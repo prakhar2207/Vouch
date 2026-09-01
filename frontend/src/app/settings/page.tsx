@@ -306,6 +306,49 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            {/* Integrations & Export Engines */}
+            <div className="bg-card border border-border rounded-xl p-6 space-y-4">
+              <h2 className="text-lg font-semibold text-white">Network Integrations & Audit Exports</h2>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl flex flex-col justify-between space-y-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-white">B2B Network Interchange (EDI)</span>
+                      <span className="px-1.5 py-0.2 bg-blue-500/10 text-blue-400 text-[10px] font-mono rounded border border-blue-500/20">LIVE</span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Manage incoming e-invoices from registered suppliers. Review, digitally sign, and auto-post stock in 1 click.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => router.push('/network/inbox')}
+                    className="px-3.5 py-2 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-lg text-xs font-bold transition-colors w-fit"
+                  >
+                    Open EDI Inbox →
+                  </button>
+                </div>
+
+                <div className="p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl flex flex-col justify-between space-y-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-white">Tally XML Bridge & CA Guide</span>
+                      <span className="px-1.5 py-0.2 bg-purple-500/10 text-purple-400 text-[10px] font-mono rounded border border-purple-500/20">TallyPrime</span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Export your entire double-entry ledger, stock catalog, and vouchers into standard Tally XML format for external audit.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => router.push('/export/tally')}
+                    className="px-3.5 py-2 bg-purple-600/10 hover:bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded-lg text-xs font-bold transition-colors w-fit"
+                  >
+                    Export to Tally (Alt+O) →
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div className="flex justify-end pt-4 border-t border-zinc-800">
               <button 
                 onClick={saveSettings} 

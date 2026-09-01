@@ -155,5 +155,13 @@ class SalesInvoiceService:
                 debit_amount=Decimal('0.00'),
                 credit_amount=total_igst
             )
+
+        # Trigger B2B Network EDI Handshake if buyer is a registered Company
+        try:
+            from apps.accounting.services.edi_service import EDIService
+            EDIService.create_inward_request_for_sales_voucher(voucher)
+        except Exception as e:
+            # Non-blocking log to ensure sales invoice creation doesn't fail
+            print(f"[EDI Error] Failed to create inward voucher request: {e}")
             
         return voucher

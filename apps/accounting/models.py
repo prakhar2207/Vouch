@@ -84,3 +84,31 @@ class LedgerEntry(models.Model):
 
     def __str__(self):
         return f"VCH: {self.voucher.voucher_number} | LDR: {self.ledger.name} | DR: {self.debit_amount} | CR: {self.credit_amount}"
+
+
+class InwardVoucherRequest(models.Model):
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending'),
+        ('ACCEPTED', 'Accepted'),
+        ('REJECTED', 'Rejected'),
+        ('DISPUTED', 'Disputed'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    source_company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='outgoing_edi_requests')
+    target_company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='incoming_edi_requests')
+    source_voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='edi_requests')
+    payload = models.JSONField(help_text="Snapshot of invoice lines, amounts, taxes, HSN codes")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING', db_index=True)
+    digital_signature_hash = models.CharField(max_length=64, null=True, blank=True)
+    signed_at = models.DateTimeField(null=True, blank=True)
+    created_purchase_voucher = models.OneToOneField(Voucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='inward_edi_request')
+    rejection_reason = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"EDI #{self.id} | {self.source_company.name} -> {self.target_company.name} ({self.status})"

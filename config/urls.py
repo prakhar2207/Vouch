@@ -24,6 +24,10 @@ from django.conf.urls.static import static
 from apps.accounting.views import UniversalVoucherAPIView, VoucherDetailAPIView
 from apps.accounting.ocr_views import OCRExtractAPIView
 from apps.analytics.views import InsightsAPIView
+from apps.accounting.b2b_views import (
+    InwardVoucherInboxView, InwardVoucherDetailView, InwardVoucherAcceptView, InwardVoucherRejectView
+)
+from apps.accounting.tally_views import TallyExportAPIView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -32,6 +36,15 @@ urlpatterns = [
     path('api/vouchers/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='api_voucher_detail_root'),
     path('api/ocr/extract/', OCRExtractAPIView.as_view(), name='api_ocr_extract_root'),
     path('api/insights/', InsightsAPIView.as_view(), name='api_insights_root'),
+    
+    # B2B EDI Network Handshake Endpoints
+    path('api/b2b/inbox/', InwardVoucherInboxView.as_view(), name='api_b2b_inbox'),
+    path('api/b2b/inbox/<uuid:pk>/', InwardVoucherDetailView.as_view(), name='api_b2b_inbox_detail'),
+    path('api/b2b/inbox/<uuid:pk>/accept/', InwardVoucherAcceptView.as_view(), name='api_b2b_inbox_accept'),
+    path('api/b2b/inbox/<uuid:pk>/reject/', InwardVoucherRejectView.as_view(), name='api_b2b_inbox_reject'),
+
+    # Tally XML Export Bridge
+    path('api/export/tally/xml/', TallyExportAPIView.as_view(), name='api_tally_export_xml'),
     
     # Standard v1 Namespaced Endpoints
     path('api/v1/auth/', include('apps.accounts.urls')),

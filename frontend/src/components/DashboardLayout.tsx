@@ -34,10 +34,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { id: 'tour-dashboard-link', path: '/dashboard', label: 'Dashboard' },
     { id: 'tour-sales-btn', path: '/sales', label: 'Sales', badge: 'F8' },
     { id: 'tour-purchase-btn', path: '/purchases', label: 'Purchases (AI)', badge: 'F9' },
+    { id: 'tour-b2b-btn', path: '/network/inbox', label: 'B2B Network', badge: 'EDI' },
     { id: 'tour-grid-btn', path: '/vouchers/grid', label: 'AG Grid', badge: 'Grid' },
     { id: 'tour-vouchers-link', path: '/vouchers', label: 'Vouchers' },
     { id: 'tour-inventory-link', path: '/inventory', label: 'Inventory' },
     { id: 'tour-parties-link', path: '/parties', label: 'Parties' },
+    { id: 'tour-tally-link', path: '/export/tally', label: 'Tally XML', badge: 'Alt+O' },
     { id: 'tour-settings-link', path: '/settings', label: 'Settings' },
   ];
 

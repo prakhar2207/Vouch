@@ -5,6 +5,10 @@ from .views import (
     CreatePaymentReceiptAPIView, ListPaymentReceiptAPIView, UniversalVoucherAPIView
 )
 from .ocr_views import OCRExtractAPIView
+from .b2b_views import (
+    InwardVoucherInboxView, InwardVoucherDetailView, InwardVoucherAcceptView, InwardVoucherRejectView
+)
+from .tally_views import TallyExportAPIView
 
 urlpatterns = [
     path('vouchers/', UniversalVoucherAPIView.as_view(), name='universal_vouchers'),
@@ -18,5 +22,14 @@ urlpatterns = [
     path('vouchers/detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='voucher_detail'),
     path('voucher-detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='voucher_detail_alias'),
     path('reports/ledger-statement/<uuid:company_id>/<uuid:ledger_id>/', LedgerStatementAPIView.as_view(), name='ledger_statement'),
+    
+    # B2B EDI Network
+    path('b2b/inbox/', InwardVoucherInboxView.as_view(), name='b2b_inbox'),
+    path('b2b/inbox/<uuid:pk>/', InwardVoucherDetailView.as_view(), name='b2b_inbox_detail'),
+    path('b2b/inbox/<uuid:pk>/accept/', InwardVoucherAcceptView.as_view(), name='b2b_inbox_accept'),
+    path('b2b/inbox/<uuid:pk>/reject/', InwardVoucherRejectView.as_view(), name='b2b_inbox_reject'),
+
+    # Tally Export
+    path('export/tally/xml/', TallyExportAPIView.as_view(), name='export_tally_xml'),
 ]
 
