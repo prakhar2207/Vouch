@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
@@ -22,11 +23,11 @@ export default function VouchersPage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const companyId = compRes.data.data[0]?.id;
       if (!companyId) return;
 
-      let url = `http://localhost:8000/api/v1/accounting/payment-receipts/${companyId}/`;
+      let url = `${API_BASE_URL}/api/v1/accounting/payment-receipts/${companyId}/`;
       if (typeFilter && typeFilter !== 'ALL') url += `?type=${typeFilter}`;
       
       const res = await axios.get(url, { headers });

@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
@@ -47,7 +48,7 @@ export default function SettingsPage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const comp = compRes.data.data[0];
       if (comp) {
         setCompany(comp);
@@ -87,7 +88,7 @@ export default function SettingsPage() {
       const headers = { Authorization: `Bearer ${token}` };
       
       // Update Settings
-      await axios.patch(`http://localhost:8000/api/v1/companies/${company.id}/update_settings/`, {
+      await axios.patch(`${API_BASE_URL}/api/v1/companies/${company.id}/update_settings/`, {
         enable_ledger_mapping: enableLedgerMapping,
         enable_manual_invoice_number: enableManualInvoice,
         enable_advanced_item_creation: enableAdvancedItemCreation,
@@ -117,7 +118,7 @@ export default function SettingsPage() {
       formData.append('bank_ifsc', bankIfsc);
       formData.append('bank_branch', bankBranch);
       
-      await axios.patch(`http://localhost:8000/api/v1/companies/${company.id}/`, formData, { 
+      await axios.patch(`${API_BASE_URL}/api/v1/companies/${company.id}/`, formData, { 
         headers: {
           ...headers,
           'Content-Type': 'multipart/form-data'
@@ -226,7 +227,7 @@ export default function SettingsPage() {
                   <label className="block text-sm text-gray-400 mb-2">Digital Signature</label>
                   {company.proprietor_signature && (
                     <div className="mb-3 p-2 bg-white rounded w-fit">
-                      <img src={`http://localhost:8000${company.proprietor_signature}`} alt="Signature" className="h-16 object-contain" />
+                      <img src={`${API_BASE_URL}${company.proprietor_signature}`} alt="Signature" className="h-16 object-contain" />
                     </div>
                   )}
                   <input type="file" accept="image/*" onChange={handleSignatureChange} className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-500/10 file:text-blue-400 hover:file:bg-blue-500/20" />

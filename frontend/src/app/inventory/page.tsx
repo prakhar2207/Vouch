@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
@@ -27,12 +28,12 @@ export default function InventoryPage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const cid = compRes.data.data[0]?.id;
       if (!cid) return;
       setCompanyId(cid);
 
-      const res = await axios.get(`http://localhost:8000/api/v1/inventory/categories/${cid}/`, { headers });
+      const res = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cid}/`, { headers });
       setCategories(res.data.data || []);
     } catch (err) {
       console.error(err);
@@ -54,7 +55,7 @@ export default function InventoryPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const res = await axios.patch(
-        `http://localhost:8000/api/v1/inventory/categories/${companyId}/${editingCategory.id}/`,
+        `${API_BASE_URL}/api/v1/inventory/categories/${companyId}/${editingCategory.id}/`,
         editData,
         { headers }
       );
@@ -81,7 +82,7 @@ export default function InventoryPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       await axios.delete(
-        `http://localhost:8000/api/v1/inventory/categories/${companyId}/${deletingCategory.id}/`,
+        `${API_BASE_URL}/api/v1/inventory/categories/${companyId}/${deletingCategory.id}/`,
         { headers }
       );
       setCategories(cats => cats.filter(c => c.id !== deletingCategory.id));

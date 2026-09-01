@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
@@ -29,13 +30,13 @@ export default function NewCategoryPage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const comp = compRes.data.data[0];
       if (!comp) return;
       setComplexityLevel(comp.settings?.complexity_level || 1);
       setEnableLedgerMapping(comp.settings?.enable_ledger_mapping || false);
 
-      const ledRes = await axios.get(`http://localhost:8000/api/v1/ledgers/${comp.id}/`, { headers });
+      const ledRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${comp.id}/`, { headers });
       setLedgers(ledRes.data.data || []);
     } catch (err) {
       console.error(err);
@@ -48,14 +49,14 @@ export default function NewCategoryPage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const companyId = compRes.data.data[0]?.id;
 
       const payload: any = { ...formData };
       if (formData.sales_ledger_id === '') delete payload.sales_ledger_id;
       if (formData.purchase_ledger_id === '') delete payload.purchase_ledger_id;
 
-      const res = await axios.post(`http://localhost:8000/api/v1/inventory/categories/${companyId}/`, payload, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/v1/inventory/categories/${companyId}/`, payload, { headers });
       if (res.data.success) {
         alert(`Category "${res.data.data.name}" created successfully!`);
         router.push('/inventory');

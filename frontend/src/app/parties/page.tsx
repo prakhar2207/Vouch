@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
@@ -25,11 +26,11 @@ export default function PartiesPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const companyId = compRes.data.data[0]?.id;
       if (!companyId) return;
 
-      const ledgersRes = await axios.get(`http://localhost:8000/api/v1/ledgers/${companyId}/`, { headers });
+      const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${companyId}/`, { headers });
       
       const rawLedgers = ledgersRes.data.data || [];
       const filteredParties = rawLedgers.filter((l: any) => 

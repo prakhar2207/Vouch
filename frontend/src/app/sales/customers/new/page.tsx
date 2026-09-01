@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
@@ -28,7 +29,7 @@ export default function NewCustomerPage() {
     }
     const token = getAccessToken();
     const headers = { Authorization: `Bearer ${token}` };
-    axios.get('http://localhost:8000/api/v1/companies/', { headers }).then(res => {
+    axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers }).then(res => {
       setCompanyId(res.data.data[0]?.id);
     });
   }, [router]);
@@ -38,7 +39,7 @@ export default function NewCustomerPage() {
     setSaving(true);
     try {
       const token = getAccessToken();
-      await axios.post(`http://localhost:8000/api/v1/ledgers/${companyId}/`, {
+      await axios.post(`${API_BASE_URL}/api/v1/ledgers/${companyId}/`, {
           ...formData,
           group_name: 'Debtors', // Maps to Sundry Debtors
           ledger_type: 'CUSTOMER'

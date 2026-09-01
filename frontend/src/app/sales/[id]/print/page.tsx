@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useParams, useRouter } from 'next/navigation';
@@ -77,7 +78,7 @@ export default function PrintInvoicePage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.get(`http://localhost:8000/api/v1/accounting/vouchers/detail/${invoiceId}/`, { headers });
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/detail/${invoiceId}/`, { headers });
       setInvoice(res.data.data);
     } catch (err) {
       console.error(err);
@@ -373,7 +374,7 @@ export default function PrintInvoicePage() {
                         <div className="flex justify-end w-full my-auto">
                             {invoice.company.proprietor_signature && (
                                 <img 
-                                    src={`http://localhost:8000${invoice.company.proprietor_signature}`} 
+                                    src={`${API_BASE_URL}${invoice.company.proprietor_signature}`} 
                                     alt="Signature" 
                                     className="h-16 object-contain" 
                                 />

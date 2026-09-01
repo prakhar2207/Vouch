@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
@@ -60,7 +61,7 @@ export default function PurchasePage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const comp = compRes.data.data[0];
       const cId = comp?.id;
       if (!cId) return;
@@ -70,11 +71,11 @@ export default function PurchasePage() {
       const isMappingEnabled = comp.settings?.enable_ledger_mapping || false;
       setEnableLedgerMapping(isMappingEnabled);
 
-      const ledgersRes = await axios.get(`http://localhost:8000/api/v1/ledgers/${cId}/`, { headers });
+      const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cId}/`, { headers });
       const ledgerList = ledgersRes.data.data || [];
       setLedgers(ledgerList);
       
-      const catsRes = await axios.get(`http://localhost:8000/api/v1/inventory/categories/${cId}/`, { headers });
+      const catsRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cId}/`, { headers });
       setCategories(catsRes.data.data || []);
       
       const party = ledgerList.find((l:any) => l.name.includes('Supplier') || l.group.includes('Creditor'));
@@ -139,7 +140,7 @@ export default function PurchasePage() {
         post_immediately: true
       };
       
-      const res = await axios.post('http://localhost:8000/api/v1/accounting/purchase-invoice/', payload, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/purchase-invoice/`, payload, { headers });
       alert("Purchase Invoice generated successfully! Voucher Number: " + res.data.voucher_number);
       router.push('/purchases');
     } catch (err: any) {

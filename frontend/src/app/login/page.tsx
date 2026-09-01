@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE_URL } from '@/utils/api';
 import { useState } from 'react';
 import axios from 'axios';
 import { setTokens } from '@/utils/auth';
@@ -14,7 +15,7 @@ export default function Login() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await axios.post('http://localhost:8000/api/v1/auth/login/', { email: username, password });
+      const res = await axios.post(`${API_BASE_URL}/api/v1/auth/login/`, { email: username, password });
       setTokens(res.data.access, res.data.refresh);
       router.push('/dashboard');
     } catch (err) {

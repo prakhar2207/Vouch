@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useRouter, useParams } from 'next/navigation';
@@ -27,11 +28,11 @@ export default function LedgerStatementPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const companyId = compRes.data.data[0]?.id;
       if (!companyId) return;
 
-      const res = await axios.get(`http://localhost:8000/api/v1/accounting/reports/ledger-statement/${companyId}/${ledgerId}/`, { headers });
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/reports/ledger-statement/${companyId}/${ledgerId}/`, { headers });
       setStatementData(res.data.data);
       
     } catch (err) {

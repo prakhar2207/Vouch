@@ -1,4 +1,5 @@
 ﻿"use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { useShortcuts } from "@/context/ShortcutContext";
@@ -43,7 +44,7 @@ export default function QuickCreateModal() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get("http://localhost:8000/api/v1/companies/", { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const cid = compRes.data.data?.[0]?.id;
       if (cid) setCompanyId(cid);
     } catch (e) {
@@ -71,7 +72,7 @@ export default function QuickCreateModal() {
         state_code: stateCode,
       };
 
-      const res = await axios.post(`http://localhost:8000/api/v1/ledgers/${companyId}/`, payload, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/v1/ledgers/${companyId}/`, payload, { headers });
       const created = res.data.data;
       notifyAltCCreated(created);
       setIsAltCOpen(false);
@@ -106,7 +107,7 @@ export default function QuickCreateModal() {
         purchase_price: Number(price),
       };
 
-      const res = await axios.post(`http://localhost:8000/api/v1/inventory/products/${companyId}/`, payload, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/v1/inventory/products/${companyId}/`, payload, { headers });
       const created = res.data.data;
       notifyAltCCreated(created);
       setIsAltCOpen(false);

@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useRouter, useParams } from 'next/navigation';
@@ -58,18 +59,18 @@ export default function NewItemInCategoryPage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const comp = compRes.data.data[0];
       if (!comp) return;
       setCompanyId(comp.id);
       setComplexityLevel(comp.settings?.complexity_level || 1);
       setEnableAdvancedItemCreation(comp.settings?.enable_advanced_item_creation || false);
 
-      const catRes = await axios.get(`http://localhost:8000/api/v1/inventory/categories/${comp.id}/`, { headers });
+      const catRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${comp.id}/`, { headers });
       const cat = (catRes.data.data || []).find((c: any) => c.id === categoryId);
       setCategory(cat);
       
-      const whRes = await axios.get(`http://localhost:8000/api/v1/inventory/warehouses/${comp.id}/`, { headers }).catch(() => null);
+      const whRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/warehouses/${comp.id}/`, { headers }).catch(() => null);
       if (whRes && whRes.data) {
         setWarehouses(whRes.data.data || []);
       }
@@ -99,7 +100,7 @@ export default function NewItemInCategoryPage() {
         track_serial_numbers: trackSerial,
       };
 
-      const res = await axios.post(`http://localhost:8000/api/v1/inventory/products/${companyId}/`, payload, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/v1/inventory/products/${companyId}/`, payload, { headers });
       if (res.data.success) {
         alert(`Item "${res.data.data.name}" added to ${category?.name}!`);
         router.push(`/inventory/categories/${categoryId}`);

@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
@@ -30,13 +31,13 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get("http://localhost:8000/api/v1/companies/", { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const cid = compRes.data.data?.[0]?.id;
       if (!cid) return;
 
       const [ledgersRes, productsRes] = await Promise.all([
-        axios.get(`http://localhost:8000/api/v1/ledgers/${cid}/`, { headers }).catch(() => ({ data: { data: [] } })),
-        axios.get(`http://localhost:8000/api/v1/inventory/products/${cid}/`, { headers }).catch(() => ({ data: { data: [] } })),
+        axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers }).catch(() => ({ data: { data: [] } })),
+        axios.get(`${API_BASE_URL}/api/v1/inventory/products/${cid}/`, { headers }).catch(() => ({ data: { data: [] } })),
       ]);
 
       setLedgers(ledgersRes.data?.data || []);

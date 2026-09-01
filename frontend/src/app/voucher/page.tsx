@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, ModuleRegistry, ValidationModule } from 'ag-grid-community';
@@ -45,8 +46,8 @@ export default function VoucherEntry() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const [ledgersRes, productsRes] = await Promise.all([
-        axios.get('http://localhost:8000/api/ledgers/', { headers }),
-        axios.get('http://localhost:8000/api/products/', { headers })
+        axios.get(`${API_BASE_URL}/api/ledgers/`, { headers }),
+        axios.get(`${API_BASE_URL}/api/products/`, { headers })
       ]);
       setLedgers(ledgersRes.data);
       setProducts(productsRes.data);
@@ -95,7 +96,7 @@ export default function VoucherEntry() {
 
     try {
       const token = getAccessToken();
-      await axios.post('http://localhost:8000/api/vouchers/', payload, {
+      await axios.post(`${API_BASE_URL}/api/vouchers/`, payload, {
         headers: { Authorization: `Bearer ${token}` }
       });
       alert('Voucher Saved Successfully!');

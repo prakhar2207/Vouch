@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense } from "react";
 import axios from "axios";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -74,12 +75,12 @@ function AgGridVoucherEntryContent() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get("http://localhost:8000/api/v1/companies/", { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const cid = compRes.data.data?.[0]?.id;
       if (!cid) return;
       setCompanyId(cid);
 
-      const ledgersRes = await axios.get(`http://localhost:8000/api/v1/ledgers/${cid}/`, { headers });
+      const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers });
       setLedgers(ledgersRes.data.data || []);
     } catch (err) {
       console.error(err);
@@ -270,7 +271,7 @@ function AgGridVoucherEntryContent() {
         })),
       };
 
-      const res = await axios.post("http://localhost:8000/api/vouchers/", payload, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/vouchers/`, payload, { headers });
 
       setStatusMessage({
         type: "success",

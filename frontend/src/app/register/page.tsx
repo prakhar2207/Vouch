@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE_URL } from '@/utils/api';
 import { useState } from 'react';
 import axios from 'axios';
 import { setTokens } from '@/utils/auth';
@@ -55,7 +56,7 @@ export default function Register() {
         proprietor_phone: proprietorPhone
       };
       
-      const res = await axios.post('http://localhost:8000/api/v1/auth/register/', payload);
+      const res = await axios.post(`${API_BASE_URL}/api/v1/auth/register/`, payload);
       
       // Store tokens and redirect
       if (res.data.success) {

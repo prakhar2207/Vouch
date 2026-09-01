@@ -1,4 +1,5 @@
 ﻿"use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
@@ -160,7 +161,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       const headers = { Authorization: `Bearer ${token}` };
 
       const res = await axios.post(
-        "http://localhost:8000/api/ocr/extract/",
+        `${API_BASE_URL}/api/ocr/extract/`,
         { file_base64: base64, mime_type: mime },
         { headers }
       );
@@ -234,7 +235,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
       // 1. Create or get Party Ledger for the Supplier
       const partyRes = await axios.post(
-        `http://localhost:8000/api/v1/ledgers/${companyId}/`,
+        `${API_BASE_URL}/api/v1/ledgers/${companyId}/`,
         {
           name: invoice.supplier_name,
           group_name: "Creditors",
@@ -271,7 +272,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         attachment_mime: fileMimeType,
       };
 
-      const res = await axios.post("http://localhost:8000/api/vouchers/", payload, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/vouchers/`, payload, { headers });
 
       alert(`Purchase Invoice #${res.data.voucher_number} saved & posted to accounting successfully!`);
       if (onSuccess) {

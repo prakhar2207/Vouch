@@ -1,4 +1,5 @@
 ﻿"use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import Link from "next/link";
@@ -37,7 +38,7 @@ export default function Dashboard() {
         const token = getAccessToken();
         const headers = { Authorization: `Bearer ${token}` };
 
-        const compRes = await axios.get("http://localhost:8000/api/v1/companies/", { headers });
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
         const companies = compRes.data.data || [];
         if (companies.length === 0) {
           setError("No companies found. Please create a company first.");
@@ -47,8 +48,8 @@ export default function Dashboard() {
         const companyId = companies[0].id;
 
         const [insightsRes, vouchersRes] = await Promise.all([
-          axios.get(`http://localhost:8000/api/insights/`, { headers }).catch(() => ({ data: { data: null } })),
-          axios.get(`http://localhost:8000/api/vouchers/`, { headers }).catch(() => ({ data: { data: [] } })),
+          axios.get(`${API_BASE_URL}/api/insights/`, { headers }).catch(() => ({ data: { data: null } })),
+          axios.get(`${API_BASE_URL}/api/vouchers/`, { headers }).catch(() => ({ data: { data: [] } })),
         ]);
 
         setInsights(insightsRes.data?.data);

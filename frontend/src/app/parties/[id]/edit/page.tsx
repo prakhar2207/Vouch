@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useRouter, useParams } from 'next/navigation';
@@ -35,12 +36,12 @@ export default function EditPartyPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
 
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const cid = compRes.data.data[0]?.id;
       if (!cid) return;
       setCompanyId(cid);
 
-      const res = await axios.get(`http://localhost:8000/api/v1/ledgers/${cid}/${partyId}/`, { headers });
+      const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/${partyId}/`, { headers });
       const d = res.data.data;
       setFormData({
         name: d.name || '',
@@ -66,7 +67,7 @@ export default function EditPartyPage() {
       const headers = { Authorization: `Bearer ${token}` };
 
       const res = await axios.patch(
-        `http://localhost:8000/api/v1/ledgers/${companyId}/${partyId}/`,
+        `${API_BASE_URL}/api/v1/ledgers/${companyId}/${partyId}/`,
         formData,
         { headers }
       );

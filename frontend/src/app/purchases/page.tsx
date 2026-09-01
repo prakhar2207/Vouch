@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
@@ -26,11 +27,11 @@ export default function PurchaseInvoiceList() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get("http://localhost:8000/api/v1/companies/", { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const companyId = compRes.data.data[0]?.id;
       if (!companyId) return;
 
-      const res = await axios.get(`http://localhost:8000/api/v1/accounting/vouchers/${companyId}/`, { headers });
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/`, { headers });
       const purchaseVouchers = (res.data.data || []).filter((v: any) => v.type === "PURCHASE");
       setInvoices(purchaseVouchers);
     } catch (err) {
@@ -46,7 +47,7 @@ export default function PurchaseInvoiceList() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.get(`http://localhost:8000/api/vouchers/${voucherId}/`, { headers });
+      const res = await axios.get(`${API_BASE_URL}/api/vouchers/${voucherId}/`, { headers });
       if (res.data.success) {
         setSelectedVoucher(res.data.data);
       }

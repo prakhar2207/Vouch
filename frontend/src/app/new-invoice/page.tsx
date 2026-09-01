@@ -1,4 +1,5 @@
 "use client"
+import { API_BASE_URL } from '@/utils/api';
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
@@ -30,8 +31,8 @@ export default function NewInvoice() {
   const fetchData = async () => {
     try {
       const [compRes, prodRes] = await Promise.all([
-        axios.get('http://localhost:8000/api/companies/'),
-        axios.get('http://localhost:8000/api/products/')
+        axios.get(`${API_BASE_URL}/api/companies/`),
+        axios.get(`${API_BASE_URL}/api/products/`)
       ]);
       setCompanies(compRes.data);
       setProducts(prodRes.data);
@@ -42,7 +43,7 @@ export default function NewInvoice() {
 
   const handleCreateCompany = async () => {
     try {
-      const res = await axios.post('http://localhost:8000/api/companies/', newCompData);
+      const res = await axios.post(`${API_BASE_URL}/api/companies/`, newCompData);
       setCompanies([...companies, res.data]);
       setSelectedCompany(res.data.id);
       setShowNewCompany(false);
@@ -55,7 +56,7 @@ export default function NewInvoice() {
 
   const handleCreateProduct = async () => {
     try {
-      const res = await axios.post('http://localhost:8000/api/products/', newProdData);
+      const res = await axios.post(`${API_BASE_URL}/api/products/`, newProdData);
       setProducts([...products, res.data]);
       setShowNewProduct(false);
       setNewProdData({ name: '', sku: '', base_price: '', gst_rate: '', hsn_code: '', stock_quantity: 0 });
@@ -89,7 +90,7 @@ export default function NewInvoice() {
         type: invoiceType,
         items: items.map(i => ({ product: i.product, quantity: i.quantity, unit_price: i.unit_price }))
       };
-      await axios.post('http://localhost:8000/api/invoices/', payload);
+      await axios.post(`${API_BASE_URL}/api/invoices/`, payload);
       alert('Invoice created successfully!');
       router.push('/');
     } catch (e) {

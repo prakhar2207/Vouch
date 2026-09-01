@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
@@ -61,7 +62,7 @@ export default function SalesPage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const comp = compRes.data.data[0];
       const cId = comp?.id;
       if (!cId) return;
@@ -73,11 +74,11 @@ export default function SalesPage() {
       setEnableLedgerMapping(isMappingEnabled);
       setEnableManualInvoice(comp.settings?.enable_manual_invoice_number || false);
 
-      const ledgersRes = await axios.get(`http://localhost:8000/api/v1/ledgers/${cId}/`, { headers });
+      const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cId}/`, { headers });
       const ledgerList = ledgersRes.data.data || [];
       setLedgers(ledgerList);
       
-      const catsRes = await axios.get(`http://localhost:8000/api/v1/inventory/categories/${cId}/`, { headers });
+      const catsRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cId}/`, { headers });
       setCategories(catsRes.data.data || []);
       
       const party = ledgerList.find((l:any) => l.name.includes('Customer') || l.group.includes('Debtors'));
@@ -144,7 +145,7 @@ export default function SalesPage() {
         post_immediately: true
       };
       
-      const res = await axios.post('http://localhost:8000/api/v1/accounting/sales-invoice/', payload, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/sales-invoice/`, payload, { headers });
       alert("Sales Invoice generated successfully! Voucher Number: " + res.data.voucher_number);
       router.push('/sales');
     } catch (err: any) {

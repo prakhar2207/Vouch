@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useRouter, useParams } from 'next/navigation';
@@ -35,16 +36,16 @@ export default function CategoryDetailPage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const cid = compRes.data.data[0]?.id;
       if (!cid) return;
       setCompanyId(cid);
 
-      const catRes = await axios.get(`http://localhost:8000/api/v1/inventory/categories/${cid}/`, { headers });
+      const catRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cid}/`, { headers });
       const cat = (catRes.data.data || []).find((c: any) => c.id === categoryId);
       setCategory(cat);
 
-      const prodRes = await axios.get(`http://localhost:8000/api/v1/inventory/products/${cid}/?category=${categoryId}`, { headers });
+      const prodRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/products/${cid}/?category=${categoryId}`, { headers });
       setProducts(prodRes.data.data || []);
     } catch (err) {
       console.error(err);
@@ -76,7 +77,7 @@ export default function CategoryDetailPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const res = await axios.patch(
-        `http://localhost:8000/api/v1/inventory/products/${companyId}/${productId}/`,
+        `${API_BASE_URL}/api/v1/inventory/products/${companyId}/${productId}/`,
         editData,
         { headers }
       );
@@ -107,7 +108,7 @@ export default function CategoryDetailPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const res = await axios.patch(
-        `http://localhost:8000/api/v1/inventory/categories/${companyId}/${categoryId}/`,
+        `${API_BASE_URL}/api/v1/inventory/categories/${companyId}/${categoryId}/`,
         categoryEditData,
         { headers }
       );

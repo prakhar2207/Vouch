@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
@@ -28,12 +29,12 @@ export default function NewVoucherPage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get('http://localhost:8000/api/v1/companies/', { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const cid = compRes.data.data[0]?.id;
       if (!cid) return;
       setCompanyId(cid);
 
-      const res = await axios.get(`http://localhost:8000/api/v1/ledgers/${cid}/`, { headers });
+      const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers });
       setLedgers(res.data.data || []);
     } catch (err) {
       console.error(err);
@@ -69,7 +70,7 @@ export default function NewVoucherPage() {
         voucher_date: voucherDate,
       };
 
-      const res = await axios.post('http://localhost:8000/api/v1/accounting/payment-receipt/', payload, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/payment-receipt/`, payload, { headers });
       
       if (res.data.success) {
         alert(`${voucherType === 'RECEIPT' ? 'Receipt' : 'Payment'} ${res.data.voucher_number} posted successfully! Amount: ₹${res.data.amount}`);
