@@ -47,7 +47,7 @@ export default function LandingPage() {
               <a href="#features" className="hover:text-foreground transition-colors">Features</a>
               <a href="#mockup" className="hover:text-foreground transition-colors">AI Bill Scanner</a>
               <a href="#shortcuts" className="hover:text-foreground transition-colors">Keyboard Shortcuts</a>
-              <a href="#pricing" className="hover:text-foreground transition-colors">Pricing</a>
+              <a href="#get-started" className="hover:text-foreground transition-colors">Get Started</a>
             </nav>
           </div>
 
@@ -80,7 +80,7 @@ export default function LandingPage() {
                   href="/register"
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-md transition-all"
                 >
-                  Start Free Trial
+                  Get Started
                 </Link>
               </div>
             )}
@@ -136,16 +136,16 @@ export default function LandingPage() {
               href={isAuth ? "/dashboard" : "/register"}
               className="px-6 py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-xl shadow-blue-600/20 transition-all flex items-center gap-2 cursor-pointer"
             >
-              <span>{isAuth ? "Launch Dashboard" : "Start Free Trial"}</span>
+              <span>{isAuth ? "Launch Dashboard" : "Get Started"}</span>
               <ArrowRight className="w-4 h-4" />
             </Link>
-            <Link
-              href="/dashboard"
+            <a
+              href="#mockup"
               className="px-6 py-3.5 bg-zinc-900 hover:bg-zinc-800 text-gray-200 border border-zinc-700 rounded-xl text-sm font-bold transition-all flex items-center gap-2 cursor-pointer"
             >
-              <span>Book a Demo</span>
+              <span>Interactive Demo</span>
               <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded text-[10px] font-mono text-gray-400">Live</kbd>
-            </Link>
+            </a>
           </motion.div>
 
           {/* Quick Keyboard Matrix */}
@@ -388,11 +388,11 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Pricing / Call to Action */}
-      <section id="pricing" className="py-20 bg-gradient-to-b from-transparent to-zinc-950 border-t border-border">
+      {/* Get Started / Call to Action */}
+      <section id="get-started" className="py-20 bg-gradient-to-b from-transparent to-zinc-950 border-t border-border">
         <div className="max-w-4xl mx-auto px-6 text-center space-y-6">
           <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight">
-            Ready to accelerate your accounting workflow?
+            Ready to streamline your business accounting?
           </h2>
           <p className="text-gray-400 text-sm max-w-xl mx-auto">
             Experience lightning-fast double-entry bookkeeping, automated GST invoices, and AI accounts payable today.
@@ -402,7 +402,7 @@ export default function LandingPage() {
               href={isAuth ? "/dashboard" : "/register"}
               className="px-8 py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-xl shadow-blue-600/25 transition-all inline-flex items-center gap-2 cursor-pointer"
             >
-              <span>{isAuth ? "Enter Dashboard" : "Start Free Trial Now"}</span>
+              <span>{isAuth ? "Enter Dashboard" : "Get Started Now"}</span>
               <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
