@@ -1,4 +1,4 @@
-﻿import os
+import os
 import io
 import re
 import json
@@ -123,7 +123,7 @@ class InvoiceOCRService:
             search_text = page_1_text if len(page_1_text.strip()) > 50 else full_text
             lines = [l.strip() for l in search_text.split('\n') if l.strip()]
 
-            # 1. Invoice Number (e.g. Invoice No. : G/0015278)
+            # 1. Invoice Number (e.g. Invoice No. : INV-2026-0891)
             inv_match = re.search(r'(?:Invoice\s*No\.?|Bill\s*No\.?|Inv\s*No\.?|Invoice\s*#|Inv\s*#|Vide\s*Bill\s*No\.?)\s*[:.\-]?\s*([A-Za-z0-9\/\-_]+)', search_text, re.IGNORECASE)
             invoice_number = inv_match.group(1).strip() if inv_match else ""
 
@@ -221,12 +221,12 @@ class InvoiceOCRService:
 
             if not line_items:
                 line_items.append({
-                    "description": "TIMING BELTS 760-8MX50 MM",
-                    "hsn_code": "40103999",
-                    "quantity": 2.0,
+                    "description": "BEARING 6205-2RS INDUSTRIAL",
+                    "hsn_code": "84821011",
+                    "quantity": 10.0,
                     "unit": "PCS",
-                    "rate": 800.0,
-                    "amount": 1600.0,
+                    "rate": 250.0,
+                    "amount": 2500.0,
                     "gst_rate": 18.0
                 })
 
@@ -235,11 +235,11 @@ class InvoiceOCRService:
                 grand_total = subtotal + cgst + sgst + igst
 
             return {
-                "supplier_name": supplier_name or "Satyam & Co.",
-                "supplier_gstin": supplier_gstin or "09ACHFS9225Q1Z7",
-                "invoice_number": invoice_number or "G/0015278",
-                "invoice_date": invoice_date or "2025-11-05",
-                "state_code": state_code or "09",
+                "supplier_name": supplier_name or "Apex Industrial Supplies Pvt Ltd",
+                "supplier_gstin": supplier_gstin or "27AAACA1234A1Z5",
+                "invoice_number": invoice_number or "INV-2026-0891",
+                "invoice_date": invoice_date or "2026-01-15",
+                "state_code": state_code or "27",
                 "subtotal": round(subtotal, 2),
                 "cgst_amount": round(cgst, 2),
                 "sgst_amount": round(sgst, 2),
@@ -255,24 +255,24 @@ class InvoiceOCRService:
     @staticmethod
     def _fallback_mock(error: Optional[str] = None) -> dict:
         return {
-            "supplier_name": "Satyam & Co.",
-            "supplier_gstin": "09ACHFS9225Q1Z7",
-            "invoice_number": "G/0015278",
-            "invoice_date": "2025-11-05",
-            "state_code": "09",
-            "subtotal": 1600.00,
-            "cgst_amount": 144.00,
-            "sgst_amount": 144.00,
+            "supplier_name": "Apex Industrial Supplies Pvt Ltd",
+            "supplier_gstin": "27AAACA1234A1Z5",
+            "invoice_number": "INV-2026-0891",
+            "invoice_date": "2026-01-15",
+            "state_code": "27",
+            "subtotal": 2500.00,
+            "cgst_amount": 225.00,
+            "sgst_amount": 225.00,
             "igst_amount": 0.00,
-            "total_amount": 1888.00,
+            "total_amount": 2950.00,
             "line_items": [
                 {
-                    "description": "TIMING BELTS 760-8MX50 MM",
-                    "hsn_code": "40103999",
-                    "quantity": 2.00,
+                    "description": "BEARING 6205-2RS INDUSTRIAL",
+                    "hsn_code": "84821011",
+                    "quantity": 10.00,
                     "unit": "PCS",
-                    "rate": 800.00,
-                    "amount": 1600.00,
+                    "rate": 250.00,
+                    "amount": 2500.00,
                     "gst_rate": 18.00
                 }
             ],

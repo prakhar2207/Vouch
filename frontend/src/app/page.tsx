@@ -288,11 +288,11 @@ export default function LandingPage() {
                   <div className="flex justify-between items-start border-b border-zinc-800 pb-3">
                     <div>
                       <div className="text-xs font-bold text-white font-mono">TAX INVOICE</div>
-                      <div className="text-[11px] text-gray-400">Satyam & Co.</div>
+                      <div className="text-[11px] text-gray-400">Apex Industrial Supplies Pvt Ltd</div>
                     </div>
                     <div className="text-right">
-                      <div className="text-xs font-mono text-blue-400 font-bold"># G/0015278</div>
-                      <div className="text-[10px] text-gray-400 font-mono">Date: 05/11/2025</div>
+                      <div className="text-xs font-mono text-blue-400 font-bold"># INV-2026-0891</div>
+                      <div className="text-[10px] text-gray-400 font-mono">Date: 15/01/2026</div>
                     </div>
                   </div>
 
@@ -304,29 +304,29 @@ export default function LandingPage() {
                       <span>AMOUNT</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="font-semibold text-white">TIMING BELTS 760-8MX50</span>
-                      <span className="text-gray-400">40103999</span>
-                      <span>2.00 PCS</span>
-                      <span>₹1,600.00</span>
+                      <span className="font-semibold text-white">BEARING 6205-2RS INDUSTRIAL</span>
+                      <span className="text-gray-400">84821011</span>
+                      <span>10.00 PCS</span>
+                      <span>₹2,500.00</span>
                     </div>
                     <div className="flex justify-between text-gray-400">
                       <span>CGST (9.00%)</span>
                       <span></span>
                       <span></span>
-                      <span>₹144.00</span>
+                      <span>₹225.00</span>
                     </div>
                     <div className="flex justify-between text-gray-400">
                       <span>SGST (9.00%)</span>
                       <span></span>
                       <span></span>
-                      <span>₹144.00</span>
+                      <span>₹225.00</span>
                     </div>
                   </div>
                 </div>
 
                 <div className="pt-3 border-t border-zinc-800 flex justify-between items-center text-xs font-bold font-mono">
                   <span className="text-gray-400">GRAND TOTAL:</span>
-                  <span className="text-green-400 text-sm">₹ 1,888.00</span>
+                  <span className="text-green-400 text-sm">₹ 2,950.00</span>
                 </div>
               </div>
 
@@ -346,30 +346,30 @@ export default function LandingPage() {
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="p-2 bg-zinc-950 rounded-lg border border-zinc-800">
                       <div className="text-[10px] text-gray-400 uppercase">Supplier</div>
-                      <div className="font-semibold text-white truncate">Satyam & Co.</div>
+                      <div className="font-semibold text-white truncate">Apex Industrial Supplies Pvt Ltd</div>
                     </div>
                     <div className="p-2 bg-zinc-950 rounded-lg border border-zinc-800">
                       <div className="text-[10px] text-gray-400 uppercase">GSTIN</div>
-                      <div className="font-mono text-blue-400 font-bold">09ACHFS9225Q1Z7</div>
+                      <div className="font-mono text-blue-400 font-bold">27AAACA1234A1Z5</div>
                     </div>
                     <div className="p-2 bg-zinc-950 rounded-lg border border-zinc-800">
                       <div className="text-[10px] text-gray-400 uppercase">State Code</div>
-                      <div className="font-mono text-gray-200">09 (Uttar Pradesh)</div>
+                      <div className="font-mono text-gray-200">27 (Maharashtra)</div>
                     </div>
                     <div className="p-2 bg-zinc-950 rounded-lg border border-zinc-800">
                       <div className="text-[10px] text-gray-400 uppercase">Invoice No</div>
-                      <div className="font-mono text-purple-400 font-bold">G/0015278</div>
+                      <div className="font-mono text-purple-400 font-bold">INV-2026-0891</div>
                     </div>
                   </div>
 
                   <div className="p-2.5 bg-zinc-950 rounded-lg border border-zinc-800 space-y-1 text-xs">
                     <div className="flex justify-between text-[10px] text-gray-400 font-mono">
-                      <span>TAXABLE: ₹1,600.00</span>
-                      <span>CGST: ₹144.00 | SGST: ₹144.00</span>
+                      <span>TAXABLE: ₹2,500.00</span>
+                      <span>CGST: ₹225.00 | SGST: ₹225.00</span>
                     </div>
                     <div className="flex justify-between text-xs font-bold text-white font-mono">
                       <span>Total Amount:</span>
-                      <span className="text-green-400">₹1,888.00</span>
+                      <span className="text-green-400">₹2,950.00</span>
                     </div>
                   </div>
                 </div>
