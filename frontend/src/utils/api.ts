@@ -7,7 +7,7 @@ const getDefaultApiUrl = () => {
     return process.env.NEXT_PUBLIC_API_URL;
   }
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-    return 'https://vouch-api.onrender.com';
+    return 'https://vouch-api-752s.onrender.com';
   }
   return 'http://localhost:8000';
 };

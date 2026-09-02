@@ -21,6 +21,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.conf import settings
 from django.conf.urls.static import static
 
+from django.http import JsonResponse
 from apps.accounting.views import UniversalVoucherAPIView, VoucherDetailAPIView
 from apps.accounting.ocr_views import OCRExtractAPIView
 from apps.analytics.views import InsightsAPIView
@@ -29,7 +30,25 @@ from apps.accounting.b2b_views import (
 )
 from apps.accounting.tally_views import TallyExportAPIView
 
+def root_health_view(request):
+    return JsonResponse({
+        "status": "healthy",
+        "service": "Vouch ERP Backend API",
+        "version": "1.0.0",
+        "endpoints": {
+            "auth": "/api/v1/auth/",
+            "companies": "/api/v1/companies/",
+            "accounting": "/api/v1/accounting/",
+            "vouchers": "/api/vouchers/",
+            "ocr": "/api/ocr/extract/",
+            "b2b": "/api/b2b/inbox/",
+            "tally_export": "/api/export/tally/xml/"
+        }
+    })
+
 urlpatterns = [
+    path('', root_health_view, name='root_health'),
+    path('api/health/', root_health_view, name='api_health'),
     path('admin/', admin.site.urls),
     # Top-Level Direct API Endpoints
     path('api/vouchers/', UniversalVoucherAPIView.as_view(), name='api_vouchers_root'),
