@@ -56,42 +56,58 @@ class InvoiceOCRService:
         if raw_bytes and ("pdf" in mime_type or raw_bytes[:4] == b'%PDF'):
             pdf_parsed_data = InvoiceOCRService._extract_from_pdf(raw_bytes)
 
-        # 2. Try Gemini AI if API Key is configured
+        # 2. Try Gemini AI with exponential backoff retry queue for rate limits (15 RPM free tier)
         api_key = os.environ.get("GEMINI_API_KEY")
-        if api_key:
+        if api_key and raw_bytes:
+            import time
+            import random
+
+            prompt = (
+                "You are an expert accounts payable AI. Analyze this Indian GST tax invoice or purchase bill carefully. "
+                "Extract the exact Supplier Name, Supplier GSTIN, Invoice Number, Invoice Date (in YYYY-MM-DD), "
+                "Subtotal, Taxes (CGST, SGST, IGST), Total Amount, and all Line Items with their full Description, "
+                "exact HSN code, Quantity, Unit, Rate, and Amount. "
+                "Output strict JSON following the schema."
+            )
+
+            models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
+            max_retries = 3
+
             try:
                 from google import genai
                 from google.genai import types
-
                 client = genai.Client(api_key=api_key)
-                prompt = (
-                    "You are an expert accounts payable AI. Analyze this Indian GST tax invoice or purchase bill carefully. "
-                    "Extract the exact Supplier Name, Supplier GSTIN, Invoice Number, Invoice Date (in YYYY-MM-DD), "
-                    "Subtotal, Taxes (CGST, SGST, IGST), Total Amount, and all Line Items with their full Description, "
-                    "exact HSN code, Quantity, Unit, Rate, and Amount. "
-                    "Output strict JSON following the schema."
-                )
 
-                for model_name in ["gemini-2.5-flash", "gemini-1.5-flash"]:
-                    try:
-                        response = client.models.generate_content(
-                            model=model_name,
-                            contents=[
-                                types.Part.from_bytes(data=raw_bytes, mime_type=mime_type),
-                                prompt
-                            ],
-                            config=types.GenerateContentConfig(
-                                response_mime_type="application/json",
-                                response_schema=InvoiceExtractionSchema,
-                                temperature=0.1,
+                for attempt in range(max_retries):
+                    for model_name in models_to_try:
+                        try:
+                            response = client.models.generate_content(
+                                model=model_name,
+                                contents=[
+                                    types.Part.from_bytes(data=raw_bytes, mime_type=mime_type),
+                                    prompt
+                                ],
+                                config=types.GenerateContentConfig(
+                                    response_mime_type="application/json",
+                                    response_schema=InvoiceExtractionSchema,
+                                    temperature=0.1,
+                                )
                             )
-                        )
-                        result = json.loads(response.text)
-                        if result and result.get("invoice_number"):
-                            return result
-                    except Exception as gemini_err:
-                        print(f"Gemini {model_name} attempt error: {gemini_err}")
-                        continue
+                            result = json.loads(response.text)
+                            if result and (result.get("invoice_number") or result.get("supplier_name")):
+                                result["is_mock"] = False
+                                return result
+                        except Exception as gemini_err:
+                            err_str = str(gemini_err).lower()
+                            # If 429 or ResourceExhausted (rate limit), pause with exponential backoff and jitter
+                            if "429" in err_str or "quota" in err_str or "exhausted" in err_str or "rate" in err_str:
+                                sleep_seconds = (2.0 * (attempt + 1)) + random.uniform(0.5, 1.5)
+                                print(f"[Gemini Rate Limit] 15 RPM hit on {model_name}. Retrying in {sleep_seconds:.1f}s (Attempt {attempt+1}/{max_retries})...")
+                                time.sleep(sleep_seconds)
+                                break  # Break inner model loop to re-enter retry attempt
+                            else:
+                                print(f"[Gemini Error] Model {model_name} attempt error: {gemini_err}")
+                                continue
             except Exception as e:
                 print(f"Gemini SDK invocation failed: {e}")
 

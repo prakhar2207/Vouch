@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { API_BASE_URL } from "@/utils/api";
 import { useState, useRef } from "react";
@@ -92,8 +92,17 @@ export default function Register() {
         setError(res.data.error || "Registration failed. Please check your details.");
       }
     } catch (err: any) {
-      const msg = err.response?.data?.error || err.response?.data?.message || "Registration failed. Please check if your details are valid or try again.";
-      setError(msg);
+      if (err.response?.data?.error) {
+        setError(err.response.data.error);
+      } else if (err.response?.data?.message) {
+        setError(err.response.data.message);
+      } else if (!err.response || err.message?.includes("Network Error") || err.code === "ERR_NETWORK") {
+        setError(
+          `Unable to connect to backend server (${API_BASE_URL}). If using Render free tier, the server may take ~30s to wake up on first request. Please wait a moment and click Complete Registration again.`
+        );
+      } else {
+        setError(`Registration error: ${err.message || "Please check your details and try again."}`);
+      }
     } finally {
       setLoading(false);
     }

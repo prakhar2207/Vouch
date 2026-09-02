@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
@@ -49,6 +49,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [scanStatusToast, setScanStatusToast] = useState<string | null>(null);
 
   const [invoice, setInvoice] = useState<ExtractedInvoice | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
@@ -156,26 +157,47 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
   const processOcr = async (base64: string, mime: string) => {
     setLoading(true);
     setError(null);
-    try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+    setScanStatusToast("AI is scanning your bill, please wait a few seconds...");
 
-      const res = await axios.post(
-        `${API_BASE_URL}/api/ocr/extract/`,
-        { file_base64: base64, mime_type: mime },
-        { headers }
-      );
+    const maxRetries = 3;
+    let attempt = 0;
+    let success = false;
 
-      if (res.data.success) {
-        setInvoice(res.data.data);
-      } else {
-        setError(res.data.error || "Failed to extract invoice data.");
+    while (attempt < maxRetries && !success) {
+      try {
+        attempt++;
+        if (attempt > 1) {
+          setScanStatusToast(`AI is scanning your bill, please wait a few seconds... (Attempt ${attempt}/${maxRetries})`);
+          await new Promise((res) => setTimeout(res, 2500));
+        }
+
+        const token = getAccessToken();
+        const headers = { Authorization: `Bearer ${token}` };
+
+        const res = await axios.post(
+          `${API_BASE_URL}/api/ocr/extract/`,
+          { file_base64: base64, mime_type: mime },
+          { headers }
+        );
+
+        if (res.data.success) {
+          setInvoice(res.data.data);
+          success = true;
+          setScanStatusToast(null);
+        } else {
+          if (attempt >= maxRetries) {
+            setError(res.data.error || "Failed to extract invoice data.");
+          }
+        }
+      } catch (err: any) {
+        if (attempt >= maxRetries) {
+          setError(err.response?.data?.error || err.message || "OCR Extraction Error.");
+        }
       }
-    } catch (err: any) {
-      setError(err.response?.data?.error || err.message || "OCR Extraction Error.");
-    } finally {
-      setLoading(false);
     }
+
+    setScanStatusToast(null);
+    setLoading(false);
   };
 
   const updateItem = (index: number, field: keyof LineItem, value: any) => {
@@ -321,12 +343,14 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
       {/* Loading Overlay */}
       {loading && (
-        <div className="p-8 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col items-center justify-center space-y-3">
+        <div className="p-8 bg-zinc-900 border border-blue-500/30 rounded-2xl flex flex-col items-center justify-center space-y-3 shadow-xl animate-in fade-in">
           <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-          <div className="text-sm font-semibold text-gray-200">
-            Reading invoice data & calculating GST...
+          <div className="text-sm font-bold text-white flex items-center gap-2">
+            <span>{scanStatusToast || "AI is scanning your bill, please wait a few seconds..."}</span>
           </div>
-          <div className="text-xs text-gray-400 font-mono">Parsing document in-memory</div>
+          <div className="text-xs text-blue-400 font-mono bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20 animate-pulse">
+            Gemini AI Invoice Extraction in Progress
+          </div>
         </div>
       )}
 
