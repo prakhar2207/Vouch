@@ -52,7 +52,6 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
     { label: "Create Purchase Invoice (with AI OCR)", shortcut: "F9", action: () => router.push("/purchases/new") },
     { label: "B2B Network EDI Inbox (Auto-Handshake)", shortcut: "EDI", action: () => router.push("/network/inbox") },
     { label: "Export to Tally XML (TallyPrime & CA Guide)", shortcut: "Alt+O", action: () => router.push("/export/tally") },
-    { label: "AG Grid High-Density Voucher Entry", shortcut: "G", action: () => router.push("/vouchers/grid") },
     { label: "View Dashboard & AI Analytics", shortcut: "D", action: () => router.push("/dashboard") },
     { label: "Inventory Products Master", shortcut: "I", action: () => router.push("/inventory") },
     { label: "Parties & Customers List", shortcut: "P", action: () => router.push("/parties") },

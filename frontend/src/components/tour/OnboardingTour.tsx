@@ -64,11 +64,11 @@ export default function OnboardingTour() {
           },
         },
         {
-          element: "#tour-grid-btn",
+          element: "#tour-b2b-btn",
           popover: {
-            title: "⌨️ High-Density Grid Entry",
-            description: "Navigate accounting cells strictly using Tab, Enter, and Arrow keys with instant debit/credit balance verification.",
-            side: "right",
+            title: "⚡ B2B Network (EDI)",
+            description: "Receive e-invoices directly from your registered suppliers and auto-post stock in 1 click.",
+            side: "bottom",
             align: "center",
           },
         },

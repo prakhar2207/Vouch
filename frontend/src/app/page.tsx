@@ -424,7 +424,7 @@ export default function LandingPage() {
               <li><Link href="/dashboard" className="hover:text-white transition-colors">Dashboard</Link></li>
               <li><Link href="/sales" className="hover:text-white transition-colors">Sales Invoicing (F8)</Link></li>
               <li><Link href="/purchases" className="hover:text-white transition-colors">AI Bill Scanner (F9)</Link></li>
-              <li><Link href="/vouchers/grid" className="hover:text-white transition-colors">High-Density AG Grid</Link></li>
+              <li><Link href="/vouchers" className="hover:text-white transition-colors">Payments & Receipts</Link></li>
             </ul>
           </div>
           <div className="space-y-2">

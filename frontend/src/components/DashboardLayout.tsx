@@ -41,7 +41,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { id: 'tour-sales-btn', path: '/sales', label: 'Sales', badge: 'F8' },
     { id: 'tour-purchase-btn', path: '/purchases', label: 'Purchases', badge: 'AI' },
     { id: 'tour-b2b-btn', path: '/network/inbox', label: 'B2B', badge: 'EDI' },
-    { id: 'tour-grid-btn', path: '/vouchers/grid', label: 'Quick Journal' },
     { id: 'tour-vouchers-link', path: '/vouchers', label: 'Vouchers' },
     { id: 'tour-inventory-link', path: '/inventory', label: 'Inventory' },
     { id: 'tour-parties-link', path: '/parties', label: 'Parties' },

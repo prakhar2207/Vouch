@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import React, { createContext, useContext, useState, useRef, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useHotkeys } from "react-hotkeys-hook";
@@ -89,7 +89,7 @@ export function ShortcutProvider({ children }: { children: React.ReactNode }) {
   // F4: Contra Voucher
   useHotkeys("f4", (e) => {
     e.preventDefault();
-    router.push("/vouchers/grid?type=CONTRA");
+    router.push("/vouchers/new?type=CONTRA");
   }, { enableOnFormTags: true });
 
   // F5: Payment Voucher
@@ -107,7 +107,7 @@ export function ShortcutProvider({ children }: { children: React.ReactNode }) {
   // F7: Journal Voucher
   useHotkeys("f7", (e) => {
     e.preventDefault();
-    router.push("/vouchers/grid?type=JOURNAL");
+    router.push("/vouchers/new?type=JOURNAL");
   }, { enableOnFormTags: true });
 
   // F8: Sales Voucher
