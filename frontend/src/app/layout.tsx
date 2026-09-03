@@ -9,6 +9,7 @@ import QuickCreateModal from "@/components/modals/QuickCreateModal";
 import OnboardingTour from "@/components/tour/OnboardingTour";
 import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 import OfflineSyncHandler from "@/components/OfflineSyncHandler";
+import { ToastProvider } from "@/context/ToastContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -64,16 +65,18 @@ export default function RootLayout({
           <FinancialYearProvider>
             <PeriodProvider>
               <ShortcutProvider>
-                {children}
-                <DateModal />
-                <PeriodModal />
-                <SplitCompanyModal />
-                <HelpModal />
-                <QuickCreateModal />
-                <YearEndClosingModal />
-                <OnboardingTour />
-                <PWAInstallPrompt />
-                <OfflineSyncHandler />
+                <ToastProvider>
+                  {children}
+                  <DateModal />
+                  <PeriodModal />
+                  <SplitCompanyModal />
+                  <HelpModal />
+                  <QuickCreateModal />
+                  <YearEndClosingModal />
+                  <OnboardingTour />
+                  <PWAInstallPrompt />
+                  <OfflineSyncHandler />
+                </ToastProvider>
               </ShortcutProvider>
             </PeriodProvider>
           </FinancialYearProvider>

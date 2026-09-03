@@ -6,11 +6,13 @@ import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useToast } from '@/context/ToastContext';
 
 export default function CategoryDetailPage() {
   const router = useRouter();
   const params = useParams();
   const categoryId = params.id as string;
+  const { toast } = useToast();
 
   const [category, setCategory] = useState<any>(null);
   const [products, setProducts] = useState<any[]>([]);
@@ -85,9 +87,10 @@ export default function CategoryDetailPage() {
         setProducts(prev => prev.map(p => p.id === productId ? { ...p, ...editData } : p));
         setEditingId(null);
         setEditData({});
+        toast.success("Item updated successfully!");
       }
     } catch (err: any) {
-      alert('Save failed: ' + (err.response?.data?.error || err.message));
+      toast.error('Save failed', err.response?.data?.error || err.message);
     } finally {
       setSavingId(null);
     }
@@ -115,9 +118,10 @@ export default function CategoryDetailPage() {
       if (res.data.success) {
         setCategory({ ...category, ...categoryEditData });
         setIsCategoryEditing(false);
+        toast.success("Category updated successfully!");
       }
     } catch (err: any) {
-      alert('Save failed: ' + (err.response?.data?.error || err.message));
+      toast.error('Save failed', err.response?.data?.error || err.message);
     } finally {
       setSavingCategory(false);
     }
@@ -247,7 +251,7 @@ export default function CategoryDetailPage() {
                     <th className="p-4 font-medium border-b border-zinc-800">Item Name / Size</th>
                     <th className="p-4 font-medium border-b border-zinc-800">Brand</th>
                     <th className="p-4 font-medium border-b border-zinc-800">SKU / Tags</th>
-                    <th className="p-4 font-medium border-b border-zinc-800 text-right">Selling Price</th>
+                    <th className="p-4 font-medium border-b border-zinc-800 text-right">Retail Price / MRP</th>
                     <th className="p-4 font-medium border-b border-zinc-800 text-right">Wholesaler Price</th>
                     <th className="p-4 font-medium border-b border-zinc-800 text-right">Stock</th>
                     <th className="p-4 font-medium border-b border-zinc-800 text-center w-28">Actions</th>

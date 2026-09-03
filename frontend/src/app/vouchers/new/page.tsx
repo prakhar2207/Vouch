@@ -6,9 +6,11 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useToast } from '@/context/ToastContext';
 
 export default function NewVoucherPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [companyId, setCompanyId] = useState('');
   const [ledgers, setLedgers] = useState<any[]>([]);
@@ -52,7 +54,7 @@ export default function NewVoucherPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!partyLedgerId || !paymentLedgerId || !amount) {
-      alert('Please fill all required fields.');
+      toast.warning('Please fill all required fields.');
       return;
     }
     setSaving(true);
@@ -73,13 +75,17 @@ export default function NewVoucherPage() {
       const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/payment-receipt/`, payload, { headers });
       
       if (res.data.success) {
-        alert(`${voucherType === 'RECEIPT' ? 'Receipt' : 'Payment'} ${res.data.voucher_number} posted successfully! Amount: ₹${res.data.amount}`);
+        toast.success(
+          `${voucherType === 'RECEIPT' ? 'Receipt' : 'Payment'} ${res.data.voucher_number} posted!`,
+          `Amount: ₹${res.data.amount}`
+        );
         router.push('/vouchers');
+        router.refresh();
       } else {
-        alert('Error: ' + res.data.error);
+        toast.error('Failed to post voucher', res.data.error);
       }
     } catch (err: any) {
-      alert('Error: ' + (err.response?.data?.error || err.message));
+      toast.error('Error posting voucher', err.response?.data?.error || err.message);
     } finally {
       setSaving(false);
     }

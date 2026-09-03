@@ -6,11 +6,13 @@ import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useToast } from '@/context/ToastContext';
 
 export default function NewItemInCategoryPage() {
   const router = useRouter();
   const params = useParams();
   const categoryId = params.id as string;
+  const { toast } = useToast();
 
   const [saving, setSaving] = useState(false);
   const [category, setCategory] = useState<any>(null);
@@ -102,13 +104,14 @@ export default function NewItemInCategoryPage() {
 
       const res = await axios.post(`${API_BASE_URL}/api/v1/inventory/products/${companyId}/`, payload, { headers });
       if (res.data.success) {
-        alert(`Item "${res.data.data.name}" added to ${category?.name}!`);
+        toast.success(`Item "${res.data.data.name}" added to ${category?.name || 'Category'}!`);
         router.push(`/inventory/categories/${categoryId}`);
+        router.refresh();
       } else {
-        alert('Error: ' + res.data.error);
+        toast.error('Failed to add item', res.data.error);
       }
     } catch (err: any) {
-      alert('Error: ' + (err.response?.data?.error || err.message));
+      toast.error('Error adding item', err.response?.data?.error || err.message);
     } finally {
       setSaving(false);
     }
@@ -230,7 +233,7 @@ export default function NewItemInCategoryPage() {
                     {!enableAdvancedItemCreation && (
                       <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-zinc-800">
                         <div>
-                          <label className="block text-sm font-medium text-blue-400 mb-1.5">Retail Price (₹) *</label>
+                          <label className="block text-sm font-medium text-blue-400 mb-1.5">Maximum Retail Price (MRP) (₹) *</label>
                           <input
                             required
                             type="number"
@@ -290,7 +293,7 @@ export default function NewItemInCategoryPage() {
                             </div>
                           </div>
                           <div className="bg-zinc-900 border border-blue-500/30 rounded-lg p-3 ring-1 ring-blue-500/20">
-                            <p className="text-xs text-blue-400 font-medium mb-1">Retail Price *</p>
+                            <p className="text-xs text-blue-400 font-medium mb-1">Maximum Retail Price (MRP) *</p>
                             <div className="flex items-center gap-1">
                               <span className="text-blue-400">₹</span>
                               <input required type="number" step="0.01" placeholder="0.00" value={formData.selling_price} onChange={e => setFormData({ ...formData, selling_price: e.target.value })} className="bg-transparent text-green-400 w-full outline-none font-bold" />

@@ -8,9 +8,11 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useShortcuts } from '@/context/ShortcutContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
+import { useToast } from '@/context/ToastContext';
 
 export default function SalesPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const { workingDate, registerSaveHandler, registerAltCCallback } = useShortcuts();
   const { activeFY, isReadOnly } = useFinancialYear();
   const [seqPreview, setSeqPreview] = useState('');
@@ -138,17 +140,29 @@ export default function SalesPage() {
   };
 
   const handleSave = async () => {
-    if (!partyLedgerId || !salesLedgerId) return alert("Please select Party and Sales ledgers!");
+    if (!partyLedgerId || !salesLedgerId) {
+      toast.warning("Please select Party and Sales ledgers!");
+      return;
+    }
     
     // Flatten grouped items for payload
     const flatItems: any[] = [];
     for (let i=0; i<groupedItems.length; i++) {
         const group = groupedItems[i];
-        if (!group.category_id) return alert(`Category Group ${i+1} is missing a category selection!`);
+        if (!group.category_id) {
+          toast.warning(`Category Group ${i+1} is missing a category selection!`);
+          return;
+        }
         for (let j=0; j<group.items.length; j++) {
             const item = group.items[j];
-            if (!item.product_name) return alert(`Category Group ${i+1}, Row ${j+1} is missing a product name!`);
-            if (item.quantity <= 0) return alert(`Category Group ${i+1}, Row ${j+1} must have a quantity > 0!`);
+            if (!item.product_name) {
+              toast.warning(`Category Group ${i+1}, Row ${j+1} is missing a product name!`);
+              return;
+            }
+            if (item.quantity <= 0) {
+              toast.warning(`Category Group ${i+1}, Row ${j+1} must have a quantity > 0!`);
+              return;
+            }
             flatItems.push({
                 ...item,
                 category_id: group.category_id,
@@ -177,11 +191,12 @@ export default function SalesPage() {
       };
       
       const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/sales-invoice/`, payload, { headers });
-      alert("Sales Invoice generated successfully! Voucher Number: " + res.data.voucher_number);
+      toast.success(`Sales Invoice generated!`, `Voucher: ${res.data.voucher_number}`);
       router.push('/sales');
+      router.refresh();
     } catch (err: any) {
       console.error(err);
-      alert("Failed to save: " + (err.response?.data?.error || err.message));
+      toast.error("Failed to save sales invoice", err.response?.data?.error || err.message);
     } finally {
       setSaving(false);
     }

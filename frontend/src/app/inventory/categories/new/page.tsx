@@ -6,9 +6,11 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useToast } from '@/context/ToastContext';
 
 export default function NewCategoryPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [complexityLevel, setComplexityLevel] = useState(1);
   const [enableLedgerMapping, setEnableLedgerMapping] = useState(false);
@@ -58,13 +60,14 @@ export default function NewCategoryPage() {
 
       const res = await axios.post(`${API_BASE_URL}/api/v1/inventory/categories/${companyId}/`, payload, { headers });
       if (res.data.success) {
-        alert(`Category "${res.data.data.name}" created successfully!`);
+        toast.success(`Category "${res.data.data.name}" created successfully!`);
         router.push('/inventory');
+        router.refresh();
       } else {
-        alert('Error: ' + res.data.error);
+        toast.error('Error creating category', res.data.error);
       }
     } catch (err: any) {
-      alert('Error: ' + (err.response?.data?.error || err.message));
+      toast.error('Error creating category', err.response?.data?.error || err.message);
     } finally {
       setSaving(false);
     }
