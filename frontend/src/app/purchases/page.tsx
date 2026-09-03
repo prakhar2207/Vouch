@@ -6,14 +6,23 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
+import { useToast } from "@/context/ToastContext";
+import EditPurchaseInvoiceModal from "@/components/modals/EditPurchaseInvoiceModal";
+import { Edit2, Trash2, Eye, FileText, Plus } from "lucide-react";
 
 export default function PurchaseInvoiceList() {
   const router = useRouter();
+  const { toast } = useToast();
+
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedVoucher, setSelectedVoucher] = useState<any | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
+
+  // Edit Modal State
+  const [editingVoucher, setEditingVoucher] = useState<any | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -58,99 +67,165 @@ export default function PurchaseInvoiceList() {
     }
   };
 
+  const handleStartEdit = (inv: any) => {
+    setEditingVoucher(inv);
+    setIsEditModalOpen(true);
+  };
+
+  const handleDeleteInvoice = async (voucherId: string, voucherNumber: string) => {
+    if (!window.confirm(`Are you sure you want to delete purchase invoice #${voucherNumber}? This will reverse the stock impact and accounting balances.`)) {
+      return;
+    }
+
+    try {
+      const token = getAccessToken();
+      const headers = { Authorization: `Bearer ${token}` };
+      const res = await axios.delete(`${API_BASE_URL}/api/vouchers/${voucherId}/`, { headers });
+
+      if (res.data.success) {
+        toast.success(res.data.message || `Invoice #${voucherNumber} deleted and reversed successfully!`);
+        setInvoices((prev) => prev.filter((i) => i.id !== voucherId));
+        if (selectedVoucher?.id === voucherId) {
+          setSelectedVoucher(null);
+        }
+      } else {
+        toast.error("Failed to delete invoice", res.data.error);
+      }
+    } catch (err: any) {
+      toast.error("Delete failed", err.response?.data?.error || err.message);
+    }
+  };
+
   return (
     <DashboardLayout>
-      <div className="space-y-6 flex flex-col h-full">
+      <div className="space-y-6 flex flex-col h-full pb-12">
+        
         {/* Header */}
         <div className="flex justify-between items-center border-b border-border pb-4">
           <div>
-            <h1 className="text-3xl font-bold text-white">Purchase Invoices</h1>
-            <p className="text-xs text-gray-400 mt-1">Inward supplier bills and attached documents</p>
+            <h1 className="text-3xl font-black text-foreground tracking-tight">Purchase Invoices</h1>
+            <p className="text-xs text-muted-foreground mt-1">Inward supplier bills and attached documents</p>
           </div>
           <Link
             href="/purchases/new"
-            className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md transition-colors flex items-center gap-1.5"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2 rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-1.5"
           >
-            <span>+ Create / Scan Invoice</span>
-            <kbd className="bg-purple-800 px-1.5 py-0.5 rounded text-[10px]">F9</kbd>
+            <Plus className="w-4 h-4" />
+            <span>Create / Scan Invoice</span>
+            <kbd className="bg-primary-foreground/20 px-1.5 py-0.5 rounded text-[10px]">F9</kbd>
           </Link>
         </div>
 
         {/* Invoices Table Card */}
-        <div className="bg-card text-card-foreground p-2 rounded-xl shadow-sm border border-border flex-1 h-[600px] overflow-hidden flex flex-col">
-          <div className="px-4 py-3 border-b border-border bg-gray-50 dark:bg-zinc-800/50 flex items-center justify-between">
-            <span className="text-sm font-semibold text-gray-500 uppercase tracking-wider">Previous Invoices</span>
-            <span className="text-xs text-gray-400">Click any row or "View Document" to inspect original bill</span>
+        <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/80 flex-1 overflow-hidden flex flex-col">
+          <div className="px-5 py-3.5 border-b border-border/70 bg-muted/20 flex items-center justify-between">
+            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Previous Invoices</span>
+            <span className="text-xs text-muted-foreground">Click any row to inspect original bill & line items</span>
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center h-full text-gray-500">Loading invoices...</div>
+            <div className="flex items-center justify-center p-16 text-muted-foreground text-sm">
+              Loading invoices...
+            </div>
           ) : invoices.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center p-12 bg-card">
-              <div className="text-4xl mb-3">📄</div>
-              <h3 className="text-2xl font-bold mb-2">No Purchase Invoices Yet</h3>
-              <p className="text-gray-500 max-w-md mx-auto mb-6 text-sm">
+            <div className="flex flex-col items-center justify-center p-16 text-center bg-card">
+              <div className="w-16 h-16 rounded-2xl bg-muted/60 text-muted-foreground flex items-center justify-center mb-3">
+                <FileText className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-bold mb-1">No Purchase Invoices Yet</h3>
+              <p className="text-muted-foreground max-w-md mx-auto mb-6 text-sm">
                 Upload your first supplier bill to automatically extract data and store attached documents.
               </p>
               <Link
                 href="/purchases/new"
-                className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2.5 rounded-lg shadow font-bold text-xs"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground px-5 py-2.5 rounded-xl shadow font-bold text-xs flex items-center gap-1.5"
               >
-                + Scan First Invoice
+                <Plus className="w-4 h-4" />
+                <span>Scan First Invoice</span>
               </Link>
             </div>
           ) : (
             <div className="flex-1 w-full overflow-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-zinc-800 bg-zinc-900/40 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                    <th className="p-4 rounded-tl-lg">Invoice No.</th>
+                  <tr className="border-b border-border/70 bg-muted/30 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    <th className="p-4">Invoice No.</th>
                     <th className="p-4">Date</th>
                     <th className="p-4">Supplier Party</th>
-                    <th className="p-4">Total Amount</th>
-                    <th className="p-4">Status</th>
-                    <th className="p-4 rounded-tr-lg text-right">Actions</th>
+                    <th className="p-4 text-right">Total Amount</th>
+                    <th className="p-4 text-center">Status</th>
+                    <th className="p-4 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800/50 text-xs">
+                <tbody className="divide-y divide-border/40 text-xs">
                   {invoices.map((inv) => (
                     <tr
                       key={inv.id}
                       onClick={() => handleOpenVoucherDetail(inv.id)}
-                      className="hover:bg-zinc-800/40 transition-colors cursor-pointer group"
+                      className="hover:bg-muted/20 transition-colors cursor-pointer group"
                     >
-                      <td className="p-4 font-mono font-medium text-white flex items-center gap-2">
-                        <span>{inv.voucher_number}</span>
+                      {/* Invoice No */}
+                      <td className="p-4 font-mono font-medium text-foreground flex items-center gap-2">
+                        <span className="font-bold">{inv.voucher_number}</span>
                         {inv.has_attachment && (
-                          <span className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded text-[10px] font-bold border border-blue-500/30">
+                          <span className="px-1.5 py-0.5 bg-blue-500/15 text-blue-400 rounded text-[10px] font-bold border border-blue-500/30">
                             📎 Doc
                           </span>
                         )}
                       </td>
-                      <td className="p-4 text-gray-400">{inv.date}</td>
-                      <td className="p-4 text-gray-300 font-medium">{inv.party_name}</td>
-                      <td className="p-4 font-bold text-white font-mono">
+
+                      {/* Date */}
+                      <td className="p-4 text-muted-foreground font-mono">{inv.date}</td>
+
+                      {/* Party */}
+                      <td className="p-4 text-foreground font-semibold">{inv.party_name}</td>
+
+                      {/* Amount */}
+                      <td className="p-4 font-bold text-foreground font-mono text-right text-sm">
                         ₹ {parseFloat(inv.total_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </td>
-                      <td className="p-4">
-                        <span className={`px-2.5 py-1 text-[10px] font-bold rounded-full ${
+
+                      {/* Status */}
+                      <td className="p-4 text-center">
+                        <span className={`px-2.5 py-1 text-[10px] font-bold rounded-full border ${
                           inv.status === "POSTED"
-                            ? "bg-green-500/10 text-green-400 border border-green-500/20"
-                            : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                            : "bg-amber-500/10 text-amber-400 border-amber-500/20"
                         }`}>
                           {inv.status}
                         </span>
                       </td>
+
+                      {/* Actions */}
                       <td className="p-4 text-right">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleOpenVoucherDetail(inv.id);
-                          }}
-                          className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-gray-200 rounded-md text-xs font-semibold border border-zinc-700 transition-colors"
-                        >
-                          👁️ View Bill & Doc
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => handleOpenVoucherDetail(inv.id)}
+                            className="px-2.5 py-1 bg-muted/60 hover:bg-muted text-foreground rounded-lg text-xs font-semibold border border-border/70 transition-colors flex items-center gap-1 cursor-pointer"
+                            title="View Document"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>View</span>
+                          </button>
+                          
+                          <button
+                            onClick={() => handleStartEdit(inv)}
+                            className="px-2.5 py-1 bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                            title="Edit Invoice"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                            <span>Edit</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleDeleteInvoice(inv.id, inv.voucher_number)}
+                            className="px-2.5 py-1 bg-rose-600/15 hover:bg-rose-600/25 text-rose-400 rounded-lg text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                            title="Delete Invoice & Reverse Stock"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -162,25 +237,51 @@ export default function PurchaseInvoiceList() {
 
         {/* Voucher Detail & Document Viewer Modal */}
         {(selectedVoucher || loadingDetail) && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in">
-            <div className="w-full max-w-5xl bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-white max-h-[90vh]">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 animate-in fade-in">
+            <div className="w-full max-w-5xl bg-card border border-border rounded-2xl shadow-2xl overflow-hidden flex flex-col text-foreground max-h-[90vh]">
+              
               {/* Modal Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-border/70 bg-muted/20">
                 <div className="flex items-center gap-3">
                   <span className="text-xl">🧾</span>
                   <div>
-                    <h3 className="text-lg font-bold text-white">
-                      Purchase Invoice #{selectedVoucher?.voucher_number || "Loading..."}
+                    <h3 className="font-bold text-base text-foreground">
+                      Purchase Invoice #{selectedVoucher?.voucher_number || "..."}
                     </h3>
-                    <p className="text-xs text-gray-400">
-                      Date: {selectedVoucher?.date} • Supplier: {selectedVoucher?.party?.name}
+                    <p className="text-xs text-muted-foreground">
+                      Party: {selectedVoucher?.party?.name || "N/A"} • Date: {selectedVoucher?.date}
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
+
+                <div className="flex items-center gap-2">
+                  {selectedVoucher && (
+                    <>
+                      <button
+                        onClick={() => {
+                          handleStartEdit(selectedVoucher);
+                        }}
+                        className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        <span>Edit</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          handleDeleteInvoice(selectedVoucher.id, selectedVoucher.voucher_number);
+                        }}
+                        className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 border border-rose-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete</span>
+                      </button>
+                    </>
+                  )}
+
                   <button
                     onClick={() => setSelectedVoucher(null)}
-                    className="text-gray-400 hover:text-white text-sm font-bold px-2 py-1 cursor-pointer"
+                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
                   >
                     ✕
                   </button>
@@ -188,126 +289,135 @@ export default function PurchaseInvoiceList() {
               </div>
 
               {/* Modal Body */}
-              <div className="p-6 overflow-y-auto space-y-6 flex-1">
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
                 {loadingDetail ? (
-                  <div className="p-12 flex flex-col items-center justify-center space-y-3">
-                    <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
-                    <div className="text-xs text-gray-400">Loading invoice details & document...</div>
+                  <div className="flex items-center justify-center p-12 text-muted-foreground">
+                    Loading voucher details & attached invoice...
                   </div>
-                ) : selectedVoucher ? (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Left Column: Original Document Viewer */}
-                    <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 flex flex-col h-[520px]">
-                      <div className="flex items-center justify-between border-b border-zinc-800 pb-2 mb-3 text-xs">
-                        <span className="font-bold text-gray-300">Attached Original Document</span>
-                        <div className="flex items-center gap-2">
-                          <button onClick={() => setZoomLevel((z) => Math.max(50, z - 25))} className="px-2 py-0.5 bg-zinc-800 rounded text-xs">-</button>
-                          <span className="font-mono text-gray-300 text-[11px]">{zoomLevel}%</span>
-                          <button onClick={() => setZoomLevel((z) => Math.min(200, z + 25))} className="px-2 py-0.5 bg-zinc-800 rounded text-xs">+</button>
-                          {selectedVoucher.attachment_data && (
-                            <a
-                              href={selectedVoucher.attachment_data}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="px-2 py-0.5 bg-blue-600/20 text-blue-400 rounded text-[11px] font-bold"
-                            >
-                              ↗ Pop Out
-                            </a>
-                          )}
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Left: Extracted Details & Items */}
+                    <div className="space-y-4">
+                      <div className="bg-muted/30 p-4 rounded-xl border border-border/70 space-y-2 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Supplier:</span>
+                          <span className="font-bold text-foreground">{selectedVoucher?.party?.name}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">GSTIN:</span>
+                          <span className="font-mono text-muted-foreground">{selectedVoucher?.party?.gstin || "Unregistered"}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Invoice Number:</span>
+                          <span className="font-mono text-foreground">{selectedVoucher?.voucher_number}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Date:</span>
+                          <span className="font-mono text-foreground">{selectedVoucher?.date}</span>
+                        </div>
+                        <div className="flex justify-between border-t border-border/50 pt-2 font-bold text-sm">
+                          <span>Total Amount:</span>
+                          <span className="text-emerald-400 font-mono">
+                            ₹ {parseFloat(selectedVoucher?.total_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          </span>
                         </div>
                       </div>
 
-                      <div className="flex-1 bg-zinc-900 rounded-lg overflow-auto flex items-center justify-center p-2">
-                        {selectedVoucher.attachment_data ? (
-                          selectedVoucher.attachment_mime?.includes("pdf") || selectedVoucher.attachment_data.startsWith("data:application/pdf") ? (
-                            <object
-                              data={selectedVoucher.attachment_data}
-                              type="application/pdf"
-                              className="w-full h-full rounded border-0"
-                            >
-                              <embed src={selectedVoucher.attachment_data} type="application/pdf" className="w-full h-full" />
-                              <div className="text-center p-4 text-xs text-gray-400">
-                                <a href={selectedVoucher.attachment_data} target="_blank" rel="noreferrer" className="text-blue-400 underline">
-                                  Click here to open and view the PDF
-                                </a>
-                              </div>
-                            </object>
+                      {/* Items Table */}
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">
+                          Line Items ({selectedVoucher?.items?.length || 0})
+                        </h4>
+                        <div className="border border-border/70 rounded-xl overflow-hidden">
+                          <table className="w-full text-xs text-left">
+                            <thead className="bg-muted/40 border-b border-border/60 text-muted-foreground">
+                              <tr>
+                                <th className="p-2.5">Item</th>
+                                <th className="p-2.5 text-right">Qty</th>
+                                <th className="p-2.5 text-right">Rate</th>
+                                <th className="p-2.5 text-right">Total</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border/30">
+                              {selectedVoucher?.items?.map((item: any, idx: number) => (
+                                <tr key={idx} className="hover:bg-muted/20">
+                                  <td className="p-2.5">
+                                    <p className="font-medium text-foreground">{item.product_name}</p>
+                                    <p className="text-[10px] text-muted-foreground font-mono">HSN: {item.hsn_code || "—"}</p>
+                                  </td>
+                                  <td className="p-2.5 text-right font-mono">{item.quantity} {item.unit}</td>
+                                  <td className="p-2.5 text-right font-mono">₹{parseFloat(item.rate).toFixed(2)}</td>
+                                  <td className="p-2.5 text-right font-mono font-bold text-emerald-400">
+                                    ₹{parseFloat(item.total_amount).toFixed(2)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right: Document Preview */}
+                    <div className="border border-border/70 rounded-xl overflow-hidden bg-muted/20 flex flex-col min-h-[400px]">
+                      <div className="p-2.5 border-b border-border/60 bg-muted/40 flex items-center justify-between text-xs">
+                        <span className="font-bold text-muted-foreground">Attached Document</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setZoomLevel((z) => Math.max(50, z - 25))}
+                            className="px-2 py-0.5 bg-muted rounded text-[11px] hover:bg-muted/80"
+                          >
+                            -
+                          </button>
+                          <span className="text-[11px] font-mono">{zoomLevel}%</span>
+                          <button
+                            onClick={() => setZoomLevel((z) => Math.min(200, z + 25))}
+                            className="px-2 py-0.5 bg-muted rounded text-[11px] hover:bg-muted/80"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 flex items-center justify-center p-4 overflow-auto">
+                        {selectedVoucher?.attachment_data ? (
+                          selectedVoucher.attachment_mime === "application/pdf" ? (
+                            <iframe
+                              src={selectedVoucher.attachment_data}
+                              className="w-full h-full border-0 rounded-lg min-h-[450px]"
+                              style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: "top center" }}
+                              title="Original Invoice PDF"
+                            />
                           ) : (
-                            <div className="w-full h-full overflow-auto flex items-center justify-center">
-                              <img
-                                src={selectedVoucher.attachment_data}
-                                alt="Original Document"
-                                style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: "center center" }}
-                                className="max-w-full max-h-full object-contain rounded transition-transform"
-                              />
-                            </div>
+                            <img
+                              src={selectedVoucher.attachment_data}
+                              alt="Attached Invoice"
+                              className="max-w-full max-h-[500px] object-contain rounded-lg shadow-sm"
+                              style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: "center center" }}
+                            />
                           )
                         ) : (
-                          <div className="text-center p-8 text-gray-500 text-xs">
-                            No document was attached to this purchase invoice.
+                          <div className="text-center p-8 text-muted-foreground">
+                            <span className="text-3xl block mb-2">📄</span>
+                            <p className="text-xs">No attachment stored for this voucher.</p>
                           </div>
                         )}
                       </div>
                     </div>
-
-                    {/* Right Column: Invoice Details & Items Breakdown */}
-                    <div className="space-y-4 text-xs">
-                      {/* Supplier Card */}
-                      <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-xl space-y-2">
-                        <div className="font-bold text-gray-300 border-b border-zinc-800 pb-1">Supplier Details</div>
-                        <div className="flex justify-between"><span className="text-gray-400">Supplier:</span><span className="font-semibold text-white">{selectedVoucher.party?.name}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-400">GSTIN:</span><span className="font-mono text-white">{selectedVoucher.party?.gstin || "N/A"}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-400">Place of Supply:</span><span className="text-white">State {selectedVoucher.party?.state_code || "N/A"}</span></div>
-                      </div>
-
-                      {/* Items List */}
-                      <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-xl space-y-3">
-                        <div className="font-bold text-gray-300 border-b border-zinc-800 pb-1">Invoiced Products</div>
-                        <div className="space-y-2 max-h-40 overflow-y-auto">
-                          {(selectedVoucher.items || []).map((item: any, idx: number) => (
-                            <div key={idx} className="p-2.5 bg-zinc-900 rounded-lg space-y-1">
-                              <div className="flex justify-between font-medium text-white">
-                                <span>{item.product_name}</span>
-                                <span className="font-mono">₹{Number(item.total_amount || item.taxable_amount).toFixed(2)}</span>
-                              </div>
-                              <div className="flex justify-between text-[11px] text-gray-400 font-mono">
-                                <span>HSN: {item.hsn_code || "40103999"}</span>
-                                <span>{item.quantity} {item.unit || "PCS"} × ₹{Number(item.rate).toFixed(2)}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Financials & Totals */}
-                      <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-xl space-y-2 font-mono text-xs">
-                        <div className="flex justify-between text-gray-400">
-                          <span>Accounting Status:</span>
-                          <span className="text-green-400 font-bold">{selectedVoucher.status}</span>
-                        </div>
-                        <div className="flex justify-between text-sm font-bold text-white border-t border-zinc-800 pt-2">
-                          <span>Grand Total:</span>
-                          <span className="text-green-400">₹{Number(selectedVoucher.total_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                        </div>
-                      </div>
-                    </div>
                   </div>
-                ) : null}
-              </div>
-
-              {/* Footer */}
-              <div className="px-6 py-3 bg-zinc-950 border-t border-zinc-800 text-xs text-gray-400 flex items-center justify-between">
-                <span>Press <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded font-mono text-zinc-300">Esc</kbd> or ✕ to close</span>
-                <button
-                  onClick={() => setSelectedVoucher(null)}
-                  className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-xs font-semibold"
-                >
-                  Close
-                </button>
+                )}
               </div>
             </div>
           </div>
         )}
+
+        {/* Edit Modal */}
+        <EditPurchaseInvoiceModal
+          isOpen={isEditModalOpen}
+          onClose={() => setIsEditModalOpen(false)}
+          voucher={editingVoucher}
+          onUpdateSuccess={fetchInvoices}
+        />
       </div>
     </DashboardLayout>
   );

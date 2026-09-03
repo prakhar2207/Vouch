@@ -217,6 +217,45 @@ class VoucherDetailAPIView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+    def delete(self, request, voucher_id):
+        try:
+            from apps.accounting.models import Voucher
+            from apps.accounting.services.voucher_service import VoucherService
+            voucher = Voucher.objects.get(id=voucher_id, company__users__user=request.user)
+
+            with transaction.atomic():
+                if voucher.status == 'POSTED':
+                    VoucherService.cancel_voucher(voucher)
+                
+                voucher_num = voucher.voucher_number
+                voucher.delete()
+
+            return Response({
+                "success": True, 
+                "message": f"Invoice #{voucher_num} deleted and reversed successfully."
+            })
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def patch(self, request, voucher_id):
+        try:
+            from apps.accounting.models import Voucher
+            voucher = Voucher.objects.get(id=voucher_id, company__users__user=request.user)
+            data = request.data
+
+            if 'voucher_number' in data and data['voucher_number']:
+                voucher.voucher_number = data['voucher_number']
+                voucher.reference_number = data['voucher_number']
+            if 'voucher_date' in data and data['voucher_date']:
+                voucher.voucher_date = data['voucher_date']
+            if 'narration' in data:
+                voucher.narration = data['narration']
+            
+            voucher.save()
+            return Response({"success": True, "message": "Invoice updated successfully."})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 class LedgerStatementAPIView(APIView):
     permission_classes = [IsAuthenticated]
     

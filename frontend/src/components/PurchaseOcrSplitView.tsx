@@ -5,6 +5,7 @@ import axios from "axios";
 import { useRouter } from "next/navigation";
 import { getAccessToken } from "@/utils/auth";
 import StateSelect from "./StateSelect";
+import { useToast } from "@/context/ToastContext";
 
 interface LineItem {
   description: string;
@@ -39,6 +40,7 @@ interface PurchaseOcrSplitViewProps {
 
 export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseOcrSplitViewProps) {
   const router = useRouter();
+  const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [fileBase64, setFileBase64] = useState<string | null>(null);
@@ -53,6 +55,33 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
   const [invoice, setInvoice] = useState<ExtractedInvoice | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
+
+  // Inventory Category Allocation State
+  const [categories, setCategories] = useState<any[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>("");
+  const [isCreatingNewCategory, setIsCreatingNewCategory] = useState<boolean>(false);
+  const [newCategoryName, setNewCategoryName] = useState<string>("");
+
+  useEffect(() => {
+    if (companyId) {
+      const fetchCategories = async () => {
+        try {
+          const token = getAccessToken();
+          const res = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${companyId}/`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const cats = res.data.data || [];
+          setCategories(cats);
+          if (cats.length > 0) {
+            setSelectedCategoryId(cats[0].id);
+          }
+        } catch (e) {
+          console.error("Failed to fetch categories", e);
+        }
+      };
+      fetchCategories();
+    }
+  }, [companyId]);
 
   useEffect(() => {
     return () => {
@@ -270,7 +299,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
       const partyLedgerId = partyRes.data.data?.id;
 
-      // 2. Format Items for Voucher Creation
+      // 2. Format Items for Voucher Creation with Category Allocation
       const formattedItems = invoice.line_items.map((item) => ({
         product_name: item.description,
         hsn_code: item.hsn_code,
@@ -279,6 +308,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         unit: item.unit || "PCS",
         discount_percent: 0,
         gst_rate: item.gst_rate || 18,
+        category_id: !isCreatingNewCategory && selectedCategoryId ? selectedCategoryId : undefined,
+        category_name: isCreatingNewCategory && newCategoryName.trim() ? newCategoryName.trim() : undefined,
       }));
 
       // 3. Post to Universal Voucher Engine with attached document
@@ -296,7 +327,11 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
       const res = await axios.post(`${API_BASE_URL}/api/vouchers/`, payload, { headers });
 
-      alert(`Purchase Invoice #${res.data.voucher_number} saved & posted to accounting successfully!`);
+      toast.success(
+        `Purchase Invoice #${res.data.voucher_number || res.data.data?.voucher_number} posted!`,
+        `Scanned items automatically linked to inventory with stock updated.`
+      );
+
       if (onSuccess) {
         onSuccess();
       } else {
@@ -304,6 +339,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       }
     } catch (err: any) {
       setError(err.response?.data?.error || err.message || "Failed to post purchase invoice.");
+      toast.error("Failed to post invoice", err.response?.data?.error || err.message);
     } finally {
       setSaving(false);
     }
@@ -510,6 +546,66 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Inventory Category Allocation Card */}
+              <div className="p-3.5 bg-blue-500/10 border border-blue-500/30 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>📦</span>
+                    <span>Add Scanned Items to Inventory Category:</span>
+                  </label>
+                  {isCreatingNewCategory ? (
+                    <button 
+                      type="button" 
+                      onClick={() => setIsCreatingNewCategory(false)}
+                      className="text-[11px] text-gray-400 hover:text-white underline cursor-pointer"
+                    >
+                      Choose Existing
+                    </button>
+                  ) : (
+                    <button 
+                      type="button" 
+                      onClick={() => setIsCreatingNewCategory(true)}
+                      className="text-[11px] text-blue-400 hover:text-blue-300 underline cursor-pointer"
+                    >
+                      + New Category
+                    </button>
+                  )}
+                </div>
+
+                {isCreatingNewCategory ? (
+                  <input
+                    type="text"
+                    placeholder="e.g. V Belts, Bearings, Lubricants"
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    className="w-full bg-zinc-950 border border-blue-500/50 text-white p-2 rounded-lg text-xs font-medium outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                ) : (
+                  <select
+                    value={selectedCategoryId}
+                    onChange={(e) => {
+                      if (e.target.value === '__NEW__') {
+                        setIsCreatingNewCategory(true);
+                      } else {
+                        setSelectedCategoryId(e.target.value);
+                      }
+                    }}
+                    className="w-full bg-zinc-950 border border-zinc-700 text-white p-2 rounded-lg text-xs font-medium outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                  >
+                    <option value="">-- Select Category (e.g. V Belts) --</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} {c.hsn_code ? `(HSN: ${c.hsn_code})` : ''}
+                      </option>
+                    ))}
+                    <option value="__NEW__">+ Create New Category</option>
+                  </select>
+                )}
+                <p className="text-[10px] text-gray-400">
+                  Scanned items will be automatically created in this category with real-time stock and purchase price updated.
+                </p>
               </div>
 
               {/* Line Items Table */}

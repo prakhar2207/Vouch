@@ -20,10 +20,14 @@ class VoucherService:
         from apps.inventory.models import Warehouse
         
         if voucher.voucher_type in ['SALES', 'PURCHASE']:
-            # For simplicity, pick the first active warehouse for the company
+            # For simplicity, pick the first active warehouse or auto-create Main Warehouse
             warehouse = Warehouse.objects.filter(company=voucher.company, is_active=True).first()
             if not warehouse:
-                raise ValidationError("No active warehouse found for the company to process stock.")
+                warehouse = Warehouse.objects.create(
+                    company=voucher.company,
+                    name="Main Warehouse",
+                    is_active=True
+                )
             StockService.process_voucher_stock(voucher, warehouse)
         
         # 2. Process Accounting Ledger Entries

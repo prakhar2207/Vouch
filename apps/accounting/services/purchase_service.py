@@ -58,22 +58,54 @@ class PurchaseInvoiceService:
                     'unit': item.get('unit', 'PCS')
                 }
                 
+                from apps.inventory.models import ProductCategory
+                category = None
                 category_id = item.get('category_id')
+                category_name = item.get('category_name')
+
                 if category_id:
-                    from apps.inventory.models import ProductCategory
                     try:
-                        category = ProductCategory.objects.get(id=category_id)
-                        defaults_dict['category'] = category
-                        defaults_dict['hsn_code'] = category.hsn_code
-                        defaults_dict['gst_rate'] = category.gst_rate
+                        category = ProductCategory.objects.get(id=category_id, company=company)
                     except ProductCategory.DoesNotExist:
                         pass
                 
+                if not category and category_name and str(category_name).strip():
+                    cat_name = str(category_name).strip()
+                    category, _ = ProductCategory.objects.get_or_create(
+                        company=company,
+                        name=cat_name,
+                        defaults={
+                            'hsn_code': item.get('hsn_code', ''),
+                            'gst_rate': Decimal(str(item.get('gst_rate', '18.00')))
+                        }
+                    )
+
+                if not category:
+                    category = ProductCategory.objects.filter(company=company).first()
+                    if not category:
+                        category = ProductCategory.objects.create(
+                            company=company,
+                            name="General Purchases",
+                            hsn_code=item.get('hsn_code', ''),
+                            gst_rate=Decimal(str(item.get('gst_rate', '18.00')))
+                        )
+
+                if category:
+                    defaults_dict['category'] = category
+                    if not defaults_dict.get('hsn_code'):
+                        defaults_dict['hsn_code'] = category.hsn_code
+                    if 'gst_rate' not in defaults_dict or defaults_dict['gst_rate'] == 0:
+                        defaults_dict['gst_rate'] = category.gst_rate
+
                 product, created = Product.objects.get_or_create(
                     company=company,
                     name=name,
                     defaults=defaults_dict
                 )
+
+                if not created and not product.category and category:
+                    product.category = category
+                    product.save(update_fields=['category'])
 
             qty = Decimal(str(item['quantity']))
             rate = Decimal(str(item['rate']))
