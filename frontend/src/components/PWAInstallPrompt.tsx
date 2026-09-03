@@ -5,22 +5,28 @@ import { Download, X } from "lucide-react";
 export default function PWAInstallPrompt() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isVisible, setIsVisible] = useState(false);
-  const [isDismissed, setIsDismissed] = useState(false);
 
   useEffect(() => {
+    // Check 7-day dismissal window
+    const dismissedUntil = localStorage.getItem("pwa_install_dismissed_until");
+    if (dismissedUntil && Number(dismissedUntil) > Date.now()) {
+      return;
+    }
+
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);
-      // Only show if not previously dismissed in this session
-      if (!sessionStorage.getItem("pwa_install_dismissed")) {
-        setIsVisible(true);
-      }
+      setIsVisible(true);
     };
 
     const handleAppInstalled = () => {
       setIsVisible(false);
       setDeferredPrompt(null);
-      sessionStorage.setItem("pwa_install_dismissed", "true");
+      // Mark as permanently or long-term installed
+      localStorage.setItem(
+        "pwa_install_dismissed_until",
+        String(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      );
     };
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
@@ -44,40 +50,44 @@ export default function PWAInstallPrompt() {
 
   const handleDismiss = () => {
     setIsVisible(false);
-    setIsDismissed(true);
-    sessionStorage.setItem("pwa_install_dismissed", "true");
+    // 7-day dismissal persistence in localStorage
+    localStorage.setItem(
+      "pwa_install_dismissed_until",
+      String(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    );
   };
 
-  if (!isVisible || isDismissed) return null;
+  if (!isVisible) return null;
 
   return (
-    <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 w-[95vw] max-w-xl animate-in fade-in slide-in-from-bottom-4 duration-300">
-      <div className="bg-zinc-900/95 border border-blue-500/40 backdrop-blur-md text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
-            <Download className="w-5 h-5" />
+    <div className="fixed bottom-4 right-4 z-50 w-full max-w-sm animate-in fade-in slide-in-from-bottom-4 duration-300">
+      <div className="bg-card/95 border border-border/80 backdrop-blur-md text-card-foreground p-3.5 rounded-xl shadow-xl flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0 border border-primary/20">
+            <Download className="w-4 h-4" />
           </div>
-          <div>
-            <div className="text-sm font-bold text-white">Install Vouch App</div>
-            <div className="text-xs text-gray-400">
-              Install our Desktop / Mobile App for faster keyboard navigation & offline access.
+          <div className="min-w-0">
+            <div className="text-xs font-semibold text-foreground truncate">Install Vouch App</div>
+            <div className="text-[11px] text-muted-foreground truncate">
+              Faster keyboard navigation & offline access
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             onClick={handleInstallClick}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-lg transition-all cursor-pointer"
+            className="px-2.5 py-1 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md text-xs font-semibold shadow-2xs transition-all cursor-pointer"
           >
             Install
           </button>
           <button
             onClick={handleDismiss}
-            className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
-            aria-label="Dismiss"
+            className="p-1 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted/60 transition-colors cursor-pointer"
+            aria-label="Dismiss for 7 days"
+            title="Dismiss for 7 days"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
