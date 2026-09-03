@@ -8,10 +8,12 @@ import DashboardLayout from '@/components/DashboardLayout';
 import StateSelect from '@/components/StateSelect';
 import { getStateName } from '@/utils/gstStates';
 import { useFinancialYear } from '@/context/FinancialYearContext';
+import { useAccountingPeriod } from '@/context/PeriodContext';
 
 export default function SettingsPage() {
   const router = useRouter();
   const { availableFYs, activeFY, setActiveFY, setIsClosingModalOpen } = useFinancialYear();
+  const { setIsSplitModalOpen } = useAccountingPeriod();
   const [company, setCompany] = useState<any>(null);
   
   // Profile State
@@ -312,7 +314,7 @@ export default function SettingsPage() {
             <div className="bg-card border border-border rounded-xl p-6 space-y-4">
               <h2 className="text-lg font-semibold text-white">Network Integrations & Audit Exports</h2>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl flex flex-col justify-between space-y-3">
                   <div>
                     <div className="flex items-center gap-2">
@@ -334,7 +336,7 @@ export default function SettingsPage() {
                 <div className="p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl flex flex-col justify-between space-y-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-white">Tally XML Bridge & CA Guide</span>
+                      <span className="text-sm font-bold text-white">Tally XML Bridge</span>
                       <span className="px-1.5 py-0.2 bg-purple-500/10 text-purple-400 text-[10px] font-mono rounded border border-purple-500/20">TallyPrime</span>
                     </div>
                     <p className="text-xs text-gray-400 mt-1">
@@ -346,6 +348,26 @@ export default function SettingsPage() {
                     className="px-3.5 py-2 bg-purple-600/10 hover:bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded-lg text-xs font-bold transition-colors w-fit"
                   >
                     Export to Tally (Alt+O) →
+                  </button>
+                </div>
+
+                <div className="p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl flex flex-col justify-between space-y-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-white">Split Company Data</span>
+                      <span className="px-1.5 py-0.2 bg-purple-500/10 text-purple-400 text-[10px] font-mono rounded border border-purple-500/20">Tally ERP</span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Archive historical accounting years and spawn a standalone new company entity with settled P&L and static opening balances.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsSplitModalOpen(true)}
+                    className="px-3.5 py-2 bg-purple-600/15 hover:bg-purple-600/25 text-purple-400 border border-purple-500/30 rounded-lg text-xs font-bold transition-colors w-fit flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>✂️</span>
+                    <span>Split Company Data →</span>
                   </button>
                 </div>
               </div>

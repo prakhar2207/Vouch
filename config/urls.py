@@ -30,6 +30,7 @@ from apps.accounting.b2b_views import (
 )
 from apps.accounting.tally_views import TallyExportAPIView
 import apps.accounting.fy_views
+import apps.accounting.period_views
 
 def root_health_view(request):
     return JsonResponse({
@@ -83,4 +84,10 @@ urlpatterns = [
         path('<uuid:pk>/close/', apps.accounting.fy_views.FinancialYearCloseAPIView.as_view(), name='financial_year_close'),
     ])),
     path('api/v1/ledgers/<uuid:ledger_id>/statement/', apps.accounting.fy_views.LedgerStatementAPIView.as_view(), name='ledger_statement_detail'),
+
+    # Tally-Style Continuous Period & Split Company Endpoints
+    path('api/v1/accounting/period-statement/<uuid:ledger_id>/', apps.accounting.period_views.PeriodLedgerStatementAPIView.as_view(), name='period_statement'),
+    path('api/v1/accounting/period-trial-balance/', apps.accounting.period_views.PeriodTrialBalanceAPIView.as_view(), name='period_trial_balance'),
+    path('api/v1/accounting/split-company/audit/', apps.accounting.period_views.SplitCompanyAuditAPIView.as_view(), name='split_company_audit'),
+    path('api/v1/accounting/split-company/', apps.accounting.period_views.SplitCompanyExecuteAPIView.as_view(), name='split_company_execute'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

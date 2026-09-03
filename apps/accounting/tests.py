@@ -332,3 +332,150 @@ class MultiYearInvoicingAndYearEndTests(TestCase):
         self.assertEqual(re_lb.opening_balance, Decimal("10000.00"))
         self.assertEqual(re_lb.opening_type, "CR")
 
+
+class TallyContinuousPeriodAndSplitCompanyTests(TestCase):
+    def setUp(self):
+        import datetime
+        self.user = User.objects.create_user(email="tally_admin@vouch.com", password="password123")
+        self.company = Company.objects.create(
+            name="Zenith Traders Pvt Ltd",
+            legal_name="Zenith Traders Pvt Ltd",
+            gstin="27AAACZ1111A1Z9",
+            pan="AAACZ1111A",
+            state_code="27",
+            state_name="Maharashtra"
+        )
+        UserCompany.objects.create(user=self.user, company=self.company, role="ADMIN")
+
+        from apps.accounting.services.sequence_service import InvoiceSequenceService
+        self.fy = InvoiceSequenceService.get_or_create_active_fy(self.company, datetime.date(2026, 4, 1))
+
+        self.asset_grp = LedgerGroup.objects.create(company=self.company, name="Bank Accounts", nature="ASSET")
+        self.income_grp = LedgerGroup.objects.create(company=self.company, name="Sales Accounts", nature="INCOME")
+
+        self.bank = Ledger.objects.create(
+            company=self.company,
+            group=self.asset_grp,
+            name="Kotak Bank Current A/c",
+            ledger_type="BANK",
+            opening_balance=Decimal("50000.00"),
+            opening_balance_type="DEBIT",
+            opening_date=datetime.date(2026, 4, 1)
+        )
+        self.sales = Ledger.objects.create(
+            company=self.company,
+            group=self.income_grp,
+            name="General Sales",
+            ledger_type="SALES",
+            opening_balance=Decimal("0.00"),
+            opening_balance_type="CREDIT",
+            opening_date=datetime.date(2026, 4, 1)
+        )
+
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_dynamic_on_the_fly_period_balance_computation(self):
+        """Dynamic opening and closing balance accurately evaluated across custom continuous dates."""
+        import datetime
+        from apps.accounting.models import Voucher, LedgerEntry
+        from apps.accounting.services.period_service import PeriodBalanceService
+
+        # Transaction 1: 01-May-2026 -> ₹15,000 Dr Bank, Cr Sales
+        v1 = Voucher.objects.create(
+            company=self.company,
+            financial_year=self.fy,
+            voucher_type="RECEIPT",
+            voucher_number="RCP/26-27/0001",
+            voucher_date=datetime.date(2026, 5, 1),
+            status="POSTED",
+            created_by=self.user,
+            total_amount=Decimal("15000.00")
+        )
+        LedgerEntry.objects.create(voucher=v1, ledger=self.bank, debit_amount=Decimal("15000.00"))
+        LedgerEntry.objects.create(voucher=v1, ledger=self.sales, credit_amount=Decimal("15000.00"))
+
+        # Transaction 2: 15-Aug-2026 -> ₹20,000 Dr Bank, Cr Sales
+        v2 = Voucher.objects.create(
+            company=self.company,
+            financial_year=self.fy,
+            voucher_type="RECEIPT",
+            voucher_number="RCP/26-27/0002",
+            voucher_date=datetime.date(2026, 8, 15),
+            status="POSTED",
+            created_by=self.user,
+            total_amount=Decimal("20000.00")
+        )
+        LedgerEntry.objects.create(voucher=v2, ledger=self.bank, debit_amount=Decimal("20000.00"))
+        LedgerEntry.objects.create(voucher=v2, ledger=self.sales, credit_amount=Decimal("20000.00"))
+
+        # Query custom window: 01-Jun-2026 to 31-Dec-2026
+        # Opening as of 01-Jun-2026 must be: Initial (50,000) + May transaction (15,000) = 65,000 Dr
+        # Period debits: 20,000
+        # Closing as of 31-Dec-2026 must be: 65,000 + 20,000 = 85,000 Dr
+        data = PeriodBalanceService.calculate_ledger_period_balance(
+            self.bank,
+            datetime.date(2026, 6, 1),
+            datetime.date(2026, 12, 31)
+        )
+
+        self.assertEqual(Decimal(data['opening_balance']), Decimal("65000.00"))
+        self.assertEqual(data['opening_type'], "DR")
+        self.assertEqual(Decimal(data['period_debit']), Decimal("20000.00"))
+        self.assertEqual(Decimal(data['closing_balance']), Decimal("85000.00"))
+        self.assertEqual(data['closing_type'], "DR")
+
+    def test_split_company_data_engine(self):
+        """Tally-style split company data creates new standalone entity, carries balances, and settles P&L."""
+        import datetime
+        from apps.companies.models import Company
+        from apps.accounting.models import Voucher, LedgerEntry, FinancialYear
+        from apps.accounting.services.split_company_service import SplitCompanyService
+
+        # Post ₹35,000 in FY 2026-27
+        v = Voucher.objects.create(
+            company=self.company,
+            financial_year=self.fy,
+            voucher_type="RECEIPT",
+            voucher_number="RCP/26-27/0001",
+            voucher_date=datetime.date(2026, 7, 1),
+            status="POSTED",
+            created_by=self.user,
+            total_amount=Decimal("35000.00")
+        )
+        LedgerEntry.objects.create(voucher=v, ledger=self.bank, debit_amount=Decimal("35000.00"))
+        LedgerEntry.objects.create(voucher=v, ledger=self.sales, credit_amount=Decimal("35000.00"))
+
+        # Execute Split as of 01-Apr-2027
+        split_date = datetime.date(2027, 4, 1)
+        result = SplitCompanyService.execute_split_company(
+            company_id=str(self.company.id),
+            split_date=split_date,
+            user=self.user
+        )
+
+        self.assertTrue(result['success'])
+        new_company_id = result['new_company_id']
+        new_company = Company.objects.get(id=new_company_id)
+
+        self.assertIn("From 01-Apr-2027", new_company.name)
+
+        # In new company: Bank Opening must be 50,000 initial + 35,000 posted = 85,000
+        new_bank = Ledger.objects.get(company=new_company, name=self.bank.name)
+        self.assertEqual(new_bank.opening_balance, Decimal("85000.00"))
+        self.assertEqual(new_bank.opening_balance_type, "DEBIT")
+
+        # In new company: Sales Opening must be 0.00
+        new_sales = Ledger.objects.get(company=new_company, name=self.sales.name)
+        self.assertEqual(new_sales.opening_balance, Decimal("0.00"))
+
+        # Retained Earnings in new company has 35,000 Credit
+        re_ledger = Ledger.objects.get(company=new_company, name="Retained Earnings")
+        self.assertEqual(re_ledger.opening_balance, Decimal("35000.00"))
+        self.assertEqual(re_ledger.opening_balance_type, "CREDIT")
+
+        # Old FY in source company is archived
+        self.fy.refresh_from_db()
+        self.assertTrue(self.fy.is_split_archived)
+
+

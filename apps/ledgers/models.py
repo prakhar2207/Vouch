@@ -38,6 +38,7 @@ class Ledger(models.Model):
     
     opening_balance = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     opening_balance_type = models.CharField(max_length=10, choices=BALANCE_TYPE_CHOICES, default='DEBIT')
+    opening_date = models.DateField(null=True, blank=True)
     current_balance = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     
     credit_limit = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
@@ -48,6 +49,14 @@ class Ledger(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def initial_opening_balance(self):
+        return self.opening_balance
+
+    @property
+    def initial_opening_type(self):
+        return 'DR' if self.opening_balance_type == 'DEBIT' else 'CR'
 
     def __str__(self):
         return f"{self.name} ({self.company.name})"

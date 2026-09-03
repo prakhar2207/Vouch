@@ -8,11 +8,12 @@ from apps.inventory.models import Product
 class FinancialYear(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='financial_years')
-    name = models.CharField(max_length=20)  # e.g. "FY 2026-27"
+    name = models.CharField(max_length=50)  # e.g. "1-Apr-2026 to 31-Mar-2027" or "FY 2026-27"
     code = models.CharField(max_length=10)  # e.g. "26-27"
     start_date = models.DateField()         # e.g. 2026-04-01
     end_date = models.DateField()           # e.g. 2027-03-31
     is_closed = models.BooleanField(default=False)
+    is_split_archived = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -35,12 +36,21 @@ class VoucherSequence(models.Model):
         ('DEBIT_NOTE', 'Debit Note'),
     )
 
+    METHOD_CHOICES = (
+        ('AUTOMATIC', 'Automatic (Sequential)'),
+        ('MANUAL', 'Manual Override'),
+    )
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='voucher_sequences')
     financial_year = models.ForeignKey(FinancialYear, on_delete=models.CASCADE, related_name='sequences')
     voucher_type = models.CharField(max_length=20, choices=VOUCHER_TYPE_CHOICES)
+    method = models.CharField(max_length=20, choices=METHOD_CHOICES, default='AUTOMATIC')
     prefix = models.CharField(max_length=10, default='INV')
+    suffix = models.CharField(max_length=10, blank=True, default="")
+    starting_number = models.PositiveIntegerField(default=1)
     last_number = models.PositiveIntegerField(default=0)
+    width = models.PositiveIntegerField(default=4)  # Zero-padding width (e.g. 0001)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

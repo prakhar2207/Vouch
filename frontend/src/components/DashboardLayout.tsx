@@ -8,6 +8,8 @@ import { removeTokens } from '@/utils/auth';
 import CommandPalette from './CommandPalette';
 import { useShortcuts } from '@/context/ShortcutContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
+import { useAccountingPeriod } from '@/context/PeriodContext';
+import { Calendar } from 'lucide-react';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -17,6 +19,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [isFYDropdownOpen, setIsFYDropdownOpen] = useState(false);
   const { setIsHelpOpen, setIsDateOpen, workingDate, startTour } = useShortcuts();
   const { activeFY, availableFYs, setActiveFY, isReadOnly, setIsClosingModalOpen } = useFinancialYear();
+  const { displayPeriod, setIsPeriodModalOpen } = useAccountingPeriod();
 
   // Close mobile nav on route change
   useEffect(() => {
@@ -118,6 +121,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Right: Quick Action Controls */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Tally-Style Continuous Period Selector (Alt+F2) */}
+            <button
+              onClick={() => setIsPeriodModalOpen(true)}
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900/80 hover:bg-zinc-800 text-xs font-semibold text-zinc-300 transition-all cursor-pointer shadow-sm"
+              title="Change Continuous Accounting Period (Alt + F2)"
+            >
+              <Calendar className="w-3.5 h-3.5 text-blue-400" />
+              <span className="font-mono text-[11px] text-zinc-300">{displayPeriod}</span>
+              <kbd className="px-1.5 py-0.2 bg-zinc-800 text-zinc-400 rounded border border-zinc-700 font-mono text-[9px]">
+                Alt+F2
+              </kbd>
+            </button>
+
             {/* Financial Year Selector Dropdown */}
             {activeFY && (
               <div className="relative">

@@ -41,7 +41,10 @@ export const metadata: Metadata = {
 };
 
 import { FinancialYearProvider } from "@/context/FinancialYearContext";
+import { PeriodProvider } from "@/context/PeriodContext";
 import YearEndClosingModal from "@/components/modals/YearEndClosingModal";
+import PeriodModal from "@/components/modals/PeriodModal";
+import SplitCompanyModal from "@/components/modals/SplitCompanyModal";
 
 export default function RootLayout({
   children,
@@ -58,15 +61,19 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <FinancialYearProvider>
-            <ShortcutProvider>
-              {children}
-              <DateModal />
-              <HelpModal />
-              <QuickCreateModal />
-              <YearEndClosingModal />
-              <OnboardingTour />
-              <PWAInstallPrompt />
-            </ShortcutProvider>
+            <PeriodProvider>
+              <ShortcutProvider>
+                {children}
+                <DateModal />
+                <PeriodModal />
+                <SplitCompanyModal />
+                <HelpModal />
+                <QuickCreateModal />
+                <YearEndClosingModal />
+                <OnboardingTour />
+                <PWAInstallPrompt />
+              </ShortcutProvider>
+            </PeriodProvider>
           </FinancialYearProvider>
         </ThemeProvider>
       </body>
