@@ -8,6 +8,7 @@ import HelpModal from "@/components/modals/HelpModal";
 import QuickCreateModal from "@/components/modals/QuickCreateModal";
 import OnboardingTour from "@/components/tour/OnboardingTour";
 import PWAInstallPrompt from "@/components/PWAInstallPrompt";
+import OfflineSyncHandler from "@/components/OfflineSyncHandler";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -72,6 +73,7 @@ export default function RootLayout({
                 <YearEndClosingModal />
                 <OnboardingTour />
                 <PWAInstallPrompt />
+                <OfflineSyncHandler />
               </ShortcutProvider>
             </PeriodProvider>
           </FinancialYearProvider>

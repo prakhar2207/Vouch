@@ -7,6 +7,7 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "High-Speed Double-Entry Accounting & ERP with AI Accounts Payable and GST Compliance",
     start_url: "/dashboard",
     display: "standalone",
+    display_override: ["window-controls-overlay", "standalone"],
     background_color: "#09090b",
     theme_color: "#2563eb",
     icons: [
