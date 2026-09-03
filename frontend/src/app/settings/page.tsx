@@ -7,9 +7,11 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import StateSelect from '@/components/StateSelect';
 import { getStateName } from '@/utils/gstStates';
+import { useFinancialYear } from '@/context/FinancialYearContext';
 
 export default function SettingsPage() {
   const router = useRouter();
+  const { availableFYs, activeFY, setActiveFY, setIsClosingModalOpen } = useFinancialYear();
   const [company, setCompany] = useState<any>(null);
   
   // Profile State
@@ -346,6 +348,81 @@ export default function SettingsPage() {
                     Export to Tally (Alt+O) →
                   </button>
                 </div>
+              </div>
+            </div>
+
+            {/* Financial Years & Period Closing Section */}
+            <div className="bg-card border border-border rounded-xl p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                    <span>Financial Years & Period Closing</span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded font-bold">
+                      GST Rule 46(b)
+                    </span>
+                  </h2>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Year-wise sequential invoice boundaries (April 1 – March 31) and balance carry-forward engine.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsClosingModalOpen(true)}
+                  className="px-4 py-2 bg-amber-600/15 hover:bg-amber-600/25 text-amber-400 border border-amber-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>🔒</span>
+                  <span>Close Year & Roll-Forward</span>
+                </button>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-zinc-800">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-zinc-900/90 text-zinc-400 font-semibold border-b border-zinc-800">
+                    <tr>
+                      <th className="px-4 py-2.5">Financial Year</th>
+                      <th className="px-4 py-2.5">Code</th>
+                      <th className="px-4 py-2.5">Date Period</th>
+                      <th className="px-4 py-2.5">Status</th>
+                      <th className="px-4 py-2.5 text-right">Vouchers Posted</th>
+                      <th className="px-4 py-2.5 text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60 font-mono">
+                    {availableFYs.map((fy) => (
+                      <tr key={fy.id} className={fy.id === activeFY?.id ? "bg-blue-600/5" : ""}>
+                        <td className="px-4 py-3 font-sans font-bold text-white flex items-center gap-2">
+                          <span>{fy.name}</span>
+                          {fy.is_current && (
+                            <span className="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.2 rounded font-mono font-normal">Current</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-zinc-300">{fy.code}</td>
+                        <td className="px-4 py-3 text-zinc-400">{fy.start_date} → {fy.end_date}</td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            fy.is_closed ? "bg-zinc-800 text-amber-400 border border-amber-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                          }`}>
+                            {fy.is_closed ? "CLOSED (READ-ONLY)" : "OPEN & ACTIVE"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right text-zinc-300">{fy.voucher_count ?? 0}</td>
+                        <td className="px-4 py-3 text-center">
+                          {fy.id === activeFY?.id ? (
+                            <span className="text-[11px] font-sans font-semibold text-blue-400">Selected</span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setActiveFY(fy)}
+                              className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-sans rounded text-[11px] transition-colors cursor-pointer"
+                            >
+                              Switch
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
 

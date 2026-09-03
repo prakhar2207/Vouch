@@ -14,15 +14,21 @@ class PurchaseInvoiceService:
         """
         End-to-End orchestration of a Purchase Invoice.
         """
-        import time
-        v_num = supplier_invoice_number.strip() if (supplier_invoice_number and supplier_invoice_number.strip()) else f"PUR/{company.id.hex[:4].upper()}/{int(time.time())}"
+        from apps.accounting.services.sequence_service import InvoiceSequenceService
+        v_date = voucher_date if voucher_date else timezone.now().date()
+        if supplier_invoice_number and supplier_invoice_number.strip():
+            v_num = supplier_invoice_number.strip()
+            fy = InvoiceSequenceService.get_or_create_active_fy(company, v_date)
+        else:
+            v_num, fy = InvoiceSequenceService.get_next_number(company, 'PURCHASE', v_date)
         
         voucher = Voucher.objects.create(
             company=company,
+            financial_year=fy,
             voucher_type='PURCHASE',
             voucher_number=v_num,
             reference_number=supplier_invoice_number,
-            voucher_date=voucher_date if voucher_date else timezone.now().date(),
+            voucher_date=v_date,
             party_ledger=party_ledger,
             status='DRAFT',
             created_by=user,

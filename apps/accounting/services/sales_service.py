@@ -19,12 +19,17 @@ class SalesInvoiceService:
         Returns the DRAFT voucher.
         """
         # 1. Create Voucher Header
-        import time
-        v_num = manual_voucher_number if manual_voucher_number else f"SAL/{company.id.hex[:4].upper()}/{int(time.time())}"
+        from apps.accounting.services.sequence_service import InvoiceSequenceService
         v_date = manual_voucher_date if manual_voucher_date else timezone.now().date()
+        if manual_voucher_number:
+            v_num = manual_voucher_number
+            fy = InvoiceSequenceService.get_or_create_active_fy(company, v_date)
+        else:
+            v_num, fy = InvoiceSequenceService.get_next_number(company, 'SALES', v_date)
         
         voucher = Voucher.objects.create(
             company=company,
+            financial_year=fy,
             voucher_type='SALES',
             voucher_number=v_num,
             voucher_date=v_date,

@@ -7,13 +7,16 @@ import { ThemeToggle } from './ThemeToggle';
 import { removeTokens } from '@/utils/auth';
 import CommandPalette from './CommandPalette';
 import { useShortcuts } from '@/context/ShortcutContext';
+import { useFinancialYear } from '@/context/FinancialYearContext';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isFYDropdownOpen, setIsFYDropdownOpen] = useState(false);
   const { setIsHelpOpen, setIsDateOpen, workingDate, startTour } = useShortcuts();
+  const { activeFY, availableFYs, setActiveFY, isReadOnly, setIsClosingModalOpen } = useFinancialYear();
 
   // Close mobile nav on route change
   useEffect(() => {
@@ -115,6 +118,84 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Right: Quick Action Controls */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Financial Year Selector Dropdown */}
+            {activeFY && (
+              <div className="relative">
+                <button
+                  onClick={() => setIsFYDropdownOpen(!isFYDropdownOpen)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all cursor-pointer ${
+                    activeFY.is_closed
+                      ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/30'
+                      : 'bg-zinc-900 hover:bg-zinc-800 text-foreground border-zinc-800'
+                  }`}
+                  title="Switch Financial Year"
+                >
+                  <span className={`w-2 h-2 rounded-full ${activeFY.is_closed ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'}`}></span>
+                  <span className="font-mono text-xs">{activeFY.code || activeFY.name}</span>
+                  <span className={`text-[9px] font-mono px-1 py-0.2 rounded uppercase ${
+                    activeFY.is_closed ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-400 font-bold'
+                  }`}>
+                    {activeFY.is_closed ? 'Closed' : 'Open'}
+                  </span>
+                  <span className="text-[10px] text-zinc-400">▼</span>
+                </button>
+
+                {isFYDropdownOpen && (
+                  <div className="absolute right-0 mt-1.5 w-64 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in">
+                    <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500 border-b border-zinc-800 mb-1">
+                      Financial Years
+                    </div>
+                    <div className="max-h-56 overflow-y-auto space-y-1">
+                      {availableFYs.map((fy) => (
+                        <button
+                          key={fy.id}
+                          onClick={() => {
+                            setActiveFY(fy);
+                            setIsFYDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-2.5 py-2 rounded-lg text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                            fy.id === activeFY.id
+                              ? 'bg-blue-600/20 text-blue-400 font-bold border border-blue-500/30'
+                              : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span>{fy.name}</span>
+                              {fy.is_current && (
+                                <span className="text-[9px] bg-blue-500/20 text-blue-400 px-1 rounded">Current</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-zinc-500 font-mono">
+                              {fy.start_date} ~ {fy.end_date}
+                            </div>
+                          </div>
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono ${
+                            fy.is_closed ? 'bg-zinc-800 text-amber-400 border border-amber-500/20' : 'bg-emerald-500/20 text-emerald-400'
+                          }`}>
+                            {fy.is_closed ? 'Closed' : 'Open'}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="border-t border-zinc-800 mt-1 pt-1">
+                      <button
+                        onClick={() => {
+                          setIsFYDropdownOpen(false);
+                          setIsClosingModalOpen(true);
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-amber-400 hover:bg-amber-500/10 flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <span>🔒</span>
+                        <span>Year-End Close & Roll-Forward</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Working Date (F2) */}
             <button
               id="tour-date-btn"
@@ -160,6 +241,27 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </div>
       </header>
+
+      {/* Read-Only Mode Banner for Closed Financial Year */}
+      {isReadOnly && activeFY && (
+        <div className="bg-amber-500/15 border-b border-amber-500/30 text-amber-400 px-4 py-2 text-xs font-semibold flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span>⚠️</span>
+            <span>
+              Viewing <strong className="text-white">{activeFY.name}</strong> (Closed Period: {activeFY.start_date} to {activeFY.end_date}). Transactions in this period are read-only.
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              const openFY = availableFYs.find((f) => !f.is_closed);
+              if (openFY) setActiveFY(openFY);
+            }}
+            className="text-[11px] underline hover:text-white font-bold cursor-pointer"
+          >
+            Switch to Active Open FY →
+          </button>
+        </div>
+      )}
 
       {/* MOBILE HIDDEN SLIDE-OUT SIDEBAR DRAWER */}
       {isMobileNavOpen && (

@@ -1,4 +1,4 @@
-﻿import json
+import json
 import xml.etree.ElementTree as ET
 from decimal import Decimal
 from django.test import TestCase
@@ -213,3 +213,122 @@ class B2BEDIAndTallyExportTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['Content-Type'], 'application/xml')
         self.assertIn("Tally_Export", response['Content-Disposition'])
+
+
+class MultiYearInvoicingAndYearEndTests(TestCase):
+    def setUp(self):
+        import datetime
+        self.user = User.objects.create_user(email="cfo@vouch.com", password="password123")
+        self.company = Company.objects.create(
+            name="Apex Dynamics Pvt Ltd",
+            legal_name="Apex Dynamics Pvt Ltd",
+            gstin="27AAACA9999A1Z1",
+            pan="AAACA9999A",
+            state_code="27",
+            state_name="Maharashtra"
+        )
+        UserCompany.objects.create(user=self.user, company=self.company, role="ADMIN")
+
+        from apps.accounting.services.sequence_service import InvoiceSequenceService
+        self.fy = InvoiceSequenceService.get_or_create_active_fy(self.company, datetime.date(2026, 6, 1))
+
+        # Groups & Ledgers
+        self.asset_grp = LedgerGroup.objects.create(company=self.company, name="Current Assets", nature="ASSET")
+        self.income_grp = LedgerGroup.objects.create(company=self.company, name="Direct Income", nature="INCOME")
+        self.expense_grp = LedgerGroup.objects.create(company=self.company, name="Direct Expenses", nature="EXPENSE")
+
+        self.bank_ledger = Ledger.objects.create(
+            company=self.company,
+            group=self.asset_grp,
+            name="HDFC Bank Current A/c",
+            ledger_type="BANK",
+            opening_balance=Decimal("50000.00"),
+            opening_balance_type="DEBIT"
+        )
+
+        self.sales_ledger = Ledger.objects.create(
+            company=self.company,
+            group=self.income_grp,
+            name="Domestic Sales",
+            ledger_type="SALES",
+            opening_balance=Decimal("0.00"),
+            opening_balance_type="CREDIT"
+        )
+
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_invoice_sequence_generation_rule_46b(self):
+        """Sequential numbers adhere to Indian GST Rule 46(b) <= 16 chars."""
+        import datetime
+        from apps.accounting.services.sequence_service import InvoiceSequenceService
+
+        num1, fy1 = InvoiceSequenceService.get_next_number(self.company, 'SALES', datetime.date(2026, 5, 10))
+        num2, fy2 = InvoiceSequenceService.get_next_number(self.company, 'SALES', datetime.date(2026, 5, 11))
+
+        self.assertEqual(num1, "INV/26-27/0001")
+        self.assertEqual(num2, "INV/26-27/0002")
+        self.assertLessEqual(len(num1), 16)
+        self.assertLessEqual(len(num2), 16)
+        self.assertEqual(fy1.id, self.fy.id)
+
+    def test_closed_financial_year_blocks_voucher_creation(self):
+        """Closed Financial Year raises ValidationError upon sequence generation."""
+        import datetime
+        from django.core.exceptions import ValidationError
+        from apps.accounting.services.sequence_service import InvoiceSequenceService
+
+        self.fy.is_closed = True
+        self.fy.save()
+
+        with self.assertRaises(ValidationError):
+            InvoiceSequenceService.get_next_number(self.company, 'SALES', datetime.date(2026, 7, 15))
+
+    def test_year_end_closing_and_balance_carry_forward(self):
+        """Year-end closing computes balances, rolls forward real accounts and net profit to equity."""
+        import datetime
+        from apps.accounting.models import Voucher, LedgerEntry
+        from apps.accounting.services.year_end_service import YearEndClosingService
+
+        # Post a transaction in current FY: Debit Bank 10,000, Credit Sales 10,000
+        voucher = Voucher.objects.create(
+            company=self.company,
+            financial_year=self.fy,
+            voucher_type="RECEIPT",
+            voucher_number="RCP/26-27/0001",
+            voucher_date=datetime.date(2026, 8, 1),
+            status="POSTED",
+            created_by=self.user,
+            total_amount=Decimal("10000.00")
+        )
+        LedgerEntry.objects.create(voucher=voucher, ledger=self.bank_ledger, debit_amount=Decimal("10000.00"), credit_amount=Decimal("0.00"))
+        LedgerEntry.objects.create(voucher=voucher, ledger=self.sales_ledger, debit_amount=Decimal("0.00"), credit_amount=Decimal("10000.00"))
+
+        # Execute Year End Closing & Roll Forward
+        result = YearEndClosingService.close_and_roll_forward(self.company.id, str(self.fy.id))
+        self.assertTrue(result['success'])
+
+        self.fy.refresh_from_db()
+        self.assertTrue(self.fy.is_closed)
+
+        # Verify next FY was created (FY 2027-28)
+        from apps.accounting.models import FinancialYear, LedgerBalance
+        next_fy = FinancialYear.objects.get(company=self.company, code="27-28")
+        self.assertIsNotNone(next_fy)
+        self.assertFalse(next_fy.is_closed)
+
+        # Verify Bank Ledger (Asset) carried forward: 50,000 Op + 10,000 Dr = 60,000 Dr
+        bank_next_lb = LedgerBalance.objects.get(ledger=self.bank_ledger, financial_year=next_fy)
+        self.assertEqual(bank_next_lb.opening_balance, Decimal("60000.00"))
+        self.assertEqual(bank_next_lb.opening_type, "DR")
+
+        # Verify Sales Ledger (Income) reset to 0 in next FY
+        sales_next_lb = LedgerBalance.objects.get(ledger=self.sales_ledger, financial_year=next_fy)
+        self.assertEqual(sales_next_lb.opening_balance, Decimal("0.00"))
+
+        # Verify Retained Earnings was credited with 10,000 Net Profit
+        re_lb = LedgerBalance.objects.filter(ledger__name="Retained Earnings", financial_year=next_fy).first()
+        self.assertIsNotNone(re_lb)
+        self.assertEqual(re_lb.opening_balance, Decimal("10000.00"))
+        self.assertEqual(re_lb.opening_type, "CR")
+

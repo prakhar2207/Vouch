@@ -40,6 +40,9 @@ export const metadata: Metadata = {
   },
 };
 
+import { FinancialYearProvider } from "@/context/FinancialYearContext";
+import YearEndClosingModal from "@/components/modals/YearEndClosingModal";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -54,14 +57,17 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <ShortcutProvider>
-            {children}
-            <DateModal />
-            <HelpModal />
-            <QuickCreateModal />
-            <OnboardingTour />
-            <PWAInstallPrompt />
-          </ShortcutProvider>
+          <FinancialYearProvider>
+            <ShortcutProvider>
+              {children}
+              <DateModal />
+              <HelpModal />
+              <QuickCreateModal />
+              <YearEndClosingModal />
+              <OnboardingTour />
+              <PWAInstallPrompt />
+            </ShortcutProvider>
+          </FinancialYearProvider>
         </ThemeProvider>
       </body>
     </html>

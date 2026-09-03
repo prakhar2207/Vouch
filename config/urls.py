@@ -29,6 +29,7 @@ from apps.accounting.b2b_views import (
     InwardVoucherInboxView, InwardVoucherDetailView, InwardVoucherAcceptView, InwardVoucherRejectView
 )
 from apps.accounting.tally_views import TallyExportAPIView
+import apps.accounting.fy_views
 
 def root_health_view(request):
     return JsonResponse({
@@ -72,4 +73,14 @@ urlpatterns = [
     path('api/v1/analytics/', include('apps.analytics.urls')),
     path('api/v1/inventory/', include('apps.inventory.urls')),
     path('api/v1/ledgers/', include('apps.ledgers.urls')),
+
+    # Direct Financial Years & Ledger Statement Routes
+    path('api/v1/financial-years/', include([
+        path('', apps.accounting.fy_views.FinancialYearListCreateAPIView.as_view(), name='financial_years_list_create'),
+        path('create-next/', apps.accounting.fy_views.FinancialYearListCreateAPIView.as_view(), name='financial_years_create_next'),
+        path('sequence-preview/', apps.accounting.fy_views.SequencePreviewAPIView.as_view(), name='sequence_preview'),
+        path('<uuid:pk>/audit/', apps.accounting.fy_views.FinancialYearPreCloseAuditAPIView.as_view(), name='financial_year_audit'),
+        path('<uuid:pk>/close/', apps.accounting.fy_views.FinancialYearCloseAPIView.as_view(), name='financial_year_close'),
+    ])),
+    path('api/v1/ledgers/<uuid:ledger_id>/statement/', apps.accounting.fy_views.LedgerStatementAPIView.as_view(), name='ledger_statement_detail'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

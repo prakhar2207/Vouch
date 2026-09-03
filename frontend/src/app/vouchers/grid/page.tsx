@@ -10,6 +10,7 @@ import "ag-grid-community/styles/ag-theme-quartz.css";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useShortcuts } from "@/context/ShortcutContext";
+import { useFinancialYear } from "@/context/FinancialYearContext";
 import {
   Layers,
   Plus,
@@ -75,12 +76,14 @@ function AgGridVoucherEntryContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { workingDate, registerSaveHandler, registerAltCCallback } = useShortcuts();
+  const { activeFY, isReadOnly } = useFinancialYear();
 
   const [companyId, setCompanyId] = useState<string>("");
   const [ledgers, setLedgers] = useState<any[]>([]);
   const [voucherType, setVoucherType] = useState<string>(searchParams?.get("type") || "JOURNAL");
   const [voucherDate, setVoucherDate] = useState<string>(workingDate || new Date().toISOString().split("T")[0]);
   const [voucherNumber, setVoucherNumber] = useState<string>("");
+  const [seqPreview, setSeqPreview] = useState<string>("");
   const [mainNarration, setMainNarration] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -91,6 +94,34 @@ function AgGridVoucherEntryContent() {
     { id: "1", type: "Dr", ledger_id: "", ledger_name: "", debit_amount: 0, credit_amount: 0, narration: "" },
     { id: "2", type: "Cr", ledger_id: "", ledger_name: "", debit_amount: 0, credit_amount: 0, narration: "" },
   ]);
+
+  useEffect(() => {
+    if (activeFY) {
+      if (voucherDate < activeFY.start_date || voucherDate > activeFY.end_date) {
+        setVoucherDate(activeFY.start_date);
+      }
+    }
+  }, [activeFY]);
+
+  useEffect(() => {
+    const fetchSeq = async () => {
+      try {
+        const token = getAccessToken();
+        const res = await axios.get(
+          `${API_BASE_URL}/api/v1/financial-years/sequence-preview/?voucher_type=${voucherType}&date=${voucherDate}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (res.data?.success && res.data.data?.preview_number) {
+          setSeqPreview(res.data.data.preview_number);
+        }
+      } catch (err) {
+        // quiet fallback
+      }
+    };
+    if (companyId) {
+      fetchSeq();
+    }
+  }, [voucherType, voucherDate, companyId]);
 
   useEffect(() => {
     const typeParam = searchParams?.get("type");
@@ -500,6 +531,11 @@ function AgGridVoucherEntryContent() {
                 <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full border ${typeConfig.badge}`}>
                   {typeConfig.label}
                 </span>
+                {seqPreview && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 bg-blue-500/15 text-blue-400 border border-blue-500/30 rounded-full font-bold">
+                    Next: {seqPreview}
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-muted-foreground hidden sm:block">
                 Double-entry spreadsheet engine. Navigate with <kbd className="px-1 py-0.2 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[9px]">Tab</kbd> / <kbd className="px-1 py-0.2 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[9px]">Enter</kbd>.
@@ -533,9 +569,11 @@ function AgGridVoucherEntryContent() {
 
             <button
               onClick={handleSubmit}
-              disabled={saving || !isBalanced}
+              disabled={saving || !isBalanced || isReadOnly}
               className={`px-4 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer ${
-                isBalanced
+                isReadOnly
+                  ? "bg-amber-500/15 text-amber-400 border border-amber-500/30 cursor-not-allowed opacity-80"
+                  : isBalanced
                   ? "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-blue-600/25"
                   : "bg-zinc-800 text-zinc-500 border border-zinc-700 cursor-not-allowed opacity-60"
               }`}
@@ -545,6 +583,8 @@ function AgGridVoucherEntryContent() {
                   <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
                   <span>Posting...</span>
                 </>
+              ) : isReadOnly ? (
+                <span>Period Closed (Read-Only)</span>
               ) : (
                 <>
                   <CheckCircle2 className="w-3.5 h-3.5" />
@@ -596,10 +636,14 @@ function AgGridVoucherEntryContent() {
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Date</label>
+            <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">
+              Date {activeFY && <span className="text-zinc-500 font-normal font-mono">({activeFY.code})</span>}
+            </label>
             <input
               type="date"
               value={voucherDate}
+              min={activeFY?.start_date}
+              max={activeFY?.end_date}
               onChange={(e) => setVoucherDate(e.target.value)}
               className="w-full bg-zinc-900 border border-zinc-700 text-white px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 font-mono"
             />
@@ -611,7 +655,7 @@ function AgGridVoucherEntryContent() {
               type="text"
               value={voucherNumber}
               onChange={(e) => setVoucherNumber(e.target.value)}
-              placeholder="Auto if blank"
+              placeholder={seqPreview ? `Auto: ${seqPreview}` : "Auto if blank"}
               className="w-full bg-zinc-900 border border-zinc-700 text-white px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 font-mono placeholder:text-zinc-500"
             />
           </div>

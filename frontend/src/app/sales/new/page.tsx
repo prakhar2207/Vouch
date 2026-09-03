@@ -7,10 +7,13 @@ import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useShortcuts } from '@/context/ShortcutContext';
+import { useFinancialYear } from '@/context/FinancialYearContext';
 
 export default function SalesPage() {
   const router = useRouter();
   const { workingDate, registerSaveHandler, registerAltCCallback } = useShortcuts();
+  const { activeFY, isReadOnly } = useFinancialYear();
+  const [seqPreview, setSeqPreview] = useState('');
   const [companyId, setCompanyId] = useState('');
   const [company, setCompany] = useState<any>(null);
   const [ledgers, setLedgers] = useState<any[]>([]);
@@ -40,6 +43,34 @@ export default function SalesPage() {
       setInvoiceDate(workingDate);
     }
   }, [workingDate]);
+
+  useEffect(() => {
+    if (activeFY) {
+      if (invoiceDate < activeFY.start_date || invoiceDate > activeFY.end_date) {
+        setInvoiceDate(activeFY.start_date);
+      }
+    }
+  }, [activeFY]);
+
+  useEffect(() => {
+    const fetchSeq = async () => {
+      try {
+        const token = getAccessToken();
+        const res = await axios.get(
+          `${API_BASE_URL}/api/v1/financial-years/sequence-preview/?voucher_type=SALES&date=${invoiceDate}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (res.data?.success && res.data.data?.preview_number) {
+          setSeqPreview(res.data.data.preview_number);
+        }
+      } catch (err) {
+        // quiet fallback
+      }
+    };
+    if (companyId) {
+      fetchSeq();
+    }
+  }, [invoiceDate, companyId]);
 
   useEffect(() => {
     registerAltCCallback((newEntity: any) => {
@@ -263,10 +294,25 @@ export default function SalesPage() {
             <Link href="/sales" className="text-gray-400 hover:text-white transition-colors">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
             </Link>
-            <h1 className="text-3xl font-bold">New Sales Invoice</h1>
+            <div>
+              <h1 className="text-3xl font-bold">New Sales Invoice</h1>
+              {activeFY && (
+                <div className="text-xs text-gray-400 mt-0.5">
+                  Financial Year: <span className="font-semibold text-white">{activeFY.name}</span> ({activeFY.start_date} ~ {activeFY.end_date})
+                </div>
+              )}
+            </div>
           </div>
-          <button onClick={handleSave} disabled={saving} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg shadow-lg font-medium transition-colors disabled:opacity-50 flex items-center gap-2">
-            {saving ? 'Posting...' : 'Post Invoice'}
+          <button
+            onClick={handleSave}
+            disabled={saving || isReadOnly}
+            className={`px-6 py-2.5 rounded-lg shadow-lg font-medium transition-colors flex items-center gap-2 cursor-pointer ${
+              isReadOnly
+                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 cursor-not-allowed opacity-80'
+                : 'bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50'
+            }`}
+          >
+            {saving ? 'Posting...' : isReadOnly ? 'Period Closed (Read-Only)' : 'Post Invoice'}
           </button>
         </div>
         
@@ -274,18 +320,38 @@ export default function SalesPage() {
         <div className="bg-card border border-border rounded-xl shadow-sm p-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold text-gray-200">Billing Details</h2>
+            {seqPreview && (
+              <span className="text-xs font-mono font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30 px-2.5 py-1 rounded-lg">
+                Next Serial: {seqPreview} (GST Rule 46b)
+              </span>
+            )}
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 pb-6 border-b border-zinc-800">
             {enableManualInvoice && (
               <div>
                 <label className="block text-sm font-medium text-gray-400 mb-1.5">Invoice Number</label>
-                <input type="text" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} placeholder="e.g. INV-001" className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
+                <input
+                  type="text"
+                  value={invoiceNumber}
+                  onChange={e => setInvoiceNumber(e.target.value)}
+                  placeholder={seqPreview ? `Auto: ${seqPreview}` : "e.g. INV-001"}
+                  className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono"
+                />
               </div>
             )}
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">Invoice Date</label>
-              <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
+              <label className="block text-sm font-medium text-gray-400 mb-1.5">
+                Invoice Date {activeFY && <span className="text-zinc-500 font-normal font-mono">({activeFY.code})</span>}
+              </label>
+              <input
+                type="date"
+                value={invoiceDate}
+                min={activeFY?.start_date}
+                max={activeFY?.end_date}
+                onChange={e => setInvoiceDate(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono"
+              />
             </div>
           </div>
           

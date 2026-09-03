@@ -5,6 +5,73 @@ from apps.accounts.models import User
 from apps.ledgers.models import Ledger
 from apps.inventory.models import Product
 
+class FinancialYear(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='financial_years')
+    name = models.CharField(max_length=20)  # e.g. "FY 2026-27"
+    code = models.CharField(max_length=10)  # e.g. "26-27"
+    start_date = models.DateField()         # e.g. 2026-04-01
+    end_date = models.DateField()           # e.g. 2027-03-31
+    is_closed = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('company', 'code')
+        ordering = ['start_date']
+
+    def __str__(self):
+        return f"{self.name} ({self.company.name})"
+
+
+class VoucherSequence(models.Model):
+    VOUCHER_TYPE_CHOICES = (
+        ('SALES', 'Sales'),
+        ('PURCHASE', 'Purchase'),
+        ('PAYMENT', 'Payment'),
+        ('RECEIPT', 'Receipt'),
+        ('CONTRA', 'Contra'),
+        ('JOURNAL', 'Journal'),
+        ('CREDIT_NOTE', 'Credit Note'),
+        ('DEBIT_NOTE', 'Debit Note'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='voucher_sequences')
+    financial_year = models.ForeignKey(FinancialYear, on_delete=models.CASCADE, related_name='sequences')
+    voucher_type = models.CharField(max_length=20, choices=VOUCHER_TYPE_CHOICES)
+    prefix = models.CharField(max_length=10, default='INV')
+    last_number = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('company', 'financial_year', 'voucher_type')
+
+    def __str__(self):
+        return f"{self.company.name} | {self.financial_year.code} | {self.voucher_type} -> {self.last_number}"
+
+
+class LedgerBalance(models.Model):
+    TYPE_CHOICES = (
+        ('DR', 'Debit'),
+        ('CR', 'Credit'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    ledger = models.ForeignKey(Ledger, on_delete=models.CASCADE, related_name='year_balances')
+    financial_year = models.ForeignKey(FinancialYear, on_delete=models.CASCADE, related_name='ledger_balances')
+    opening_balance = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    opening_type = models.CharField(max_length=2, choices=TYPE_CHOICES, default='DR')
+    closing_balance = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    closing_type = models.CharField(max_length=2, choices=TYPE_CHOICES, default='DR')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('ledger', 'financial_year')
+
+    def __str__(self):
+        return f"{self.ledger.name} | {self.financial_year.code} | Op: {self.opening_type} {self.opening_balance} | Cl: {self.closing_type} {self.closing_balance}"
+
+
 class Voucher(models.Model):
     VOUCHER_TYPE_CHOICES = (
         ('CONTRA', 'Contra'),
@@ -24,6 +91,7 @@ class Voucher(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='vouchers')
+    financial_year = models.ForeignKey(FinancialYear, on_delete=models.PROTECT, null=True, blank=True, related_name='vouchers')
     voucher_type = models.CharField(max_length=20, choices=VOUCHER_TYPE_CHOICES)
     voucher_number = models.CharField(max_length=100)
     voucher_date = models.DateField()
@@ -39,7 +107,11 @@ class Voucher(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ('company', 'voucher_number')
+        unique_together = ('company', 'financial_year', 'voucher_number')
+        indexes = [
+            models.Index(fields=['company', 'financial_year', 'voucher_number']),
+            models.Index(fields=['company', 'voucher_date']),
+        ]
 
     def clean(self):
         from django.core.exceptions import ValidationError

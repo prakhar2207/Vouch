@@ -561,11 +561,16 @@ class UniversalVoucherAPIView(APIView):
                 if not entries_data:
                     return Response({"success": False, "error": "Either 'items' or 'entries' must be provided."}, status=400)
 
-                prefix = voucher_type[:3]
-                v_num = manual_vnum if manual_vnum else f"{prefix}/{company.id.hex[:4].upper()}/{int(time.time())}"
+                from apps.accounting.services.sequence_service import InvoiceSequenceService
+                if manual_vnum:
+                    v_num = manual_vnum
+                    fy = InvoiceSequenceService.get_or_create_active_fy(company, voucher_date)
+                else:
+                    v_num, fy = InvoiceSequenceService.get_next_number(company, voucher_type, voucher_date)
 
                 voucher = Voucher.objects.create(
                     company=company,
+                    financial_year=fy,
                     voucher_type=voucher_type,
                     voucher_number=v_num,
                     voucher_date=voucher_date,
