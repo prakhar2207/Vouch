@@ -83,7 +83,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {/* Desktop Navigation Links */}
             <nav className="hidden md:flex items-center gap-1 overflow-x-auto py-1">
               {navItems.map((item) => {
-                const isActive = pathname === item.path || (item.path !== '/dashboard' && pathname.startsWith(item.path));
+                const isActive = item.path === pathname || (
+                  item.path !== '/dashboard' &&
+                  item.path !== '/vouchers' &&
+                  pathname.startsWith(item.path + '/')
+                );
                 return (
                   <Link
                     key={item.path}
