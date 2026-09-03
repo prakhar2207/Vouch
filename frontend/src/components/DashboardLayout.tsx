@@ -33,9 +33,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const navItems = [
     { id: 'tour-dashboard-link', path: '/dashboard', label: 'Dashboard' },
     { id: 'tour-sales-btn', path: '/sales', label: 'Sales', badge: 'F8' },
-    { id: 'tour-purchase-btn', path: '/purchases', label: 'Purchases (AI)', badge: 'F9' },
-    { id: 'tour-b2b-btn', path: '/network/inbox', label: 'B2B Network', badge: 'EDI' },
-    { id: 'tour-grid-btn', path: '/vouchers/grid', label: 'AG Grid', badge: 'Grid' },
+    { id: 'tour-purchase-btn', path: '/purchases', label: 'Purchases', badge: 'AI' },
+    { id: 'tour-b2b-btn', path: '/network/inbox', label: 'B2B', badge: 'EDI' },
+    { id: 'tour-grid-btn', path: '/vouchers/grid', label: 'Quick Journal' },
     { id: 'tour-vouchers-link', path: '/vouchers', label: 'Vouchers' },
     { id: 'tour-inventory-link', path: '/inventory', label: 'Inventory' },
     { id: 'tour-parties-link', path: '/parties', label: 'Parties' },
@@ -53,13 +53,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* TOP NAVIGATION BAR (PC & Large Screens) */}
       <header className="sticky top-0 z-40 w-full border-b border-border bg-card/95 backdrop-blur-md shadow-sm">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+        <div className="w-full px-3 sm:px-5 h-16 flex items-center justify-between gap-2 sm:gap-4">
           {/* Left: Brand & Desktop Horizontal Nav */}
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3 sm:gap-5 min-w-0 flex-1">
             {/* Mobile Hamburger Button */}
             <button
               onClick={() => setIsMobileNavOpen(true)}
-              className="md:hidden p-2 rounded-lg text-gray-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+              className="md:hidden p-2 rounded-lg text-gray-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer shrink-0"
               aria-label="Open Navigation Menu"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -67,21 +67,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </svg>
             </button>
 
-            {/* Brand Logo */}
-            <div id="tour-header-brand" className="flex items-center gap-2">
+            {/* Brand Logo - shrink-0 ensures it NEVER gets cut off */}
+            <div id="tour-header-brand" className="flex items-center gap-1.5 shrink-0">
               <Link
                 href="/dashboard"
-                className="text-xl sm:text-2xl font-black text-blue-600 dark:text-blue-500 tracking-tight hover:opacity-90 flex items-center gap-1.5"
+                className="text-xl sm:text-2xl font-black text-blue-600 dark:text-blue-500 tracking-tight hover:opacity-90 flex items-center gap-1.5 shrink-0"
               >
                 <span>Vouch</span>
               </Link>
-              <span className="hidden sm:inline-block px-1.5 py-0.5 text-[9px] font-mono bg-blue-600/10 text-blue-500 rounded border border-blue-500/20 font-bold">
+              <span className="hidden sm:inline-block px-1.5 py-0.5 text-[9px] font-mono bg-blue-600/10 text-blue-500 rounded border border-blue-500/20 font-bold shrink-0">
                 CORE
               </span>
             </div>
 
-            {/* Desktop Navigation Links */}
-            <nav className="hidden md:flex items-center gap-1 overflow-x-auto py-1">
+            {/* Desktop Navigation Links - scrollable without clipping logo */}
+            <nav className="hidden md:flex items-center gap-1 overflow-x-auto no-scrollbar py-1 min-w-0 flex-1">
               {navItems.map((item) => {
                 const isActive = item.path === pathname || (
                   item.path !== '/dashboard' &&
@@ -93,7 +93,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     key={item.path}
                     id={item.id}
                     href={item.path}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
                       isActive
                         ? 'bg-blue-600 text-white shadow-sm font-bold'
                         : 'text-gray-400 hover:text-foreground hover:bg-zinc-800/60'
@@ -114,7 +114,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
 
           {/* Right: Quick Action Controls */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Working Date (F2) */}
             <button
               id="tour-date-btn"

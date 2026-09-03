@@ -10,7 +10,6 @@ import "ag-grid-community/styles/ag-theme-quartz.css";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useShortcuts } from "@/context/ShortcutContext";
-import { useTheme } from "next-themes";
 import {
   Layers,
   Plus,
@@ -41,32 +40,32 @@ interface RowData {
 
 const VOUCHER_TYPE_STYLES: Record<string, { label: string; badge: string; desc: string }> = {
   JOURNAL: {
-    label: "Journal Voucher",
+    label: "Journal (F7)",
     badge: "bg-purple-500/15 text-purple-400 border-purple-500/30",
     desc: "General adjustments, asset purchases, non-cash entries",
   },
   PAYMENT: {
-    label: "Payment Voucher",
+    label: "Payment (F5)",
     badge: "bg-amber-500/15 text-amber-400 border-amber-500/30",
     desc: "Payments to vendors, expenses, or cash withdrawals",
   },
   RECEIPT: {
-    label: "Receipt Voucher",
+    label: "Receipt (F6)",
     badge: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
     desc: "Inward customer receipts, income, or capital injections",
   },
   CONTRA: {
-    label: "Contra Voucher",
+    label: "Contra (F4)",
     badge: "bg-blue-500/15 text-blue-400 border-blue-500/30",
     desc: "Bank to cash, cash to bank, or bank-to-bank transfers",
   },
   SALES: {
-    label: "Sales Entry",
+    label: "Sales (F8)",
     badge: "bg-sky-500/15 text-sky-400 border-sky-500/30",
     desc: "Accounting entries for customer invoices & GST output",
   },
   PURCHASE: {
-    label: "Purchase Entry",
+    label: "Purchase (F9)",
     badge: "bg-rose-500/15 text-rose-400 border-rose-500/30",
     desc: "Vendor inward purchase ledger postings & input credit",
   },
@@ -76,7 +75,6 @@ function AgGridVoucherEntryContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { workingDate, registerSaveHandler, registerAltCCallback } = useShortcuts();
-  const { resolvedTheme } = useTheme();
 
   const [companyId, setCompanyId] = useState<string>("");
   const [ledgers, setLedgers] = useState<any[]>([]);
@@ -257,7 +255,7 @@ function AgGridVoucherEntryContent() {
       {
         headerName: "#",
         valueGetter: "node.rowIndex + 1",
-        width: 65,
+        width: 55,
         pinned: "left",
         cellClass: "text-center font-mono font-bold text-zinc-400 text-xs flex items-center justify-center",
         headerClass: "text-center",
@@ -265,7 +263,7 @@ function AgGridVoucherEntryContent() {
       {
         field: "type",
         headerName: "Polarity",
-        width: 110,
+        width: 105,
         editable: true,
         cellEditor: "agSelectCellEditor",
         cellEditorParams: {
@@ -276,10 +274,10 @@ function AgGridVoucherEntryContent() {
           return (
             <div className="flex items-center h-full">
               <span
-                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black tracking-wider shadow-sm ${
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-black tracking-wider shadow-sm ${
                   isDr
-                    ? "bg-blue-500/15 text-blue-400 border border-blue-500/30"
-                    : "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                    ? "bg-blue-500/20 text-blue-400 border border-blue-500/40"
+                    : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
                 }`}
               >
                 {isDr ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownLeft className="w-3 h-3" />}
@@ -316,12 +314,12 @@ function AgGridVoucherEntryContent() {
         },
         cellRenderer: (params: any) => {
           if (!params.value) {
-            return <span className="text-zinc-500 italic text-xs">Select or press Enter to choose ledger...</span>;
+            return <span className="text-zinc-500 italic text-xs">Press Enter to select ledger account...</span>;
           }
           return (
-            <div className="flex items-center gap-2 h-full font-semibold text-foreground">
-              <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-              <span>{params.value}</span>
+            <div className="flex items-center gap-2 h-full font-semibold text-zinc-100">
+              <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0"></span>
+              <span className="truncate">{params.value}</span>
             </div>
           );
         },
@@ -343,7 +341,7 @@ function AgGridVoucherEntryContent() {
         flex: 1.2,
         editable: (params) => params.data.type === "Dr",
         valueFormatter: (params) => (params.value ? Number(params.value).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : ""),
-        cellClass: "text-right font-mono font-bold text-blue-500 dark:text-blue-400 flex items-center justify-end pr-4",
+        cellClass: "text-right font-mono font-bold text-blue-400 flex items-center justify-end pr-4",
         headerClass: "text-right pr-4",
         onCellValueChanged: (params) => {
           const idx = params.node?.rowIndex;
@@ -361,7 +359,7 @@ function AgGridVoucherEntryContent() {
         flex: 1.2,
         editable: (params) => params.data.type === "Cr",
         valueFormatter: (params) => (params.value ? Number(params.value).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : ""),
-        cellClass: "text-right font-mono font-bold text-emerald-500 dark:text-emerald-400 flex items-center justify-end pr-4",
+        cellClass: "text-right font-mono font-bold text-emerald-400 flex items-center justify-end pr-4",
         headerClass: "text-right pr-4",
         onCellValueChanged: (params) => {
           const idx = params.node?.rowIndex;
@@ -380,9 +378,9 @@ function AgGridVoucherEntryContent() {
         editable: true,
         cellRenderer: (params: any) => {
           if (!params.value) {
-            return <span className="text-zinc-500 text-xs italic">Optional row remark...</span>;
+            return <span className="text-zinc-600 text-xs italic">Optional remark...</span>;
           }
-          return <span className="text-xs text-muted-foreground">{params.value}</span>;
+          return <span className="text-xs text-zinc-300 truncate">{params.value}</span>;
         },
         onCellValueChanged: (params) => {
           const idx = params.node?.rowIndex;
@@ -395,7 +393,7 @@ function AgGridVoucherEntryContent() {
       },
       {
         headerName: "",
-        width: 60,
+        width: 50,
         pinned: "right",
         cellRenderer: (params: any) => {
           const idx = params.node?.rowIndex;
@@ -406,7 +404,7 @@ function AgGridVoucherEntryContent() {
                 onClick={() => removeRow(idx)}
                 disabled={rowData.length <= 2}
                 title="Remove Row"
-                className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors disabled:opacity-20 disabled:pointer-events-none cursor-pointer"
+                className="p-1 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors disabled:opacity-20 disabled:pointer-events-none cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -464,7 +462,6 @@ function AgGridVoucherEntryContent() {
         text: `Voucher #${res.data.voucher_number} posted successfully! Total: ₹${res.data.total_amount}`,
       });
 
-      // Reset form
       setRowData([
         { id: "1", type: "Dr", ledger_id: "", ledger_name: "", debit_amount: 0, credit_amount: 0, narration: "" },
         { id: "2", type: "Cr", ledger_id: "", ledger_name: "", debit_amount: 0, credit_amount: 0, narration: "" },
@@ -486,63 +483,58 @@ function AgGridVoucherEntryContent() {
   }, [registerSaveHandler, handleSubmit]);
 
   const typeConfig = VOUCHER_TYPE_STYLES[voucherType] || VOUCHER_TYPE_STYLES.JOURNAL;
-  const isDark = resolvedTheme !== "light";
-  const gridThemeClass = isDark ? "ag-theme-quartz-dark" : "ag-theme-quartz";
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 max-w-7xl mx-auto pb-20">
+      <div className="h-[calc(100vh-5rem)] flex flex-col max-w-[1600px] mx-auto px-2 sm:px-4 py-2 gap-2.5 overflow-hidden">
         
-        {/* Header Hero Bar */}
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-card border border-border/80 p-6 rounded-2xl shadow-sm backdrop-blur-sm">
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0">
-              <Layers className="w-6 h-6" />
+        {/* Compact Header Bar */}
+        <div className="bg-card border border-border/80 px-4 py-2.5 rounded-xl shadow-sm flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-sm shrink-0">
+              <Layers className="w-4 h-4" />
             </div>
             <div>
-              <div className="flex items-center gap-2.5">
-                <h1 className="text-2xl font-black tracking-tight text-foreground">AG Grid Voucher Entry</h1>
-                <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${typeConfig.badge}`}>
+              <div className="flex items-center gap-2">
+                <h1 className="text-base font-black tracking-tight text-foreground">Quick Journal Entry</h1>
+                <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full border ${typeConfig.badge}`}>
                   {typeConfig.label}
                 </span>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                High-density double-entry accounting engine. Navigate cells with{" "}
-                <kbd className="px-1.5 py-0.5 bg-zinc-800 text-zinc-200 border border-zinc-700 rounded text-[10px] font-mono shadow-sm">Tab</kbd>{" "}
-                and{" "}
-                <kbd className="px-1.5 py-0.5 bg-zinc-800 text-zinc-200 border border-zinc-700 rounded text-[10px] font-mono shadow-sm">Enter</kbd>.
+              <p className="text-[11px] text-muted-foreground hidden sm:block">
+                Double-entry spreadsheet engine. Navigate with <kbd className="px-1 py-0.2 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[9px]">Tab</kbd> / <kbd className="px-1 py-0.2 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[9px]">Enter</kbd>.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 w-full lg:w-auto justify-end">
+          {/* Quick Actions */}
+          <div className="flex items-center gap-2">
             <button
               onClick={addRow}
               type="button"
-              className="px-4 py-2.5 bg-secondary hover:bg-secondary/80 text-foreground rounded-xl text-xs font-bold border border-border transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+              className="px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-bold border border-border transition-all flex items-center gap-1 shadow-sm cursor-pointer"
             >
-              <Plus className="w-4 h-4 text-blue-400" />
+              <Plus className="w-3.5 h-3.5 text-blue-400" />
               <span>Add Line</span>
-              <span className="text-[10px] text-muted-foreground font-mono ml-1 px-1 bg-zinc-800/50 rounded">Alt+A</span>
+              <span className="text-[10px] text-muted-foreground font-mono ml-0.5">Alt+A</span>
             </button>
 
             {!isBalanced && difference > 0 && (
               <button
                 onClick={autoBalance}
                 type="button"
-                className="px-4 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 rounded-xl text-xs font-bold border border-amber-500/30 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+                className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 rounded-lg text-xs font-bold border border-amber-500/30 transition-all flex items-center gap-1 shadow-sm cursor-pointer"
                 title="Auto-fill the difference into a balancing line"
               >
-                <Scale className="w-4 h-4" />
-                <span>Auto-Balance</span>
-                <span className="text-[10px] font-mono ml-1 px-1 bg-amber-500/20 rounded">₹{difference.toFixed(2)}</span>
+                <Scale className="w-3.5 h-3.5" />
+                <span>Auto-Balance (₹{difference.toFixed(2)})</span>
               </button>
             )}
 
             <button
               onClick={handleSubmit}
               disabled={saving || !isBalanced}
-              className={`px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-2 cursor-pointer ${
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer ${
                 isBalanced
                   ? "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-blue-600/25"
                   : "bg-zinc-800 text-zinc-500 border border-zinc-700 cursor-not-allowed opacity-60"
@@ -550,12 +542,12 @@ function AgGridVoucherEntryContent() {
             >
               {saving ? (
                 <>
-                  <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
                   <span>Posting...</span>
                 </>
               ) : (
                 <>
-                  <CheckCircle2 className="w-4 h-4" />
+                  <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>Post Voucher</span>
                   <span className="text-[10px] font-mono px-1 py-0.2 bg-black/20 rounded">Ctrl+S</span>
                 </>
@@ -567,145 +559,110 @@ function AgGridVoucherEntryContent() {
         {/* Status Notification */}
         {statusMessage && (
           <div
-            className={`p-4 rounded-xl border text-xs font-semibold flex items-center justify-between shadow-sm animate-in fade-in ${
+            className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center justify-between shrink-0 shadow-sm animate-in fade-in ${
               statusMessage.type === "success"
                 ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
                 : "bg-red-500/10 border-red-500/30 text-red-400"
             }`}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               {statusMessage.type === "success" ? (
-                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
               ) : (
-                <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-400" />
               )}
               <span>{statusMessage.text}</span>
             </div>
-            <button
-              onClick={() => setStatusMessage(null)}
-              className="text-xs font-bold px-2 py-1 hover:bg-white/10 rounded-md transition-colors"
-            >
-              ✕
-            </button>
+            <button onClick={() => setStatusMessage(null)} className="text-xs font-bold px-1.5 py-0.5">✕</button>
           </div>
         )}
 
-        {/* Quick Templates Bar */}
-        <div className="bg-card border border-border/80 rounded-2xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-            <Zap className="w-4 h-4 text-amber-400" />
-            <span>Quick 1-Click Accounting Templates:</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => applyTemplate("CONTRA_DEPOSIT")}
-              className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded-lg text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5"
-            >
-              <span>🏦 Bank Deposit (Contra)</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => applyTemplate("VENDOR_PAYMENT")}
-              className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5"
-            >
-              <span>💸 Vendor Payment</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => applyTemplate("CUSTOMER_RECEIPT")}
-              className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5"
-            >
-              <span>📥 Customer Receipt</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => applyTemplate("EXPENSE_JOURNAL")}
-              className="px-3 py-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 rounded-lg text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5"
-            >
-              <span>📊 Expense Journal</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Voucher Meta Form */}
-        <div className="bg-card border border-border/80 rounded-2xl p-5 shadow-sm grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Compact Metadata & Template Toolbar */}
+        <div className="bg-card border border-border/80 px-3.5 py-2 rounded-xl shadow-sm grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2.5 items-center shrink-0">
           <div>
-            <label className="block text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-              <Tag className="w-3.5 h-3.5 text-blue-400" />
-              <span>Voucher Type</span>
-            </label>
+            <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Type</label>
             <select
               value={voucherType}
               onChange={(e) => setVoucherType(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-700 text-white px-3 py-2.5 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 font-semibold cursor-pointer"
+              className="w-full bg-zinc-900 border border-zinc-700 text-white px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
             >
-              <option value="JOURNAL">Journal Voucher (F7)</option>
-              <option value="PAYMENT">Payment Voucher (F5)</option>
-              <option value="RECEIPT">Receipt Voucher (F6)</option>
-              <option value="CONTRA">Contra Voucher (F4)</option>
-              <option value="SALES">Sales Entry (F8)</option>
-              <option value="PURCHASE">Purchase Entry (F9)</option>
+              <option value="JOURNAL">Journal (F7)</option>
+              <option value="PAYMENT">Payment (F5)</option>
+              <option value="RECEIPT">Receipt (F6)</option>
+              <option value="CONTRA">Contra (F4)</option>
+              <option value="SALES">Sales (F8)</option>
+              <option value="PURCHASE">Purchase (F9)</option>
             </select>
           </div>
 
           <div>
-            <label className="block text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Voucher Date</span>
-            </label>
+            <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Date</label>
             <input
               type="date"
               value={voucherDate}
               onChange={(e) => setVoucherDate(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-700 text-white px-3 py-2 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              className="w-full bg-zinc-900 border border-zinc-700 text-white px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 font-mono"
             />
           </div>
 
           <div>
-            <label className="block text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-              <Hash className="w-3.5 h-3.5 text-amber-400" />
-              <span>Voucher No. (Auto / Custom)</span>
-            </label>
+            <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Voucher No.</label>
             <input
               type="text"
               value={voucherNumber}
               onChange={(e) => setVoucherNumber(e.target.value)}
-              placeholder="Auto-generated if blank"
-              className="w-full bg-zinc-900 border border-zinc-700 text-white px-3 py-2 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 font-mono placeholder:text-zinc-500"
+              placeholder="Auto if blank"
+              className="w-full bg-zinc-900 border border-zinc-700 text-white px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 font-mono placeholder:text-zinc-500"
             />
           </div>
 
-          <div>
-            <label className="block text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-              <FileText className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Overall Narration / Remark</span>
-            </label>
+          <div className="col-span-2 lg:col-span-2">
+            <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Narration</label>
             <input
               type="text"
               value={mainNarration}
               onChange={(e) => setMainNarration(e.target.value)}
               placeholder="Overall voucher description..."
-              className="w-full bg-zinc-900 border border-zinc-700 text-white px-3 py-2 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-zinc-500"
+              className="w-full bg-zinc-900 border border-zinc-700 text-white px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-zinc-500"
             />
+          </div>
+
+          <div className="col-span-2 lg:col-span-1">
+            <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Template</label>
+            <select
+              onChange={(e) => {
+                if (e.target.value) {
+                  applyTemplate(e.target.value);
+                  e.target.value = "";
+                }
+              }}
+              defaultValue=""
+              className="w-full bg-blue-500/10 border border-blue-500/30 text-blue-400 px-2 py-1.5 rounded-lg text-xs outline-none font-semibold cursor-pointer"
+            >
+              <option value="" disabled>⚡ 1-Click Preset...</option>
+              <option value="CONTRA_DEPOSIT">🏦 Bank Deposit (Contra)</option>
+              <option value="VENDOR_PAYMENT">💸 Vendor Payment</option>
+              <option value="CUSTOMER_RECEIPT">📥 Customer Receipt</option>
+              <option value="EXPENSE_JOURNAL">📊 Expense Journal</option>
+            </select>
           </div>
         </div>
 
-        {/* AG Grid Data Entry Table */}
-        <div className="bg-card border border-border/80 rounded-2xl shadow-xl overflow-hidden flex flex-col transition-all">
-          <div className="p-3 bg-zinc-900/60 border-b border-border flex items-center justify-between text-xs text-muted-foreground">
+        {/* AG Grid Data Entry Table - Fills remaining viewport cleanly */}
+        <div className="bg-card border border-border/80 rounded-xl shadow-lg overflow-hidden flex flex-col flex-1 min-h-0">
+          <div className="px-3 py-1.5 bg-zinc-900/90 border-b border-border flex items-center justify-between text-xs text-muted-foreground shrink-0">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span className="font-semibold text-foreground">Double-Entry Ledger Grid</span>
-              <span className="text-[11px] text-zinc-500">({rowData.length} lines staged)</span>
+              <span className="font-semibold text-foreground">Double-Entry Spreadsheet</span>
+              <span className="text-[11px] text-zinc-500">({rowData.length} rows staged)</span>
             </div>
-            <div className="flex items-center gap-3 text-[11px]">
-              <span className="text-zinc-400">Press <kbd className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[10px]">Alt+C</kbd> to quick-create ledger</span>
+            <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+              <span>Press <kbd className="px-1 py-0.2 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[9px]">Alt+C</kbd> to quick-create ledger</span>
             </div>
           </div>
 
           {/* Grid Viewport */}
-          <div className={`${gridThemeClass} w-full`} style={{ height: 380 }}>
+          <div className="ag-theme-quartz ag-theme-quartz-dark w-full flex-1 min-h-0">
             <AgGridReact
               rowData={rowData}
               columnDefs={columnDefs}
@@ -716,40 +673,40 @@ function AgGridVoucherEntryContent() {
               enterNavigatesVerticallyAfterEdit={true}
               singleClickEdit={true}
               suppressCellFocus={false}
-              rowHeight={48}
-              headerHeight={44}
+              rowHeight={42}
+              headerHeight={38}
             />
           </div>
 
-          {/* Modern Bottom Totals & Balance Bar */}
-          <div className="bg-zinc-950 p-5 border-t border-border flex flex-col lg:flex-row items-center justify-between gap-4 font-mono text-sm">
-            <div className="flex flex-wrap items-center gap-6">
-              <div className="flex items-center gap-2.5 bg-zinc-900/80 px-4 py-2 rounded-xl border border-zinc-800">
-                <span className="text-xs text-zinc-400 font-sans font-semibold">Total Debit:</span>
-                <span className="text-blue-400 font-black text-base">
+          {/* Docked Totals & Real-Time Balance Status Bar - Always Visible */}
+          <div className="bg-zinc-950 px-4 py-2.5 border-t border-border flex flex-wrap items-center justify-between gap-3 font-mono text-xs shrink-0">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1.5 bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800">
+                <span className="text-[11px] text-zinc-400 font-sans font-semibold">Total Debit:</span>
+                <span className="text-blue-400 font-black text-sm">
                   ₹{totalDebit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </span>
               </div>
-              <div className="flex items-center gap-2.5 bg-zinc-900/80 px-4 py-2 rounded-xl border border-zinc-800">
-                <span className="text-xs text-zinc-400 font-sans font-semibold">Total Credit:</span>
-                <span className="text-emerald-400 font-black text-base">
+              <div className="flex items-center gap-1.5 bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800">
+                <span className="text-[11px] text-zinc-400 font-sans font-semibold">Total Credit:</span>
+                <span className="text-emerald-400 font-black text-sm">
                   ₹{totalCredit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </span>
               </div>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               {isBalanced ? (
-                <div className="px-4 py-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-xl font-bold text-xs flex items-center gap-2 shadow-sm">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>BALANCED · Difference ₹0.00</span>
+                <div className="px-3 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow-sm">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>BALANCED · ₹0.00 Diff</span>
                 </div>
               ) : (
-                <div className="flex items-center gap-3">
-                  <div className="px-4 py-2 bg-red-500/10 text-red-400 border border-red-500/30 rounded-xl font-bold text-xs flex items-center gap-2 shadow-sm">
-                    <span className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse"></span>
-                    <AlertCircle className="w-4 h-4 text-red-400" />
+                <div className="flex items-center gap-2">
+                  <div className="px-3 py-1.5 bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow-sm">
+                    <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span>
+                    <AlertCircle className="w-3.5 h-3.5 text-red-400" />
                     <span>
                       UNBALANCED · Diff: ₹{difference.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                     </span>
@@ -757,39 +714,12 @@ function AgGridVoucherEntryContent() {
                   <button
                     type="button"
                     onClick={autoBalance}
-                    className="px-3.5 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl font-sans font-bold text-xs transition-colors cursor-pointer"
+                    className="px-2.5 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg font-sans font-bold text-xs transition-colors cursor-pointer"
                   >
-                    Fix Balance
+                    Auto-Fix
                   </button>
                 </div>
               )}
-            </div>
-          </div>
-        </div>
-
-        {/* Keyboard Reference Footer */}
-        <div className="p-4 bg-card/60 border border-border/80 rounded-xl flex flex-wrap items-center justify-between gap-4 text-xs text-muted-foreground">
-          <div className="flex flex-wrap items-center gap-4">
-            <span className="font-semibold text-foreground">Keyboard Shortcuts:</span>
-            <div className="flex items-center gap-1.5">
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[10px]">Tab</kbd>
-              <span>Next Cell</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[10px]">Enter</kbd>
-              <span>Commit & Edit Next</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[10px]">Alt+A</kbd>
-              <span>Add Row</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[10px]">Alt+B</kbd>
-              <span>Auto-Balance</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[10px]">Ctrl+S</kbd>
-              <span>Post Voucher</span>
             </div>
           </div>
         </div>
@@ -801,7 +731,7 @@ function AgGridVoucherEntryContent() {
 
 export default function AgGridVoucherEntryPage() {
   return (
-    <Suspense fallback={<div className="p-12 text-center text-gray-400">Loading High-Density Grid...</div>}>
+    <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading High-Density Grid...</div>}>
       <AgGridVoucherEntryContent />
     </Suspense>
   );
