@@ -404,16 +404,16 @@ export default function CategoryDetailPage() {
                   <select
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value as SortOption)}
-                    className="bg-muted/40 border border-border/70 text-foreground text-xs font-medium rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer"
+                    className="bg-zinc-900 border border-zinc-700 text-white text-xs font-medium rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer"
                   >
-                    <option value="NAME_ASC">Name (A → Z)</option>
-                    <option value="NAME_DESC">Name (Z → A)</option>
-                    <option value="MRP_DESC">MRP: High → Low</option>
-                    <option value="MRP_ASC">MRP: Low → High</option>
-                    <option value="PURCHASE_DESC">Purchase Price: High → Low</option>
-                    <option value="PURCHASE_ASC">Purchase Price: Low → High</option>
-                    <option value="STOCK_DESC">Stock: High → Low</option>
-                    <option value="STOCK_ASC">Stock: Low → High</option>
+                    <option value="NAME_ASC" className="bg-zinc-900 text-white py-1">Name (A → Z)</option>
+                    <option value="NAME_DESC" className="bg-zinc-900 text-white py-1">Name (Z → A)</option>
+                    <option value="MRP_DESC" className="bg-zinc-900 text-white py-1">MRP: High → Low</option>
+                    <option value="MRP_ASC" className="bg-zinc-900 text-white py-1">MRP: Low → High</option>
+                    <option value="PURCHASE_DESC" className="bg-zinc-900 text-white py-1">Purchase Price: High → Low</option>
+                    <option value="PURCHASE_ASC" className="bg-zinc-900 text-white py-1">Purchase Price: Low → High</option>
+                    <option value="STOCK_DESC" className="bg-zinc-900 text-white py-1">Stock: High → Low</option>
+                    <option value="STOCK_ASC" className="bg-zinc-900 text-white py-1">Stock: Low → High</option>
                   </select>
                 </div>
 

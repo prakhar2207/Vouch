@@ -239,20 +239,168 @@ class VoucherDetailAPIView(APIView):
 
     def patch(self, request, voucher_id):
         try:
-            from apps.accounting.models import Voucher
-            voucher = Voucher.objects.get(id=voucher_id, company__users__user=request.user)
+            from apps.accounting.models import Voucher, VoucherItem, LedgerEntry
+            from apps.accounting.services.voucher_service import VoucherService
+            from apps.inventory.models import Product, ProductCategory
+            from apps.gst.services.gst_calculator import GSTCalculator
+            from decimal import Decimal
+
+            voucher = Voucher.objects.select_related('company', 'party_ledger').get(
+                id=voucher_id, 
+                company__users__user=request.user
+            )
+            company = voucher.company
             data = request.data
 
-            if 'voucher_number' in data and data['voucher_number']:
-                voucher.voucher_number = data['voucher_number']
-                voucher.reference_number = data['voucher_number']
-            if 'voucher_date' in data and data['voucher_date']:
-                voucher.voucher_date = data['voucher_date']
-            if 'narration' in data:
-                voucher.narration = data['narration']
-            
-            voucher.save()
-            return Response({"success": True, "message": "Invoice updated successfully."})
+            with transaction.atomic():
+                if 'voucher_number' in data and data['voucher_number']:
+                    voucher.voucher_number = str(data['voucher_number']).strip()
+                    voucher.reference_number = str(data['voucher_number']).strip()
+                if 'voucher_date' in data and data['voucher_date']:
+                    voucher.voucher_date = data['voucher_date']
+                if 'narration' in data:
+                    voucher.narration = data['narration']
+
+                # If party name changed
+                if 'party_name' in data and str(data['party_name']).strip() and voucher.party_ledger:
+                    new_party_name = str(data['party_name']).strip()
+                    if voucher.party_ledger.name != new_party_name:
+                        voucher.party_ledger.name = new_party_name
+                        voucher.party_ledger.save(update_fields=['name'])
+
+                # Full line items update
+                if 'items' in data and isinstance(data['items'], list):
+                    # 1. Reverse previous accounting & stock if POSTED
+                    if voucher.status == 'POSTED':
+                        VoucherService.cancel_voucher(voucher)
+
+                    # 2. Clear old items and ledger entries
+                    voucher.items.all().delete()
+                    voucher.ledger_entries.all().delete()
+
+                    # 3. Process each updated line item
+                    total_invoice_value = Decimal('0.00')
+                    total_taxable_value = Decimal('0.00')
+                    total_cgst = Decimal('0.00')
+                    total_sgst = Decimal('0.00')
+                    total_igst = Decimal('0.00')
+
+                    party_ledger = voucher.party_ledger
+
+                    for item in data['items']:
+                        raw_name = str(item.get('product_name') or item.get('description') or 'Unnamed Product').strip()
+                        if not raw_name:
+                            continue
+
+                        qty = Decimal(str(item.get('quantity', 1)))
+                        rate = Decimal(str(item.get('rate', 0)))
+                        hsn = str(item.get('hsn_code', '')).strip()
+                        gst_pct = Decimal(str(item.get('gst_rate', 18)))
+                        unit = str(item.get('unit', 'PCS')).strip().upper()
+
+                        # Resolve or create product
+                        product = Product.objects.filter(company=company, name__iexact=raw_name).first()
+                        if not product:
+                            category = ProductCategory.objects.filter(company=company).first()
+                            if not category:
+                                category = ProductCategory.objects.create(
+                                    company=company,
+                                    name="General Purchases",
+                                    hsn_code=hsn,
+                                    gst_rate=gst_pct
+                                )
+                            import uuid
+                            sku = f"{raw_name[:4].upper()}-{uuid.uuid4().hex[:6].upper()}"
+                            product = Product.objects.create(
+                                company=company,
+                                category=category,
+                                name=raw_name,
+                                sku=sku,
+                                hsn_code=hsn or category.hsn_code,
+                                gst_rate=gst_pct,
+                                unit=unit,
+                                purchase_price=rate,
+                                selling_price=rate * Decimal('1.25')
+                            )
+                        else:
+                            if rate > Decimal('0.00'):
+                                product.purchase_price = rate
+                            if hsn:
+                                product.hsn_code = hsn
+                            if gst_pct > Decimal('0.00'):
+                                product.gst_rate = gst_pct
+                            product.save()
+
+                        taxable_amount = qty * rate
+                        taxes = GSTCalculator.calculate_taxes(
+                            company_state_code=company.state_code,
+                            party_state_code=party_ledger.state_code if party_ledger else company.state_code,
+                            taxable_amount=taxable_amount,
+                            gst_rate=gst_pct
+                        )
+                        total_line_amount = taxable_amount + taxes['total_tax']
+
+                        VoucherItem.objects.create(
+                            voucher=voucher,
+                            product=product,
+                            quantity=qty,
+                            rate=rate,
+                            discount_percent=Decimal('0.00'),
+                            discount_amount=Decimal('0.00'),
+                            taxable_amount=taxable_amount,
+                            gst_rate=gst_pct,
+                            total_amount=total_line_amount
+                        )
+
+                        total_taxable_value += taxable_amount
+                        total_cgst += taxes['cgst']
+                        total_sgst += taxes['sgst']
+                        total_igst += taxes['igst']
+                        total_invoice_value += total_line_amount
+
+                    voucher.total_amount = total_invoice_value
+                    voucher.status = 'DRAFT'
+                    voucher.save()
+
+                    # 4. Re-create double-entry ledger entries
+                    if party_ledger:
+                        LedgerEntry.objects.create(
+                            voucher=voucher,
+                            ledger=party_ledger,
+                            debit_amount=Decimal('0.00'),
+                            credit_amount=total_invoice_value
+                        )
+
+                    from apps.ledgers.models import Ledger, LedgerGroup
+                    purchase_ledger = Ledger.objects.filter(company=company, name__icontains='Purchase').first()
+                    if not purchase_ledger:
+                        exp_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Purchase Accounts', defaults={'nature': 'EXPENSE'})
+                        purchase_ledger, _ = Ledger.objects.get_or_create(company=company, name='Purchase Account', defaults={'group': exp_grp, 'ledger_type': 'GENERAL'})
+
+                    LedgerEntry.objects.create(
+                        voucher=voucher,
+                        ledger=purchase_ledger,
+                        debit_amount=total_taxable_value,
+                        credit_amount=Decimal('0.00')
+                    )
+
+                    tax_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Duties & Taxes', defaults={'nature': 'LIABILITY'})
+                    if total_cgst > 0:
+                        input_cgst, _ = Ledger.objects.get_or_create(company=company, name='Input CGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
+                        LedgerEntry.objects.create(voucher=voucher, ledger=input_cgst, debit_amount=total_cgst, credit_amount=Decimal('0.00'))
+                    if total_sgst > 0:
+                        input_sgst, _ = Ledger.objects.get_or_create(company=company, name='Input SGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
+                        LedgerEntry.objects.create(voucher=voucher, ledger=input_sgst, debit_amount=total_sgst, credit_amount=Decimal('0.00'))
+                    if total_igst > 0:
+                        input_igst, _ = Ledger.objects.get_or_create(company=company, name='Input IGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
+                        LedgerEntry.objects.create(voucher=voucher, ledger=input_igst, debit_amount=total_igst, credit_amount=Decimal('0.00'))
+
+                    # 5. Re-post voucher to update stock & balances
+                    VoucherService.post_voucher(voucher)
+                else:
+                    voucher.save()
+
+            return Response({"success": True, "message": "Purchase invoice and items updated successfully."})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
