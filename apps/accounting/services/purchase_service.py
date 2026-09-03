@@ -77,6 +77,12 @@ class PurchaseInvoiceService:
 
             qty = Decimal(str(item['quantity']))
             rate = Decimal(str(item['rate']))
+
+            # Update product purchase price to latest purchase rate
+            if not created and rate > Decimal('0.00'):
+                product.purchase_price = rate
+                product.save(update_fields=['purchase_price'])
+
             discount_pct = Decimal(str(item.get('discount_percent', '0.00')))
             
             gross = qty * rate

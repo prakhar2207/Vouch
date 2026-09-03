@@ -260,3 +260,49 @@ class WarehouseListView(APIView):
             return Response({"success": True, "data": data})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
+
+
+class PriceListBulkImportAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, company_id):
+        try:
+            from apps.companies.models import Company
+            from .services.price_list_service import PriceListService
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            category_id = request.data.get('category_id')
+            brand = request.data.get('brand', '')
+            items = request.data.get('items', [])
+
+            if not category_id:
+                return Response({"success": False, "error": "Category is required."}, status=400)
+            if not items:
+                return Response({"success": False, "error": "No items provided for import."}, status=400)
+
+            result = PriceListService.bulk_import_price_list(
+                company=company,
+                category_id=category_id,
+                brand=brand,
+                items_data=items
+            )
+            return Response(result)
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
+
+class ParsePriceListPdfAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, company_id):
+        try:
+            from apps.companies.models import Company
+            from .services.price_list_service import PriceListService
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            file_obj = request.FILES.get('file')
+            if not file_obj:
+                return Response({"success": False, "error": "PDF file is required."}, status=400)
+
+            items = PriceListService.parse_pdf_price_list(file_obj)
+            return Response({"success": True, "count": len(items), "items": items})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
