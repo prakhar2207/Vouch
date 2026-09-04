@@ -1,4 +1,4 @@
-﻿from rest_framework.views import APIView
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
@@ -24,8 +24,10 @@ class OCRExtractAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        custom_api_key = request.headers.get('X-Gemini-Key') or request.data.get('gemini_api_key')
+
         try:
-            extracted_data = InvoiceOCRService.extract_from_base64(file_base64, mime_type)
+            extracted_data = InvoiceOCRService.extract_from_base64(file_base64, mime_type, custom_api_key=custom_api_key)
             return Response({
                 "success": True,
                 "data": extracted_data

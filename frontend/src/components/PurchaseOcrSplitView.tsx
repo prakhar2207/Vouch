@@ -31,6 +31,7 @@ interface ExtractedInvoice {
   line_items: LineItem[];
   is_mock?: boolean;
   mock_reason?: string;
+  source?: string;
 }
 
 interface PurchaseOcrSplitViewProps {
@@ -55,6 +56,17 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
   const [invoice, setInvoice] = useState<ExtractedInvoice | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
+
+  // Gemini API Key State (synchronized with localStorage vouch_gemini_key)
+  const [geminiApiKey, setGeminiApiKey] = useState<string>("");
+  const [showApiKeyAccordion, setShowApiKeyAccordion] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const savedKey = localStorage.getItem("vouch_gemini_key") || "";
+      if (savedKey) setGeminiApiKey(savedKey);
+    }
+  }, []);
 
   // Inventory Category Allocation State
   const [categories, setCategories] = useState<any[]>([]);
@@ -201,11 +213,18 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         }
 
         const token = getAccessToken();
-        const headers = { Authorization: `Bearer ${token}` };
+        const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+        if (geminiApiKey.trim()) {
+          headers["X-Gemini-Key"] = geminiApiKey.trim();
+        }
 
         const res = await axios.post(
           `${API_BASE_URL}/api/ocr/extract/`,
-          { file_base64: base64, mime_type: mime },
+          {
+            file_base64: base64,
+            mime_type: mime,
+            gemini_api_key: geminiApiKey.trim() || undefined
+          },
           { headers }
         );
 
@@ -347,6 +366,86 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
   return (
     <div className="space-y-6">
+      {/* AI Vision OCR Engine & Settings Bar */}
+      <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">✨</span>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-foreground">AI Vision OCR Engine</span>
+                {geminiApiKey.trim() ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                    Gemini Vision AI (Active)
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                    Native Vision OCR (Active)
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {geminiApiKey.trim()
+                  ? "High-precision AI semantic parsing active for phone photos and scanned bills."
+                  : "Using built-in native OCR. Connect a free Google Gemini key for maximum recognition on photos."}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowApiKeyAccordion(!showApiKeyAccordion)}
+            className="text-xs text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 rounded-lg transition-colors cursor-pointer"
+          >
+            <span>{showApiKeyAccordion ? "Hide Key Settings" : "Configure Gemini Key"}</span>
+            <svg className={`w-3.5 h-3.5 transition-transform ${showApiKeyAccordion ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+          </button>
+        </div>
+
+        {showApiKeyAccordion && (
+          <div className="mt-3 pt-3 border-t border-border space-y-2.5">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="password"
+                placeholder="Paste your Google Gemini API Key"
+                value={geminiApiKey}
+                onChange={(e) => {
+                  setGeminiApiKey(e.target.value);
+                  if (typeof window !== "undefined") {
+                    localStorage.setItem("vouch_gemini_key", e.target.value.trim());
+                  }
+                }}
+                className="flex-1 bg-zinc-900 border border-border text-white text-xs px-3 py-2 rounded-lg font-mono focus:border-blue-500 focus:outline-none"
+              />
+              {geminiApiKey && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGeminiApiKey("");
+                    if (typeof window !== "undefined") {
+                      localStorage.removeItem("vouch_gemini_key");
+                    }
+                  }}
+                  className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-semibold rounded-lg border border-red-500/20 transition-colors cursor-pointer"
+                >
+                  Clear Key
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center justify-between text-[11px] text-muted-foreground gap-2">
+              <span>Key is stored securely in your browser storage and shared across invoice and price list imports.</span>
+              <a
+                href="https://aistudio.google.com/app/apikey"
+                target="_blank"
+                rel="noreferrer"
+                className="text-blue-400 hover:underline font-semibold"
+              >
+                Get a 100% Free Gemini API Key from Google AI Studio →
+              </a>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Upload Banner */}
       {!fileBase64 && (
         <div className="border-2 border-dashed border-zinc-700 bg-zinc-900/40 rounded-2xl p-10 text-center hover:border-blue-500 transition-colors">
@@ -362,16 +461,16 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
               📄
             </div>
             <div className="space-y-1">
-              <h3 className="text-lg font-bold text-white">Upload Supplier Invoice (PDF or Image)</h3>
+              <h3 className="text-lg font-bold text-white">Upload Supplier Invoice (Photo or PDF)</h3>
               <p className="text-xs text-gray-400">
-                Supports PDF, PNG, JPEG, WebP. Files over 2MB are automatically compressed.
+                Supports camera photos (JPEG, PNG, WebP) and digital or scanned PDFs.
               </p>
             </div>
             <button
               onClick={() => fileInputRef.current?.click()}
               className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-xs shadow-lg transition-colors cursor-pointer"
             >
-              Browse Document
+              Browse Document / Photo
             </button>
           </div>
         </div>
@@ -382,10 +481,10 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         <div className="p-8 bg-zinc-900 border border-blue-500/30 rounded-2xl flex flex-col items-center justify-center space-y-3 shadow-xl animate-in fade-in">
           <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
           <div className="text-sm font-bold text-white flex items-center gap-2">
-            <span>{scanStatusToast || "AI is scanning your bill, please wait a few seconds..."}</span>
+            <span>{scanStatusToast || "Scanning your bill, please wait a few seconds..."}</span>
           </div>
           <div className="text-xs text-blue-400 font-mono bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20 animate-pulse">
-            Gemini AI Invoice Extraction in Progress
+            {geminiApiKey.trim() ? "Gemini Vision AI Processing" : "Native Vision OCR Processing"}
           </div>
         </div>
       )}
@@ -395,6 +494,19 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-xs text-red-400 flex items-center justify-between">
           <span>{error}</span>
           <button onClick={() => setError(null)} className="font-bold ml-4">✕</button>
+        </div>
+      )}
+
+      {/* Unreadable / Mock Banner */}
+      {invoice?.is_mock && !loading && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-start gap-3">
+          <span className="text-lg">⚠️</span>
+          <div className="space-y-1">
+            <div className="font-bold">Text extraction was partial or unclear from this photo</div>
+            <p className="text-amber-400/90 text-[11px]">
+              {invoice.mock_reason || "Could not recognize all invoice details automatically. Please verify or fill in the supplier and item details on the right, or configure a free Google Gemini key above for higher vision accuracy."}
+            </p>
+          </div>
         </div>
       )}
 
@@ -412,8 +524,25 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
             <div className="flex items-center gap-3">
               <span className="text-xl">📑</span>
               <div>
-                <div className="text-sm font-bold text-white">{fileName}</div>
-                <div className="text-xs text-gray-400 font-mono">
+                <div className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
+                  <span>{fileName}</span>
+                  {invoice.source === "AI_GEMINI_VISION" && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                      ✨ Gemini Vision AI
+                    </span>
+                  )}
+                  {invoice.source === "RAPID_OCR_VISION" && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                      ⚡ Native Vision OCR
+                    </span>
+                  )}
+                  {invoice.source === "PDF_TEXT_STREAM" && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      📄 PDF Text Stream
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-gray-400 font-mono mt-0.5">
                   {fileMimeType} • Extracted in-memory
                 </div>
               </div>
