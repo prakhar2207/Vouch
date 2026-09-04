@@ -121,6 +121,7 @@ class ProductListView(APIView):
                     "wholesaler_price": p.wholesaler_price,
                     "min_selling_price": p.min_selling_price,
                     "purchase_price": p.purchase_price,
+                    "purchase_price_from_invoice": getattr(p, 'purchase_price_from_invoice', False),
                     "stock_quantity": p.stock_quantity,
                     "track_batches": p.track_batches,
                     "track_serial_numbers": p.track_serial_numbers

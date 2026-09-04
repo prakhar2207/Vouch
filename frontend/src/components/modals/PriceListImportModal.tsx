@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 
 interface PriceListItem {
+  id?: string;
   name: string;
   selling_price: number;
   purchase_price: number;
@@ -59,6 +60,9 @@ export default function PriceListImportModal({
   const [parsing, setParsing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [parsedItems, setParsedItems] = useState<PriceListItem[]>([]);
+  const [selectedSection, setSelectedSection] = useState<string>("ALL");
+  const [previewPage, setPreviewPage] = useState<number>(1);
+  const PAGE_SIZE = 100;
   const [filterSearch, setFilterSearch] = useState("");
   const [discountPercent, setDiscountPercent] = useState<number>(30);
   const [geminiApiKey, setGeminiApiKey] = useState("");
@@ -212,6 +216,7 @@ export default function PriceListImportModal({
           const unitVal = unitIdx !== -1 && unitIdx < row.length ? String(row[unitIdx] || "PCS").trim().toUpperCase() : "PCS";
 
           items.push({
+            id: `item_ss_${i}`,
             name: rawName,
             selling_price: mrpVal,
             purchase_price: Math.round(purchaseVal * 100) / 100,
@@ -223,6 +228,8 @@ export default function PriceListImportModal({
         }
 
         setParsedItems(items);
+        setSelectedSection("ALL");
+        setPreviewPage(1);
         setParsingEngine("Spreadsheet Importer");
         toast.success(`Extracted ${items.length} items from spreadsheet`);
       } else if (fileName.endsWith(".pdf")) {
@@ -256,7 +263,8 @@ export default function PriceListImportModal({
         }
 
         if (res.data.success && rawList.length > 0) {
-          const rawItems = rawList.map((it: any) => ({
+          const rawItems = rawList.map((it: any, idx: number) => ({
+            id: `item_pdf_${idx}`,
             name: it.name || it.item_name,
             selling_price: parseFloat(it.mrp || it.selling_price || 0),
             purchase_price: parseFloat(it.purchase_price || (it.mrp ? it.mrp * 0.70 : 0)),
@@ -267,6 +275,8 @@ export default function PriceListImportModal({
           }));
 
           setParsedItems(rawItems);
+          setSelectedSection("ALL");
+          setPreviewPage(1);
           if (res.data.brand && !brand) {
             setBrand(res.data.brand);
           }
@@ -350,22 +360,56 @@ export default function PriceListImportModal({
     }
   };
 
-  const updateItemField = (idx: number, field: keyof PriceListItem, val: any) => {
-    setParsedItems((prev) => {
-      const copy = [...prev];
-      copy[idx] = { ...copy[idx], [field]: val };
-      return copy;
+  const updateItemField = (id: string | undefined, index: number, field: keyof PriceListItem, val: any) => {
+    setParsedItems((prev) =>
+      prev.map((item, i) => {
+        if (id ? item.id === id : i === index) {
+          return { ...item, [field]: val };
+        }
+        return item;
+      })
+    );
+  };
+
+  const removeItem = (id: string | undefined, index: number) => {
+    setParsedItems((prev) => prev.filter((item, i) => (id ? item.id !== id : i !== index)));
+  };
+
+  const availableSections = useMemo(() => {
+    const counts: Record<string, number> = {};
+    parsedItems.forEach((item) => {
+      const s = item.section?.trim() || "Other";
+      counts[s] = (counts[s] || 0) + 1;
     });
-  };
+    return counts;
+  }, [parsedItems]);
 
-  const removeItem = (idx: number) => {
-    setParsedItems((prev) => prev.filter((_, i) => i !== idx));
-  };
+  const sectionList = useMemo(() => {
+    return Object.keys(availableSections).sort();
+  }, [availableSections]);
 
-  const filteredItems = parsedItems.filter((i) =>
-    i.name.toLowerCase().includes(filterSearch.toLowerCase()) ||
-    (i.section && i.section.toLowerCase().includes(filterSearch.toLowerCase()))
-  );
+  const filteredItems = useMemo(() => {
+    const query = filterSearch.trim().toLowerCase();
+    return parsedItems.filter((i) => {
+      // 1. Section Filter Tab
+      if (selectedSection !== "ALL") {
+        const itemSec = i.section?.trim() || "Other";
+        if (itemSec !== selectedSection) return false;
+      }
+      // 2. Search Text
+      if (!query) return true;
+      if (i.name.toLowerCase().includes(query)) return true;
+      // Only match section if query is > 2 characters
+      if (query.length > 2 && i.section && i.section.toLowerCase().includes(query)) return true;
+      return false;
+    });
+  }, [parsedItems, selectedSection, filterSearch]);
+
+  const totalPages = Math.ceil(filteredItems.length / PAGE_SIZE) || 1;
+  const paginatedItems = useMemo(() => {
+    const start = (previewPage - 1) * PAGE_SIZE;
+    return filteredItems.slice(start, start + PAGE_SIZE);
+  }, [filteredItems, previewPage]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -585,11 +629,50 @@ export default function PriceListImportModal({
                     type="text"
                     placeholder="Search size, code, section..."
                     value={filterSearch}
-                    onChange={(e) => setFilterSearch(e.target.value)}
+                    onChange={(e) => { setFilterSearch(e.target.value); setPreviewPage(1); }}
                     className="w-full bg-muted/40 border border-border/70 rounded-lg pl-8 pr-2.5 py-1 text-xs text-foreground outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
               </div>
+
+              {/* Section Filter Tabs */}
+              {sectionList.length > 1 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedSection("ALL"); setPreviewPage(1); }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                      selectedSection === "ALL"
+                        ? "bg-primary text-primary-foreground shadow-xs"
+                        : "bg-muted/40 text-muted-foreground hover:text-foreground border border-border/50"
+                    }`}
+                  >
+                    All Sections ({parsedItems.length})
+                  </button>
+                  {sectionList.map((sec: string) => {
+                    const count = availableSections[sec] || 0;
+                    const isSelected = selectedSection === sec;
+                    const displayLabel = sec.replace(/\s*\([^)]*\)/, "").trim();
+                    return (
+                      <button
+                        key={sec}
+                        type="button"
+                        onClick={() => { setSelectedSection(sec); setPreviewPage(1); }}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 border ${
+                          isSelected
+                            ? "bg-blue-600 text-white border-blue-500 shadow-xs"
+                            : "bg-muted/40 text-muted-foreground hover:text-foreground border-border/50"
+                        }`}
+                      >
+                        <span>{displayLabel}</span>
+                        <span className={`text-[10px] font-mono px-1 rounded ${isSelected ? 'bg-blue-800 text-blue-100' : 'bg-muted text-muted-foreground'}`}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Items Grid */}
               <div className="border border-border/70 rounded-xl overflow-hidden max-h-72 overflow-y-auto">
@@ -606,13 +689,13 @@ export default function PriceListImportModal({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/30">
-                    {filteredItems.slice(0, 150).map((item, idx) => (
-                      <tr key={idx} className="hover:bg-muted/20">
+                    {paginatedItems.map((item: PriceListItem, idx: number) => (
+                      <tr key={item.id || idx} className="hover:bg-muted/20">
                         <td className="p-2">
                           <input
                             type="text"
                             value={item.name}
-                            onChange={(e) => updateItemField(idx, "name", e.target.value)}
+                            onChange={(e) => updateItemField(item.id, idx, "name", e.target.value)}
                             className="w-full bg-transparent text-foreground font-bold outline-none"
                           />
                         </td>
@@ -620,7 +703,7 @@ export default function PriceListImportModal({
                           <input
                             type="text"
                             value={item.section || ""}
-                            onChange={(e) => updateItemField(idx, "section", e.target.value)}
+                            onChange={(e) => updateItemField(item.id, idx, "section", e.target.value)}
                             placeholder="Section / Specs"
                             className="w-full bg-transparent text-muted-foreground text-[11px] outline-none"
                           />
@@ -630,7 +713,7 @@ export default function PriceListImportModal({
                             type="number"
                             step="0.01"
                             value={item.selling_price}
-                            onChange={(e) => updateItemField(idx, "selling_price", parseFloat(e.target.value) || 0)}
+                            onChange={(e) => updateItemField(item.id, idx, "selling_price", parseFloat(e.target.value) || 0)}
                             className="w-full bg-muted/40 border border-border/50 rounded px-1.5 py-1 font-mono font-bold text-foreground text-right outline-none"
                           />
                         </td>
@@ -639,7 +722,7 @@ export default function PriceListImportModal({
                             type="number"
                             step="0.01"
                             value={item.purchase_price}
-                            onChange={(e) => updateItemField(idx, "purchase_price", parseFloat(e.target.value) || 0)}
+                            onChange={(e) => updateItemField(item.id, idx, "purchase_price", parseFloat(e.target.value) || 0)}
                             className="w-full bg-muted/40 border border-border/50 rounded px-1.5 py-1 font-mono text-emerald-400 font-semibold text-right outline-none"
                           />
                         </td>
@@ -647,7 +730,7 @@ export default function PriceListImportModal({
                           <input
                             type="number"
                             value={item.case_qty || 1}
-                            onChange={(e) => updateItemField(idx, "case_qty", parseInt(e.target.value) || 1)}
+                            onChange={(e) => updateItemField(item.id, idx, "case_qty", parseInt(e.target.value) || 1)}
                             className="w-16 bg-muted/40 border border-border/50 rounded px-1.5 py-1 font-mono text-center text-muted-foreground outline-none"
                           />
                         </td>
@@ -655,14 +738,14 @@ export default function PriceListImportModal({
                           <input
                             type="text"
                             value={item.unit}
-                            onChange={(e) => updateItemField(idx, "unit", e.target.value.toUpperCase())}
+                            onChange={(e) => updateItemField(item.id, idx, "unit", e.target.value.toUpperCase())}
                             className="w-12 bg-muted/40 border border-border/50 rounded px-1 py-1 font-mono text-[11px] text-center text-muted-foreground outline-none"
                           />
                         </td>
                         <td className="p-2 text-center">
                           <button
                             type="button"
-                            onClick={() => removeItem(idx)}
+                            onClick={() => removeItem(item.id, idx)}
                             className="p-1 text-muted-foreground hover:text-rose-400 transition-colors cursor-pointer"
                             title="Remove row"
                           >
@@ -674,11 +757,38 @@ export default function PriceListImportModal({
                   </tbody>
                 </table>
               </div>
-              {filteredItems.length > 150 && (
-                <p className="text-[11px] text-muted-foreground text-right italic">
-                  Showing first 150 of {filteredItems.length} items in preview. All will be imported upon submission.
-                </p>
-              )}
+
+              {/* Pagination Controls */}
+              <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
+                <span>
+                  Showing {filteredItems.length > 0 ? (previewPage - 1) * PAGE_SIZE + 1 : 0} -{" "}
+                  {Math.min(previewPage * PAGE_SIZE, filteredItems.length)} of {filteredItems.length} items
+                  {selectedSection !== "ALL" && ` in ${selectedSection}`}
+                </span>
+                {totalPages > 1 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={previewPage <= 1}
+                      onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
+                      className="px-2.5 py-1 rounded bg-muted/60 hover:bg-muted disabled:opacity-40 border border-border/60 font-medium cursor-pointer"
+                    >
+                      Previous
+                    </button>
+                    <span className="font-mono text-xs">
+                      Page {previewPage} of {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={previewPage >= totalPages}
+                      onClick={() => setPreviewPage((p) => Math.min(totalPages, p + 1))}
+                      className="px-2.5 py-1 rounded bg-muted/60 hover:bg-muted disabled:opacity-40 border border-border/60 font-medium cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

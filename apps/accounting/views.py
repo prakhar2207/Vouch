@@ -298,10 +298,31 @@ class VoucherDetailAPIView(APIView):
                         gst_pct = Decimal(str(item.get('gst_rate', 18)))
                         unit = str(item.get('unit', 'PCS')).strip().upper()
 
-                        # Resolve or create product
-                        product = Product.objects.filter(company=company, name__iexact=raw_name).first()
+                        # Resolve or create product (respecting brand vs unbranded)
+                        item_brand = str(item.get('brand', '')).strip()
+                        if item_brand:
+                            product = Product.objects.filter(
+                                company=company,
+                                name__iexact=raw_name,
+                                brand__iexact=item_brand
+                            ).first()
+                        else:
+                            # No brand in purchase bill -> Do not touch branded items, target unbranded
+                            product = Product.objects.filter(
+                                company=company,
+                                name__iexact=raw_name,
+                                brand__in=["", None, "Unbranded", "Generic"]
+                            ).first()
+
                         if not product:
-                            category = ProductCategory.objects.filter(company=company).first()
+                            # Try to inherit category from existing sibling product of same name
+                            category = None
+                            existing_sibling = Product.objects.filter(company=company, name__iexact=raw_name).first()
+                            if existing_sibling and existing_sibling.category:
+                                category = existing_sibling.category
+                            else:
+                                category = ProductCategory.objects.filter(company=company).first()
+                            
                             if not category:
                                 category = ProductCategory.objects.create(
                                     company=company,
@@ -315,16 +336,19 @@ class VoucherDetailAPIView(APIView):
                                 company=company,
                                 category=category,
                                 name=raw_name,
+                                brand=item_brand,
                                 sku=sku,
                                 hsn_code=hsn or category.hsn_code,
                                 gst_rate=gst_pct,
                                 unit=unit,
                                 purchase_price=rate,
+                                purchase_price_from_invoice=True,
                                 selling_price=rate * Decimal('1.25')
                             )
                         else:
                             if rate > Decimal('0.00'):
                                 product.purchase_price = rate
+                                product.purchase_price_from_invoice = True
                             if hsn:
                                 product.hsn_code = hsn
                             if gst_pct > Decimal('0.00'):

@@ -159,19 +159,22 @@ export default function CategoryDetailPage() {
     }
   };
 
-  // Compute available brands with counts
+  // Compute available brands with counts (including Unbranded)
   const availableBrands = useMemo(() => {
     const counts: Record<string, number> = {};
     products.forEach((p) => {
       const b = (p.brand || '').trim();
-      if (b) {
-        counts[b] = (counts[b] || 0) + 1;
-      }
+      const key = b || 'Unbranded';
+      counts[key] = (counts[key] || 0) + 1;
     });
     return counts;
   }, [products]);
 
-  const existingBrandList = useMemo(() => Object.keys(availableBrands).sort(), [availableBrands]);
+  const existingBrandList = useMemo(() => Object.keys(availableBrands).sort((a, b) => {
+    if (a === 'Unbranded') return 1;
+    if (b === 'Unbranded') return -1;
+    return a.localeCompare(b);
+  }), [availableBrands]);
 
   const toggleBrand = (b: string) => {
     setSelectedBrands(prev => 
@@ -195,6 +198,8 @@ export default function CategoryDetailPage() {
 
       if (selectedBrands.length > 0) {
         const brandClean = (p.brand || '').trim();
+        const isUnbranded = !brandClean || brandClean.toLowerCase() === 'unbranded' || brandClean.toLowerCase() === 'generic';
+        if (selectedBrands.includes('Unbranded') && isUnbranded) return true;
         return selectedBrands.includes(brandClean);
       }
       return true;
@@ -224,6 +229,19 @@ export default function CategoryDetailPage() {
     });
 
     const list = Object.values(groups);
+
+    // Sort variants within each item block: Branded first (alphabetical), Unbranded at the bottom
+    list.forEach((block) => {
+      block.variants.sort((a, b) => {
+        const aBrand = (a.brand || '').trim();
+        const bBrand = (b.brand || '').trim();
+        const aIsUnbranded = !aBrand || aBrand.toLowerCase() === 'unbranded' || aBrand.toLowerCase() === 'generic';
+        const bIsUnbranded = !bBrand || bBrand.toLowerCase() === 'unbranded' || bBrand.toLowerCase() === 'generic';
+        if (aIsUnbranded && !bIsUnbranded) return 1;
+        if (!aIsUnbranded && bIsUnbranded) return -1;
+        return aBrand.localeCompare(bBrand);
+      });
+    });
 
     // Sort blocks
     list.sort((a, b) => {
@@ -549,7 +567,9 @@ export default function CategoryDetailPage() {
                                 {p.brand}
                               </span>
                             ) : (
-                              <span className="text-muted-foreground text-xs">—</span>
+                              <span className="bg-zinc-800/80 text-zinc-300 border border-zinc-700/80 text-xs px-2 py-0.5 rounded-md font-medium">
+                                Unbranded
+                              </span>
                             )}
                           </td>
 
@@ -591,9 +611,16 @@ export default function CategoryDetailPage() {
                                 className="bg-muted/40 border border-border text-foreground px-2 py-1 rounded w-24 text-xs text-right font-mono outline-none"
                               />
                             ) : (
-                              <span className="text-muted-foreground font-medium text-xs">
-                                {parseFloat(p.purchase_price) > 0 ? `₹${parseFloat(p.purchase_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
-                              </span>
+                              <div className="flex items-center justify-end gap-1.5">
+                                <span className="text-muted-foreground font-medium text-xs">
+                                  {parseFloat(p.purchase_price) > 0 ? `₹${parseFloat(p.purchase_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
+                                </span>
+                                {p.purchase_price_from_invoice && (
+                                  <span title="Purchase price set from Purchase Invoice" className="text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1 rounded font-mono font-bold">
+                                    Invoice
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </td>
 
@@ -675,9 +702,13 @@ export default function CategoryDetailPage() {
                                         onChange={e => setEditData({ ...editData, brand: e.target.value })}
                                         className="bg-muted/40 border border-border text-foreground px-1.5 py-1 rounded text-xs w-full outline-none"
                                       />
-                                    ) : (
+                                    ) : v.brand ? (
                                       <span className="bg-zinc-800 text-blue-400 border border-blue-500/20 text-xs px-2 py-0.5 rounded font-bold font-mono">
-                                        {v.brand || 'Generic'}
+                                        {v.brand}
+                                      </span>
+                                    ) : (
+                                      <span className="bg-zinc-800/80 text-zinc-300 border border-zinc-700 text-xs px-2 py-0.5 rounded font-medium">
+                                        Unbranded
                                       </span>
                                     )}
                                   </div>
@@ -715,9 +746,16 @@ export default function CategoryDetailPage() {
                                         className="bg-muted/40 border border-border text-foreground px-1.5 py-1 rounded text-xs text-right font-mono w-20 outline-none"
                                       />
                                     ) : (
-                                      <span className="text-muted-foreground font-medium">
-                                        {parseFloat(v.purchase_price) > 0 ? `₹${parseFloat(v.purchase_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
-                                      </span>
+                                      <div className="flex items-center justify-end gap-1">
+                                        <span className="text-muted-foreground font-medium">
+                                          {parseFloat(v.purchase_price) > 0 ? `₹${parseFloat(v.purchase_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
+                                        </span>
+                                        {v.purchase_price_from_invoice && (
+                                          <span title="Purchase price set from Purchase Invoice" className="text-[9px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1 rounded font-mono font-bold">
+                                            Invoice
+                                          </span>
+                                        )}
+                                      </div>
                                     )}
                                   </div>
 

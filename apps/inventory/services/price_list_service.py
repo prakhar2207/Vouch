@@ -54,10 +54,11 @@ class PriceListService:
             
             if existing:
                 existing.selling_price = selling_price
-                if purchase_price > Decimal("0.00"):
-                    existing.purchase_price = purchase_price
-                if opening_qty > Decimal("0.00") and existing.stock_quantity == Decimal("0.00"):
-                    existing.stock_quantity = opening_qty
+                # Prioritise purchase price from purchase invoice instead of price list
+                if not getattr(existing, 'purchase_price_from_invoice', False):
+                    if purchase_price > Decimal("0.00"):
+                        existing.purchase_price = purchase_price
+                # IMPORTANT: Never touch existing.stock_quantity when re-uploading a price list!
                 if final_desc:
                     existing.description = final_desc
                 existing.save()
@@ -76,7 +77,8 @@ class PriceListService:
                     unit=unit,
                     selling_price=selling_price,
                     purchase_price=purchase_price,
-                    stock_quantity=opening_qty,
+                    purchase_price_from_invoice=False,
+                    stock_quantity=Decimal("0.00"),
                     description=final_desc,
                     hsn_code=category.hsn_code or "",
                     gst_rate=category.gst_rate or Decimal("18.00")

@@ -63,6 +63,7 @@ class Product(models.Model):
     wholesaler_price = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     min_selling_price = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     purchase_price = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    purchase_price_from_invoice = models.BooleanField(default=False)
     
     stock_quantity = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     reorder_level = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)

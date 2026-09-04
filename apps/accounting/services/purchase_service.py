@@ -46,7 +46,7 @@ class PurchaseInvoiceService:
             if product_id:
                 product = Product.objects.get(id=product_id)
             else:
-                name = item.get('product_name', 'Unnamed Product')
+                name = str(item.get('product_name') or item.get('name') or 'Unnamed Product').strip()
                 import uuid
                 sku = item.get('sku', name.upper()[:3] + '-' + str(uuid.uuid4())[:6])
                 
@@ -97,11 +97,48 @@ class PurchaseInvoiceService:
                     if 'gst_rate' not in defaults_dict or defaults_dict['gst_rate'] == 0:
                         defaults_dict['gst_rate'] = category.gst_rate
 
-                product, created = Product.objects.get_or_create(
-                    company=company,
-                    name=name,
-                    defaults=defaults_dict
-                )
+                item_brand = (item.get('brand') or '').strip()
+
+                if item_brand:
+                    product = Product.objects.filter(
+                        company=company,
+                        name__iexact=name,
+                        brand__iexact=item_brand
+                    ).first()
+                    if not product:
+                        defaults_dict['brand'] = item_brand
+                        defaults_dict['purchase_price_from_invoice'] = True
+                        product = Product.objects.create(
+                            company=company,
+                            name=name,
+                            **defaults_dict
+                        )
+                        created = True
+                    else:
+                        created = False
+                else:
+                    # No brand mentioned in purchase bill -> Do NOT touch branded products!
+                    # Target or create an unbranded product variant
+                    product = Product.objects.filter(
+                        company=company,
+                        name__iexact=name,
+                        brand__in=["", None, "Unbranded", "Generic"]
+                    ).first()
+                    if not product:
+                        # If an existing branded item exists with this name, inherit its category
+                        existing_sibling = Product.objects.filter(company=company, name__iexact=name).first()
+                        if existing_sibling and existing_sibling.category:
+                            defaults_dict['category'] = existing_sibling.category
+                        defaults_dict['brand'] = ""
+                        defaults_dict['purchase_price_from_invoice'] = True
+                        product = Product.objects.create(
+                            company=company,
+                            name=name,
+                            **defaults_dict
+                        )
+                        created = True
+                    else:
+                        created = False
 
                 if not created and not product.category and category:
                     product.category = category
@@ -110,10 +147,11 @@ class PurchaseInvoiceService:
             qty = Decimal(str(item['quantity']))
             rate = Decimal(str(item['rate']))
 
-            # Update product purchase price to latest purchase rate
-            if not created and rate > Decimal('0.00'):
+            # Update product purchase price to latest purchase rate from invoice
+            if rate > Decimal('0.00'):
                 product.purchase_price = rate
-                product.save(update_fields=['purchase_price'])
+                product.purchase_price_from_invoice = True
+                product.save(update_fields=['purchase_price', 'purchase_price_from_invoice'])
 
             discount_pct = Decimal(str(item.get('discount_percent', '0.00')))
             
