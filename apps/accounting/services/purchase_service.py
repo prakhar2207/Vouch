@@ -147,13 +147,14 @@ class PurchaseInvoiceService:
             qty = Decimal(str(item['quantity']))
             rate = Decimal(str(item['rate']))
 
-            # Update product purchase price to latest purchase rate from invoice
-            if rate > Decimal('0.00'):
-                product.purchase_price = rate
+            discount_pct = Decimal(str(item.get('discount_percent', '0.00')))
+            
+            # Update product purchase price to latest purchase rate from invoice (net of discount)
+            net_rate = (rate * (Decimal('100') - discount_pct) / Decimal('100')).quantize(Decimal('0.01'))
+            if net_rate > Decimal('0.00'):
+                product.purchase_price = net_rate
                 product.purchase_price_from_invoice = True
                 product.save(update_fields=['purchase_price', 'purchase_price_from_invoice'])
-
-            discount_pct = Decimal(str(item.get('discount_percent', '0.00')))
             
             gross = qty * rate
             discount_amt = (gross * discount_pct / Decimal('100')).quantize(Decimal('0.01'))

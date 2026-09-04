@@ -314,6 +314,9 @@ class VoucherDetailAPIView(APIView):
                                 brand__in=["", None, "Unbranded", "Generic"]
                             ).first()
 
+                        discount_pct = Decimal(str(item.get('discount_percent', '0.00')))
+                        net_rate = (rate * (Decimal('100') - discount_pct) / Decimal('100')).quantize(Decimal('0.01'))
+
                         if not product:
                             # Try to inherit category from existing sibling product of same name
                             category = None
@@ -341,13 +344,13 @@ class VoucherDetailAPIView(APIView):
                                 hsn_code=hsn or category.hsn_code,
                                 gst_rate=gst_pct,
                                 unit=unit,
-                                purchase_price=rate,
+                                purchase_price=net_rate,
                                 purchase_price_from_invoice=True,
                                 selling_price=rate * Decimal('1.25')
                             )
                         else:
-                            if rate > Decimal('0.00'):
-                                product.purchase_price = rate
+                            if net_rate > Decimal('0.00'):
+                                product.purchase_price = net_rate
                                 product.purchase_price_from_invoice = True
                             if hsn:
                                 product.hsn_code = hsn
@@ -355,7 +358,10 @@ class VoucherDetailAPIView(APIView):
                                 product.gst_rate = gst_pct
                             product.save()
 
-                        taxable_amount = qty * rate
+                        gross = qty * rate
+                        discount_amt = (gross * discount_pct / Decimal('100')).quantize(Decimal('0.01'))
+                        taxable_amount = gross - discount_amt
+                        
                         taxes = GSTCalculator.calculate_taxes(
                             company_state_code=company.state_code,
                             party_state_code=party_ledger.state_code if party_ledger else company.state_code,
@@ -369,8 +375,8 @@ class VoucherDetailAPIView(APIView):
                             product=product,
                             quantity=qty,
                             rate=rate,
-                            discount_percent=Decimal('0.00'),
-                            discount_amount=Decimal('0.00'),
+                            discount_percent=discount_pct,
+                            discount_amount=discount_amt,
                             taxable_amount=taxable_amount,
                             gst_rate=gst_pct,
                             total_amount=total_line_amount
