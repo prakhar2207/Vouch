@@ -198,29 +198,11 @@ class InvoiceOCRService:
     def _extract_from_image_ocr(raw_bytes: bytes) -> Optional[dict]:
         """Runs native RapidOCR on image bytes and parses Indian GST invoice structure."""
         try:
-            from PIL import Image
-            import numpy as np
-            from rapidocr_onnxruntime import RapidOCR
-
-            img = Image.open(io.BytesIO(raw_bytes))
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-
-            # Resize if excessively large to keep inference fast
-            w, h = img.size
-            max_dim = 2400
-            if w > max_dim or h > max_dim:
-                scale = max_dim / max(w, h)
-                img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
-
-            img_np = np.array(img)
-            engine = RapidOCR()
-            result, _ = engine(img_np)
-            if not result:
-                return None
-
-            lines = [item[1].strip() for item in result if item and len(item) > 1 and item[1].strip()]
-            return InvoiceOCRService._parse_invoice_lines(lines)
+            # Disabled RapidOCR temporarily to prevent Out of Memory (OOM) 
+            # crashes on Render's 512MB free tier instances.
+            # Falling back to mock/graceful failure if Gemini AI is not configured.
+            print("RapidOCR disabled due to memory constraints on Render free tier.")
+            return None
         except Exception as e:
             print(f"Error running RapidOCR on image: {e}")
             return None
