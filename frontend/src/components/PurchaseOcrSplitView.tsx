@@ -13,6 +13,7 @@ interface LineItem {
   quantity: number;
   unit: string;
   rate: number;
+  discount_percent: number;
   amount: number;
   gst_rate: number;
 }
@@ -256,10 +257,13 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
     const updatedItems = [...invoice.line_items];
     (updatedItems[index] as any)[field] = value;
 
-    if (field === "quantity" || field === "rate") {
+    if (field === "quantity" || field === "rate" || field === "discount_percent") {
       const q = parseFloat(String(updatedItems[index].quantity)) || 0;
       const r = parseFloat(String(updatedItems[index].rate)) || 0;
-      updatedItems[index].amount = Number((q * r).toFixed(2));
+      const d = parseFloat(String(updatedItems[index].discount_percent)) || 0;
+      const amountBeforeDiscount = q * r;
+      const finalAmount = amountBeforeDiscount - (amountBeforeDiscount * (d / 100));
+      updatedItems[index].amount = Number(finalAmount.toFixed(2));
     }
 
     const sub = updatedItems.reduce((s, i) => s + (Number(i.amount) || 0), 0);
@@ -285,7 +289,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       ...invoice,
       line_items: [
         ...invoice.line_items,
-        { description: "New Item", hsn_code: "", quantity: 1, unit: "PCS", rate: 0, amount: 0, gst_rate: 18 },
+        { description: "New Item", hsn_code: "", quantity: 1, unit: "PCS", rate: 0, discount_percent: 0, amount: 0, gst_rate: 18 },
       ],
     });
   };
@@ -328,7 +332,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         quantity: item.quantity,
         rate: item.rate,
         unit: item.unit || "PCS",
-        discount_percent: 0,
+        discount_percent: item.discount_percent || 0,
         gst_rate: item.gst_rate || 18,
         category_id: !isCreatingNewCategory && selectedCategoryId ? selectedCategoryId : undefined,
         category_name: isCreatingNewCategory && newCategoryName.trim() ? newCategoryName.trim() : undefined,
@@ -683,7 +687,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                         <button onClick={() => removeLineItem(idx)} className="text-red-400 hover:text-red-300 px-1 font-bold cursor-pointer">✕</button>
                       </div>
 
-                      <div className="grid grid-cols-4 gap-2">
+                      <div className="grid grid-cols-5 gap-2">
                         <div>
                           <label className="block text-[10px] text-gray-400">HSN</label>
                           <input
@@ -708,6 +712,15 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                             type="number"
                             value={item.rate}
                             onChange={(e) => updateItem(idx, "rate", e.target.value)}
+                            className="w-full bg-zinc-950 border border-zinc-700 text-white p-1.5 rounded outline-none font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-gray-400">Disc %</label>
+                          <input
+                            type="number"
+                            value={item.discount_percent || ""}
+                            onChange={(e) => updateItem(idx, "discount_percent", e.target.value)}
                             className="w-full bg-zinc-950 border border-zinc-700 text-white p-1.5 rounded outline-none font-mono"
                           />
                         </div>

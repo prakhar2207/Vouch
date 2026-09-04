@@ -12,8 +12,9 @@ class InvoiceItemSchema(BaseModel):
     hsn_code: Optional[str] = Field(default="", description="HSN or SAC code")
     quantity: float = Field(default=1.0, description="Quantity")
     unit: Optional[str] = Field(default="PCS", description="Unit of measurement, e.g., PCS, KG, NOS")
-    rate: float = Field(default=0.0, description="Price or unit rate per item")
-    amount: float = Field(default=0.0, description="Taxable amount for this line item")
+    rate: float = Field(default=0.0, description="Price or unit rate per item (before discount)")
+    discount_percent: float = Field(default=0.0, description="Discount percentage applied to this item, e.g. 62 for 62%")
+    amount: float = Field(default=0.0, description="Taxable amount for this line item (after discount)")
     gst_rate: Optional[float] = Field(default=18.0, description="GST rate percentage, e.g., 5, 12, 18, 28")
 
 class InvoiceExtractionSchema(BaseModel):
@@ -104,7 +105,7 @@ class InvoiceOCRService:
                 "You are an expert accounts payable AI. Analyze this Indian GST tax invoice or purchase bill carefully. "
                 "Extract the exact Supplier Name, Supplier GSTIN, Invoice Number, Invoice Date (in YYYY-MM-DD), "
                 "Subtotal, Taxes (CGST, SGST, IGST), Total Amount, and all Line Items with their full Description, "
-                "exact HSN code, Quantity, Unit, Rate, and Amount. "
+                "exact HSN code, Quantity, Unit, Rate (MRP/price before discount), Discount Percentage (if any), and Amount (after discount). "
                 "Output strict JSON following the schema."
             )
 
@@ -448,6 +449,7 @@ class InvoiceOCRService:
                     "quantity": qty,
                     "unit": unit,
                     "rate": rate,
+                    "discount_percent": 0.0,
                     "amount": amt,
                     "gst_rate": 18.0
                 })
@@ -471,6 +473,7 @@ class InvoiceOCRService:
                 "quantity": 1.0,
                 "unit": "NOS",
                 "rate": subtotal_calc,
+                "discount_percent": 0.0,
                 "amount": subtotal_calc,
                 "gst_rate": 18.0
             })
