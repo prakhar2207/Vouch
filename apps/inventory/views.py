@@ -302,7 +302,7 @@ class ParsePriceListPdfAPIView(APIView):
             if not file_obj:
                 return Response({"success": False, "error": "PDF file is required."}, status=400)
 
-            items = PriceListService.parse_pdf_price_list(file_obj)
-            return Response({"success": True, "count": len(items), "items": items})
+            result = PriceListService.parse_pdf_price_list(file_obj)
+            return Response(result)
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)

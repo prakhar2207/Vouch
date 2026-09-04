@@ -90,42 +90,117 @@ export default function PriceListImportModal({
           return;
         }
 
-        const headers: string[] = rows[0].map((h: any) => String(h || "").trim().toLowerCase());
+        const KEY_TERMS = [
+          "section", "size", "price", "mrp", "rate", "cost", "stock", "qty", "quantity",
+          "item", "name", "bearing", "part", "sku", "code", "unit", "description", "value"
+        ];
 
-        const nameIdx = headers.findIndex((h) =>
-          h.includes("name") || h.includes("item") || h.includes("size") || h.includes("part") || h.includes("bearing") || h.includes("model")
+        let bestHeaderIdx = 0;
+        let bestScore = 0;
+
+        for (let r = 0; r < Math.min(25, rows.length); r++) {
+          const row = rows[r];
+          if (!row || !Array.isArray(row)) continue;
+          let score = 0;
+          for (const cell of row) {
+            const cellClean = String(cell || "").trim().toLowerCase();
+            if (KEY_TERMS.some((term) => cellClean.includes(term))) {
+              score++;
+            }
+          }
+          if (score > bestScore) {
+            bestScore = score;
+            bestHeaderIdx = r;
+          }
+        }
+
+        const headers: string[] = (rows[bestHeaderIdx] || []).map((h: any) =>
+          String(h || "").trim().toLowerCase()
         );
-        const mrpIdx = headers.findIndex((h) =>
-          h.includes("mrp") || h.includes("retail") || h.includes("list price") || h.includes("selling") || h.includes("rate") || h.includes("price")
-        );
-        const purchaseIdx = headers.findIndex((h) =>
-          h.includes("purchase") || h.includes("cost") || h.includes("buy")
-        );
-        const qtyIdx = headers.findIndex((h) =>
-          h.includes("stock") || h.includes("qty") || h.includes("quantity")
-        );
-        const caseQtyIdx = headers.findIndex((h) =>
-          h.includes("case") || h.includes("box") || h.includes("pack") || h.includes("moq")
-        );
-        const sectionIdx = headers.findIndex((h) =>
-          h.includes("section") || h.includes("category") || h.includes("group") || h.includes("type") || h.includes("desc")
-        );
-        const unitIdx = headers.findIndex((h) => h.includes("unit") || h.includes("uom"));
+
+        let sectionIdx = -1;
+        let sizeIdx = -1;
+        let nameIdx = -1;
+        let mrpIdx = -1;
+        let purchaseIdx = -1;
+        let qtyIdx = -1;
+        let caseQtyIdx = -1;
+        let unitIdx = -1;
+
+        for (let c = 0; c < headers.length; c++) {
+          const h = headers[c];
+          if (h.includes("section")) sectionIdx = c;
+          else if (h.includes("size")) sizeIdx = c;
+          else if (["item", "name", "part", "bearing", "product", "description", "title"].some((k) => h.includes(k))) {
+            if (nameIdx === -1) nameIdx = c;
+          } else if (["mrp", "retail", "list price", "unit price", "selling", "price", "rate"].some((k) => h.includes(k))) {
+            if (mrpIdx === -1) mrpIdx = c;
+          } else if (["purchase", "cost", "buy"].some((k) => h.includes(k))) {
+            purchaseIdx = c;
+          } else if (["quantity in stock", "stock", "qty", "quantity"].some((k) => h.includes(k))) {
+            if (qtyIdx === -1) qtyIdx = c;
+          } else if (["case", "box", "pack", "moq"].some((k) => h.includes(k))) {
+            caseQtyIdx = c;
+          } else if (["unit", "uom"].some((k) => h.includes(k))) {
+            unitIdx = c;
+          }
+        }
 
         const items: PriceListItem[] = [];
-        for (let i = 1; i < rows.length; i++) {
+        for (let i = bestHeaderIdx + 1; i < rows.length; i++) {
           const row = rows[i];
-          if (!row || row.length === 0) continue;
+          if (!row || !Array.isArray(row) || !row.some((cell: any) => cell !== null && cell !== undefined && cell !== "")) continue;
 
-          const rawName = nameIdx !== -1 ? String(row[nameIdx] || "").trim() : "";
-          if (!rawName) continue;
+          let rawName = "";
+          const sectionVal = sectionIdx !== -1 && sectionIdx < row.length ? String(row[sectionIdx] || "").trim() : "";
+          const sizeVal = sizeIdx !== -1 && sizeIdx < row.length ? String(row[sizeIdx] || "").trim() : "";
 
-          const mrpVal = mrpIdx !== -1 ? parseFloat(String(row[mrpIdx] || "0").replace(/[^0-9.]/g, "")) || 0 : 0;
-          const purchaseVal = purchaseIdx !== -1 ? parseFloat(String(row[purchaseIdx] || "0").replace(/[^0-9.]/g, "")) || 0 : mrpVal * 0.70;
-          const stockVal = qtyIdx !== -1 ? parseFloat(String(row[qtyIdx] || "0").replace(/[^0-9.]/g, "")) || 0 : 0;
-          const caseQtyVal = caseQtyIdx !== -1 ? parseInt(String(row[caseQtyIdx] || "1").replace(/[^0-9]/g, "")) || 1 : 1;
-          const sectionVal = sectionIdx !== -1 ? String(row[sectionIdx] || "").trim() : "";
-          const unitVal = unitIdx !== -1 ? String(row[unitIdx] || "PCS").trim().toUpperCase() : "PCS";
+          if (sectionVal && sizeVal) {
+            rawName = `${sectionVal} ${sizeVal}`.trim();
+          } else if (nameIdx !== -1 && nameIdx < row.length && String(row[nameIdx] || "").trim()) {
+            rawName = String(row[nameIdx] || "").trim();
+          } else if (sizeVal) {
+            rawName = sizeVal;
+          } else if (sectionVal) {
+            rawName = sectionVal;
+          } else {
+            for (let c = 0; c < row.length; c++) {
+              const val = String(row[c] || "").trim();
+              if (val && isNaN(Number(val))) {
+                rawName = val;
+                break;
+              }
+            }
+          }
+
+          if (!rawName || ["total", "subtotal", "reorder", "discontinued"].includes(rawName.toLowerCase())) {
+            continue;
+          }
+
+          let mrpVal = 0;
+          if (mrpIdx !== -1 && mrpIdx < row.length) {
+            const cleanP = String(row[mrpIdx] || "").replace(/[^0-9.]/g, "");
+            mrpVal = parseFloat(cleanP) || 0;
+          }
+
+          let purchaseVal = mrpVal * 0.70;
+          if (purchaseIdx !== -1 && purchaseIdx < row.length) {
+            const cleanCost = String(row[purchaseIdx] || "").replace(/[^0-9.]/g, "");
+            const parsedCost = parseFloat(cleanCost);
+            if (!isNaN(parsedCost) && parsedCost > 0) {
+              purchaseVal = parsedCost;
+            }
+          }
+
+          let stockVal = 0;
+          if (qtyIdx !== -1 && qtyIdx < row.length) {
+            const cleanS = String(row[qtyIdx] || "").replace(/[^0-9.]/g, "");
+            stockVal = parseFloat(cleanS) || 0;
+          }
+
+          const caseQtyVal = caseQtyIdx !== -1 && caseQtyIdx < row.length ? parseInt(String(row[caseQtyIdx] || "1").replace(/[^0-9]/g, "")) || 1 : 1;
+          const sectionFinal = sectionVal || "";
+          const unitVal = unitIdx !== -1 && unitIdx < row.length ? String(row[unitIdx] || "PCS").trim().toUpperCase() : "PCS";
 
           items.push({
             name: rawName,
@@ -133,7 +208,7 @@ export default function PriceListImportModal({
             purchase_price: Math.round(purchaseVal * 100) / 100,
             opening_qty: stockVal,
             case_qty: caseQtyVal,
-            section: sectionVal,
+            section: sectionFinal,
             unit: unitVal || "PCS",
           });
         }
@@ -157,8 +232,17 @@ export default function PriceListImportModal({
           }
         );
 
-        if (res.data.success && res.data.items) {
-          const rawItems = res.data.items.map((it: any) => ({
+        let rawList: any[] = [];
+        if (Array.isArray(res.data.items)) {
+          rawList = res.data.items;
+        } else if (res.data.items && Array.isArray(res.data.items.items)) {
+          rawList = res.data.items.items;
+        } else if (Array.isArray(res.data.data)) {
+          rawList = res.data.data;
+        }
+
+        if (res.data.success && rawList.length > 0) {
+          const rawItems = rawList.map((it: any) => ({
             name: it.name || it.item_name,
             selling_price: parseFloat(it.mrp || it.selling_price || 0),
             purchase_price: parseFloat(it.purchase_price || (it.mrp ? it.mrp * 0.70 : 0)),
