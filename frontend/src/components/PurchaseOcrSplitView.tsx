@@ -213,9 +213,9 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         }
 
         const token = getAccessToken();
-        const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
-        if (geminiApiKey.trim()) {
-          headers["X-Gemini-Key"] = geminiApiKey.trim();
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
         }
 
         const res = await axios.post(
@@ -223,7 +223,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           {
             file_base64: base64,
             mime_type: mime,
-            gemini_api_key: geminiApiKey.trim() || undefined
+            gemini_api_key: geminiApiKey?.trim() || undefined
           },
           { headers }
         );
@@ -239,7 +239,10 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         }
       } catch (err: any) {
         if (attempt >= maxRetries) {
-          setError(err.response?.data?.error || err.message || "OCR Extraction Error.");
+          const errMsg = err.response?.status === 401 
+            ? "Authentication session expired. Please log in again." 
+            : (err.response?.data?.error || err.message || "OCR Extraction Error.");
+          setError(errMsg);
         }
       }
     }

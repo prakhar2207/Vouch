@@ -77,22 +77,8 @@ const accountingCustomCaching: RuntimeCaching[] = [
   },
 ];
 
-// Precache Critical Application Shell Routes
-const criticalShellEntries: PrecacheEntry[] = [
-  { url: "/dashboard", revision: "v1.1" },
-  { url: "/vouchers/new", revision: "v1.1" },
-  { url: "/vouchers/grid", revision: "v1.1" },
-  { url: "/parties", revision: "v1.1" },
-  { url: "/sales", revision: "v1.1" },
-  { url: "/purchases", revision: "v1.1" },
-  { url: "/settings", revision: "v1.1" },
-  { url: "/~offline", revision: "v1.1" },
-];
-
-const manifestEntries = (self.__SW_MANIFEST || []).concat(criticalShellEntries);
-
 installSerwist({
-  precacheEntries: manifestEntries,
+  precacheEntries: self.__SW_MANIFEST,
   skipWaiting: true,
   clientsClaim: true,
   navigationPreload: true,
@@ -101,6 +87,7 @@ installSerwist({
     entries: [
       {
         url: "/~offline",
+        revision: "v1",
         matcher({ request }: any) {
           return request.destination === "document";
         },

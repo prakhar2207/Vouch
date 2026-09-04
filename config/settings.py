@@ -165,17 +165,13 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': False,
 }
 
+from corsheaders.defaults import default_headers
+
 # Cross-Origin Resource Sharing (CORS) & CSRF
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_HEADERS = [
-    'accept',
-    'accept-encoding',
-    'authorization',
-    'content-type',
-    'dnt',
-    'origin',
-    'user-agent',
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'x-gemini-key',
     'x-csrftoken',
     'x-requested-with',
 ]
