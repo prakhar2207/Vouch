@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
@@ -16,8 +16,8 @@ import {
   Search,
   Percent,
   Calendar,
-  Layers,
   Sparkles,
+  KeyRound,
 } from "lucide-react";
 
 interface PriceListItem {
@@ -61,6 +61,15 @@ export default function PriceListImportModal({
   const [parsedItems, setParsedItems] = useState<PriceListItem[]>([]);
   const [filterSearch, setFilterSearch] = useState("");
   const [discountPercent, setDiscountPercent] = useState<number>(30);
+  const [geminiApiKey, setGeminiApiKey] = useState("");
+  const [showKeyInput, setShowKeyInput] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const savedKey = localStorage.getItem("vouch_gemini_key") || "";
+      if (savedKey) setGeminiApiKey(savedKey);
+    }
+  }, []);
 
   if (!isOpen) return null;
 
@@ -220,16 +229,21 @@ export default function PriceListImportModal({
         const token = getAccessToken();
         const formData = new FormData();
         formData.append("file", selectedFile);
+        formData.append("filename", selectedFile.name);
+
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "multipart/form-data",
+        };
+
+        if (geminiApiKey.trim()) {
+          headers["X-Gemini-Key"] = geminiApiKey.trim();
+        }
 
         const res = await axios.post(
           `${API_BASE_URL}/api/v1/inventory/parse-price-list-pdf/${companyId}/`,
           formData,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "multipart/form-data",
-            },
-          }
+          { headers }
         );
 
         let rawList: any[] = [];
@@ -259,7 +273,11 @@ export default function PriceListImportModal({
           if (res.data.effective_date) {
             setEffectiveDate(res.data.effective_date);
           }
-          setParsingEngine(res.data.source === "AI_GEMINI" ? "Gemini AI Document Model" : "Multi-Column Industrial Parser");
+          setParsingEngine(
+            res.data.source === "AI_GEMINI_VISION"
+              ? "Gemini Vision AI OCR"
+              : "Multi-Column Industrial Parser"
+          );
           toast.success(`Extracted ${rawItems.length} items from PDF price list`);
         } else {
           toast.error("Failed to parse PDF price list", res.data.error || "No items detected.");
@@ -418,6 +436,55 @@ export default function PriceListImportModal({
             </div>
           </div>
 
+          {/* Vision OCR / Gemini Key Accordion */}
+          <div className="p-3 bg-purple-500/10 border border-purple-500/25 rounded-xl space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-purple-400" />
+                <span className="text-xs font-bold text-purple-400">Gemini Vision AI OCR Available</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowKeyInput(!showKeyInput)}
+                className="text-[11px] text-purple-400 hover:text-purple-300 underline cursor-pointer flex items-center gap-1"
+              >
+                <KeyRound className="w-3 h-3" />
+                <span>{showKeyInput ? "Hide API Key" : "Configure Custom Key"}</span>
+              </button>
+            </div>
+            {showKeyInput && (
+              <div className="pt-1 flex items-center gap-2">
+                <input
+                  type="password"
+                  placeholder="Paste your Gemini API Key (optional)"
+                  value={geminiApiKey}
+                  onChange={(e) => {
+                    setGeminiApiKey(e.target.value);
+                    if (typeof window !== "undefined") {
+                      localStorage.setItem("vouch_gemini_key", e.target.value);
+                    }
+                  }}
+                  className="w-full bg-zinc-950 border border-purple-500/40 text-foreground px-3 py-1.5 rounded-lg text-xs font-mono outline-none focus:ring-1 focus:ring-purple-500"
+                />
+                {geminiApiKey && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGeminiApiKey("");
+                      if (typeof window !== "undefined") localStorage.removeItem("vouch_gemini_key");
+                    }}
+                    className="text-xs text-muted-foreground hover:text-rose-400 px-2"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="text-[10px] text-muted-foreground">
+              Automatic Vision OCR reads multi-column scanned catalogs and complex table formats. Also works offline with high-speed built-in industrial tokenizer.
+            </p>
+          </div>
+
           {/* Step 2: File Upload Area */}
           <div className="space-y-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -444,7 +511,7 @@ export default function PriceListImportModal({
                   {file ? file.name : "Click to browse or drop price list file here"}
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Supports multi-column manufacturer catalogs (PIX V-Belts, NBC Bearings, SKF), spreadsheets & CSVs
+                  Supports multi-column catalogs (PIX V-Belts, NBC Bearings, SKF), spreadsheets & CSVs
                 </p>
               </div>
               {parsing && (
@@ -541,7 +608,6 @@ export default function PriceListImportModal({
                   <tbody className="divide-y divide-border/30">
                     {filteredItems.slice(0, 150).map((item, idx) => (
                       <tr key={idx} className="hover:bg-muted/20">
-                        {/* Name */}
                         <td className="p-2">
                           <input
                             type="text"
@@ -550,8 +616,6 @@ export default function PriceListImportModal({
                             className="w-full bg-transparent text-foreground font-bold outline-none"
                           />
                         </td>
-
-                        {/* Section / Category */}
                         <td className="p-2">
                           <input
                             type="text"
@@ -561,8 +625,6 @@ export default function PriceListImportModal({
                             className="w-full bg-transparent text-muted-foreground text-[11px] outline-none"
                           />
                         </td>
-
-                        {/* MRP */}
                         <td className="p-2 text-right">
                           <input
                             type="number"
@@ -572,8 +634,6 @@ export default function PriceListImportModal({
                             className="w-full bg-muted/40 border border-border/50 rounded px-1.5 py-1 font-mono font-bold text-foreground text-right outline-none"
                           />
                         </td>
-
-                        {/* Purchase Price */}
                         <td className="p-2 text-right">
                           <input
                             type="number"
@@ -583,8 +643,6 @@ export default function PriceListImportModal({
                             className="w-full bg-muted/40 border border-border/50 rounded px-1.5 py-1 font-mono text-emerald-400 font-semibold text-right outline-none"
                           />
                         </td>
-
-                        {/* Case Qty */}
                         <td className="p-2 text-center">
                           <input
                             type="number"
@@ -593,8 +651,6 @@ export default function PriceListImportModal({
                             className="w-16 bg-muted/40 border border-border/50 rounded px-1.5 py-1 font-mono text-center text-muted-foreground outline-none"
                           />
                         </td>
-
-                        {/* Unit */}
                         <td className="p-2 text-center">
                           <input
                             type="text"
@@ -603,8 +659,6 @@ export default function PriceListImportModal({
                             className="w-12 bg-muted/40 border border-border/50 rounded px-1 py-1 font-mono text-[11px] text-center text-muted-foreground outline-none"
                           />
                         </td>
-
-                        {/* Action */}
                         <td className="p-2 text-center">
                           <button
                             type="button"

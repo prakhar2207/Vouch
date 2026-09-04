@@ -302,7 +302,10 @@ class ParsePriceListPdfAPIView(APIView):
             if not file_obj:
                 return Response({"success": False, "error": "PDF file is required."}, status=400)
 
-            result = PriceListService.parse_pdf_price_list(file_obj)
+            custom_api_key = request.headers.get('X-Gemini-Key') or request.data.get('gemini_api_key')
+            filename = file_obj.name or request.data.get('filename', '')
+
+            result = PriceListService.parse_pdf_price_list(file_obj, custom_api_key=custom_api_key, filename=filename)
             return Response(result)
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
