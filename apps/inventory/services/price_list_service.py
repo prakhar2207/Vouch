@@ -153,7 +153,7 @@ class PriceListService:
                 )
                 
                 response = client.models.generate_content(
-                    model="gemini-2.5-flash",
+                    model="gemini-3.6-flash",
                     contents=[
                         types.Part.from_bytes(data=raw_bytes, mime_type="application/pdf"),
                         prompt

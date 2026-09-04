@@ -108,7 +108,7 @@ class InvoiceOCRService:
                 "Output strict JSON following the schema."
             )
 
-            models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash"]
+            models_to_try = ["gemini-3.6-flash"]
             max_retries = 2
 
             try:
