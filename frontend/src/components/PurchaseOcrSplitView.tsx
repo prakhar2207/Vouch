@@ -427,7 +427,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           <div className="space-y-1">
             <div className="font-bold">Text extraction was partial or unclear from this photo</div>
             <p className="text-amber-400/90 text-[11px]">
-              {invoice.mock_reason || "Could not recognize all invoice details automatically. Please verify or fill in the supplier and item details on the right, or configure a free Google Gemini key above for higher vision accuracy."}
+              {invoice.mock_reason || "Could not recognize all invoice details automatically. Please verify or fill in the supplier and item details on the right, or ensure the GEMINI_API_KEY environment variable is set on your Render backend for high-accuracy vision."}
             </p>
           </div>
         </div>
