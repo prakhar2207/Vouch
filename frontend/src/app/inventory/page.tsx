@@ -94,6 +94,115 @@ export default function InventoryPage() {
     }
   };
 
+  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
+
+  const scrollToCategory = (index: number) => {
+    if (index >= 0 && index < categories.length) {
+      const catId = categories[index].id;
+      const el = document.getElementById(`cat-card-${catId}`);
+      if (el) {
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 1. If Category Inline Edit is active
+      if (editingCategory) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'Enter' || e.key.toLowerCase() === 'a')) {
+          e.preventDefault();
+          handleSaveEdit();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          setEditingCategory(null);
+        }
+        return;
+      }
+
+      // 2. If Delete Confirmation Modal is open
+      if (deletingCategory) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleDelete();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          setDeletingCategory(null);
+        }
+        return;
+      }
+
+      // 3. Skip if user is actively typing in an input
+      const activeElement = document.activeElement;
+      const isInputFocused = activeElement && (
+        activeElement.tagName === 'INPUT' ||
+        activeElement.tagName === 'TEXTAREA' ||
+        activeElement.tagName === 'SELECT'
+      );
+      if (isInputFocused) return;
+
+      if (categories.length === 0) return;
+
+      // 4. Arrow navigation
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        setFocusedIndex(prev => {
+          const next = prev < categories.length - 1 ? prev + 1 : 0;
+          scrollToCategory(next);
+          return next;
+        });
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setFocusedIndex(prev => {
+          const next = prev > 0 ? prev - 1 : categories.length - 1;
+          scrollToCategory(next);
+          return next;
+        });
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        setFocusedIndex(0);
+        scrollToCategory(0);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        setFocusedIndex(categories.length - 1);
+        scrollToCategory(categories.length - 1);
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        // TALLY ALTER SHORTCUT: Ctrl + Enter edits the selected category
+        if (focusedIndex >= 0 && focusedIndex < categories.length) {
+          e.preventDefault();
+          const target = categories[focusedIndex];
+          setEditingCategory(target);
+          setEditData({ name: target.name, hsn_code: target.hsn_code, gst_rate: target.gst_rate });
+        }
+      } else if (e.key.toLowerCase() === 'e' && !e.ctrlKey && !e.metaKey) {
+        // 'e' shortcut to edit
+        if (focusedIndex >= 0 && focusedIndex < categories.length) {
+          e.preventDefault();
+          const target = categories[focusedIndex];
+          setEditingCategory(target);
+          setEditData({ name: target.name, hsn_code: target.hsn_code, gst_rate: target.gst_rate });
+        }
+      } else if (e.key === 'Enter') {
+        // Enter drills down into category items
+        if (focusedIndex >= 0 && focusedIndex < categories.length) {
+          e.preventDefault();
+          router.push(`/inventory/categories/${categories[focusedIndex].id}`);
+        }
+      } else if ((e.altKey && e.key.toLowerCase() === 'd') || e.key === 'Delete') {
+        // TALLY DELETE SHORTCUT: Alt + D deletes selected category
+        if (focusedIndex >= 0 && focusedIndex < categories.length) {
+          e.preventDefault();
+          setDeletingCategory(categories[focusedIndex]);
+        }
+      } else if (e.key === 'Escape') {
+        setFocusedIndex(-1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [categories, focusedIndex, editingCategory, deletingCategory, editData, saving, router]);
+
   return (
     <DashboardLayout>
       <div className="space-y-6 pb-12">
@@ -124,85 +233,147 @@ export default function InventoryPage() {
             </Link>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {categories.map((cat: any) => (
-              <div 
-                key={cat.id}
-                onClick={() => router.push(`/inventory/categories/${cat.id}`)}
-                className="bg-card border border-border hover:border-blue-500 cursor-pointer rounded-xl p-6 transition-all shadow-sm flex flex-col group relative overflow-hidden h-64"
-              >
-                {/* Top accent */}
-                <div className="absolute top-0 left-0 right-0 h-1 bg-blue-500 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                
-                {editingCategory?.id === cat.id ? (
-                  <div className="flex-1 flex flex-col justify-center gap-3" onClick={e => e.stopPropagation()}>
-                    <input 
-                      type="text" 
-                      value={editData.name} 
-                      onChange={e => setEditData({...editData, name: e.target.value})}
-                      className="bg-zinc-800 border border-zinc-700 text-white px-3 py-1.5 rounded text-lg font-bold w-full"
-                      placeholder="Category Name"
-                    />
-                    <div className="flex justify-between items-start gap-2">
-                      <input 
-                        type="text" 
-                        value={editData.hsn_code} 
-                        onChange={e => setEditData({...editData, hsn_code: e.target.value})}
-                        className="bg-zinc-800 border border-zinc-700 text-white px-2 py-1.5 rounded w-full text-sm"
-                        placeholder="HSN"
-                      />
-                      <div className="w-full flex flex-col gap-1">
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              {categories.map((cat: any, idx: number) => {
+                const isFocused = focusedIndex === idx;
+                return (
+                  <div 
+                    id={`cat-card-${cat.id}`}
+                    key={cat.id}
+                    onClick={() => {
+                      setFocusedIndex(idx);
+                      router.push(`/inventory/categories/${cat.id}`);
+                    }}
+                    className={`border cursor-pointer rounded-xl p-6 transition-all shadow-sm flex flex-col group relative overflow-hidden h-64 ${
+                      isFocused 
+                        ? 'bg-card border-blue-500 ring-2 ring-blue-500/60 shadow-lg shadow-blue-500/15 scale-[1.01]' 
+                        : 'bg-card border-border hover:border-blue-500'
+                    }`}
+                  >
+                    {/* Top accent */}
+                    <div className={`absolute top-0 left-0 right-0 h-1 bg-blue-500 transition-opacity ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}></div>
+
+                    {isFocused && (
+                      <div className="absolute top-2.5 left-2.5 z-10 px-2 py-0.5 rounded text-[10px] font-mono bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                        Selected
+                      </div>
+                    )}
+                    
+                    {editingCategory?.id === cat.id ? (
+                      <div className="flex-1 flex flex-col justify-center gap-3" onClick={e => e.stopPropagation()}>
                         <input 
-                          type="number" 
-                          value={editData.gst_rate} 
-                          onChange={e => setEditData({...editData, gst_rate: e.target.value})}
-                          className="bg-zinc-800 border border-zinc-700 text-white px-2 py-1.5 rounded w-full text-sm"
-                          placeholder="Total GST %"
+                          type="text" 
+                          value={editData.name} 
+                          onChange={e => setEditData({...editData, name: e.target.value})}
+                          className="bg-zinc-800 border border-zinc-700 text-white px-3 py-1.5 rounded text-lg font-bold w-full"
+                          placeholder="Category Name"
+                          autoFocus
                         />
-                        <div className="text-[10px] text-gray-400 text-right leading-tight">
-                          IGST: {editData.gst_rate || 0}%<br/>
-                          CGST: {(Number(editData.gst_rate || 0) / 2).toFixed(1)}% | SGST: {(Number(editData.gst_rate || 0) / 2).toFixed(1)}%
+                        <div className="flex justify-between items-start gap-2">
+                          <input 
+                            type="text" 
+                            value={editData.hsn_code} 
+                            onChange={e => setEditData({...editData, hsn_code: e.target.value})}
+                            className="bg-zinc-800 border border-zinc-700 text-white px-2 py-1.5 rounded w-full text-sm"
+                            placeholder="HSN"
+                          />
+                          <div className="w-full flex flex-col gap-1">
+                            <input 
+                              type="number" 
+                              value={editData.gst_rate} 
+                              onChange={e => setEditData({...editData, gst_rate: e.target.value})}
+                              className="bg-zinc-800 border border-zinc-700 text-white px-2 py-1.5 rounded w-full text-sm"
+                              placeholder="Total GST %"
+                            />
+                            <div className="text-[10px] text-gray-400 text-right leading-tight">
+                              IGST: {editData.gst_rate || 0}%<br/>
+                              CGST: {(Number(editData.gst_rate || 0) / 2).toFixed(1)}% | SGST: {(Number(editData.gst_rate || 0) / 2).toFixed(1)}%
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex justify-end gap-2 mt-2">
+                          <button onClick={() => setEditingCategory(null)} className="text-gray-400 hover:text-white text-xs px-2 py-1">Cancel (Esc)</button>
+                          <button onClick={handleSaveEdit} disabled={saving} className="bg-blue-600 text-white text-xs px-3 py-1 rounded hover:bg-blue-700">Save (Ctrl+Enter / Ctrl+A)</button>
                         </div>
                       </div>
-                    </div>
-                    <div className="flex justify-end gap-2 mt-2">
-                      <button onClick={() => setEditingCategory(null)} className="text-gray-400 hover:text-white text-xs px-2 py-1">Cancel</button>
-                      <button onClick={handleSaveEdit} disabled={saving} className="bg-blue-600 text-white text-xs px-3 py-1 rounded hover:bg-blue-700">Save</button>
-                    </div>
+                    ) : (
+                      <>
+                        <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={(e) => startEdit(cat, e)} className="p-1.5 bg-zinc-800 hover:bg-blue-500 text-gray-400 hover:text-white rounded transition-colors" title="Edit Category (Ctrl+Enter)">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                          </button>
+                          <button onClick={(e) => startDelete(cat, e)} className="p-1.5 bg-zinc-800 hover:bg-red-500 text-gray-400 hover:text-white rounded transition-colors" title="Delete Category (Alt+D)">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                          </button>
+                        </div>
+
+                        <div className="flex-1 flex flex-col items-center justify-center text-center">
+                          <div className="w-14 h-14 bg-zinc-800 text-gray-300 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-all">
+                            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                          </div>
+                          <h3 className="text-xl font-bold text-white group-hover:text-blue-400 transition-colors">{cat.name}</h3>
+                          <p className="text-gray-500 text-sm mt-1">{cat.item_count} item{cat.item_count !== 1 ? 's' : ''}</p>
+                        </div>
+
+                        <div className="border-t border-zinc-800 pt-3 mt-auto flex flex-col text-xs text-gray-500 gap-1">
+                          <div className="flex justify-between">
+                            <span>HSN: <span className="text-gray-300 font-medium">{cat.hsn_code || '—'}</span></span>
+                            <span>IGST: <span className="text-gray-300 font-medium">{cat.gst_rate}%</span></span>
+                          </div>
+                          <div className="flex justify-between text-[10px]">
+                            <span></span>
+                            <span>CGST: {(Number(cat.gst_rate)/2).toFixed(1)}% | SGST: {(Number(cat.gst_rate)/2).toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
-                ) : (
-                  <>
-                    <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={(e) => startEdit(cat, e)} className="p-1.5 bg-zinc-800 hover:bg-blue-500 text-gray-400 hover:text-white rounded transition-colors" title="Edit Category">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
-                      </button>
-                      <button onClick={(e) => startDelete(cat, e)} className="p-1.5 bg-zinc-800 hover:bg-red-500 text-gray-400 hover:text-white rounded transition-colors" title="Delete Category">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                      </button>
-                    </div>
+                );
+              })}
+            </div>
 
-                    <div className="flex-1 flex flex-col items-center justify-center text-center">
-                      <div className="w-14 h-14 bg-zinc-800 text-gray-300 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-all">
-                        <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
-                      </div>
-                      <h3 className="text-xl font-bold text-white group-hover:text-blue-400 transition-colors">{cat.name}</h3>
-                      <p className="text-gray-500 text-sm mt-1">{cat.item_count} item{cat.item_count !== 1 ? 's' : ''}</p>
-                    </div>
-
-                    <div className="border-t border-zinc-800 pt-3 mt-auto flex flex-col text-xs text-gray-500 gap-1">
-                      <div className="flex justify-between">
-                        <span>HSN: <span className="text-gray-300 font-medium">{cat.hsn_code || '—'}</span></span>
-                        <span>IGST: <span className="text-gray-300 font-medium">{cat.gst_rate}%</span></span>
-                      </div>
-                      <div className="flex justify-between text-[10px]">
-                        <span></span>
-                        <span>CGST: {(Number(cat.gst_rate)/2).toFixed(1)}% | SGST: {(Number(cat.gst_rate)/2).toFixed(1)}%</span>
-                      </div>
-                    </div>
-                  </>
-                )}
+            {/* Keyboard Shortcuts Hint Bar */}
+            <div className="p-3 border border-border bg-card/60 backdrop-blur rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-muted-foreground mt-4">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="flex items-center gap-1 font-semibold text-foreground">
+                  <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                  Tally Shortcuts:
+                </span>
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">↑</kbd>
+                  <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">↓</kbd>
+                  <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">←</kbd>
+                  <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">→</kbd>
+                  <span className="text-[11px]">Navigate</span>
+                </span>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Enter</kbd>
+                  <span className="text-[11px]">Open Category</span>
+                </span>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Ctrl + Enter</kbd>
+                  <span className="text-[11px]">Alter / Edit</span>
+                </span>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Alt + D</kbd>
+                  <span className="text-[11px]">Delete</span>
+                </span>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Esc</kbd>
+                  <span className="text-[11px]">Deselect</span>
+                </span>
               </div>
-            ))}
+              {focusedIndex >= 0 && categories[focusedIndex] && (
+                <span className="font-mono text-blue-400 font-semibold text-[11px]">
+                  {categories[focusedIndex].name} ({focusedIndex + 1}/{categories.length})
+                </span>
+              )}
+            </div>
           </div>
         )}
       </div>

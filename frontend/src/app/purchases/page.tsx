@@ -96,6 +96,90 @@ export default function PurchaseInvoiceList() {
     }
   };
 
+  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
+
+  const scrollToInvoice = (index: number) => {
+    if (index >= 0 && index < invoices.length) {
+      const invId = invoices[index].id;
+      const el = document.getElementById(`row-invoice-${invId}`);
+      if (el) {
+        el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isEditModalOpen) return;
+
+      const activeElement = document.activeElement;
+      const isInputFocused = activeElement && (
+        activeElement.tagName === "INPUT" ||
+        activeElement.tagName === "TEXTAREA" ||
+        activeElement.tagName === "SELECT"
+      );
+      if (isInputFocused) return;
+
+      if (invoices.length === 0) return;
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedIndex(prev => {
+          const next = prev < invoices.length - 1 ? prev + 1 : 0;
+          scrollToInvoice(next);
+          return next;
+        });
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedIndex(prev => {
+          const next = prev > 0 ? prev - 1 : invoices.length - 1;
+          scrollToInvoice(next);
+          return next;
+        });
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        setFocusedIndex(0);
+        scrollToInvoice(0);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        setFocusedIndex(invoices.length - 1);
+        scrollToInvoice(invoices.length - 1);
+      } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        // TALLY ALTER SHORTCUT: Ctrl + Enter opens the full Edit Invoice Modal!
+        if (focusedIndex >= 0 && focusedIndex < invoices.length) {
+          e.preventDefault();
+          handleStartEdit(invoices[focusedIndex]);
+        }
+      } else if (e.key === "Enter") {
+        // Enter views details of selected invoice
+        if (focusedIndex >= 0 && focusedIndex < invoices.length) {
+          e.preventDefault();
+          handleOpenVoucherDetail(invoices[focusedIndex].id);
+        }
+      } else if (e.key.toLowerCase() === "e" && !e.ctrlKey && !e.metaKey) {
+        if (focusedIndex >= 0 && focusedIndex < invoices.length) {
+          e.preventDefault();
+          handleStartEdit(invoices[focusedIndex]);
+        }
+      } else if ((e.altKey && e.key.toLowerCase() === "d") || e.key === "Delete") {
+        if (focusedIndex >= 0 && focusedIndex < invoices.length) {
+          e.preventDefault();
+          const target = invoices[focusedIndex];
+          handleDeleteInvoice(target.id, target.voucher_number);
+        }
+      } else if (e.key === "Escape") {
+        if (selectedVoucher) {
+          setSelectedVoucher(null);
+        } else {
+          setFocusedIndex(-1);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [invoices, focusedIndex, isEditModalOpen, selectedVoucher]);
+
   return (
     <DashboardLayout>
       <div className="space-y-6 flex flex-col h-full pb-12">
@@ -158,12 +242,22 @@ export default function PurchaseInvoiceList() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/40 text-xs">
-                  {invoices.map((inv) => (
-                    <tr
-                      key={inv.id}
-                      onClick={() => handleOpenVoucherDetail(inv.id)}
-                      className="hover:bg-muted/20 transition-colors cursor-pointer group"
-                    >
+                  {invoices.map((inv, idx) => {
+                    const isFocused = focusedIndex === idx;
+                    return (
+                      <tr
+                        id={`row-invoice-${inv.id}`}
+                        key={inv.id}
+                        onClick={() => {
+                          setFocusedIndex(idx);
+                          handleOpenVoucherDetail(inv.id);
+                        }}
+                        className={`transition-all duration-150 cursor-pointer group ${
+                          isFocused
+                            ? "bg-blue-500/10 ring-2 ring-inset ring-blue-500/60 border-l-4 border-l-blue-500"
+                            : "hover:bg-muted/20"
+                        }`}
+                      >
                       {/* Invoice No */}
                       <td className="p-4 font-mono font-medium text-foreground flex items-center gap-2">
                         <span className="font-bold">{inv.voucher_number}</span>
@@ -228,9 +322,45 @@ export default function PurchaseInvoiceList() {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
+
+              {/* Keyboard Shortcuts Hint Bar */}
+              <div className="p-3 border-t border-border/60 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-muted-foreground">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="flex items-center gap-1">
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">↑</kbd>
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">↓</kbd>
+                    <span className="text-[11px]">Navigate</span>
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">Ctrl</kbd>
+                    <span>+</span>
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">Enter</kbd>
+                    <span className="text-[11px]">Edit Invoice (Tally Alter)</span>
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">Enter</kbd>
+                    <span className="text-[11px]">View Bill</span>
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">Alt</kbd>
+                    <span>+</span>
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">D</kbd>
+                    <span className="text-[11px]">Delete</span>
+                  </span>
+                </div>
+                {focusedIndex >= 0 && (
+                  <span className="font-mono text-blue-400 font-semibold text-[11px]">
+                    Invoice {focusedIndex + 1} of {invoices.length} selected
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>

@@ -280,6 +280,121 @@ export default function CategoryDetailPage() {
     return list;
   }, [filteredProducts, sortBy]);
 
+  // Flat list of all navigable product variant rows in the table
+  const navigableRows = useMemo(() => {
+    const list: { productId: string; product: any; blockBaseName: string }[] = [];
+    groupedItemBlocks.forEach(block => {
+      block.variants.forEach(v => {
+        list.push({ productId: v.id, product: v, blockBaseName: block.baseName });
+      });
+    });
+    return list;
+  }, [groupedItemBlocks]);
+
+  const [focusedRowIndex, setFocusedRowIndex] = useState<number>(-1);
+
+  // Auto-scroll focused row into view smoothly
+  const scrollToRow = (index: number) => {
+    if (index >= 0 && index < navigableRows.length) {
+      const pid = navigableRows[index].productId;
+      const el = document.getElementById(`row-product-${pid}`);
+      if (el) {
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isImportModalOpen) return;
+
+      const activeElement = document.activeElement;
+      const isInputFocused = activeElement && (
+        activeElement.tagName === 'INPUT' ||
+        activeElement.tagName === 'TEXTAREA' ||
+        activeElement.tagName === 'SELECT'
+      );
+
+      // If currently editing an item inline
+      if (editingId) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelEdit();
+        } else if ((e.ctrlKey || e.metaKey) && (e.key === 'Enter' || e.key.toLowerCase() === 'a')) {
+          // Tally shortcut: Ctrl + Enter or Ctrl + A to accept/save
+          e.preventDefault();
+          saveEdit(editingId);
+        } else if (e.key === 'Enter' && isInputFocused && !e.shiftKey) {
+          e.preventDefault();
+          saveEdit(editingId);
+        }
+        return;
+      }
+
+      // If user is focused on the search bar or category edit
+      if (isInputFocused) {
+        if (e.key === 'Escape') {
+          (activeElement as HTMLElement).blur();
+        }
+        return;
+      }
+
+      if (navigableRows.length === 0) return;
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setFocusedRowIndex(prev => {
+          const next = prev < navigableRows.length - 1 ? prev + 1 : 0;
+          scrollToRow(next);
+          return next;
+        });
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setFocusedRowIndex(prev => {
+          const next = prev > 0 ? prev - 1 : navigableRows.length - 1;
+          scrollToRow(next);
+          return next;
+        });
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        setFocusedRowIndex(0);
+        scrollToRow(0);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        setFocusedRowIndex(navigableRows.length - 1);
+        scrollToRow(navigableRows.length - 1);
+      } else if (e.key === 'PageDown') {
+        e.preventDefault();
+        setFocusedRowIndex(prev => {
+          const next = Math.min(navigableRows.length - 1, Math.max(0, prev) + 10);
+          scrollToRow(next);
+          return next;
+        });
+      } else if (e.key === 'PageUp') {
+        e.preventDefault();
+        setFocusedRowIndex(prev => {
+          const next = Math.max(0, prev - 10);
+          scrollToRow(next);
+          return next;
+        });
+      } else if (e.key === 'Enter' || ((e.ctrlKey || e.metaKey) && e.key === 'Enter')) {
+        // TALLY SHORTCUT: Ctrl + Enter or Enter to alter/edit the selected item!
+        if (focusedRowIndex >= 0 && focusedRowIndex < navigableRows.length) {
+          e.preventDefault();
+          const target = navigableRows[focusedRowIndex];
+          if (target) {
+            startEdit(target.product);
+          }
+        }
+      } else if (e.key === 'Escape') {
+        setFocusedRowIndex(-1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [navigableRows, focusedRowIndex, editingId, editData, isImportModalOpen]);
+
   return (
     <DashboardLayout>
       <div className="space-y-6 pb-16">
@@ -524,8 +639,20 @@ export default function CategoryDetailPage() {
                     if (!isMultiBrand) {
                       const p = block.variants[0];
                       const isEditing = editingId === p.id;
+                      const isFocused = focusedRowIndex >= 0 && navigableRows[focusedRowIndex]?.productId === p.id;
                       return (
-                        <tr key={p.id} className={`transition-colors ${isEditing ? 'bg-blue-500/5' : 'hover:bg-muted/20'}`}>
+                        <tr
+                          id={`row-product-${p.id}`}
+                          key={p.id}
+                          onClick={() => setFocusedRowIndex(navigableRows.findIndex(r => r.productId === p.id))}
+                          className={`transition-all duration-150 cursor-pointer ${
+                            isEditing 
+                              ? 'bg-blue-500/10 border-l-4 border-l-blue-500' 
+                              : isFocused 
+                              ? 'bg-blue-500/10 ring-2 ring-inset ring-blue-500/60 border-l-4 border-l-blue-500' 
+                              : 'hover:bg-muted/20'
+                          }`}
+                        >
                           {/* Item Name */}
                           <td className="p-3.5">
                             {isEditing ? (
@@ -691,8 +818,20 @@ export default function CategoryDetailPage() {
                           <div className="divide-y divide-border/30">
                             {block.variants.map((v) => {
                               const isEditing = editingId === v.id;
+                              const isFocused = focusedRowIndex >= 0 && navigableRows[focusedRowIndex]?.productId === v.id;
                               return (
-                                <div key={v.id} className={`grid grid-cols-6 items-center p-3 text-xs transition-colors ${isEditing ? 'bg-blue-500/5' : 'hover:bg-muted/15'}`}>
+                                <div
+                                  id={`row-product-${v.id}`}
+                                  key={v.id}
+                                  onClick={() => setFocusedRowIndex(navigableRows.findIndex(r => r.productId === v.id))}
+                                  className={`grid grid-cols-6 items-center p-3 text-xs transition-all duration-150 cursor-pointer ${
+                                    isEditing 
+                                      ? 'bg-blue-500/10 border-l-4 border-l-blue-500' 
+                                      : isFocused 
+                                      ? 'bg-blue-500/10 ring-2 ring-inset ring-blue-500/60 border-l-4 border-l-blue-500' 
+                                      : 'hover:bg-muted/15'
+                                  }`}
+                                >
                                   {/* Brand */}
                                   <div>
                                     {isEditing ? (
@@ -810,12 +949,44 @@ export default function CategoryDetailPage() {
             </div>
 
             {/* Table Footer */}
-            <div className="p-4 border-t border-border/60 bg-muted/15 flex items-center justify-between text-xs text-muted-foreground">
-              <span>
-                Showing <strong>{groupedItemBlocks.length}</strong> base items (
-                <strong>{filteredProducts.length}</strong> brand entries)
-              </span>
-              <span>Click ✏️ to inline edit prices & brands</span>
+            <div className="p-3.5 border-t border-border/60 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">↑</kbd>
+                  <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">↓</kbd>
+                  <span className="text-[11px]">Navigate</span>
+                </span>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">Ctrl</kbd>
+                  <span>+</span>
+                  <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">Enter</kbd>
+                  <span className="text-[11px]">Edit (Tally Alter)</span>
+                </span>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">Ctrl</kbd>
+                  <span>+</span>
+                  <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">A</kbd>
+                  <span>/</span>
+                  <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">Enter</kbd>
+                  <span className="text-[11px]">Save</span>
+                </span>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">Esc</kbd>
+                  <span className="text-[11px]">Cancel</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2 font-mono text-[11px]">
+                {focusedRowIndex >= 0 ? (
+                  <span className="text-blue-400 font-semibold bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+                    Row {focusedRowIndex + 1} of {navigableRows.length}
+                  </span>
+                ) : (
+                  <span>Showing {groupedItemBlocks.length} items ({filteredProducts.length} variants)</span>
+                )}
+              </div>
             </div>
           </div>
         )}
