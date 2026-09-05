@@ -8,6 +8,7 @@ import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
 import EditPurchaseInvoiceModal from "@/components/modals/EditPurchaseInvoiceModal";
+import ConfirmModal from "@/components/modals/ConfirmModal";
 import { Edit2, Trash2, Eye, FileText, Plus } from "lucide-react";
 
 export default function PurchaseInvoiceList() {
@@ -23,6 +24,8 @@ export default function PurchaseInvoiceList() {
   // Edit Modal State
   const [editingVoucher, setEditingVoucher] = useState<any | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  
+  const [deleteConfirmParams, setDeleteConfirmParams] = useState<{ id: string, number: string } | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -72,18 +75,14 @@ export default function PurchaseInvoiceList() {
     setIsEditModalOpen(true);
   };
 
-  const handleDeleteInvoice = async (voucherId: string, voucherNumber: string) => {
-    if (!window.confirm(`Are you sure you want to delete purchase invoice #${voucherNumber}? This will reverse the stock impact and accounting balances.`)) {
-      return;
-    }
-
+  const executeDelete = async (voucherId: string) => {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const res = await axios.delete(`${API_BASE_URL}/api/vouchers/detail/${voucherId}/`, { headers });
 
       if (res.data.success) {
-        toast.success(res.data.message || `Invoice #${voucherNumber} deleted and reversed successfully!`);
+        toast.success(res.data.message || `Invoice deleted and reversed successfully!`);
         setInvoices((prev) => prev.filter((i) => i.id !== voucherId));
         if (selectedVoucher?.id === voucherId) {
           setSelectedVoucher(null);
@@ -94,6 +93,10 @@ export default function PurchaseInvoiceList() {
     } catch (err: any) {
       toast.error("Delete failed", err.response?.data?.error || err.message);
     }
+  };
+
+  const handleDeleteInvoice = (voucherId: string, voucherNumber: string) => {
+    setDeleteConfirmParams({ id: voucherId, number: voucherNumber });
   };
 
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
@@ -110,7 +113,7 @@ export default function PurchaseInvoiceList() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isEditModalOpen) return;
+      if (isEditModalOpen || deleteConfirmParams !== null) return;
 
       const activeElement = document.activeElement;
       const isInputFocused = activeElement && (
@@ -547,6 +550,23 @@ export default function PurchaseInvoiceList() {
           onClose={() => setIsEditModalOpen(false)}
           voucher={editingVoucher}
           onUpdateSuccess={fetchInvoices}
+        />
+
+        {/* Delete Confirm Modal */}
+        <ConfirmModal
+          isOpen={deleteConfirmParams !== null}
+          onClose={() => setDeleteConfirmParams(null)}
+          onConfirm={() => deleteConfirmParams && executeDelete(deleteConfirmParams.id)}
+          title="Delete Invoice"
+          description={
+            <>
+              Are you sure you want to delete purchase invoice <span className="text-white font-semibold">#{deleteConfirmParams?.number}</span>? 
+              This will reverse the stock impact and accounting balances.
+            </>
+          }
+          confirmText="Delete & Reverse"
+          cancelText="Cancel"
+          variant="danger"
         />
       </div>
     </DashboardLayout>

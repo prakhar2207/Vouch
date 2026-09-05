@@ -8,6 +8,7 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useToast } from '@/context/ToastContext';
 import PriceListImportModal from '@/components/modals/PriceListImportModal';
+import ConfirmModal from '@/components/modals/ConfirmModal';
 import { 
   ArrowUpDown, 
   FileSpreadsheet, 
@@ -50,6 +51,7 @@ export default function CategoryDetailPage() {
   
   // Modals state
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [deleteConfirmParams, setDeleteConfirmParams] = useState<{ id: string, name: string } | null>(null);
 
   // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -129,9 +131,7 @@ export default function CategoryDetailPage() {
     }
   };
 
-  const deleteProduct = async (productId: string, productName: string) => {
-    if (!window.confirm(`Are you sure you want to delete ${productName}?`)) return;
-    
+  const executeDelete = async (productId: string) => {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
@@ -147,6 +147,10 @@ export default function CategoryDetailPage() {
     } catch (err: any) {
       toast.error('Delete failed', err.response?.data?.error || err.message);
     }
+  };
+
+  const deleteProduct = (productId: string, productName: string) => {
+    setDeleteConfirmParams({ id: productId, name: productName });
   };
 
   const startCategoryEdit = () => {
@@ -327,7 +331,7 @@ export default function CategoryDetailPage() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isImportModalOpen) return;
+      if (isImportModalOpen || deleteConfirmParams !== null) return;
 
       const activeElement = document.activeElement;
       const isInputFocused = activeElement && (
@@ -1054,6 +1058,22 @@ export default function CategoryDetailPage() {
           companyId={companyId}
           existingBrands={existingBrandList}
           onImportSuccess={fetchData}
+        />
+
+        <ConfirmModal
+          isOpen={deleteConfirmParams !== null}
+          onClose={() => setDeleteConfirmParams(null)}
+          onConfirm={() => deleteConfirmParams && executeDelete(deleteConfirmParams.id)}
+          title="Delete Item"
+          description={
+            <>
+              Are you sure you want to delete <span className="text-white font-semibold">{deleteConfirmParams?.name}</span>? 
+              This action cannot be undone.
+            </>
+          }
+          confirmText="Delete"
+          cancelText="Cancel"
+          variant="danger"
         />
       </div>
     </DashboardLayout>
