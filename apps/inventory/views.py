@@ -95,7 +95,7 @@ class ProductListView(APIView):
             company = Company.objects.get(id=company_id, users__user=request.user)
             category_id = request.query_params.get('category')
             
-            qs = Product.objects.filter(company=company).select_related('category').order_by('-created_at')
+            qs = Product.objects.filter(company=company).select_related('category').prefetch_related('voucher_items').order_by('-created_at')
             if category_id:
                 if category_id == 'unassigned':
                     qs = qs.filter(category__isnull=True)
@@ -123,6 +123,7 @@ class ProductListView(APIView):
                     "purchase_price": p.purchase_price,
                     "purchase_price_from_invoice": getattr(p, 'purchase_price_from_invoice', False),
                     "stock_quantity": p.stock_quantity,
+                    "has_invoice_stock": len(p.voucher_items.all()) > 0,
                     "track_batches": p.track_batches,
                     "track_serial_numbers": p.track_serial_numbers
                 } for p in qs
@@ -237,6 +238,35 @@ class ProductDetailView(APIView):
             if 'purchase_price' in data: product.purchase_price = data['purchase_price']
             if 'sku' in data: product.sku = data['sku']
             if 'unit' in data: product.unit = data['unit']
+            
+            if 'stock_quantity' in data:
+                new_stock = float(data['stock_quantity'])
+                product.stock_quantity = new_stock
+                
+                # Also update the Opening Stock InventoryEntry
+                from apps.inventory.models import InventoryEntry, Warehouse
+                opening_entry = InventoryEntry.objects.filter(product=product, voucher_id__isnull=True).first()
+                if opening_entry:
+                    if new_stock == 0:
+                        opening_entry.delete()
+                    else:
+                        opening_entry.quantity = new_stock
+                        opening_entry.rate = product.purchase_price
+                        opening_entry.total_value = new_stock * float(product.purchase_price)
+                        opening_entry.save()
+                elif new_stock > 0:
+                    warehouse = Warehouse.objects.filter(company=company).first()
+                    if not warehouse:
+                        warehouse = Warehouse.objects.create(company=company, name="Main Warehouse")
+                    InventoryEntry.objects.create(
+                        company=company,
+                        product=product,
+                        warehouse=warehouse,
+                        movement_type='IN',
+                        quantity=new_stock,
+                        rate=product.purchase_price,
+                        total_value=new_stock * float(product.purchase_price)
+                    )
 
             product.save()
             return Response({"success": True, "data": {"id": str(product.id), "name": product.name}})

@@ -100,6 +100,7 @@ export default function CategoryDetailPage() {
       selling_price: p.selling_price,
       wholesaler_price: p.wholesaler_price,
       purchase_price: p.purchase_price,
+      stock_quantity: p.stock_quantity,
     });
   };
 
@@ -786,10 +787,25 @@ export default function CategoryDetailPage() {
 
                           {/* Stock */}
                           <td className="p-3.5 text-right">
-                            <span className={`font-bold text-sm ${parseFloat(p.stock_quantity) > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                              {parseFloat(p.stock_quantity).toLocaleString('en-IN')}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground ml-1">{p.unit}</span>
+                            {isEditing && !p.has_invoice_stock ? (
+                              <div className="flex items-center justify-end gap-1">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editData.stock_quantity}
+                                  onChange={e => setEditData({ ...editData, stock_quantity: parseFloat(e.target.value) || 0 })}
+                                  className="bg-muted/40 border border-border text-emerald-400 px-1.5 py-1 rounded text-xs text-right font-mono font-bold w-16 outline-none"
+                                />
+                                <span className="text-[10px] text-muted-foreground">{p.unit}</span>
+                              </div>
+                            ) : (
+                              <>
+                                <span className={`font-bold text-sm ${parseFloat(p.stock_quantity) > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                                  {parseFloat(p.stock_quantity).toLocaleString('en-IN')}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground ml-1">{p.unit}</span>
+                              </>
+                            )}
                           </td>
 
                           {/* Actions */}
@@ -942,10 +958,25 @@ export default function CategoryDetailPage() {
 
                                   {/* Stock */}
                                   <div className="text-right">
-                                    <span className={`font-bold ${parseFloat(v.stock_quantity) > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                                      {parseFloat(v.stock_quantity).toLocaleString('en-IN')}
-                                    </span>
-                                    <span className="text-[10px] text-muted-foreground ml-1">{v.unit}</span>
+                                    {isEditing && !v.has_invoice_stock ? (
+                                      <div className="flex items-center justify-end gap-1">
+                                        <input
+                                          type="number"
+                                          step="0.01"
+                                          value={editData.stock_quantity}
+                                          onChange={e => setEditData({ ...editData, stock_quantity: parseFloat(e.target.value) || 0 })}
+                                          className="bg-muted/40 border border-border text-emerald-400 px-1.5 py-1 rounded text-xs text-right font-mono font-bold w-16 outline-none"
+                                        />
+                                        <span className="text-[10px] text-muted-foreground">{v.unit}</span>
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <span className={`font-bold ${parseFloat(v.stock_quantity) > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                                          {parseFloat(v.stock_quantity).toLocaleString('en-IN')}
+                                        </span>
+                                        <span className="text-[10px] text-muted-foreground ml-1">{v.unit}</span>
+                                      </>
+                                    )}
                                   </div>
 
                                   {/* Action */}
