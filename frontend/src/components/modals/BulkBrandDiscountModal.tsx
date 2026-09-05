@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useToast } from '@/context/ToastContext';
 import { Percent, Check, X } from 'lucide-react';
@@ -29,10 +29,17 @@ export default function BulkBrandDiscountModal({
   existingBrands,
   onSuccess
 }: BulkBrandDiscountModalProps) {
-  const [selectedBrand, setSelectedBrand] = useState(existingBrands[0] || '');
+  const [selectedBrand, setSelectedBrand] = useState('');
   const [discountPercent, setDiscountPercent] = useState<number>(0);
   const [isUpdating, setIsUpdating] = useState(false);
   const { toast } = useToast();
+
+  // Sync selectedBrand whenever the brands list changes or modal opens
+  useEffect(() => {
+    if (isOpen && existingBrands.length > 0) {
+      setSelectedBrand(prev => prev && existingBrands.includes(prev) ? prev : existingBrands[0]);
+    }
+  }, [isOpen, existingBrands]);
 
   if (!isOpen) return null;
 
@@ -76,6 +83,7 @@ export default function BulkBrandDiscountModal({
       <div 
         className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}
+        onKeyDown={e => e.stopPropagation()}
       >
         <div className="p-5 border-b border-zinc-800 flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center">
