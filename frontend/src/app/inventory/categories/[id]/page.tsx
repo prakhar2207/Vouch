@@ -38,7 +38,8 @@ type SortOption =
 const isIntegerUnit = (unit?: string) => {
   if (!unit) return true; // Default unit is PCS
   const u = unit.trim().toUpperCase();
-  return ['PCS', 'PIECES', 'NOS', 'NO', 'PC', 'PKT', 'PACKET', 'BOX', 'BAG', 'SET', 'DOZ', 'CAN', 'BTL'].includes(u);
+  const fractionalUnits = ['KG', 'KGS', 'KILOGRAM', 'KILOGRAMS', 'LTR', 'LTRS', 'LITRE', 'LITRES', 'LITER', 'LITERS', 'MTR', 'MTRS', 'METER', 'METERS', 'METRE', 'METRES'];
+  return !fractionalUnits.includes(u);
 };
 
 const formatStockQuantity = (qty: any, unit?: string) => {
@@ -869,7 +870,24 @@ export default function CategoryDetailPage() {
                                   type="number"
                                   step={isIntegerUnit(p.unit) ? "1" : "0.01"}
                                   min="0"
-                                  value={editData.stock_quantity !== undefined ? editData.stock_quantity : (isIntegerUnit(p.unit) ? Math.round(parseFloat(p.stock_quantity) || 0) : p.stock_quantity)}
+                                  value={
+                                    isIntegerUnit(p.unit)
+                                      ? Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : p.stock_quantity) || 0)
+                                      : (editData.stock_quantity !== undefined ? editData.stock_quantity : p.stock_quantity)
+                                  }
+                                  onKeyDown={e => {
+                                    if (isIntegerUnit(p.unit)) {
+                                      if (e.key === 'ArrowUp') {
+                                        e.preventDefault();
+                                        const current = Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : p.stock_quantity) || 0);
+                                        setEditData({ ...editData, stock_quantity: current + 1 });
+                                      } else if (e.key === 'ArrowDown') {
+                                        e.preventDefault();
+                                        const current = Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : p.stock_quantity) || 0);
+                                        setEditData({ ...editData, stock_quantity: Math.max(0, current - 1) });
+                                      }
+                                    }
+                                  }}
                                   onChange={e => {
                                     const val = parseFloat(e.target.value) || 0;
                                     setEditData({ ...editData, stock_quantity: isIntegerUnit(p.unit) ? Math.round(val) : val });
@@ -1070,7 +1088,24 @@ export default function CategoryDetailPage() {
                                           type="number"
                                           step={isIntegerUnit(v.unit) ? "1" : "0.01"}
                                           min="0"
-                                          value={editData.stock_quantity !== undefined ? editData.stock_quantity : (isIntegerUnit(v.unit) ? Math.round(parseFloat(v.stock_quantity) || 0) : v.stock_quantity)}
+                                          value={
+                                            isIntegerUnit(v.unit)
+                                              ? Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : v.stock_quantity) || 0)
+                                              : (editData.stock_quantity !== undefined ? editData.stock_quantity : v.stock_quantity)
+                                          }
+                                          onKeyDown={e => {
+                                            if (isIntegerUnit(v.unit)) {
+                                              if (e.key === 'ArrowUp') {
+                                                e.preventDefault();
+                                                const current = Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : v.stock_quantity) || 0);
+                                                setEditData({ ...editData, stock_quantity: current + 1 });
+                                              } else if (e.key === 'ArrowDown') {
+                                                e.preventDefault();
+                                                const current = Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : v.stock_quantity) || 0);
+                                                setEditData({ ...editData, stock_quantity: Math.max(0, current - 1) });
+                                              }
+                                            }
+                                          }}
                                           onChange={e => {
                                             const val = parseFloat(e.target.value) || 0;
                                             setEditData({ ...editData, stock_quantity: isIntegerUnit(v.unit) ? Math.round(val) : val });

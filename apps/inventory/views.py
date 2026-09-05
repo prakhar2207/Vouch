@@ -90,7 +90,9 @@ class ProductCategoryDetailView(APIView):
 def is_integer_unit(unit_str):
     if not unit_str:
         return True # Default unit is PCS
-    return str(unit_str).strip().upper() in ['PCS', 'PIECES', 'NOS', 'NO', 'PC', 'PKT', 'PACKET', 'BOX', 'BAG', 'SET', 'DOZ', 'CAN', 'BTL']
+    u = str(unit_str).strip().upper()
+    fractional_units = ['KG', 'KGS', 'KILOGRAM', 'KILOGRAMS', 'LTR', 'LTRS', 'LITRE', 'LITRES', 'LITER', 'LITERS', 'MTR', 'MTRS', 'METER', 'METERS', 'METRE', 'METRES']
+    return u not in fractional_units
 
 class ProductListView(APIView):
     permission_classes = [IsAuthenticated]

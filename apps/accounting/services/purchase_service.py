@@ -146,7 +146,8 @@ class PurchaseInvoiceService:
 
             qty = Decimal(str(item['quantity']))
             unit_str = str(item.get('unit') or getattr(product, 'unit', 'PCS') or 'PCS').strip().upper()
-            if unit_str in ['PCS', 'PIECES', 'NOS', 'NO', 'PC', 'PKT', 'PACKET', 'BOX', 'BAG', 'SET', 'DOZ', 'CAN', 'BTL']:
+            fractional_units = ['KG', 'KGS', 'KILOGRAM', 'KILOGRAMS', 'LTR', 'LTRS', 'LITRE', 'LITRES', 'LITER', 'LITERS', 'MTR', 'MTRS', 'METER', 'METERS', 'METRE', 'METRES']
+            if unit_str not in fractional_units:
                 qty = Decimal(str(int(round(float(qty)))))
             rate = Decimal(str(item['rate']))
 
