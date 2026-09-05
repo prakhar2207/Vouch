@@ -36,8 +36,9 @@ export default function SalesPage() {
   const [saving, setSaving] = useState(false);
   
   const [categories, setCategories] = useState<any[]>([]);
-  const [groupedItems, setGroupedItems] = useState([
-    { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', quantity: 1, rate: 0, discount_percent: 0 } ] }
+  const [products, setProducts] = useState<any[]>([]);
+  const [groupedItems, setGroupedItems] = useState<any[]>([
+    { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: 0 } ] }
   ]);
 
   useEffect(() => {
@@ -81,9 +82,9 @@ export default function SalesPage() {
         setPartyLedgerId(newEntity.id);
         const disc = Number(newEntity.discount_percent || 0);
         if (disc > 0) {
-          setGroupedItems(prev => prev.map(group => ({
+          setGroupedItems(prev => prev.map((group: any) => ({
             ...group,
-            items: group.items.map(item => ({
+            items: group.items.map((item: any) => ({
               ...item,
               discount_percent: disc
             }))
@@ -117,12 +118,15 @@ export default function SalesPage() {
       setEnableLedgerMapping(isMappingEnabled);
       setEnableManualInvoice(comp.settings?.enable_manual_invoice_number || false);
 
-      const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cId}/`, { headers });
+      const [ledgersRes, catsRes, prodsRes] = await Promise.all([
+        axios.get(`${API_BASE_URL}/api/v1/ledgers/${cId}/`, { headers }),
+        axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cId}/`, { headers }),
+        axios.get(`${API_BASE_URL}/api/v1/inventory/products/${cId}/`, { headers }).catch(() => ({ data: { data: [] } }))
+      ]);
       const ledgerList = ledgersRes.data.data || [];
       setLedgers(ledgerList);
-      
-      const catsRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cId}/`, { headers });
       setCategories(catsRes.data.data || []);
+      setProducts(prodsRes.data?.data || []);
       
       const party = ledgerList.find((l:any) => l.name.includes('Customer') || l.group.includes('Debtors'));
       
@@ -140,9 +144,9 @@ export default function SalesPage() {
         setPartyLedgerId(party.id);
         const partyDisc = Number(party.discount_percent || 0);
         if (partyDisc > 0) {
-          setGroupedItems(prev => prev.map(group => ({
+          setGroupedItems(prev => prev.map((group: any) => ({
             ...group,
-            items: group.items.map(item => ({
+            items: group.items.map((item: any) => ({
               ...item,
               discount_percent: partyDisc
             }))
@@ -167,9 +171,9 @@ export default function SalesPage() {
     const disc = Number(party?.discount_percent || 0);
 
     // Auto-populate customer's default discount across all line items
-    setGroupedItems(prev => prev.map(group => ({
+    setGroupedItems(prev => prev.map((group: any) => ({
       ...group,
-      items: group.items.map(item => ({
+      items: group.items.map((item: any) => ({
         ...item,
         discount_percent: disc
       }))
@@ -253,16 +257,93 @@ export default function SalesPage() {
     if (field === 'category_id') {
       const cat = categories.find(c => c.id === value);
       if (cat) {
-        newGroups[gIndex].hsn_code = cat.hsn_code;
-        newGroups[gIndex].gst_rate = Number(cat.gst_rate);
+        newGroups[gIndex].hsn_code = cat.hsn_code || '';
+        newGroups[gIndex].gst_rate = Number(cat.gst_rate) || 18;
       }
+      // Re-evaluate existing items in this group against the newly selected category
+      newGroups[gIndex].items = newGroups[gIndex].items.map((item: any) => {
+        if (!item.product_name) return item;
+        const cleanVal = String(item.product_name || '').trim().toLowerCase();
+        const alphaVal = cleanVal.replace(/[\s\-_/.]/g, '');
+        const catProds = products.filter(p => p.category_id === value);
+        const match = catProds.find((p: any) => 
+          p.name.toLowerCase() === cleanVal ||
+          p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal ||
+          (p.alias && (p.alias.toLowerCase() === cleanVal || p.alias.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)) ||
+          p.sku.toLowerCase() === cleanVal
+        );
+        if (match) {
+          const mrp = parseFloat(match.selling_price) || 0;
+          return {
+            ...item,
+            product_id: match.id,
+            brand: match.brand || item.brand || '',
+            unit: match.unit || item.unit || 'PCS',
+            rate: mrp > 0 ? mrp : item.rate,
+            discount_percent: (!item.discount_percent || Number(item.discount_percent) === 0) && currentPartyDiscount > 0
+              ? currentPartyDiscount
+              : item.discount_percent
+          };
+        }
+        return item;
+      });
     }
     setGroupedItems(newGroups);
   };
 
   const updateItem = (gIndex: number, iIndex: number, field: string, value: any) => {
     const newGroups = [...groupedItems];
-    (newGroups[gIndex].items[iIndex] as any)[field] = value;
+    const group = newGroups[gIndex];
+    const item = group.items[iIndex];
+    (item as any)[field] = value;
+
+    if (field === 'product_name') {
+      const cleanVal = String(value || '').trim().toLowerCase();
+      const alphaVal = cleanVal.replace(/[\s\-_/.]/g, '');
+      
+      if (cleanVal) {
+        // Prioritize products in this group's category
+        const catProds = products.filter((p: any) => p.category_id === group.category_id);
+        const match = 
+          catProds.find((p: any) => 
+            p.name.toLowerCase() === cleanVal ||
+            p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal ||
+            (p.alias && (p.alias.toLowerCase() === cleanVal || p.alias.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)) ||
+            p.sku.toLowerCase() === cleanVal
+          ) ||
+          products.find((p: any) => 
+            p.name.toLowerCase() === cleanVal ||
+            p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal ||
+            (p.alias && (p.alias.toLowerCase() === cleanVal || p.alias.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)) ||
+            p.sku.toLowerCase() === cleanVal
+          );
+
+        if (match) {
+          const mrp = parseFloat(match.selling_price) || 0;
+          if (mrp > 0) {
+            item.rate = mrp;
+          }
+          item.product_id = match.id;
+          item.brand = match.brand || '';
+          item.unit = match.unit || 'PCS';
+          
+          // Auto-apply customer discount if item currently has 0 discount
+          if ((!item.discount_percent || Number(item.discount_percent) === 0) && currentPartyDiscount > 0) {
+            item.discount_percent = currentPartyDiscount;
+          }
+
+          // If group category is unselected, auto-set to matched product's category
+          if (!group.category_id && match.category_id) {
+            group.category_id = match.category_id;
+            const cat = categories.find(c => c.id === match.category_id);
+            if (cat) {
+              group.hsn_code = cat.hsn_code || '';
+              group.gst_rate = Number(cat.gst_rate) || 18;
+            }
+          }
+        }
+      }
+    }
     setGroupedItems(newGroups);
   };
 
@@ -271,28 +352,46 @@ export default function SalesPage() {
 
   const addRow = (gIndex: number) => {
     const newGroups = [...groupedItems];
-    newGroups[gIndex].items.push({ product_name: '', quantity: 1, rate: 0, discount_percent: currentPartyDiscount });
+    newGroups[gIndex].items.push({ 
+      product_name: '', 
+      product_id: '',
+      brand: '',
+      unit: 'PCS',
+      quantity: 1, 
+      rate: 0, 
+      discount_percent: currentPartyDiscount 
+    });
     setGroupedItems(newGroups);
   };
 
   const removeRow = (gIndex: number, iIndex: number) => {
     const newGroups = [...groupedItems];
     if (newGroups[gIndex].items.length === 1) return;
-    newGroups[gIndex].items = newGroups[gIndex].items.filter((_, i) => i !== iIndex);
+    newGroups[gIndex].items = newGroups[gIndex].items.filter((_: any, i: number) => i !== iIndex);
     setGroupedItems(newGroups);
   };
 
   const addCategoryGroup = () => {
-    setGroupedItems([...groupedItems, { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', quantity: 1, rate: 0, discount_percent: currentPartyDiscount } ] }]);
+    setGroupedItems([
+      ...groupedItems, 
+      { 
+        category_id: '', 
+        hsn_code: '', 
+        gst_rate: 18, 
+        items: [ 
+          { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: currentPartyDiscount } 
+        ] 
+      }
+    ]);
   };
   
   const removeCategoryGroup = (gIndex: number) => {
     if (groupedItems.length === 1) return;
-    setGroupedItems(groupedItems.filter((_, i) => i !== gIndex));
+    setGroupedItems(groupedItems.filter((_: any, i: number) => i !== gIndex));
   };
 
   // Flatten for calculations
-  const allItems = groupedItems.flatMap(g => g.items.map(i => ({...i, gst_rate: g.gst_rate})));
+  const allItems = groupedItems.flatMap((g: any) => g.items.map((i: any) => ({...i, gst_rate: g.gst_rate})));
 
   // Calculate Subtotals
   const grossTotal = allItems.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.rate)), 0);
@@ -498,19 +597,42 @@ export default function SalesPage() {
                         </div>
                         
                         <div className="overflow-x-auto">
+                            {/* Datalist of items for this category block */}
+                            <datalist id={`products-list-${gIndex}`}>
+                                {products
+                                    .filter((p: any) => !group.category_id || p.category_id === group.category_id)
+                                    .map((p: any) => {
+                                        const mrp = parseFloat(p.selling_price) || 0;
+                                        const brandStr = p.brand ? `[${p.brand}] ` : '';
+                                        return (
+                                            <option 
+                                                key={p.id} 
+                                                value={p.name}
+                                            >
+                                                {brandStr}{p.name} — MRP: ₹{mrp.toFixed(2)}
+                                            </option>
+                                        );
+                                    })}
+                            </datalist>
+
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-zinc-900/40 text-gray-400 text-xs uppercase tracking-wider">
                                     <tr>
                                         <th className="p-3 font-medium">Product Name</th>
-                                        <th className="p-3 font-medium w-24">Qty</th>
-                                        <th className="p-3 font-medium w-32">Rate (₹)</th>
-                                        <th className="p-3 font-medium w-24">Disc %</th>
+                                        <th className="p-3 font-medium w-24 text-center">Qty</th>
+                                        <th className="p-3 font-medium w-36 text-right">Rate / MRP (₹)</th>
+                                        <th className="p-3 font-medium w-28 text-center">
+                                            <span>Disc %</span>
+                                            {currentPartyDiscount > 0 && (
+                                                <span className="block text-[10px] text-blue-400 lowercase font-normal">({currentPartyDiscount}% party)</span>
+                                            )}
+                                        </th>
                                         <th className="p-3 font-medium w-32 text-right">Amount</th>
                                         <th className="p-3 w-12"></th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-800/50">
-                                    {group.items.map((item, iIndex) => {
+                                    {group.items.map((item: any, iIndex: number) => {
                                         const gross = Number(item.quantity) * Number(item.rate);
                                         const discount = gross * (Number(item.discount_percent)/100);
                                         const taxable = gross - discount;
@@ -518,22 +640,69 @@ export default function SalesPage() {
                                         return (
                                         <tr key={iIndex} className="hover:bg-zinc-800/40 transition-colors">
                                             <td className="p-2">
-                                                <input type="text" placeholder="e.g. Item Name" value={item.product_name} onChange={e => updateItem(gIndex, iIndex, 'product_name', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-sm" />
+                                                <input 
+                                                    type="text" 
+                                                    list={`products-list-${gIndex}`}
+                                                    placeholder="e.g. Item Name or Size" 
+                                                    value={item.product_name} 
+                                                    onChange={e => updateItem(gIndex, iIndex, 'product_name', e.target.value)} 
+                                                    className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-sm font-medium" 
+                                                />
+                                                {item.product_name && (
+                                                    <div className="flex items-center gap-2 mt-0.5 px-1.5">
+                                                        {Number(item.rate) > 0 ? (
+                                                            <span className="text-[11px] text-blue-400 font-mono flex items-center gap-1">
+                                                                <span>MRP:</span>
+                                                                <strong className="text-white">₹{Number(item.rate).toFixed(2)}</strong>
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-[11px] text-zinc-500 italic">No MRP stored</span>
+                                                        )}
+                                                        {item.brand && (
+                                                            <span className="text-[10px] bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded border border-zinc-700 font-medium">
+                                                                {item.brand}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </td>
                                             <td className="p-2">
-                                                <input type="number" min="1" value={item.quantity} onChange={e => updateItem(gIndex, iIndex, 'quantity', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-center text-sm" />
+                                                <input 
+                                                    type="number" 
+                                                    step="1"
+                                                    min="1" 
+                                                    value={item.quantity} 
+                                                    onChange={e => updateItem(gIndex, iIndex, 'quantity', e.target.value)} 
+                                                    className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-center text-sm font-medium" 
+                                                />
                                             </td>
                                             <td className="p-2">
-                                                <input type="number" min="0" value={item.rate} onChange={e => updateItem(gIndex, iIndex, 'rate', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-right text-sm" />
+                                                <input 
+                                                    type="number" 
+                                                    step="0.01"
+                                                    min="0" 
+                                                    placeholder="0.00"
+                                                    value={item.rate === 0 && !item.product_name ? '' : item.rate} 
+                                                    onChange={e => updateItem(gIndex, iIndex, 'rate', e.target.value)} 
+                                                    className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-right text-sm font-mono" 
+                                                />
                                             </td>
                                             <td className="p-2">
-                                                <input type="number" min="0" max="100" value={item.discount_percent} onChange={e => updateItem(gIndex, iIndex, 'discount_percent', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-center text-sm" />
+                                                <input 
+                                                    type="number" 
+                                                    step="0.01"
+                                                    min="0" 
+                                                    max="100" 
+                                                    value={item.discount_percent} 
+                                                    onChange={e => updateItem(gIndex, iIndex, 'discount_percent', e.target.value)} 
+                                                    className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-center text-sm font-mono" 
+                                                />
                                             </td>
-                                            <td className="p-2 text-right font-medium text-gray-200">
+                                            <td className="p-2 text-right font-medium text-gray-200 font-mono">
                                                 ₹{taxable.toFixed(2)}
                                             </td>
                                             <td className="p-2 text-center">
-                                                <button onClick={() => removeRow(gIndex, iIndex)} className="text-zinc-600 hover:text-red-400 transition-colors p-1">
+                                                <button onClick={() => removeRow(gIndex, iIndex)} className="text-zinc-600 hover:text-red-400 transition-colors p-1" title="Remove line item">
                                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                                 </button>
                                             </td>

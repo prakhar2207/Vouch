@@ -82,9 +82,17 @@ class SalesInvoiceService:
                 )
 
             qty = Decimal(str(item['quantity']))
-            rate = Decimal(str(item['rate']))
+            rate = Decimal(str(item.get('rate', '0.00')))
             discount_pct = Decimal(str(item.get('discount_percent', '0.00')))
             
+            # Automatically fetch rate from product's list price / MRP if rate is 0
+            if rate <= Decimal('0.00') and product.selling_price > Decimal('0.00'):
+                rate = product.selling_price
+                
+            # Automatically apply party's default discount if discount_percent is 0
+            if discount_pct <= Decimal('0.00') and party_ledger.discount_percent > Decimal('0.00'):
+                discount_pct = party_ledger.discount_percent
+
             gross = qty * rate
             discount_amt = (gross * discount_pct / Decimal('100')).quantize(Decimal('0.01'))
             taxable_amount = gross - discount_amt
