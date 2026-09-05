@@ -243,6 +243,24 @@ class ProductDetailView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 
+    def delete(self, request, company_id, product_id):
+        try:
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            product = Product.objects.get(id=product_id, company=company)
+            
+            # Check if product is used in vouchers
+            from apps.accounting.models import VoucherItem
+            if VoucherItem.objects.filter(product=product).exists():
+                return Response({
+                    "success": False, 
+                    "error": f"Cannot delete {product.name} because it is used in one or more vouchers. Please delete the vouchers first or just rename this item."
+                }, status=400)
+                
+            product.delete()
+            return Response({"success": True, "message": "Product deleted successfully"})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
 
 class WarehouseListView(APIView):
     permission_classes = [IsAuthenticated]

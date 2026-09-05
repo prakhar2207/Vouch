@@ -16,6 +16,7 @@ import {
   Tag, 
   Layers, 
   Edit2, 
+  Trash2,
   Check, 
   X,
   Info
@@ -125,6 +126,26 @@ export default function CategoryDetailPage() {
       toast.error('Save failed', err.response?.data?.error || err.message);
     } finally {
       setSavingId(null);
+    }
+  };
+
+  const deleteProduct = async (productId: string, productName: string) => {
+    if (!window.confirm(`Are you sure you want to delete ${productName}?`)) return;
+    
+    try {
+      const token = getAccessToken();
+      const headers = { Authorization: `Bearer ${token}` };
+      const res = await axios.delete(
+        `${API_BASE_URL}/api/v1/inventory/products/${companyId}/${productId}/`,
+        { headers }
+      );
+      if (res.data.success) {
+        toast.success("Item deleted successfully!");
+        setProducts(prev => prev.filter(p => p.id !== productId));
+        if (editingId === productId) cancelEdit();
+      }
+    } catch (err: any) {
+      toast.error('Delete failed', err.response?.data?.error || err.message);
     }
   };
 
@@ -384,6 +405,14 @@ export default function CategoryDetailPage() {
           const target = navigableRows[focusedRowIndex];
           if (target) {
             startEdit(target.product);
+          }
+        }
+      } else if ((e.altKey && e.key.toLowerCase() === "d") || e.key === "Delete") {
+        if (focusedRowIndex >= 0 && focusedRowIndex < navigableRows.length) {
+          e.preventDefault();
+          const target = navigableRows[focusedRowIndex];
+          if (target) {
+            deleteProduct(target.product.id, target.product.name);
           }
         }
       } else if (e.key === 'Escape') {
@@ -780,13 +809,22 @@ export default function CategoryDetailPage() {
                                 </button>
                               </div>
                             ) : (
-                              <button
-                                onClick={() => startEdit(p)}
-                                className="text-muted-foreground hover:text-blue-400 p-1.5 rounded hover:bg-muted/60 transition-colors"
-                                title="Edit item"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  onClick={() => startEdit(p)}
+                                  className="text-muted-foreground hover:text-blue-400 p-1.5 rounded hover:bg-muted/60 transition-colors"
+                                  title="Edit item"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => deleteProduct(p.id, p.name)}
+                                  className="text-muted-foreground hover:text-rose-400 p-1.5 rounded hover:bg-muted/60 transition-colors"
+                                  title="Delete item (Alt+D)"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -927,13 +965,22 @@ export default function CategoryDetailPage() {
                                         </button>
                                       </div>
                                     ) : (
-                                      <button
-                                        onClick={() => startEdit(v)}
-                                        className="text-muted-foreground hover:text-blue-400 p-1 rounded hover:bg-muted/60 transition-colors"
-                                        title="Edit this brand variant"
-                                      >
-                                        <Edit2 className="w-3 h-3" />
-                                      </button>
+                                      <div className="flex items-center justify-center gap-1">
+                                        <button
+                                          onClick={() => startEdit(v)}
+                                          className="text-muted-foreground hover:text-blue-400 p-1 rounded hover:bg-muted/60 transition-colors"
+                                          title="Edit this brand variant"
+                                        >
+                                          <Edit2 className="w-3 h-3" />
+                                        </button>
+                                        <button
+                                          onClick={() => deleteProduct(v.id, v.name)}
+                                          className="text-muted-foreground hover:text-rose-400 p-1 rounded hover:bg-muted/60 transition-colors"
+                                          title="Delete item (Alt+D)"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      </div>
                                     )}
                                   </div>
                                 </div>
@@ -971,6 +1018,13 @@ export default function CategoryDetailPage() {
                   <span>/</span>
                   <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">Enter</kbd>
                   <span className="text-[11px]">Save</span>
+                </span>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">Alt</kbd>
+                  <span>+</span>
+                  <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">D</kbd>
+                  <span className="text-[11px]">Delete</span>
                 </span>
                 <span>•</span>
                 <span className="flex items-center gap-1">
