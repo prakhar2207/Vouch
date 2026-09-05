@@ -33,7 +33,7 @@ export default function PurchasePage() {
   
   const [categories, setCategories] = useState<any[]>([]);
   const [groupedItems, setGroupedItems] = useState([
-    { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', quantity: 1, rate: 0, discount_percent: 0 } ] }
+    { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 } ] }
   ]);
 
   useEffect(() => {
@@ -191,7 +191,7 @@ export default function PurchasePage() {
 
   const addRow = (gIndex: number) => {
     const newGroups = [...groupedItems];
-    newGroups[gIndex].items.push({ product_name: '', quantity: 1, rate: 0, discount_percent: 0 });
+    newGroups[gIndex].items.push({ product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 });
     setGroupedItems(newGroups);
   };
 
@@ -203,7 +203,7 @@ export default function PurchasePage() {
   };
 
   const addCategoryGroup = () => {
-    setGroupedItems([...groupedItems, { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', quantity: 1, rate: 0, discount_percent: 0 } ] }]);
+    setGroupedItems([...groupedItems, { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 } ] }]);
   };
   
   const removeCategoryGroup = (gIndex: number) => {
@@ -381,6 +381,7 @@ export default function PurchasePage() {
                                 <thead className="bg-zinc-900/40 text-gray-400 text-xs uppercase tracking-wider">
                                     <tr>
                                         <th className="p-3 font-medium">Product Name</th>
+                                        <th className="p-3 font-medium w-36">Brand</th>
                                         <th className="p-3 font-medium w-24">Qty</th>
                                         <th className="p-3 font-medium w-32">Rate (₹)</th>
                                         <th className="p-3 font-medium w-24">Disc %</th>
@@ -398,6 +399,9 @@ export default function PurchasePage() {
                                         <tr key={iIndex} className="hover:bg-zinc-800/40 transition-colors">
                                             <td className="p-2">
                                                 <input type="text" placeholder="e.g. Item Name" value={item.product_name} onChange={e => updateItem(gIndex, iIndex, 'product_name', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-sm" />
+                                            </td>
+                                            <td className="p-2">
+                                                <input type="text" placeholder="e.g. Fenner" value={item.brand || ''} onChange={e => updateItem(gIndex, iIndex, 'brand', e.target.value)} className="w-full bg-transparent border border-zinc-800 hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-sm" />
                                             </td>
                                             <td className="p-2">
                                                 <input type="number" min="1" value={item.quantity} onChange={e => updateItem(gIndex, iIndex, 'quantity', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-center text-sm" />

@@ -9,6 +9,7 @@ import { useToast } from "@/context/ToastContext";
 
 interface LineItem {
   description: string;
+  brand?: string;
   hsn_code: string;
   quantity: number;
   unit: string;
@@ -289,7 +290,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       ...invoice,
       line_items: [
         ...invoice.line_items,
-        { description: "New Item", hsn_code: "", quantity: 1, unit: "PCS", rate: 0, discount_percent: 0, amount: 0, gst_rate: 18 },
+        { description: "New Item", brand: "", hsn_code: "", quantity: 1, unit: "PCS", rate: 0, discount_percent: 0, amount: 0, gst_rate: 18 },
       ],
     });
   };
@@ -328,6 +329,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       // 2. Format Items for Voucher Creation with Category Allocation
       const formattedItems = invoice.line_items.map((item) => ({
         product_name: item.description,
+        brand: item.brand && item.brand.trim() ? item.brand.trim() : undefined,
         hsn_code: item.hsn_code,
         quantity: item.quantity,
         rate: item.rate,
@@ -681,8 +683,15 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                           type="text"
                           value={item.description}
                           onChange={(e) => updateItem(idx, "description", e.target.value)}
-                          placeholder="Item Description"
+                          placeholder="Item Description / Product Name"
                           className="flex-1 bg-zinc-950 border border-zinc-700 text-white p-1.5 rounded outline-none font-medium"
+                        />
+                        <input
+                          type="text"
+                          value={item.brand || ""}
+                          onChange={(e) => updateItem(idx, "brand", e.target.value)}
+                          placeholder="Brand (e.g. Fenner, SKF)"
+                          className="w-44 bg-zinc-950 border border-zinc-700 text-white p-1.5 rounded outline-none text-xs"
                         />
                         <button onClick={() => removeLineItem(idx)} className="text-red-400 hover:text-red-300 px-1 font-bold cursor-pointer">✕</button>
                       </div>

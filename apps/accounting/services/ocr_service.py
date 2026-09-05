@@ -9,6 +9,7 @@ from typing import List, Optional
 
 class InvoiceItemSchema(BaseModel):
     description: str = Field(description="Description or name of the product/service")
+    brand: Optional[str] = Field(default="", description="Brand, make, or manufacturer of the item if mentioned on the bill, e.g. Fenner, SKF, Havells")
     hsn_code: Optional[str] = Field(default="", description="HSN or SAC code")
     quantity: float = Field(default=1.0, description="Quantity")
     unit: Optional[str] = Field(default="PCS", description="Unit of measurement, e.g., PCS, KG, NOS")
@@ -104,7 +105,7 @@ class InvoiceOCRService:
             prompt = (
                 "You are an expert accounts payable AI. Analyze this Indian GST tax invoice or purchase bill carefully. "
                 "Extract the exact Supplier Name, Supplier GSTIN, Invoice Number, Invoice Date (in YYYY-MM-DD), "
-                "Subtotal, Taxes (CGST, SGST, IGST), Total Amount, and all Line Items with their full Description, "
+                "Subtotal, Taxes (CGST, SGST, IGST), Total Amount, and all Line Items with their full Description, Brand (if mentioned), "
                 "exact HSN code, Quantity, Unit, Rate (MRP/price before discount), Discount Percentage (if any), and Amount (after discount). "
                 "Output strict JSON following the schema."
             )
