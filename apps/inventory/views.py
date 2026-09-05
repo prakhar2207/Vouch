@@ -325,6 +325,42 @@ class WarehouseListView(APIView):
             return Response({"success": False, "error": str(e)}, status=400)
 
 
+class BulkBrandDiscountUpdateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, company_id):
+        try:
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            category_id = request.data.get('category_id')
+            brand = request.data.get('brand')
+            discount_percent = request.data.get('discount_percent')
+            
+            if not category_id or not brand or discount_percent is None:
+                return Response({"success": False, "error": "category_id, brand, and discount_percent are required"}, status=400)
+                
+            discount_factor = (100 - float(discount_percent)) / 100.0
+            
+            # Get products
+            products = Product.objects.filter(company=company, category_id=category_id, brand=brand)
+            updated_count = 0
+            for p in products:
+                # Update purchase price based on selling_price and discount
+                # Only update if they don't have purchase_price_from_invoice = True ? 
+                # Actually, if the user explicitly triggers this, we can update the purchase price, 
+                # but let's clear the purchase_price_from_invoice flag since it's now manually overridden
+                new_purchase_price = float(p.selling_price) * discount_factor
+                p.purchase_price = new_purchase_price
+                p.purchase_price_from_invoice = False
+                p.save(update_fields=['purchase_price', 'purchase_price_from_invoice'])
+                updated_count += 1
+                
+            return Response({
+                "success": True, 
+                "message": f"Updated purchase price for {updated_count} items."
+            })
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
 class PriceListBulkImportAPIView(APIView):
     permission_classes = [IsAuthenticated]
 

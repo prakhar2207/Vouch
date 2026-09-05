@@ -8,6 +8,7 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useToast } from '@/context/ToastContext';
 import PriceListImportModal from '@/components/modals/PriceListImportModal';
+import BulkBrandDiscountModal from '@/components/modals/BulkBrandDiscountModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 import { 
   ArrowUpDown, 
@@ -20,7 +21,8 @@ import {
   Trash2,
   Check, 
   X,
-  Info
+  Info,
+  Percent
 } from 'lucide-react';
 
 type SortOption = 
@@ -51,6 +53,7 @@ export default function CategoryDetailPage() {
   
   // Modals state
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isBulkDiscountModalOpen, setIsBulkDiscountModalOpen] = useState(false);
   const [deleteConfirmParams, setDeleteConfirmParams] = useState<{ id: string, name: string } | null>(null);
 
   // Edit state
@@ -93,14 +96,18 @@ export default function CategoryDetailPage() {
 
   const startEdit = (p: any) => {
     setEditingId(p.id);
+    const sp = parseFloat(p.selling_price) || 0;
+    const pp = parseFloat(p.purchase_price) || 0;
+    const dp = sp > 0 ? ((sp - pp) / sp) * 100 : 0;
     setEditData({
       name: p.name,
       alias: p.alias || '',
       brand: p.brand || '',
-      selling_price: p.selling_price,
+      selling_price: sp,
       wholesaler_price: p.wholesaler_price,
-      purchase_price: p.purchase_price,
+      purchase_price: pp,
       stock_quantity: p.stock_quantity,
+      discount_percent: dp.toFixed(2),
     });
   };
 
@@ -496,6 +503,15 @@ export default function CategoryDetailPage() {
               </>
             ) : (
               <>
+                {/* Bulk Discount Trigger */}
+                <button
+                  onClick={() => setIsBulkDiscountModalOpen(true)}
+                  className="bg-muted/60 hover:bg-muted text-foreground border border-border/80 px-3.5 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  <Percent className="w-4 h-4 text-blue-400" />
+                  <span>Brand Discount</span>
+                </button>
+                
                 {/* Import Price List Trigger */}
                 <button
                   onClick={() => setIsImportModalOpen(true)}
@@ -751,7 +767,12 @@ export default function CategoryDetailPage() {
                                 type="number"
                                 step="0.01"
                                 value={editData.selling_price}
-                                onChange={e => setEditData({ ...editData, selling_price: parseFloat(e.target.value) || 0 })}
+                                onChange={e => {
+                                  const sp = parseFloat(e.target.value) || 0;
+                                  const d = parseFloat(editData.discount_percent) || 0;
+                                  const pp = sp * (1 - d/100);
+                                  setEditData({ ...editData, selling_price: sp, purchase_price: parseFloat(pp.toFixed(2)) });
+                                }}
                                 className="bg-muted/40 border border-border text-emerald-400 px-2 py-1 rounded w-24 text-xs text-right font-mono font-bold outline-none"
                               />
                             ) : (
@@ -764,13 +785,34 @@ export default function CategoryDetailPage() {
                           {/* Purchase Price */}
                           <td className="p-3.5 text-right">
                             {isEditing ? (
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={editData.purchase_price}
-                                onChange={e => setEditData({ ...editData, purchase_price: parseFloat(e.target.value) || 0 })}
-                                className="bg-muted/40 border border-border text-foreground px-2 py-1 rounded w-24 text-xs text-right font-mono outline-none"
-                              />
+                              <div className="flex items-center justify-end gap-1.5">
+                                <div className="flex items-center gap-1 bg-muted/30 px-1 py-0.5 rounded border border-border/40">
+                                  <span className="text-[9px] text-muted-foreground font-semibold">DISC%</span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={editData.discount_percent}
+                                    onChange={e => {
+                                      const d = parseFloat(e.target.value) || 0;
+                                      const p = (editData.selling_price * (1 - d/100)).toFixed(2);
+                                      setEditData({ ...editData, discount_percent: e.target.value, purchase_price: parseFloat(p) });
+                                    }}
+                                    className="bg-transparent text-blue-400 w-12 text-xs text-right font-mono font-bold outline-none"
+                                  />
+                                </div>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editData.purchase_price}
+                                  onChange={e => {
+                                    const p = parseFloat(e.target.value) || 0;
+                                    const sp = editData.selling_price || 1;
+                                    const d = sp > 0 ? ((sp - p) / sp * 100).toFixed(2) : 0;
+                                    setEditData({ ...editData, purchase_price: p, discount_percent: d });
+                                  }}
+                                  className="bg-muted/40 border border-border text-foreground px-2 py-1 rounded w-20 text-xs text-right font-mono outline-none"
+                                />
+                              </div>
                             ) : (
                               <div className="flex items-center justify-end gap-1.5">
                                 <span className="text-muted-foreground font-medium text-xs">
@@ -922,7 +964,12 @@ export default function CategoryDetailPage() {
                                         type="number"
                                         step="0.01"
                                         value={editData.selling_price}
-                                        onChange={e => setEditData({ ...editData, selling_price: parseFloat(e.target.value) || 0 })}
+                                        onChange={e => {
+                                          const sp = parseFloat(e.target.value) || 0;
+                                          const d = parseFloat(editData.discount_percent) || 0;
+                                          const pp = sp * (1 - d/100);
+                                          setEditData({ ...editData, selling_price: sp, purchase_price: parseFloat(pp.toFixed(2)) });
+                                        }}
                                         className="bg-muted/40 border border-border text-emerald-400 px-1.5 py-1 rounded text-xs text-right font-mono font-bold w-20 outline-none"
                                       />
                                     ) : (
@@ -933,15 +980,36 @@ export default function CategoryDetailPage() {
                                   </div>
 
                                   {/* Purchase Price */}
-                                  <div className="text-right">
+                                  <div className="text-right flex items-center justify-end gap-1">
                                     {isEditing ? (
-                                      <input
-                                        type="number"
-                                        step="0.01"
-                                        value={editData.purchase_price}
-                                        onChange={e => setEditData({ ...editData, purchase_price: parseFloat(e.target.value) || 0 })}
-                                        className="bg-muted/40 border border-border text-foreground px-1.5 py-1 rounded text-xs text-right font-mono w-20 outline-none"
-                                      />
+                                      <>
+                                        <div className="flex items-center gap-1 bg-muted/30 px-1 py-0.5 rounded border border-border/40">
+                                          <span className="text-[9px] text-muted-foreground font-semibold">DISC%</span>
+                                          <input
+                                            type="number"
+                                            step="0.01"
+                                            value={editData.discount_percent}
+                                            onChange={e => {
+                                              const d = parseFloat(e.target.value) || 0;
+                                              const p = (editData.selling_price * (1 - d/100)).toFixed(2);
+                                              setEditData({ ...editData, discount_percent: e.target.value, purchase_price: parseFloat(p) });
+                                            }}
+                                            className="bg-transparent text-blue-400 w-12 text-xs text-right font-mono font-bold outline-none"
+                                          />
+                                        </div>
+                                        <input
+                                          type="number"
+                                          step="0.01"
+                                          value={editData.purchase_price}
+                                          onChange={e => {
+                                            const p = parseFloat(e.target.value) || 0;
+                                            const sp = editData.selling_price || 1;
+                                            const d = sp > 0 ? ((sp - p) / sp * 100).toFixed(2) : 0;
+                                            setEditData({ ...editData, purchase_price: p, discount_percent: d });
+                                          }}
+                                          className="bg-muted/40 border border-border text-foreground px-1.5 py-1 rounded text-xs text-right font-mono w-20 outline-none"
+                                        />
+                                      </>
                                     ) : (
                                       <div className="flex items-center justify-end gap-1">
                                         <span className="text-muted-foreground font-medium">
@@ -1089,6 +1157,16 @@ export default function CategoryDetailPage() {
           companyId={companyId}
           existingBrands={existingBrandList}
           onImportSuccess={fetchData}
+        />
+
+        {/* Bulk Brand Discount Modal */}
+        <BulkBrandDiscountModal
+          isOpen={isBulkDiscountModalOpen}
+          onClose={() => setIsBulkDiscountModalOpen(false)}
+          categoryId={categoryId}
+          companyId={companyId}
+          existingBrands={existingBrandList}
+          onSuccess={fetchData}
         />
 
         <ConfirmModal
