@@ -7,9 +7,11 @@ import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { Boxes, Tag, Layers, TrendingUp, Plus } from 'lucide-react';
+import { useToast } from '@/context/ToastContext';
 
 export default function InventoryPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [categories, setCategories] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -66,9 +68,10 @@ export default function InventoryPage() {
       if (res.data.success) {
         setCategories(cats => cats.map(c => c.id === editingCategory.id ? { ...c, ...editData } : c));
         setEditingCategory(null);
+        toast.success('Category updated successfully');
       }
     } catch (err: any) {
-      alert('Save failed: ' + (err.response?.data?.error || err.message));
+      toast.error('Save failed', err.response?.data?.error || err.message);
     } finally {
       setSaving(false);
     }
@@ -91,8 +94,9 @@ export default function InventoryPage() {
       );
       setCategories(cats => cats.filter(c => c.id !== deletingCategory.id));
       setDeletingCategory(null);
+      toast.success('Category deleted successfully');
     } catch (err: any) {
-      alert('Delete failed: ' + (err.response?.data?.error || err.message));
+      toast.error('Delete failed', err.response?.data?.error || err.message);
     } finally {
       setSaving(false);
     }

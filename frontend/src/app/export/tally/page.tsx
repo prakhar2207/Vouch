@@ -24,8 +24,10 @@ import {
 import DashboardLayout from "@/components/DashboardLayout";
 import { getAccessToken } from "@/utils/auth";
 import { API_BASE_URL } from "@/utils/api";
+import { useToast } from "@/context/ToastContext";
 
 export default function TallyExportPage() {
+  const { toast } = useToast();
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [exportType, setExportType] = useState<"all" | "vouchers" | "masters">("all");
@@ -73,9 +75,10 @@ export default function TallyExportPage() {
       window.URL.revokeObjectURL(url);
 
       setDownloadSuccess(true);
+      toast.success("Export generated successfully", "Your Tally XML file has downloaded.");
       setTimeout(() => setDownloadSuccess(false), 6000);
     } catch (err: any) {
-      alert("Failed to export Tally XML. Please verify your date filters.");
+      toast.error("Export Failed", "Failed to export Tally XML. Please verify your date filters.");
     } finally {
       setDownloading(false);
     }

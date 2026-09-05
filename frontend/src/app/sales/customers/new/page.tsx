@@ -7,9 +7,11 @@ import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import StateSelect from '@/components/StateSelect';
+import { useToast } from '@/context/ToastContext';
 
 export default function NewCustomerPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [companyId, setCompanyId] = useState('');
   const [saving, setSaving] = useState(false);
   
@@ -48,10 +50,10 @@ export default function NewCustomerPage() {
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      alert("Customer created successfully!");
+      toast.success("Customer created successfully!", `"${formData.name}" has been saved.`);
       router.push('/sales/new');
     } catch (err: any) {
-      alert("Failed to create customer: " + (err.response?.data?.error || err.message));
+      toast.error("Failed to create customer", err.response?.data?.error || err.message);
     } finally {
       setSaving(false);
     }

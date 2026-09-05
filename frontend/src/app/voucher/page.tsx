@@ -12,11 +12,13 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-quartz.css';
 import { useTheme } from 'next-themes';
+import { useToast } from '@/context/ToastContext';
 
 ModuleRegistry.registerModules([AllCommunityModule, ValidationModule]);
 
 export default function VoucherEntry() {
   const router = useRouter();
+  const { toast } = useToast();
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [voucherType, setVoucherType] = useState('F8');
@@ -77,7 +79,8 @@ export default function VoucherEntry() {
     const crTotal = rowData.filter(r => r.type === 'Cr').reduce((acc, r) => acc + Number(r.amount), 0);
     
     if (drTotal !== crTotal) {
-      return alert(`Voucher does not balance! Dr: ${drTotal}, Cr: ${crTotal}`);
+      toast.warning('Voucher Imbalance', `Voucher does not balance! Dr: ${drTotal}, Cr: ${crTotal}`);
+      return;
     }
 
     const payload = {
@@ -99,11 +102,11 @@ export default function VoucherEntry() {
       await axios.post(`${API_BASE_URL}/api/vouchers/`, payload, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      alert('Voucher Saved Successfully!');
+      toast.success('Voucher Saved Successfully', `Voucher ${payload.voucher_number} has been recorded.`);
       router.push('/');
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert('Failed to save voucher.');
+      toast.error('Failed to save voucher', e.response?.data?.error || e.message);
     }
   };
 

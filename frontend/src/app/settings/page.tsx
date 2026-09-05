@@ -9,9 +9,11 @@ import StateSelect from '@/components/StateSelect';
 import { getStateName } from '@/utils/gstStates';
 import { useFinancialYear } from '@/context/FinancialYearContext';
 import { useAccountingPeriod } from '@/context/PeriodContext';
+import { useToast } from '@/context/ToastContext';
 
 export default function SettingsPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const { availableFYs, activeFY, setActiveFY, setIsClosingModalOpen } = useFinancialYear();
   const { setIsSplitModalOpen } = useAccountingPeriod();
   const [company, setCompany] = useState<any>(null);
@@ -129,11 +131,11 @@ export default function SettingsPage() {
         }
       });
       
-      alert('Profile and Settings updated successfully!');
+      toast.success('Profile and Settings updated', 'Changes have been saved successfully.');
       fetchCompany();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Failed to update profile/settings');
+      toast.error('Failed to update profile/settings', err.response?.data?.error || err.message);
     } finally {
       setSaving(false);
     }

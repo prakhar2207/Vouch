@@ -4,9 +4,11 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { useToast } from '@/context/ToastContext';
 
 export default function NewInvoice() {
   const router = useRouter();
+  const { toast } = useToast();
   const [companies, setCompanies] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   
@@ -48,9 +50,10 @@ export default function NewInvoice() {
       setSelectedCompany(res.data.id);
       setShowNewCompany(false);
       setNewCompData({ name: '', gstin: '', state_code: '', is_owner: false });
-    } catch (e) {
+      toast.success('Company created successfully');
+    } catch (e: any) {
       console.error(e);
-      alert('Error creating company');
+      toast.error('Error creating company', e.response?.data?.error || e.message);
     }
   };
 
@@ -60,9 +63,10 @@ export default function NewInvoice() {
       setProducts([...products, res.data]);
       setShowNewProduct(false);
       setNewProdData({ name: '', sku: '', base_price: '', gst_rate: '', hsn_code: '', stock_quantity: 0 });
-    } catch (e) {
+      toast.success('Product created successfully');
+    } catch (e: any) {
       console.error(e);
-      alert('Error creating product');
+      toast.error('Error creating product', e.response?.data?.error || e.message);
     }
   };
 
@@ -83,7 +87,10 @@ export default function NewInvoice() {
   };
 
   const handleSubmit = async () => {
-    if (!selectedCompany || items.length === 0) return alert('Select company and add items');
+    if (!selectedCompany || items.length === 0) {
+      toast.warning('Incomplete Invoice', 'Please select a company and add items');
+      return;
+    }
     try {
       const payload = {
         company: selectedCompany,
@@ -91,11 +98,11 @@ export default function NewInvoice() {
         items: items.map(i => ({ product: i.product, quantity: i.quantity, unit_price: i.unit_price }))
       };
       await axios.post(`${API_BASE_URL}/api/invoices/`, payload);
-      alert('Invoice created successfully!');
+      toast.success('Invoice created successfully!');
       router.push('/');
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert('Error creating invoice');
+      toast.error('Error creating invoice', e.response?.data?.error || e.message);
     }
   };
 

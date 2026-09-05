@@ -27,6 +27,7 @@ import {
 import DashboardLayout from "@/components/DashboardLayout";
 import { getAccessToken } from "@/utils/auth";
 import { API_BASE_URL } from "@/utils/api";
+import { useToast } from "@/context/ToastContext";
 
 interface InwardRequest {
   id: string;
@@ -79,6 +80,7 @@ interface InwardRequest {
 }
 
 export default function B2BInboxPage() {
+  const { toast } = useToast();
   const [requests, setRequests] = useState<InwardRequest[]>([]);
   const [counts, setCounts] = useState({ all: 0, pending: 0, accepted: 0, rejected: 0 });
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
@@ -90,7 +92,6 @@ export default function B2BInboxPage() {
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const fetchInbox = async () => {
     setLoading(true);
@@ -114,11 +115,6 @@ export default function B2BInboxPage() {
     fetchInbox();
   }, [statusFilter]);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 5000);
-  };
-
   const handleAccept = async () => {
     if (!selectedReq) return;
     setActionLoading(true);
@@ -130,13 +126,16 @@ export default function B2BInboxPage() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (res.data.success) {
-        showToast(`🎉 Success! Purchase Voucher #${res.data.voucher_number} created and inventory updated instantly.`);
+        toast.success(
+          "Voucher Accepted & Signed",
+          `Purchase Voucher #${res.data.voucher_number} created and inventory updated instantly.`
+        );
         setIsSignModalOpen(false);
         setSelectedReq(null);
         fetchInbox();
       }
     } catch (err: any) {
-      alert(err.response?.data?.error || "Failed to accept and sign inward voucher.");
+      toast.error("Acceptance Failed", err.response?.data?.error || "Failed to accept and sign inward voucher.");
     } finally {
       setActionLoading(false);
     }
@@ -153,14 +152,14 @@ export default function B2BInboxPage() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (res.data.success) {
-        showToast("Inward voucher request has been rejected.");
+        toast.warning("Voucher Rejected", "Inward voucher request has been rejected.");
         setIsRejectModalOpen(false);
         setSelectedReq(null);
         setRejectionReason("");
         fetchInbox();
       }
     } catch (err: any) {
-      alert(err.response?.data?.error || "Failed to reject inward voucher.");
+      toast.error("Rejection Failed", err.response?.data?.error || "Failed to reject inward voucher.");
     } finally {
       setActionLoading(false);
     }
@@ -179,17 +178,6 @@ export default function B2BInboxPage() {
     <DashboardLayout>
       <div className="space-y-6 animate-in fade-in duration-300">
         
-        {/* Toast Banner */}
-        {toastMessage && (
-          <div className="p-4 bg-green-500/10 border border-green-500/30 text-green-400 rounded-xl flex items-center justify-between shadow-lg">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <CheckCircle2 className="w-5 h-5 text-green-400" />
-              <span>{toastMessage}</span>
-            </div>
-            <button onClick={() => setToastMessage(null)} className="text-gray-400 hover:text-white text-xs">✕</button>
-          </div>
-        )}
-
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/60 pb-5">
           <div>

@@ -7,9 +7,11 @@ import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import StateSelect from '@/components/StateSelect';
+import { useToast } from '@/context/ToastContext';
 
 export default function NewSupplierPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [companyId, setCompanyId] = useState('');
   const [saving, setSaving] = useState(false);
   
@@ -48,10 +50,10 @@ export default function NewSupplierPage() {
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      alert("Supplier created successfully!");
+      toast.success("Supplier created successfully!", `"${formData.name}" has been saved.`);
       router.push('/purchases/new');
     } catch (err: any) {
-      alert("Failed to create supplier: " + (err.response?.data?.error || err.message));
+      toast.error("Failed to create supplier", err.response?.data?.error || err.message);
     } finally {
       setSaving(false);
     }
