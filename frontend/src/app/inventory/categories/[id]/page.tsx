@@ -720,7 +720,7 @@ export default function CategoryDetailPage() {
                     <th className="p-3.5 w-60">Item Name / Size</th>
                     <th className="p-3.5 w-32">Brand</th>
                     <th className="p-3.5">SKU / Tags</th>
-                    <th className="p-3.5 text-right w-36">Retail Price / MRP</th>
+                    <th className="p-3.5 text-right w-36">MRP / List Price</th>
                     <th className="p-3.5 text-right w-36">
                       <div className="flex items-center justify-end gap-1">
                         <span>Purchase Price</span>

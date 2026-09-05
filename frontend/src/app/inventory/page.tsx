@@ -19,6 +19,7 @@ export default function InventoryPage() {
   const [deletingCategory, setDeletingCategory] = useState<any>(null);
   const [editData, setEditData] = useState<any>({});
   const [saving, setSaving] = useState(false);
+  const [retailDiscount, setRetailDiscount] = useState<number>(0);
 
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
@@ -239,35 +240,91 @@ export default function InventoryPage() {
             </div>
           </div>
 
-          <div className="p-4 rounded-xl border border-border bg-card/70 backdrop-blur shadow-xs flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center justify-center shrink-0">
-              <Tag className="w-6 h-6" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Retail / MRP Value</p>
-              <h3 className="text-xl font-bold text-foreground truncate">
-                ₹{(summary?.total_retail_value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                Valuation at selling price
-              </p>
-            </div>
-          </div>
+          {(() => {
+            const listPriceValue = summary?.total_retail_value || 0;
+            const stockCostValue = summary?.total_stock_value || 0;
+            const effectiveRetailValue = retailDiscount > 0 
+              ? listPriceValue * (1 - retailDiscount / 100) 
+              : listPriceValue;
+            const effectiveMargin = Math.max(0, effectiveRetailValue - stockCostValue);
+            const marginMarkupPct = stockCostValue > 0 ? ((effectiveMargin / stockCostValue) * 100).toFixed(1) : '0';
 
-          <div className="p-4 rounded-xl border border-border bg-card/70 backdrop-blur shadow-xs flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
-              <TrendingUp className="w-6 h-6" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Potential Margin</p>
-              <h3 className="text-xl font-bold text-emerald-400 truncate">
-                ₹{Math.max(0, (summary?.total_retail_value || 0) - (summary?.total_stock_value || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                {(summary?.total_stock_value > 0) ? (((summary.total_retail_value - summary.total_stock_value) / summary.total_stock_value) * 100).toFixed(1) : '0'}% unrealized markup
-              </p>
-            </div>
-          </div>
+            return (
+              <>
+                <div className="p-4 rounded-xl border border-border bg-card/70 backdrop-blur shadow-xs flex flex-col justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center justify-center shrink-0">
+                      <Tag className="w-6 h-6" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total MRP (List Price)</p>
+                      <h3 className="text-xl font-bold text-foreground truncate">
+                        ₹{listPriceValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </h3>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        {retailDiscount > 0 ? (
+                          <span className="text-purple-400 font-medium">
+                            At {retailDiscount}% disc: ₹{effectiveRetailValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        ) : (
+                          'Valuation at catalog list price'
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-2.5 pt-2 border-t border-border/40 flex items-center justify-between text-[11px]">
+                    <span className="text-muted-foreground">Est. Retail Discount:</span>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min="0"
+                        max="99"
+                        placeholder="0"
+                        value={retailDiscount || ''}
+                        onChange={e => setRetailDiscount(Math.max(0, Math.min(99, parseFloat(e.target.value) || 0)))}
+                        className="w-12 bg-zinc-800/80 border border-zinc-700/80 rounded px-1.5 py-0.5 text-xs text-white font-mono font-bold text-right outline-none focus:border-purple-500"
+                      />
+                      <span className="text-muted-foreground font-semibold">%</span>
+                      {retailDiscount > 0 && (
+                        <button
+                          onClick={() => setRetailDiscount(0)}
+                          className="text-[10px] text-zinc-400 hover:text-white ml-1 px-1 py-0.5 rounded bg-zinc-800"
+                          title="Reset to 0%"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl border border-border bg-card/70 backdrop-blur shadow-xs flex flex-col justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                      <TrendingUp className="w-6 h-6" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        {retailDiscount > 0 ? 'Realized Margin' : 'Gross Margin (At MRP)'}
+                      </p>
+                      <h3 className="text-xl font-bold text-emerald-400 truncate">
+                        ₹{effectiveMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </h3>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        {marginMarkupPct}% {retailDiscount > 0 ? `markup after ${retailDiscount}% retail discount` : 'markup over cost at list price'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-2.5 pt-2 border-t border-border/40 text-[11px] text-muted-foreground flex items-center justify-between">
+                    <span>Retail vs Purchase Cost</span>
+                    <span className="font-medium text-foreground">
+                      ₹{stockCostValue > 0 ? ((effectiveRetailValue / stockCostValue)).toFixed(2) : '1.00'}x cost
+                    </span>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
 
           <div className="p-4 rounded-xl border border-border bg-card/70 backdrop-blur shadow-xs flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center shrink-0">
