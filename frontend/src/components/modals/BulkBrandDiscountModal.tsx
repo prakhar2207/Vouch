@@ -1,16 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useToast } from '@/context/ToastContext';
-import { Percent, Check, X } from 'lucide-react';
+import { getAccessToken } from '@/utils/auth';
+import { Percent } from 'lucide-react';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
-const getAccessToken = () => {
-  if (typeof window !== 'undefined') {
-    return localStorage.getItem('access_token');
-  }
-  return null;
-};
 
 interface BulkBrandDiscountModalProps {
   isOpen: boolean;
