@@ -42,6 +42,7 @@ class Ledger(models.Model):
     current_balance = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     
     credit_limit = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0.00, help_text="Default discount percentage for this party")
     phone = models.CharField(max_length=20, null=True, blank=True)
     email = models.EmailField(null=True, blank=True)
     address = models.TextField(null=True, blank=True)

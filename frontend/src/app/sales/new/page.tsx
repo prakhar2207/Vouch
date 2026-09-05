@@ -79,6 +79,16 @@ export default function SalesPage() {
       if (newEntity?.group_name || newEntity?.ledger_type) {
         setLedgers((prev) => [...prev, newEntity]);
         setPartyLedgerId(newEntity.id);
+        const disc = Number(newEntity.discount_percent || 0);
+        if (disc > 0) {
+          setGroupedItems(prev => prev.map(group => ({
+            ...group,
+            items: group.items.map(item => ({
+              ...item,
+              discount_percent: disc
+            }))
+          })));
+        }
       }
     });
   }, [registerAltCCallback]);
@@ -126,7 +136,19 @@ export default function SalesPage() {
       const sgst = ledgerList.find((l:any) => l.name === 'SGST');
       const igst = ledgerList.find((l:any) => l.name === 'IGST');
       
-      if (party) setPartyLedgerId(party.id);
+      if (party) {
+        setPartyLedgerId(party.id);
+        const partyDisc = Number(party.discount_percent || 0);
+        if (partyDisc > 0) {
+          setGroupedItems(prev => prev.map(group => ({
+            ...group,
+            items: group.items.map(item => ({
+              ...item,
+              discount_percent: partyDisc
+            }))
+          })));
+        }
+      }
       if (sales) setSalesLedgerId(sales.id);
       else if (genericSales) setSalesLedgerId(genericSales.id);
       if (cgst) setCgstLedgerId(cgst.id);
@@ -136,6 +158,25 @@ export default function SalesPage() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePartyChange = (selectedId: string) => {
+    setPartyLedgerId(selectedId);
+    const party = ledgers.find(l => l.id === selectedId);
+    const disc = Number(party?.discount_percent || 0);
+
+    // Auto-populate customer's default discount across all line items
+    setGroupedItems(prev => prev.map(group => ({
+      ...group,
+      items: group.items.map(item => ({
+        ...item,
+        discount_percent: disc
+      }))
+    })));
+
+    if (disc > 0) {
+      toast.info(`Default ${disc}% discount applied for ${party?.name}`, "You can edit discount per item in the table below if needed.");
     }
   };
 
@@ -225,9 +266,12 @@ export default function SalesPage() {
     setGroupedItems(newGroups);
   };
 
+  const selectedParty = ledgers.find(l => l.id === partyLedgerId);
+  const currentPartyDiscount = Number(selectedParty?.discount_percent || 0);
+
   const addRow = (gIndex: number) => {
     const newGroups = [...groupedItems];
-    newGroups[gIndex].items.push({ product_name: '', quantity: 1, rate: 0, discount_percent: 0 });
+    newGroups[gIndex].items.push({ product_name: '', quantity: 1, rate: 0, discount_percent: currentPartyDiscount });
     setGroupedItems(newGroups);
   };
 
@@ -239,7 +283,7 @@ export default function SalesPage() {
   };
 
   const addCategoryGroup = () => {
-    setGroupedItems([...groupedItems, { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', quantity: 1, rate: 0, discount_percent: 0 } ] }]);
+    setGroupedItems([...groupedItems, { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', quantity: 1, rate: 0, discount_percent: currentPartyDiscount } ] }]);
   };
   
   const removeCategoryGroup = (gIndex: number) => {
@@ -265,7 +309,6 @@ export default function SalesPage() {
     return sum + taxable + (taxable * (Number(item.gst_rate)/100));
   }, 0);
 
-  const selectedParty = ledgers.find(l => l.id === partyLedgerId);
   const isInterState = Boolean(selectedParty?.state_code && companyStateCode && selectedParty.state_code !== companyStateCode);
 
   if (loading) return <DashboardLayout><div className="flex items-center justify-center h-full text-gray-500">Loading invoice form...</div></DashboardLayout>;
@@ -376,12 +419,27 @@ export default function SalesPage() {
                 <label className="block text-sm font-medium text-gray-400">Party (Customer)</label>
                 <Link href="/sales/customers/new" className="text-xs text-blue-500 hover:text-blue-400">+ Add New Customer</Link>
               </div>
-              <select value={partyLedgerId} onChange={e => setPartyLedgerId(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+              <select
+                value={partyLedgerId}
+                onChange={e => handlePartyChange(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              >
                 <option value="">-- Select Customer --</option>
-                {ledgers.filter(l => l.group.includes('Debtor') || l.group.includes('Creditor')).map(l => (
-                  <option key={l.id} value={l.id}>{l.name}</option>
+                {ledgers.filter(l => l.group.includes('Debtor') || l.group.includes('Creditor') || l.ledger_type === 'CUSTOMER').map(l => (
+                  <option key={l.id} value={l.id}>
+                    {l.name} {Number(l.discount_percent || 0) > 0 ? `(${Number(l.discount_percent)}% Disc)` : ''}
+                  </option>
                 ))}
               </select>
+              {selectedParty && Number(selectedParty.discount_percent || 0) > 0 && (
+                <div className="mt-2 text-xs flex items-center justify-between text-blue-300 bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 rounded-lg">
+                  <div className="flex items-center gap-1.5 font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
+                    <span>Customer Discount: <strong className="text-white font-mono">{Number(selectedParty.discount_percent)}%</strong></span>
+                  </div>
+                  <span className="text-[11px] text-zinc-400">Applied automatically • Editable below</span>
+                </div>
+              )}
             </div>
             {enableLedgerMapping && (
               <div>

@@ -30,6 +30,7 @@ export default function EditPartyPage() {
     phone: '',
     email: '',
     address: '',
+    discount_percent: '',
   });
 
   useEffect(() => {
@@ -57,6 +58,7 @@ export default function EditPartyPage() {
         phone: d.phone || '',
         email: d.email || '',
         address: d.address || '',
+        discount_percent: d.discount_percent !== undefined && d.discount_percent !== null ? String(d.discount_percent) : '',
       });
     } catch (err) {
       console.error(err);
@@ -235,6 +237,34 @@ export default function EditPartyPage() {
                 onChange={e => setFormData({ ...formData, email: e.target.value })}
                 className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
               />
+            </div>
+
+            {/* Default Party / Customer Discount */}
+            <div className="col-span-2 bg-zinc-900/50 border border-zinc-800 p-4 rounded-xl space-y-2">
+              <div className="flex justify-between items-center">
+                <label className="block text-sm font-semibold text-gray-200">
+                  Default Discount (%)
+                </label>
+                <span className="text-[11px] text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded font-mono">
+                  Auto-applied in Invoices
+                </span>
+              </div>
+              <div className="relative">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  placeholder="e.g. 10.00"
+                  value={formData.discount_percent}
+                  onChange={e => setFormData({ ...formData, discount_percent: e.target.value })}
+                  className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 pr-10 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono"
+                />
+                <span className="absolute right-3.5 top-3 text-gray-400 text-base font-bold">%</span>
+              </div>
+              <p className="text-xs text-gray-400">
+                This discount automatically populates on invoice line items whenever this customer is selected, and can still be edited or customized per order.
+              </p>
             </div>
 
             {/* Address */}

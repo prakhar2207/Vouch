@@ -24,6 +24,7 @@ class LedgerListView(APIView):
                     "address": l.address or "",
                     "current_balance": l.current_balance,
                     "opening_balance_type": l.opening_balance_type,
+                    "discount_percent": float(l.discount_percent or 0),
                 } for l in ledgers
             ]
             return Response({"success": True, "data": data})
@@ -32,6 +33,7 @@ class LedgerListView(APIView):
 
     def post(self, request, company_id):
         try:
+            from decimal import Decimal
             company = Company.objects.get(id=company_id, users__user=request.user)
             data = request.data
             
@@ -64,6 +66,12 @@ class LedgerListView(APIView):
                 if data.get('address') and not existing.address:
                     existing.address = str(data.get('address')).strip()
                     updated = True
+                if 'discount_percent' in data and data.get('discount_percent') is not None and str(data.get('discount_percent')).strip() != '':
+                    try:
+                        existing.discount_percent = Decimal(str(data.get('discount_percent')))
+                        updated = True
+                    except Exception:
+                        pass
                 if updated:
                     existing.save()
 
@@ -74,7 +82,8 @@ class LedgerListView(APIView):
                         "name": existing.name,
                         "group": existing.group.name if existing.group else "",
                         "ledger_type": existing.ledger_type,
-                        "gstin": existing.gstin or ""
+                        "gstin": existing.gstin or "",
+                        "discount_percent": float(existing.discount_percent or 0)
                     },
                     "already_exists": True,
                     "message": f"Party '{existing.name}' already exists. Reused existing ledger."
@@ -99,6 +108,13 @@ class LedgerListView(APIView):
                     nature=nature
                 )
 
+            discount_percent = Decimal('0.00')
+            if 'discount_percent' in data and data.get('discount_percent') is not None and str(data.get('discount_percent')).strip() != '':
+                try:
+                    discount_percent = Decimal(str(data.get('discount_percent')))
+                except Exception:
+                    pass
+
             # Create ledger
             ledger = Ledger.objects.create(
                 company=company,
@@ -110,6 +126,7 @@ class LedgerListView(APIView):
                 phone=data.get('phone', ''),
                 email=data.get('email', ''),
                 address=data.get('address', ''),
+                discount_percent=discount_percent,
                 opening_balance_type=data.get('opening_balance_type', 'DEBIT')
             )
             return Response({
@@ -119,7 +136,8 @@ class LedgerListView(APIView):
                     "name": ledger.name,
                     "group": ledger.group.name if ledger.group else "",
                     "ledger_type": ledger.ledger_type,
-                    "gstin": ledger.gstin or ""
+                    "gstin": ledger.gstin or "",
+                    "discount_percent": float(ledger.discount_percent or 0)
                 }
             }, status=201)
         except Exception as e:
@@ -145,6 +163,7 @@ class LedgerDetailView(APIView):
                 "current_balance": l.current_balance,
                 "opening_balance": l.opening_balance,
                 "opening_balance_type": l.opening_balance_type,
+                "discount_percent": float(l.discount_percent or 0),
             }
             return Response({"success": True, "data": data})
         except Exception as e:
@@ -152,6 +171,7 @@ class LedgerDetailView(APIView):
 
     def patch(self, request, company_id, ledger_id):
         try:
+            from decimal import Decimal
             company = Company.objects.get(id=company_id, users__user=request.user)
             ledger = Ledger.objects.get(id=ledger_id, company=company)
             data = request.data
@@ -162,9 +182,14 @@ class LedgerDetailView(APIView):
             if 'phone' in data: ledger.phone = data['phone']
             if 'email' in data: ledger.email = data['email']
             if 'address' in data: ledger.address = data['address']
+            if 'discount_percent' in data and data.get('discount_percent') is not None and str(data.get('discount_percent')).strip() != '':
+                try:
+                    ledger.discount_percent = Decimal(str(data['discount_percent']))
+                except Exception:
+                    pass
 
             ledger.save()
-            return Response({"success": True, "data": {"id": str(ledger.id), "name": ledger.name}})
+            return Response({"success": True, "data": {"id": str(ledger.id), "name": ledger.name, "discount_percent": float(ledger.discount_percent or 0)}})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 

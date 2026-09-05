@@ -422,6 +422,11 @@ export default function PartiesPage() {
                             {party.gstin}
                           </span>
                         )}
+                        {Number(party.discount_percent || 0) > 0 && (
+                          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded font-semibold">
+                            {Number(party.discount_percent)}% Disc
+                          </span>
+                        )}
                       </div>
                     </div>
 
