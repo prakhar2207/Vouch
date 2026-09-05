@@ -80,7 +80,7 @@ export default function PurchaseInvoiceList() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.delete(`${API_BASE_URL}/api/vouchers/${voucherId}/`, { headers });
+      const res = await axios.delete(`${API_BASE_URL}/api/vouchers/detail/${voucherId}/`, { headers });
 
       if (res.data.success) {
         toast.success(res.data.message || `Invoice #${voucherNumber} deleted and reversed successfully!`);

@@ -224,11 +224,20 @@ class VoucherDetailAPIView(APIView):
             voucher = Voucher.objects.get(id=voucher_id, company__users__user=request.user)
 
             with transaction.atomic():
+                product_ids = list(voucher.items.values_list('product_id', flat=True))
+                
                 if voucher.status == 'POSTED':
                     VoucherService.cancel_voucher(voucher)
                 
                 voucher_num = voucher.voucher_number
                 voucher.delete()
+                
+                # Cleanup orphaned products that were only used in this deleted invoice
+                from apps.inventory.models import Product
+                for pid in set(product_ids):
+                    prod = Product.objects.filter(id=pid).first()
+                    if prod and not prod.voucher_items.exists() and not prod.entries.exists():
+                        prod.delete()
 
             return Response({
                 "success": True, 
@@ -274,9 +283,17 @@ class VoucherDetailAPIView(APIView):
                     if voucher.status == 'POSTED':
                         VoucherService.cancel_voucher(voucher)
 
+                    old_product_ids = list(voucher.items.values_list('product_id', flat=True))
+
                     # 2. Clear old items and ledger entries
                     voucher.items.all().delete()
                     voucher.ledger_entries.all().delete()
+                    
+                    # Cleanup orphaned products from the previous version of this invoice
+                    for pid in set(old_product_ids):
+                        prod = Product.objects.filter(id=pid).first()
+                        if prod and not prod.voucher_items.exists() and not prod.entries.exists():
+                            prod.delete()
 
                     # 3. Process each updated line item
                     total_invoice_value = Decimal('0.00')
