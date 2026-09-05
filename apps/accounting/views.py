@@ -314,6 +314,8 @@ class VoucherDetailAPIView(APIView):
                         hsn = str(item.get('hsn_code', '')).strip()
                         gst_pct = Decimal(str(item.get('gst_rate', 18)))
                         unit = str(item.get('unit', 'PCS')).strip().upper()
+                        if unit in ['PCS', 'PIECES', 'NOS', 'NO', 'PC', 'PKT', 'PACKET', 'BOX', 'BAG', 'SET', 'DOZ', 'CAN', 'BTL']:
+                            qty = Decimal(str(int(round(float(qty)))))
 
                         # Resolve or create product (respecting brand vs unbranded)
                         item_brand = str(item.get('brand', '')).strip()

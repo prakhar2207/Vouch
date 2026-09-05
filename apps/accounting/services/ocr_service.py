@@ -136,6 +136,10 @@ class InvoiceOCRService:
                             if result and (result.get("invoice_number") or result.get("supplier_name")):
                                 result["is_mock"] = False
                                 result["source"] = "AI_GEMINI_VISION"
+                                for it in result.get("line_items", []):
+                                    u = str(it.get("unit") or "PCS").strip().upper()
+                                    if u in ["PCS", "PIECES", "NOS", "NO", "PC", "PKT", "PACKET", "BOX", "BAG", "SET", "DOZ", "CAN", "BTL"]:
+                                        it["quantity"] = int(round(float(it.get("quantity", 1))))
                                 return result
                         except Exception as gemini_err:
                             err_str = str(gemini_err).lower()
@@ -442,6 +446,9 @@ class InvoiceOCRService:
                         desc = f"{desc_p1} {next_line}".strip()
 
                 desc = re.sub(r'\s+', ' ', desc)
+
+                if unit in ["PCS", "PIECES", "NOS", "NO", "PC", "PKT", "PACKET", "BOX", "BAG", "SET", "DOZ", "CAN", "BTL"]:
+                    qty = float(int(round(qty)))
 
                 line_items.append({
                     "description": desc,

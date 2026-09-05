@@ -145,6 +145,9 @@ class PurchaseInvoiceService:
                     product.save(update_fields=['category'])
 
             qty = Decimal(str(item['quantity']))
+            unit_str = str(item.get('unit') or getattr(product, 'unit', 'PCS') or 'PCS').strip().upper()
+            if unit_str in ['PCS', 'PIECES', 'NOS', 'NO', 'PC', 'PKT', 'PACKET', 'BOX', 'BAG', 'SET', 'DOZ', 'CAN', 'BTL']:
+                qty = Decimal(str(int(round(float(qty)))))
             rate = Decimal(str(item['rate']))
 
             discount_pct = Decimal(str(item.get('discount_percent', '0.00')))

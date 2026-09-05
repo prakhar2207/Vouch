@@ -35,6 +35,20 @@ type SortOption =
   | 'STOCK_DESC' 
   | 'STOCK_ASC';
 
+const isIntegerUnit = (unit?: string) => {
+  if (!unit) return true; // Default unit is PCS
+  const u = unit.trim().toUpperCase();
+  return ['PCS', 'PIECES', 'NOS', 'NO', 'PC', 'PKT', 'PACKET', 'BOX', 'BAG', 'SET', 'DOZ', 'CAN', 'BTL'].includes(u);
+};
+
+const formatStockQuantity = (qty: any, unit?: string) => {
+  const num = parseFloat(qty) || 0;
+  if (isIntegerUnit(unit)) {
+    return Math.round(num).toLocaleString('en-IN');
+  }
+  return num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+};
+
 export default function CategoryDetailPage() {
   const router = useRouter();
   const params = useParams();
@@ -99,6 +113,8 @@ export default function CategoryDetailPage() {
     const sp = parseFloat(p.selling_price) || 0;
     const pp = parseFloat(p.purchase_price) || 0;
     const dp = sp > 0 ? ((sp - pp) / sp) * 100 : 0;
+    const isInt = isIntegerUnit(p.unit);
+    const sq = parseFloat(p.stock_quantity) || 0;
     setEditData({
       name: p.name,
       alias: p.alias || '',
@@ -106,7 +122,7 @@ export default function CategoryDetailPage() {
       selling_price: sp,
       wholesaler_price: p.wholesaler_price,
       purchase_price: pp,
-      stock_quantity: p.stock_quantity,
+      stock_quantity: isInt ? Math.round(sq) : sq,
       discount_percent: dp.toFixed(2),
     });
   };
@@ -119,15 +135,33 @@ export default function CategoryDetailPage() {
   const saveEdit = async (productId: string) => {
     setSavingId(productId);
     try {
+      const product = products.find(p => p.id === productId) || products.flatMap(p => p.variants || []).find((v: any) => v.id === productId);
+      const isInt = isIntegerUnit(product?.unit);
+      const payload = {
+        ...editData,
+        stock_quantity: editData.stock_quantity !== undefined 
+          ? (isInt ? Math.round(parseFloat(editData.stock_quantity) || 0) : parseFloat(editData.stock_quantity) || 0)
+          : undefined
+      };
+
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const res = await axios.patch(
         `${API_BASE_URL}/api/v1/inventory/products/${companyId}/${productId}/`,
-        editData,
+        payload,
         { headers }
       );
       if (res.data.success) {
-        setProducts(prev => prev.map(p => p.id === productId ? { ...p, ...editData } : p));
+        setProducts(prev => prev.map(p => {
+          if (p.id === productId) return { ...p, ...payload };
+          if (p.variants) {
+            return {
+              ...p,
+              variants: p.variants.map((v: any) => v.id === productId ? { ...v, ...payload } : v)
+            };
+          }
+          return p;
+        }));
         setEditingId(null);
         setEditData({});
         toast.success("Item updated successfully!");
@@ -797,7 +831,7 @@ export default function CategoryDetailPage() {
                                       const p = (editData.selling_price * (1 - d/100)).toFixed(2);
                                       setEditData({ ...editData, discount_percent: e.target.value, purchase_price: parseFloat(p) });
                                     }}
-                                    className="bg-transparent text-blue-400 w-12 text-xs text-right font-mono font-bold outline-none"
+                                    className="bg-transparent text-blue-400 w-14 text-xs text-right font-mono font-bold outline-none"
                                   />
                                 </div>
                                 <input
@@ -833,9 +867,13 @@ export default function CategoryDetailPage() {
                               <div className="flex items-center justify-end gap-1">
                                 <input
                                   type="number"
-                                  step="0.01"
-                                  value={editData.stock_quantity}
-                                  onChange={e => setEditData({ ...editData, stock_quantity: parseFloat(e.target.value) || 0 })}
+                                  step={isIntegerUnit(p.unit) ? "1" : "0.01"}
+                                  min="0"
+                                  value={editData.stock_quantity !== undefined ? editData.stock_quantity : (isIntegerUnit(p.unit) ? Math.round(parseFloat(p.stock_quantity) || 0) : p.stock_quantity)}
+                                  onChange={e => {
+                                    const val = parseFloat(e.target.value) || 0;
+                                    setEditData({ ...editData, stock_quantity: isIntegerUnit(p.unit) ? Math.round(val) : val });
+                                  }}
                                   className="bg-muted/40 border border-border text-emerald-400 px-1.5 py-1 rounded text-xs text-right font-mono font-bold w-16 outline-none"
                                 />
                                 <span className="text-[10px] text-muted-foreground">{p.unit}</span>
@@ -843,7 +881,7 @@ export default function CategoryDetailPage() {
                             ) : (
                               <>
                                 <span className={`font-bold text-sm ${parseFloat(p.stock_quantity) > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                                  {parseFloat(p.stock_quantity).toLocaleString('en-IN')}
+                                  {formatStockQuantity(p.stock_quantity, p.unit)}
                                 </span>
                                 <span className="text-[10px] text-muted-foreground ml-1">{p.unit}</span>
                               </>
@@ -994,7 +1032,7 @@ export default function CategoryDetailPage() {
                                               const p = (editData.selling_price * (1 - d/100)).toFixed(2);
                                               setEditData({ ...editData, discount_percent: e.target.value, purchase_price: parseFloat(p) });
                                             }}
-                                            className="bg-transparent text-blue-400 w-12 text-xs text-right font-mono font-bold outline-none"
+                                            className="bg-transparent text-blue-400 w-14 text-xs text-right font-mono font-bold outline-none"
                                           />
                                         </div>
                                         <input
@@ -1030,9 +1068,13 @@ export default function CategoryDetailPage() {
                                       <div className="flex items-center justify-end gap-1">
                                         <input
                                           type="number"
-                                          step="0.01"
-                                          value={editData.stock_quantity}
-                                          onChange={e => setEditData({ ...editData, stock_quantity: parseFloat(e.target.value) || 0 })}
+                                          step={isIntegerUnit(v.unit) ? "1" : "0.01"}
+                                          min="0"
+                                          value={editData.stock_quantity !== undefined ? editData.stock_quantity : (isIntegerUnit(v.unit) ? Math.round(parseFloat(v.stock_quantity) || 0) : v.stock_quantity)}
+                                          onChange={e => {
+                                            const val = parseFloat(e.target.value) || 0;
+                                            setEditData({ ...editData, stock_quantity: isIntegerUnit(v.unit) ? Math.round(val) : val });
+                                          }}
                                           className="bg-muted/40 border border-border text-emerald-400 px-1.5 py-1 rounded text-xs text-right font-mono font-bold w-16 outline-none"
                                         />
                                         <span className="text-[10px] text-muted-foreground">{v.unit}</span>
@@ -1040,7 +1082,7 @@ export default function CategoryDetailPage() {
                                     ) : (
                                       <>
                                         <span className={`font-bold ${parseFloat(v.stock_quantity) > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                                          {parseFloat(v.stock_quantity).toLocaleString('en-IN')}
+                                          {formatStockQuantity(v.stock_quantity, v.unit)}
                                         </span>
                                         <span className="text-[10px] text-muted-foreground ml-1">{v.unit}</span>
                                       </>

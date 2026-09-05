@@ -87,6 +87,11 @@ class ProductCategoryDetailView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 
+def is_integer_unit(unit_str):
+    if not unit_str:
+        return True # Default unit is PCS
+    return str(unit_str).strip().upper() in ['PCS', 'PIECES', 'NOS', 'NO', 'PC', 'PKT', 'PACKET', 'BOX', 'BAG', 'SET', 'DOZ', 'CAN', 'BTL']
+
 class ProductListView(APIView):
     permission_classes = [IsAuthenticated]
     
@@ -122,7 +127,7 @@ class ProductListView(APIView):
                     "min_selling_price": p.min_selling_price,
                     "purchase_price": p.purchase_price,
                     "purchase_price_from_invoice": getattr(p, 'purchase_price_from_invoice', False),
-                    "stock_quantity": p.stock_quantity,
+                    "stock_quantity": int(round(p.stock_quantity)) if is_integer_unit(p.unit) else p.stock_quantity,
                     "has_invoice_stock": len(p.voucher_items.all()) > 0,
                     "track_batches": p.track_batches,
                     "track_serial_numbers": p.track_serial_numbers
@@ -186,6 +191,8 @@ class ProductListView(APIView):
 
             # Handle Opening Stock (Feature 7)
             opening_qty = float(data.get('opening_qty', 0))
+            if is_integer_unit(product.unit):
+                opening_qty = float(round(opening_qty))
             if opening_qty > 0:
                 from apps.inventory.models import Warehouse, InventoryEntry
                 # Find default warehouse or use provided
@@ -212,9 +219,16 @@ class ProductListView(APIView):
                 
                 # Update product stock
                 product.stock_quantity = opening_qty
-                product.save()
+                product.save(update_fields=['stock_quantity'])
 
-            return Response({"success": True, "data": {"id": str(product.id), "name": product.name}})
+            return Response({
+                "success": True, 
+                "data": {
+                    "id": str(product.id), 
+                    "name": product.name,
+                    "sku": product.sku
+                }
+            }, status=201)
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 
@@ -241,6 +255,8 @@ class ProductDetailView(APIView):
             
             if 'stock_quantity' in data:
                 new_stock = float(data['stock_quantity'])
+                if is_integer_unit(product.unit):
+                    new_stock = float(round(new_stock))
                 product.stock_quantity = new_stock
                 
                 # Also update the Opening Stock InventoryEntry
