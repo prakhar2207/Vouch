@@ -737,52 +737,69 @@ export default function CategoryDetailPage() {
                   {groupedItemBlocks.map((block) => {
                     const isMultiBrand = block.variants.length > 1;
 
-                    // If single variant for this item block
-                    if (!isMultiBrand) {
-                      const p = block.variants[0];
-                      const isEditing = editingId === p.id;
-                      const isFocused = focusedRowIndex >= 0 && navigableRows[focusedRowIndex]?.productId === p.id;
+                    return block.variants.map((v, vIndex) => {
+                      const isFirst = vIndex === 0;
+                      const isEditing = editingId === v.id;
+                      const isFocused = focusedRowIndex >= 0 && navigableRows[focusedRowIndex]?.productId === v.id;
+
                       return (
                         <tr
-                          id={`row-product-${p.id}`}
-                          key={p.id}
-                          onClick={() => setFocusedRowIndex(navigableRows.findIndex(r => r.productId === p.id))}
+                          id={`row-product-${v.id}`}
+                          key={v.id}
+                          onClick={() => setFocusedRowIndex(navigableRows.findIndex(r => r.productId === v.id))}
                           className={`transition-all duration-150 cursor-pointer ${
                             isEditing 
                               ? 'bg-blue-500/10 border-l-4 border-l-blue-500' 
                               : isFocused 
                               ? 'bg-blue-500/10 ring-2 ring-inset ring-blue-500/60 border-l-4 border-l-blue-500' 
                               : 'hover:bg-muted/20'
-                          }`}
+                          } ${isMultiBrand && !isFirst ? 'border-t-0' : 'border-t border-border/40'}`}
                         >
-                          {/* Item Name */}
-                          <td className="p-3.5">
-                            {isEditing ? (
-                              <div className="space-y-1">
-                                <input
-                                  type="text"
-                                  value={editData.name}
-                                  onChange={e => setEditData({ ...editData, name: e.target.value })}
-                                  className="bg-muted/40 border border-border text-foreground px-2 py-1 rounded w-full text-xs font-semibold outline-none focus:ring-1 focus:ring-blue-500"
-                                />
-                                <input
-                                  type="text"
-                                  placeholder="Alias"
-                                  value={editData.alias}
-                                  onChange={e => setEditData({ ...editData, alias: e.target.value })}
-                                  className="bg-muted/40 border border-border text-muted-foreground px-2 py-0.5 rounded w-full text-[11px] outline-none"
-                                />
-                              </div>
-                            ) : (
-                              <div>
-                                <p className="text-foreground font-bold text-sm">{block.baseName}</p>
-                                {block.alias && <p className="text-muted-foreground text-xs">{block.alias}</p>}
-                              </div>
-                            )}
-                          </td>
+                          {/* Item Name / Size */}
+                          {isFirst && (
+                            <td 
+                              rowSpan={isMultiBrand ? block.variants.length : 1} 
+                              className={`p-3.5 align-top ${isMultiBrand ? 'border-r border-border/40 bg-muted/5' : ''}`}
+                            >
+                              {isEditing && !isMultiBrand ? (
+                                <div className="space-y-1">
+                                  <input
+                                    type="text"
+                                    value={editData.name}
+                                    onChange={e => setEditData({ ...editData, name: e.target.value })}
+                                    className="bg-muted/40 border border-border text-foreground px-2 py-1 rounded w-full text-xs font-semibold outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                                  <input
+                                    type="text"
+                                    placeholder="Alias"
+                                    value={editData.alias}
+                                    onChange={e => setEditData({ ...editData, alias: e.target.value })}
+                                    className="bg-muted/40 border border-border text-muted-foreground px-2 py-0.5 rounded w-full text-[11px] outline-none"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-foreground font-extrabold text-sm">{block.baseName}</span>
+                                    {isMultiBrand && (
+                                      <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.2 rounded font-semibold whitespace-nowrap">
+                                        {block.variants.length} Brands
+                                      </span>
+                                    )}
+                                  </div>
+                                  {block.alias && <p className="text-muted-foreground text-xs">{block.alias}</p>}
+                                  {isMultiBrand && (
+                                    <p className="text-[11px] text-muted-foreground">
+                                      {block.variants.map(varItem => varItem.brand).filter(Boolean).join(', ')}
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          )}
 
                           {/* Brand */}
-                          <td className="p-3.5">
+                          <td className="p-3.5 align-middle">
                             {isEditing ? (
                               <input
                                 type="text"
@@ -791,9 +808,9 @@ export default function CategoryDetailPage() {
                                 placeholder="Brand"
                                 className="bg-muted/40 border border-border text-foreground px-2 py-1 rounded w-full text-xs outline-none"
                               />
-                            ) : p.brand ? (
-                              <span className="bg-muted/60 text-foreground border border-border/60 text-xs px-2 py-0.5 rounded-md font-semibold font-mono">
-                                {p.brand}
+                            ) : v.brand ? (
+                              <span className="bg-zinc-800 text-blue-400 border border-blue-500/20 text-xs px-2 py-0.5 rounded font-bold font-mono">
+                                {v.brand}
                               </span>
                             ) : (
                               <span className="bg-zinc-800/80 text-zinc-300 border border-zinc-700/80 text-xs px-2 py-0.5 rounded-md font-medium">
@@ -803,17 +820,17 @@ export default function CategoryDetailPage() {
                           </td>
 
                           {/* SKU & Tags */}
-                          <td className="p-3.5">
-                            <p className="text-muted-foreground font-mono text-xs">{p.sku}</p>
+                          <td className="p-3.5 align-middle">
+                            <p className="text-muted-foreground font-mono text-xs">{v.sku}</p>
                             <div className="flex gap-1 mt-1 flex-wrap">
-                              {p.tax_override && <span className="bg-red-500/10 text-red-400 text-[9px] px-1.5 py-0.5 rounded border border-red-500/20">Tax Override</span>}
-                              {p.track_batches && <span className="bg-green-500/10 text-green-400 text-[9px] px-1.5 py-0.5 rounded border border-green-500/20">Batches</span>}
-                              {p.track_serial_numbers && <span className="bg-purple-500/10 text-purple-400 text-[9px] px-1.5 py-0.5 rounded border border-purple-500/20">Serial</span>}
+                              {v.tax_override && <span className="bg-red-500/10 text-red-400 text-[9px] px-1.5 py-0.5 rounded border border-red-500/20">Tax Override</span>}
+                              {v.track_batches && <span className="bg-green-500/10 text-green-400 text-[9px] px-1.5 py-0.5 rounded border border-green-500/20">Batches</span>}
+                              {v.track_serial_numbers && <span className="bg-purple-500/10 text-purple-400 text-[9px] px-1.5 py-0.5 rounded border border-purple-500/20">Serial</span>}
                             </div>
                           </td>
 
                           {/* Retail Price / MRP */}
-                          <td className="p-3.5 text-right">
+                          <td className="p-3.5 text-right align-middle font-mono">
                             {isEditing ? (
                               <input
                                 type="number"
@@ -829,13 +846,13 @@ export default function CategoryDetailPage() {
                               />
                             ) : (
                               <span className="text-emerald-400 font-bold text-sm">
-                                ₹{parseFloat(p.selling_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                ₹{parseFloat(v.selling_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                               </span>
                             )}
                           </td>
 
                           {/* Purchase Price */}
-                          <td className="p-3.5 text-right">
+                          <td className="p-3.5 text-right align-middle">
                             {isEditing ? (
                               <div className="flex items-center justify-end gap-1.5">
                                 <div className="flex items-center gap-1 bg-muted/30 px-1 py-0.5 rounded border border-border/40">
@@ -866,11 +883,11 @@ export default function CategoryDetailPage() {
                                 />
                               </div>
                             ) : (
-                              <div className="flex items-center justify-end gap-1.5">
+                              <div className="flex items-center justify-end gap-1.5 font-mono">
                                 <span className="text-muted-foreground font-medium text-xs">
-                                  {parseFloat(p.purchase_price) > 0 ? `₹${parseFloat(p.purchase_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
+                                  {parseFloat(v.purchase_price) > 0 ? `₹${parseFloat(v.purchase_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
                                 </span>
-                                {p.purchase_price_from_invoice && (
+                                {v.purchase_price_from_invoice && (
                                   <span title="Purchase price set from Purchase Invoice" className="text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1 rounded font-mono font-bold">
                                     Invoice
                                   </span>
@@ -880,56 +897,56 @@ export default function CategoryDetailPage() {
                           </td>
 
                           {/* Stock */}
-                          <td className="p-3.5 text-right">
-                            {isEditing && !p.has_invoice_stock ? (
+                          <td className="p-3.5 text-right align-middle font-mono">
+                            {isEditing && !v.has_invoice_stock ? (
                               <div className="flex items-center justify-end gap-1">
                                 <input
                                   type="number"
-                                  step={isIntegerUnit(p.unit) ? "1" : "0.01"}
+                                  step={isIntegerUnit(v.unit) ? "1" : "0.01"}
                                   min="0"
                                   value={
-                                    isIntegerUnit(p.unit)
-                                      ? Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : p.stock_quantity) || 0)
-                                      : (editData.stock_quantity !== undefined ? editData.stock_quantity : p.stock_quantity)
+                                    isIntegerUnit(v.unit)
+                                      ? Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : v.stock_quantity) || 0)
+                                      : (editData.stock_quantity !== undefined ? editData.stock_quantity : v.stock_quantity)
                                   }
                                   onKeyDown={e => {
-                                    if (isIntegerUnit(p.unit)) {
+                                    if (isIntegerUnit(v.unit)) {
                                       if (e.key === 'ArrowUp') {
                                         e.preventDefault();
-                                        const current = Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : p.stock_quantity) || 0);
+                                        const current = Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : v.stock_quantity) || 0);
                                         setEditData({ ...editData, stock_quantity: current + 1 });
                                       } else if (e.key === 'ArrowDown') {
                                         e.preventDefault();
-                                        const current = Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : p.stock_quantity) || 0);
+                                        const current = Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : v.stock_quantity) || 0);
                                         setEditData({ ...editData, stock_quantity: Math.max(0, current - 1) });
                                       }
                                     }
                                   }}
                                   onChange={e => {
                                     const val = parseFloat(e.target.value) || 0;
-                                    setEditData({ ...editData, stock_quantity: isIntegerUnit(p.unit) ? Math.round(val) : val });
+                                    setEditData({ ...editData, stock_quantity: isIntegerUnit(v.unit) ? Math.round(val) : val });
                                   }}
                                   className="bg-muted/40 border border-border text-emerald-400 px-1.5 py-1 rounded text-xs text-right font-mono font-bold w-16 outline-none"
                                 />
-                                <span className="text-[10px] text-muted-foreground">{p.unit}</span>
+                                <span className="text-[10px] text-muted-foreground">{v.unit}</span>
                               </div>
                             ) : (
                               <>
-                                <span className={`font-bold text-sm ${parseFloat(p.stock_quantity) > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                                  {formatStockQuantity(p.stock_quantity, p.unit)}
+                                <span className={`font-bold text-sm ${parseFloat(v.stock_quantity) > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                                  {formatStockQuantity(v.stock_quantity, v.unit)}
                                 </span>
-                                <span className="text-[10px] text-muted-foreground ml-1">{p.unit}</span>
+                                <span className="text-[10px] text-muted-foreground ml-1">{v.unit}</span>
                               </>
                             )}
                           </td>
 
                           {/* Actions */}
-                          <td className="p-3.5 text-center">
+                          <td className="p-3.5 text-center align-middle">
                             {isEditing ? (
                               <div className="flex items-center justify-center gap-1">
                                 <button
-                                  onClick={() => saveEdit(p.id)}
-                                  disabled={savingId === p.id}
+                                  onClick={() => saveEdit(v.id)}
+                                  disabled={savingId === v.id}
                                   className="p-1 rounded bg-emerald-600 text-white hover:bg-emerald-700"
                                   title="Save"
                                 >
@@ -946,14 +963,14 @@ export default function CategoryDetailPage() {
                             ) : (
                               <div className="flex items-center justify-center gap-1">
                                 <button
-                                  onClick={() => startEdit(p)}
+                                  onClick={() => startEdit(v)}
                                   className="text-muted-foreground hover:text-blue-400 p-1.5 rounded hover:bg-muted/60 transition-colors"
                                   title="Edit item"
                                 >
                                   <Edit2 className="w-3.5 h-3.5" />
                                 </button>
                                 <button
-                                  onClick={() => deleteProduct(p.id, p.name)}
+                                  onClick={() => deleteProduct(v.id, v.name)}
                                   className="text-muted-foreground hover:text-rose-400 p-1.5 rounded hover:bg-muted/60 transition-colors"
                                   title="Delete item (Alt+D)"
                                 >
@@ -964,229 +981,7 @@ export default function CategoryDetailPage() {
                           </td>
                         </tr>
                       );
-                    }
-
-                    // Multi-Brand Unified Item Block:
-                    // Render single master item block with stacked brand rows
-                    return (
-                      <tr key={block.baseName} className="border-b border-border/60 hover:bg-muted/5 transition-colors">
-                        {/* Master Item Name Column */}
-                        <td className="p-3.5 align-top border-r border-border/40 bg-muted/5">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-foreground font-extrabold text-sm">{block.baseName}</span>
-                              <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.2 rounded font-semibold whitespace-nowrap">
-                                {block.variants.length} Brands
-                              </span>
-                            </div>
-                            {block.alias && <p className="text-muted-foreground text-xs">{block.alias}</p>}
-                            <p className="text-[11px] text-muted-foreground">
-                              {block.variants.map(v => v.brand).filter(Boolean).join(', ')}
-                            </p>
-                          </div>
-                        </td>
-
-                        {/* Multi-Brand Nested Details Columns */}
-                        <td colSpan={6} className="p-0 align-top">
-                          <div className="divide-y divide-border/30">
-                            {block.variants.map((v) => {
-                              const isEditing = editingId === v.id;
-                              const isFocused = focusedRowIndex >= 0 && navigableRows[focusedRowIndex]?.productId === v.id;
-                              return (
-                                <div
-                                  id={`row-product-${v.id}`}
-                                  key={v.id}
-                                  onClick={() => setFocusedRowIndex(navigableRows.findIndex(r => r.productId === v.id))}
-                                  className={`grid grid-cols-6 items-center p-3 text-xs transition-all duration-150 cursor-pointer ${
-                                    isEditing 
-                                      ? 'bg-blue-500/10 border-l-4 border-l-blue-500' 
-                                      : isFocused 
-                                      ? 'bg-blue-500/10 ring-2 ring-inset ring-blue-500/60 border-l-4 border-l-blue-500' 
-                                      : 'hover:bg-muted/15'
-                                  }`}
-                                >
-                                  {/* Brand */}
-                                  <div>
-                                    {isEditing ? (
-                                      <input
-                                        type="text"
-                                        value={editData.brand}
-                                        onChange={e => setEditData({ ...editData, brand: e.target.value })}
-                                        className="bg-muted/40 border border-border text-foreground px-1.5 py-1 rounded text-xs w-full outline-none"
-                                      />
-                                    ) : v.brand ? (
-                                      <span className="bg-zinc-800 text-blue-400 border border-blue-500/20 text-xs px-2 py-0.5 rounded font-bold font-mono">
-                                        {v.brand}
-                                      </span>
-                                    ) : (
-                                      <span className="bg-zinc-800/80 text-zinc-300 border border-zinc-700 text-xs px-2 py-0.5 rounded font-medium">
-                                        Unbranded
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  {/* SKU */}
-                                  <div className="font-mono text-muted-foreground text-xs truncate pr-2">
-                                    {v.sku}
-                                  </div>
-
-                                  {/* Retail Price / MRP */}
-                                  <div className="text-right">
-                                    {isEditing ? (
-                                      <input
-                                        type="number"
-                                        step="0.01"
-                                        value={editData.selling_price}
-                                        onChange={e => {
-                                          const sp = parseFloat(e.target.value) || 0;
-                                          const d = parseFloat(editData.discount_percent) || 0;
-                                          const pp = sp * (1 - d/100);
-                                          setEditData({ ...editData, selling_price: sp, purchase_price: parseFloat(pp.toFixed(2)) });
-                                        }}
-                                        className="bg-muted/40 border border-border text-emerald-400 px-1.5 py-1 rounded text-xs text-right font-mono font-bold w-20 outline-none"
-                                      />
-                                    ) : (
-                                      <span className="text-emerald-400 font-bold">
-                                        ₹{parseFloat(v.selling_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  {/* Purchase Price */}
-                                  <div className="text-right flex items-center justify-end gap-1">
-                                    {isEditing ? (
-                                      <>
-                                        <div className="flex items-center gap-1 bg-muted/30 px-1 py-0.5 rounded border border-border/40">
-                                          <span className="text-[9px] text-muted-foreground font-semibold">DISC%</span>
-                                          <input
-                                            type="number"
-                                            step="0.01"
-                                            value={editData.discount_percent}
-                                            onChange={e => {
-                                              const d = parseFloat(e.target.value) || 0;
-                                              const p = (editData.selling_price * (1 - d/100)).toFixed(2);
-                                              setEditData({ ...editData, discount_percent: e.target.value, purchase_price: parseFloat(p) });
-                                            }}
-                                            className="bg-transparent text-blue-400 w-14 text-xs text-right font-mono font-bold outline-none"
-                                          />
-                                        </div>
-                                        <input
-                                          type="number"
-                                          step="0.01"
-                                          value={editData.purchase_price}
-                                          onChange={e => {
-                                            const p = parseFloat(e.target.value) || 0;
-                                            const sp = editData.selling_price || 1;
-                                            const d = sp > 0 ? ((sp - p) / sp * 100).toFixed(2) : 0;
-                                            setEditData({ ...editData, purchase_price: p, discount_percent: d });
-                                          }}
-                                          className="bg-muted/40 border border-border text-foreground px-1.5 py-1 rounded text-xs text-right font-mono w-20 outline-none"
-                                        />
-                                      </>
-                                    ) : (
-                                      <div className="flex items-center justify-end gap-1">
-                                        <span className="text-muted-foreground font-medium">
-                                          {parseFloat(v.purchase_price) > 0 ? `₹${parseFloat(v.purchase_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
-                                        </span>
-                                        {v.purchase_price_from_invoice && (
-                                          <span title="Purchase price set from Purchase Invoice" className="text-[9px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1 rounded font-mono font-bold">
-                                            Invoice
-                                          </span>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  {/* Stock */}
-                                  <div className="text-right">
-                                    {isEditing && !v.has_invoice_stock ? (
-                                      <div className="flex items-center justify-end gap-1">
-                                        <input
-                                          type="number"
-                                          step={isIntegerUnit(v.unit) ? "1" : "0.01"}
-                                          min="0"
-                                          value={
-                                            isIntegerUnit(v.unit)
-                                              ? Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : v.stock_quantity) || 0)
-                                              : (editData.stock_quantity !== undefined ? editData.stock_quantity : v.stock_quantity)
-                                          }
-                                          onKeyDown={e => {
-                                            if (isIntegerUnit(v.unit)) {
-                                              if (e.key === 'ArrowUp') {
-                                                e.preventDefault();
-                                                const current = Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : v.stock_quantity) || 0);
-                                                setEditData({ ...editData, stock_quantity: current + 1 });
-                                              } else if (e.key === 'ArrowDown') {
-                                                e.preventDefault();
-                                                const current = Math.round(parseFloat(editData.stock_quantity !== undefined ? editData.stock_quantity : v.stock_quantity) || 0);
-                                                setEditData({ ...editData, stock_quantity: Math.max(0, current - 1) });
-                                              }
-                                            }
-                                          }}
-                                          onChange={e => {
-                                            const val = parseFloat(e.target.value) || 0;
-                                            setEditData({ ...editData, stock_quantity: isIntegerUnit(v.unit) ? Math.round(val) : val });
-                                          }}
-                                          className="bg-muted/40 border border-border text-emerald-400 px-1.5 py-1 rounded text-xs text-right font-mono font-bold w-16 outline-none"
-                                        />
-                                        <span className="text-[10px] text-muted-foreground">{v.unit}</span>
-                                      </div>
-                                    ) : (
-                                      <>
-                                        <span className={`font-bold ${parseFloat(v.stock_quantity) > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                                          {formatStockQuantity(v.stock_quantity, v.unit)}
-                                        </span>
-                                        <span className="text-[10px] text-muted-foreground ml-1">{v.unit}</span>
-                                      </>
-                                    )}
-                                  </div>
-
-                                  {/* Action */}
-                                  <div className="text-center">
-                                    {isEditing ? (
-                                      <div className="flex items-center justify-center gap-1">
-                                        <button
-                                          onClick={() => saveEdit(v.id)}
-                                          disabled={savingId === v.id}
-                                          className="p-1 rounded bg-emerald-600 text-white hover:bg-emerald-700"
-                                          title="Save"
-                                        >
-                                          <Check className="w-3 h-3" />
-                                        </button>
-                                        <button
-                                          onClick={cancelEdit}
-                                          className="p-1 rounded bg-muted text-muted-foreground hover:text-foreground"
-                                          title="Cancel"
-                                        >
-                                          <X className="w-3 h-3" />
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <div className="flex items-center justify-center gap-1">
-                                        <button
-                                          onClick={() => startEdit(v)}
-                                          className="text-muted-foreground hover:text-blue-400 p-1 rounded hover:bg-muted/60 transition-colors"
-                                          title="Edit this brand variant"
-                                        >
-                                          <Edit2 className="w-3 h-3" />
-                                        </button>
-                                        <button
-                                          onClick={() => deleteProduct(v.id, v.name)}
-                                          className="text-muted-foreground hover:text-rose-400 p-1 rounded hover:bg-muted/60 transition-colors"
-                                          title="Delete item (Alt+D)"
-                                        >
-                                          <Trash2 className="w-3 h-3" />
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </td>
-                      </tr>
-                    );
+                    });
                   })}
                 </tbody>
               </table>
