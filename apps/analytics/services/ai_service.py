@@ -1,4 +1,4 @@
-﻿import pandas as pd
+import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
@@ -158,6 +158,18 @@ class AnalyticsEngine:
         sales_count = Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED').count()
         purchase_count = Voucher.objects.filter(company=company, voucher_type='PURCHASE', status='POSTED').count()
         
+        from apps.inventory.models import Product
+        from django.db.models import F, ExpressionWrapper, DecimalField
+        stock_val_expr = ExpressionWrapper(F('stock_quantity') * F('purchase_price'), output_field=DecimalField(max_digits=15, decimal_places=2))
+        retail_val_expr = ExpressionWrapper(F('stock_quantity') * F('selling_price'), output_field=DecimalField(max_digits=15, decimal_places=2))
+        
+        in_stock_prods = Product.objects.filter(company=company, stock_quantity__gt=0)
+        total_stock_value = in_stock_prods.annotate(v=stock_val_expr).aggregate(Sum('v'))['v__sum'] or Decimal('0.00')
+        total_retail_value = in_stock_prods.annotate(v=retail_val_expr).aggregate(Sum('v'))['v__sum'] or Decimal('0.00')
+        total_stock_qty = in_stock_prods.aggregate(Sum('stock_quantity'))['stock_quantity__sum'] or Decimal('0.00')
+        total_in_stock_items = in_stock_prods.count()
+        total_catalog_items = Product.objects.filter(company=company).count()
+
         return {
             "business_health": trend["status"],
             "trend_summary": trend["summary"],
@@ -168,6 +180,11 @@ class AnalyticsEngine:
                 "total_purchases": float(total_purchases),
                 "sales_vouchers_count": sales_count,
                 "purchase_vouchers_count": purchase_count,
-                "net_position": float(total_sales - total_purchases)
+                "net_position": float(total_sales - total_purchases),
+                "total_stock_value": float(total_stock_value),
+                "total_retail_value": float(total_retail_value),
+                "total_stock_qty": float(total_stock_qty),
+                "total_in_stock_items": total_in_stock_items,
+                "total_catalog_items": total_catalog_items,
             }
         }

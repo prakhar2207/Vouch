@@ -22,7 +22,8 @@ import {
   Check, 
   X,
   Info,
-  Percent
+  Percent,
+  Boxes
 } from 'lucide-react';
 
 type SortOption = 
@@ -62,6 +63,13 @@ export default function CategoryDetailPage() {
   const [search, setSearch] = useState('');
   const [companyId, setCompanyId] = useState('');
   
+  const categoryStockValue = useMemo(() => {
+    return products.reduce((acc, p) => acc + ((parseFloat(p.stock_quantity) || 0) * (parseFloat(p.purchase_price) || 0)), 0);
+  }, [products]);
+
+  const categoryStockQty = useMemo(() => {
+    return products.reduce((acc, p) => acc + (parseFloat(p.stock_quantity) || 0), 0);
+  }, [products]);
   // Sort and Brand Filter state
   const [sortBy, setSortBy] = useState<SortOption>('NAME_ASC');
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
@@ -505,6 +513,15 @@ export default function CategoryDetailPage() {
 
                 <span className="text-xs font-mono bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-md font-semibold">
                   {products.length} {products.length === 1 ? 'item' : 'items'}
+                </span>
+
+                <span className="text-xs font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2.5 py-0.5 rounded-md font-semibold flex items-center gap-1.5">
+                  <Boxes className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-emerald-500/80">Stock Value:</span>
+                  <span className="font-bold">₹{categoryStockValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  {categoryStockQty > 0 && (
+                    <span className="text-emerald-400/70 font-normal">({categoryStockQty.toLocaleString('en-IN')} units)</span>
+                  )}
                 </span>
               </div>
 

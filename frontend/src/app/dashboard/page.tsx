@@ -30,6 +30,7 @@ import {
   ArrowDownRight,
   HelpCircle,
   FileText,
+  Boxes,
 } from "lucide-react";
 
 export default function Dashboard() {
@@ -103,6 +104,9 @@ export default function Dashboard() {
     sales_vouchers_count: 0,
     purchase_vouchers_count: 0,
     net_position: 0,
+    total_stock_value: 0,
+    total_in_stock_items: 0,
+    total_stock_qty: 0,
   };
 
   const trend = insights?.trend_details || {
@@ -163,8 +167,8 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Task 3: 4-Column Metric Grid with Neutral Zero-States */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* 5-Column Metric Grid with Real-Time Stock Valuation */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           {/* Card 1: Total Sales */}
           <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1">
             <div className="flex items-center justify-between text-muted-foreground">
@@ -193,7 +197,28 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Card 3: Net Cash / Receivables */}
+          {/* Card 3: Total Stock Value */}
+          <Link 
+            href="/inventory"
+            className="bg-card border border-border/50 hover:border-blue-500/50 rounded-xl p-4 shadow-2xs space-y-1 transition-all group cursor-pointer block"
+            title="View Inventory Breakdown"
+          >
+            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground">
+              <span className="text-xs font-medium">Total Stock Value</span>
+              <Boxes className="w-4 h-4 text-blue-400 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="text-2xl font-bold font-mono tracking-tight text-blue-400">
+              ₹{(kpis.total_stock_value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </div>
+            <div className="text-[11px] text-muted-foreground flex items-center justify-between">
+              <span>{kpis.total_in_stock_items || 0} items ({Math.round(kpis.total_stock_qty || 0).toLocaleString("en-IN")} pcs)</span>
+              <span className="text-blue-400 text-[10px] font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
+                &rarr;
+              </span>
+            </div>
+          </Link>
+
+          {/* Card 4: Net Cash / Receivables */}
           <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1">
             <div className="flex items-center justify-between text-muted-foreground">
               <span className="text-xs font-medium">Net Position</span>

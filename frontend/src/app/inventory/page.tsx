@@ -6,10 +6,12 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
+import { Boxes, Tag, Layers, TrendingUp, Plus } from 'lucide-react';
 
 export default function InventoryPage() {
   const router = useRouter();
   const [categories, setCategories] = useState<any[]>([]);
+  const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [companyId, setCompanyId] = useState('');
 
@@ -35,6 +37,7 @@ export default function InventoryPage() {
 
       const res = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cid}/`, { headers });
       setCategories(res.data.data || []);
+      setSummary(res.data.summary || null);
     } catch (err) {
       console.error(err);
     } finally {
@@ -218,7 +221,70 @@ export default function InventoryPage() {
             New Category
           </Link>
         </div>
-        
+
+        {/* Stock Valuation Summary Banner */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="p-4 rounded-xl border border-border bg-card/70 backdrop-blur shadow-xs flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center justify-center shrink-0">
+              <Boxes className="w-6 h-6" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Stock Value</p>
+              <h3 className="text-xl font-bold text-foreground truncate">
+                ₹{(summary?.total_stock_value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </h3>
+              <p className="text-[11px] text-blue-400 font-medium mt-0.5">
+                {(summary?.total_stock_quantity || 0).toLocaleString('en-IN')} units at cost
+              </p>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-xl border border-border bg-card/70 backdrop-blur shadow-xs flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center justify-center shrink-0">
+              <Tag className="w-6 h-6" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Retail / MRP Value</p>
+              <h3 className="text-xl font-bold text-foreground truncate">
+                ₹{(summary?.total_retail_value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Valuation at selling price
+              </p>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-xl border border-border bg-card/70 backdrop-blur shadow-xs flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
+              <TrendingUp className="w-6 h-6" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Potential Margin</p>
+              <h3 className="text-xl font-bold text-emerald-400 truncate">
+                ₹{Math.max(0, (summary?.total_retail_value || 0) - (summary?.total_stock_value || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {(summary?.total_stock_value > 0) ? (((summary.total_retail_value - summary.total_stock_value) / summary.total_stock_value) * 100).toFixed(1) : '0'}% unrealized markup
+              </p>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-xl border border-border bg-card/70 backdrop-blur shadow-xs flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center shrink-0">
+              <Layers className="w-6 h-6" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Catalog Scope</p>
+              <h3 className="text-xl font-bold text-foreground truncate">
+                {summary?.total_items ?? categories.reduce((acc: number, c: any) => acc + (c.item_count || 0), 0)} Items
+              </h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Across {categories.length} product {categories.length === 1 ? 'category' : 'categories'}
+              </p>
+            </div>
+          </div>
+        </div>
+
         {loading ? (
           <div className="flex items-center justify-center py-20 text-gray-500">Loading...</div>
         ) : categories.length === 0 ? (
@@ -245,7 +311,7 @@ export default function InventoryPage() {
                       setFocusedIndex(idx);
                       router.push(`/inventory/categories/${cat.id}`);
                     }}
-                    className={`border cursor-pointer rounded-xl p-6 transition-all shadow-sm flex flex-col group relative overflow-hidden h-64 ${
+                    className={`border cursor-pointer rounded-xl p-5 transition-all shadow-sm flex flex-col group relative overflow-hidden min-h-[17.5rem] ${
                       isFocused 
                         ? 'bg-card border-blue-500 ring-2 ring-blue-500/60 shadow-lg shadow-blue-500/15 scale-[1.01]' 
                         : 'bg-card border-border hover:border-blue-500'
@@ -266,32 +332,24 @@ export default function InventoryPage() {
                           type="text" 
                           value={editData.name} 
                           onChange={e => setEditData({...editData, name: e.target.value})}
-                          className="bg-zinc-800 border border-zinc-700 text-white px-3 py-1.5 rounded text-lg font-bold w-full"
                           placeholder="Category Name"
+                          className="bg-zinc-900 border border-zinc-700 rounded p-1.5 text-white text-sm"
                           autoFocus
                         />
-                        <div className="flex justify-between items-start gap-2">
-                          <input 
-                            type="text" 
-                            value={editData.hsn_code} 
-                            onChange={e => setEditData({...editData, hsn_code: e.target.value})}
-                            className="bg-zinc-800 border border-zinc-700 text-white px-2 py-1.5 rounded w-full text-sm"
-                            placeholder="HSN"
-                          />
-                          <div className="w-full flex flex-col gap-1">
-                            <input 
-                              type="number" 
-                              value={editData.gst_rate} 
-                              onChange={e => setEditData({...editData, gst_rate: e.target.value})}
-                              className="bg-zinc-800 border border-zinc-700 text-white px-2 py-1.5 rounded w-full text-sm"
-                              placeholder="Total GST %"
-                            />
-                            <div className="text-[10px] text-gray-400 text-right leading-tight">
-                              IGST: {editData.gst_rate || 0}%<br/>
-                              CGST: {(Number(editData.gst_rate || 0) / 2).toFixed(1)}% | SGST: {(Number(editData.gst_rate || 0) / 2).toFixed(1)}%
-                            </div>
-                          </div>
-                        </div>
+                        <input 
+                          type="text" 
+                          value={editData.hsn_code} 
+                          onChange={e => setEditData({...editData, hsn_code: e.target.value})}
+                          placeholder="HSN Code"
+                          className="bg-zinc-900 border border-zinc-700 rounded p-1.5 text-white text-sm"
+                        />
+                        <input 
+                          type="number" 
+                          value={editData.gst_rate} 
+                          onChange={e => setEditData({...editData, gst_rate: e.target.value})}
+                          placeholder="GST Rate %"
+                          className="bg-zinc-900 border border-zinc-700 rounded p-1.5 text-white text-sm"
+                        />
                         <div className="flex justify-end gap-2 mt-2">
                           <button onClick={() => setEditingCategory(null)} className="text-gray-400 hover:text-white text-xs px-2 py-1">Cancel (Esc)</button>
                           <button onClick={handleSaveEdit} disabled={saving} className="bg-blue-600 text-white text-xs px-3 py-1 rounded hover:bg-blue-700">Save (Ctrl+Enter / Ctrl+A)</button>
@@ -309,11 +367,25 @@ export default function InventoryPage() {
                         </div>
 
                         <div className="flex-1 flex flex-col items-center justify-center text-center">
-                          <div className="w-14 h-14 bg-zinc-800 text-gray-300 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-all">
-                            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                          <div className="w-12 h-12 bg-zinc-800 text-gray-300 rounded-full flex items-center justify-center mb-2.5 group-hover:scale-110 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-all">
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
                           </div>
-                          <h3 className="text-xl font-bold text-white group-hover:text-blue-400 transition-colors">{cat.name}</h3>
-                          <p className="text-gray-500 text-sm mt-1">{cat.item_count} item{cat.item_count !== 1 ? 's' : ''}</p>
+                          <h3 className="text-lg font-bold text-white group-hover:text-blue-400 transition-colors truncate max-w-full px-1">{cat.name}</h3>
+                          <div className="flex items-center gap-1.5 text-xs text-gray-400 mt-0.5">
+                            <span>{cat.item_count} item{cat.item_count !== 1 ? 's' : ''}</span>
+                            {cat.stock_quantity > 0 && (
+                              <>
+                                <span>•</span>
+                                <span className="text-blue-400 font-medium">{cat.stock_quantity} units</span>
+                              </>
+                            )}
+                          </div>
+                          
+                          {/* Stock Value Badge */}
+                          <div className="mt-2.5 px-2.5 py-1 rounded-md bg-emerald-950/40 border border-emerald-500/20 text-emerald-400 text-xs font-semibold flex items-center gap-1">
+                            <span className="text-[10px] text-emerald-500/70 uppercase">Stock Val:</span>
+                            <span>₹{(cat.stock_value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
                         </div>
 
                         <div className="border-t border-zinc-800 pt-3 mt-auto flex flex-col text-xs text-gray-500 gap-1">

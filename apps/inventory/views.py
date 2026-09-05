@@ -9,18 +9,65 @@ class ProductCategoryListView(APIView):
     
     def get(self, request, company_id):
         try:
+            from django.db.models import F, Sum, ExpressionWrapper, DecimalField
+            from decimal import Decimal
             company = Company.objects.get(id=company_id, users__user=request.user)
             categories = ProductCategory.objects.filter(company=company).order_by('name')
-            data = [
-                {
+            
+            stock_val_expr = ExpressionWrapper(F('stock_quantity') * F('purchase_price'), output_field=DecimalField(max_digits=15, decimal_places=2))
+            retail_val_expr = ExpressionWrapper(F('stock_quantity') * F('selling_price'), output_field=DecimalField(max_digits=15, decimal_places=2))
+            
+            data = []
+            overall_stock_value = Decimal('0.00')
+            overall_retail_value = Decimal('0.00')
+            overall_stock_qty = Decimal('0.00')
+            overall_items_count = 0
+            
+            for c in categories:
+                cat_prods = c.products.all()
+                cat_stock_val = cat_prods.filter(stock_quantity__gt=0).annotate(v=stock_val_expr).aggregate(Sum('v'))['v__sum'] or Decimal('0.00')
+                cat_retail_val = cat_prods.filter(stock_quantity__gt=0).annotate(v=retail_val_expr).aggregate(Sum('v'))['v__sum'] or Decimal('0.00')
+                cat_stock_qty = cat_prods.filter(stock_quantity__gt=0).aggregate(Sum('stock_quantity'))['stock_quantity__sum'] or Decimal('0.00')
+                item_count = cat_prods.count()
+                
+                overall_stock_value += cat_stock_val
+                overall_retail_value += cat_retail_val
+                overall_stock_qty += cat_stock_qty
+                overall_items_count += item_count
+                
+                data.append({
                     "id": str(c.id), 
                     "name": c.name,
                     "hsn_code": c.hsn_code or "",
                     "gst_rate": str(c.gst_rate),
-                    "item_count": c.products.count(),
-                } for c in categories
-            ]
-            return Response({"success": True, "data": data})
+                    "item_count": item_count,
+                    "stock_quantity": float(cat_stock_qty),
+                    "stock_value": float(cat_stock_val),
+                    "retail_value": float(cat_retail_val),
+                })
+                
+            # Also account for unassigned products
+            unassigned_prods = Product.objects.filter(company=company, category__isnull=True)
+            if unassigned_prods.exists():
+                un_stock_val = unassigned_prods.filter(stock_quantity__gt=0).annotate(v=stock_val_expr).aggregate(Sum('v'))['v__sum'] or Decimal('0.00')
+                un_retail_val = unassigned_prods.filter(stock_quantity__gt=0).annotate(v=retail_val_expr).aggregate(Sum('v'))['v__sum'] or Decimal('0.00')
+                un_stock_qty = unassigned_prods.filter(stock_quantity__gt=0).aggregate(Sum('stock_quantity'))['stock_quantity__sum'] or Decimal('0.00')
+                overall_stock_value += un_stock_val
+                overall_retail_value += un_retail_val
+                overall_stock_qty += un_stock_qty
+                overall_items_count += unassigned_prods.count()
+
+            return Response({
+                "success": True, 
+                "data": data,
+                "summary": {
+                    "total_stock_value": float(overall_stock_value),
+                    "total_retail_value": float(overall_retail_value),
+                    "total_stock_quantity": float(overall_stock_qty),
+                    "total_items": overall_items_count,
+                    "total_categories": categories.count(),
+                }
+            })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
             
@@ -135,7 +182,20 @@ class ProductListView(APIView):
                     "track_serial_numbers": p.track_serial_numbers
                 } for p in qs
             ]
-            return Response({"success": True, "data": data})
+            category_stock_val = sum(float(p.stock_quantity) * float(p.purchase_price) for p in qs if p.stock_quantity > 0)
+            category_retail_val = sum(float(p.stock_quantity) * float(p.selling_price) for p in qs if p.stock_quantity > 0)
+            category_stock_qty = sum(float(p.stock_quantity) for p in qs if p.stock_quantity > 0)
+            
+            return Response({
+                "success": True, 
+                "data": data,
+                "summary": {
+                    "total_stock_value": round(category_stock_val, 2),
+                    "total_retail_value": round(category_retail_val, 2),
+                    "total_stock_quantity": round(category_stock_qty, 2),
+                    "total_items": len(data),
+                }
+            })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 
