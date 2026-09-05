@@ -221,12 +221,21 @@ export default function PurchasePage() {
       const taxable = gross - discount;
       return sum + (taxable * (Number(item.gst_rate)/100));
   }, 0);
-  const grandTotal = allItems.reduce((sum, item) => {
+  const unroundedGrandTotal = allItems.reduce((sum, item) => {
     const gross = Number(item.quantity) * Number(item.rate);
     const discount = gross * (Number(item.discount_percent)/100);
     const taxable = gross - discount;
     return sum + taxable + (taxable * (Number(item.gst_rate)/100));
   }, 0);
+
+  let grandTotal = 0;
+  let roundOff = 0;
+  if (unroundedGrandTotal > 0) {
+    const integerPart = Math.floor(unroundedGrandTotal);
+    const decimalPart = Math.round((unroundedGrandTotal - integerPart) * 100) / 100;
+    grandTotal = decimalPart < 0.5 ? integerPart : integerPart + 1;
+    roundOff = Math.round((grandTotal - unroundedGrandTotal) * 100) / 100;
+  }
 
   const selectedParty = ledgers.find(l => l.id === partyLedgerId);
   const isInterState = Boolean(selectedParty?.state_code && companyStateCode && selectedParty.state_code !== companyStateCode);
@@ -466,9 +475,15 @@ export default function PurchasePage() {
                         </div>
                     </>
                 )}
+                <div className="flex justify-between text-gray-400">
+                    <span>Round Off</span>
+                    <span className={roundOff < 0 ? "text-emerald-400 font-mono font-medium" : roundOff > 0 ? "text-amber-400 font-mono font-medium" : "text-gray-400 font-mono"}>
+                        {roundOff > 0 ? `+₹${roundOff.toFixed(2)}` : roundOff < 0 ? `-₹${Math.abs(roundOff).toFixed(2)}` : `₹0.00`}
+                    </span>
+                </div>
                 <div className="border-t border-zinc-700 pt-3 flex justify-between text-xl font-bold text-white">
                     <span>Grand Total</span>
-                    <span>₹{grandTotal.toFixed(2)}</span>
+                    <span className="font-mono">₹{grandTotal.toFixed(2)}</span>
                 </div>
             </div>
         </div>

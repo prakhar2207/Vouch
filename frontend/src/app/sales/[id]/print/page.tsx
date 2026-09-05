@@ -116,6 +116,10 @@ export default function PrintInvoicePage() {
     }
   });
 
+  const subtotalWithTaxes = totalTaxable + (isInterState ? totalIgst : (totalCgst + totalSgst));
+  const roundOff = Number(invoice.total_amount) - subtotalWithTaxes;
+  const hasRoundOff = Math.abs(roundOff) >= 0.005;
+
   return (
     <div className="bg-white text-black min-h-screen">
       {/* Print Button (Hidden on Print) */}
@@ -261,6 +265,15 @@ export default function PrintInvoicePage() {
                             </div>
                         </>
                     )}
+
+                    {hasRoundOff && (
+                        <div className="h-5 flex items-center justify-end pr-12 text-[11px] italic">
+                            <div className="flex justify-between items-center w-48">
+                                <span>{roundOff > 0 ? 'Add : Round Off' : 'Less : Round Off'}</span>
+                                <span></span>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* Right side: Amount Column with Subtotal & Taxes */}
@@ -282,6 +295,12 @@ export default function PrintInvoicePage() {
                                 {totalSgst.toLocaleString('en-IN', {minimumFractionDigits: 2})}
                             </div>
                         </>
+                    )}
+
+                    {hasRoundOff && (
+                        <div className="h-5 flex items-center justify-end pr-2 text-xs font-medium">
+                            {roundOff > 0 ? `+${roundOff.toFixed(2)}` : roundOff.toFixed(2)}
+                        </div>
                     )}
                 </div>
             </div>

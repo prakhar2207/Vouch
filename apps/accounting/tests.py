@@ -214,6 +214,76 @@ class B2BEDIAndTallyExportTests(TestCase):
         self.assertEqual(response['Content-Type'], 'application/xml')
         self.assertIn("Tally_Export", response['Content-Disposition'])
 
+    def test_sales_invoice_round_off_floor_and_ceiling(self):
+        """Test that decimal < 0.5 floors and decimal >= 0.5 ceilings with balanced double entry."""
+        from apps.accounting.services.purchase_service import PurchaseInvoiceService
+
+        # 1. Test Floor Case: 246.00 + 18% GST (44.28) = 290.28 (< 0.5 -> 290.00)
+        prod_floor = Product.objects.create(
+            company=self.seller_company,
+            name="Floor Test Part",
+            sku="FTP-001",
+            hsn_code="8482",
+            gst_rate=Decimal("18.00"),
+            selling_price=Decimal("246.00"),
+            stock_quantity=Decimal("50.00"),
+            unit="PCS"
+        )
+        sales_vch_floor = SalesInvoiceService.generate_sales_invoice(
+            company=self.seller_company,
+            user=self.user_seller,
+            party_ledger=self.buyer_party_ledger,
+            items_data=[{"product_id": str(prod_floor.id), "quantity": 1, "rate": 246.00}],
+            sales_ledger=self.sales_ledger,
+            cgst_ledger=self.cgst_ledger,
+            sgst_ledger=self.sgst_ledger,
+            igst_ledger=self.igst_ledger
+        )
+        # Total amount must be floored to 290.00
+        self.assertEqual(sales_vch_floor.total_amount, Decimal("290.00"))
+        # Post voucher should pass double-entry constraint check
+        VoucherService.post_voucher(sales_vch_floor)
+        self.assertEqual(sales_vch_floor.status, "POSTED")
+
+        # Check Round Off ledger entry: debited 0.28
+        round_off_entry = sales_vch_floor.ledger_entries.filter(ledger__name="Round Off").first()
+        self.assertIsNotNone(round_off_entry)
+        self.assertEqual(round_off_entry.debit_amount, Decimal("0.28"))
+        self.assertEqual(round_off_entry.credit_amount, Decimal("0.00"))
+
+        # 2. Test Ceiling Case: 246.40 + 18% IGST (44.35) = 290.75 (>= 0.5 -> 291.00)
+        prod_ceil = Product.objects.create(
+            company=self.seller_company,
+            name="Ceil Test Part",
+            sku="CTP-002",
+            hsn_code="8482",
+            gst_rate=Decimal("18.00"),
+            selling_price=Decimal("246.40"),
+            stock_quantity=Decimal("50.00"),
+            unit="PCS"
+        )
+        sales_vch_ceil = SalesInvoiceService.generate_sales_invoice(
+            company=self.seller_company,
+            user=self.user_seller,
+            party_ledger=self.buyer_party_ledger,
+            items_data=[{"product_id": str(prod_ceil.id), "quantity": 1, "rate": 246.40}],
+            sales_ledger=self.sales_ledger,
+            cgst_ledger=self.cgst_ledger,
+            sgst_ledger=self.sgst_ledger,
+            igst_ledger=self.igst_ledger
+        )
+        # Total amount must be ceiled to 291.00
+        self.assertEqual(sales_vch_ceil.total_amount, Decimal("291.00"))
+        # Post voucher should pass double-entry constraint check
+        VoucherService.post_voucher(sales_vch_ceil)
+        self.assertEqual(sales_vch_ceil.status, "POSTED")
+
+        # Check Round Off ledger entry: credited 0.25
+        round_off_ceil = sales_vch_ceil.ledger_entries.filter(ledger__name="Round Off").first()
+        self.assertIsNotNone(round_off_ceil)
+        self.assertEqual(round_off_ceil.debit_amount, Decimal("0.00"))
+        self.assertEqual(round_off_ceil.credit_amount, Decimal("0.25"))
+
 
 class MultiYearInvoicingAndYearEndTests(TestCase):
     def setUp(self):

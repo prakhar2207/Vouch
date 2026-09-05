@@ -192,16 +192,28 @@ class PurchaseInvoiceService:
             total_igst += taxes['igst']
             total_invoice_value += total_amount
             
-        voucher.total_amount = total_invoice_value
+        # Round Off calculation:
+        # If decimal value < 0.5 then floor, if >= 0.5 then ceiling
+        unrounded_total = total_invoice_value
+        integer_part = Decimal(int(unrounded_total))
+        decimal_part = unrounded_total - integer_part
+        if decimal_part < Decimal('0.50'):
+            rounded_total = integer_part.quantize(Decimal('0.01'))
+        else:
+            rounded_total = (integer_part + Decimal('1.00')).quantize(Decimal('0.01'))
+            
+        round_off = (rounded_total - unrounded_total).quantize(Decimal('0.01'))
+
+        voucher.total_amount = rounded_total
         voucher.save(update_fields=['total_amount'])
         
         # 3. Generate strict Ledger Entries (The Double Entry)
-        # Credit the Supplier (Party)
+        # Credit the Supplier (Party) with rounded total payable amount
         LedgerEntry.objects.create(
             voucher=voucher,
             ledger=party_ledger,
             debit_amount=Decimal('0.00'),
-            credit_amount=total_invoice_value
+            credit_amount=rounded_total
         )
         
         # Debit the Purchase Account
@@ -234,5 +246,49 @@ class PurchaseInvoiceService:
                 debit_amount=total_igst,
                 credit_amount=Decimal('0.00')
             )
+
+        # Round Off balancing entry for Purchase:
+        # If round_off < 0: Debits (purchase + taxes = unrounded) > Credits (party = rounded).
+        # Need CREDIT of abs(round_off) to Round Off ledger (Income/Discount received).
+        # If round_off > 0: Debits (purchase + taxes = unrounded) < Credits (party = rounded).
+        # Need DEBIT of round_off to Round Off ledger (Expense).
+        if round_off != Decimal('0.00'):
+            round_off_ledger = PurchaseInvoiceService._get_or_create_round_off_ledger(company)
+            if round_off > Decimal('0.00'):
+                LedgerEntry.objects.create(
+                    voucher=voucher,
+                    ledger=round_off_ledger,
+                    debit_amount=round_off,
+                    credit_amount=Decimal('0.00')
+                )
+            else:
+                LedgerEntry.objects.create(
+                    voucher=voucher,
+                    ledger=round_off_ledger,
+                    debit_amount=Decimal('0.00'),
+                    credit_amount=abs(round_off)
+                )
             
         return voucher
+
+    @staticmethod
+    def _get_or_create_round_off_ledger(company: Company) -> Ledger:
+        from apps.ledgers.models import LedgerGroup
+        round_off = Ledger.objects.filter(company=company, name__iexact="Round Off").first()
+        if not round_off:
+            expense_grp = LedgerGroup.objects.filter(company=company, nature="EXPENSE").first()
+            if not expense_grp:
+                expense_grp = LedgerGroup.objects.filter(company=company, name__icontains="Expense").first()
+            if not expense_grp:
+                expense_grp = LedgerGroup.objects.create(
+                    company=company,
+                    name="Indirect Expenses",
+                    nature="EXPENSE"
+                )
+            round_off = Ledger.objects.create(
+                company=company,
+                group=expense_grp,
+                name="Round Off",
+                ledger_type="ROUND_OFF"
+            )
+        return round_off

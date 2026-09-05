@@ -139,7 +139,15 @@ export default function EditPurchaseInvoiceModal({
     (acc, item) => acc + (item.quantity * item.rate * (item.gst_rate / 100)),
     0
   );
-  const grandTotal = taxableTotal + totalTax;
+  const unroundedGrandTotal = taxableTotal + totalTax;
+  let grandTotal = 0;
+  let roundOff = 0;
+  if (unroundedGrandTotal > 0) {
+    const integerPart = Math.floor(unroundedGrandTotal);
+    const decimalPart = Math.round((unroundedGrandTotal - integerPart) * 100) / 100;
+    grandTotal = decimalPart < 0.5 ? integerPart : integerPart + 1;
+    roundOff = Math.round((grandTotal - unroundedGrandTotal) * 100) / 100;
+  }
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -456,6 +464,12 @@ export default function EditPurchaseInvoiceModal({
                   <span>Total Taxes (GST):</span>
                   <span className="font-mono text-foreground">
                     ₹{totalTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Round Off:</span>
+                  <span className={roundOff < 0 ? "text-emerald-400 font-mono font-medium" : roundOff > 0 ? "text-amber-400 font-mono font-medium" : "text-muted-foreground font-mono"}>
+                    {roundOff > 0 ? `+₹${roundOff.toFixed(2)}` : roundOff < 0 ? `-₹${Math.abs(roundOff).toFixed(2)}` : `₹0.00`}
                   </span>
                 </div>
                 <div className="flex justify-between border-t border-border/50 pt-2 font-bold text-sm">

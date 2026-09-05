@@ -1,8 +1,13 @@
 import pandas as pd
 import numpy as np
-from sklearn.cluster import KMeans
-from sklearn.linear_model import LinearRegression
-from statsmodels.tsa.holtwinters import ExponentialSmoothing
+try:
+    from sklearn.cluster import KMeans
+    from sklearn.linear_model import LinearRegression
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+except ImportError:
+    KMeans = None
+    LinearRegression = None
+    ExponentialSmoothing = None
 from django.db.models import Sum, Count
 from django.utils import timezone
 from datetime import timedelta

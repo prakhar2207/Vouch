@@ -448,6 +448,21 @@ export default function PurchaseInvoiceList() {
                           <span className="text-muted-foreground">Date:</span>
                           <span className="font-mono text-foreground">{selectedVoucher?.date}</span>
                         </div>
+                        {(() => {
+                          const vItemsTotal = (selectedVoucher?.items || []).reduce((sum: number, it: any) => sum + (parseFloat(it.total_amount) || 0), 0);
+                          const vRoundOff = (parseFloat(selectedVoucher?.total_amount) || 0) - vItemsTotal;
+                          if (Math.abs(vRoundOff) >= 0.005) {
+                            return (
+                              <div className="flex justify-between text-muted-foreground">
+                                <span>Round Off:</span>
+                                <span className={vRoundOff < 0 ? "text-emerald-400 font-mono" : "text-amber-400 font-mono"}>
+                                  {vRoundOff > 0 ? `+₹${vRoundOff.toFixed(2)}` : `-₹${Math.abs(vRoundOff).toFixed(2)}`}
+                                </span>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                         <div className="flex justify-between border-t border-border/50 pt-2 font-bold text-sm">
                           <span>Total Amount:</span>
                           <span className="text-emerald-400 font-mono">
