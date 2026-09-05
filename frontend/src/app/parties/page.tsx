@@ -16,7 +16,8 @@ import {
   Building2, 
   UserCheck, 
   ArrowUpRight,
-  Plus
+  Plus,
+  RefreshCw
 } from 'lucide-react';
 
 export default function PartiesPage() {
@@ -79,6 +80,28 @@ export default function PartiesPage() {
       setLoading(false);
     }
   };
+
+  const [isCleaning, setIsCleaning] = useState(false);
+
+  const handleCleanDuplicates = async () => {
+    if (!companyId) return;
+    setIsCleaning(true);
+    try {
+      const token = getAccessToken();
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/ledgers/${companyId}/cleanup-duplicates/`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      toast.success("Parties Consolidated", res.data.message || "Duplicates merged successfully.");
+      await fetchParties();
+    } catch (err: any) {
+      toast.error("Cleanup Failed", err.response?.data?.error || err.message);
+    } finally {
+      setIsCleaning(false);
+    }
+  };
+
 
   // Counts for tabs
   const counts = useMemo(() => {
@@ -312,8 +335,20 @@ export default function PartiesPage() {
             </button>
           </div>
 
-          <div className="text-xs text-muted-foreground px-3">
-            Showing <span className="text-foreground font-bold">{filteredParties.length}</span> of {parties.length} accounts
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleCleanDuplicates}
+              disabled={isCleaning}
+              title="Consolidate duplicate parties and merge purchases"
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 border border-zinc-700/60 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3 h-3 ${isCleaning ? 'animate-spin text-blue-400' : 'text-zinc-400'}`} />
+              <span>{isCleaning ? 'Consolidating...' : 'Consolidate Duplicates'}</span>
+            </button>
+            <div className="text-xs text-muted-foreground px-1">
+              Showing <span className="text-foreground font-bold">{filteredParties.length}</span> of {parties.length} accounts
+            </div>
           </div>
         </div>
         
