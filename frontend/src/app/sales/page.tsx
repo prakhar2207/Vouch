@@ -6,11 +6,22 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useToast } from '@/context/ToastContext';
+import EditSalesInvoiceModal from '@/components/modals/EditSalesInvoiceModal';
+import ConfirmModal from '@/components/modals/ConfirmModal';
+import { Edit2, Trash2, Printer, Plus } from 'lucide-react';
 
 export default function SalesInvoiceList() {
   const router = useRouter();
+  const { toast } = useToast();
+
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Edit and Delete state
+  const [editingVoucher, setEditingVoucher] = useState<any | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [deleteConfirmParams, setDeleteConfirmParams] = useState<{ id: string; number: string } | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -40,6 +51,33 @@ export default function SalesInvoiceList() {
     }
   };
 
+  const handleStartEdit = (inv: any) => {
+    setEditingVoucher(inv);
+    setIsEditModalOpen(true);
+  };
+
+  const handleDeleteInvoice = (voucherId: string, voucherNumber: string) => {
+    setDeleteConfirmParams({ id: voucherId, number: voucherNumber });
+  };
+
+  const executeDelete = async (voucherId: string) => {
+    try {
+      const token = getAccessToken();
+      const headers = { Authorization: `Bearer ${token}` };
+      const res = await axios.delete(`${API_BASE_URL}/api/vouchers/detail/${voucherId}/`, { headers });
+
+      if (res.data.success) {
+        toast.success(res.data.message || 'Sales invoice deleted and reversed successfully!');
+        setInvoices((prev) => prev.filter((i) => i.id !== voucherId));
+        setDeleteConfirmParams(null);
+      } else {
+        toast.error('Failed to delete invoice', res.data.error);
+      }
+    } catch (err: any) {
+      toast.error('Delete failed', err.response?.data?.error || err.message);
+    }
+  };
+
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
 
   const scrollToInvoice = (index: number) => {
@@ -54,6 +92,8 @@ export default function SalesInvoiceList() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isEditModalOpen || deleteConfirmParams !== null) return;
+
       const activeElement = document.activeElement;
       const isInputFocused = activeElement && (
         activeElement.tagName === 'INPUT' ||
@@ -86,11 +126,28 @@ export default function SalesInvoiceList() {
         e.preventDefault();
         setFocusedIndex(invoices.length - 1);
         scrollToInvoice(invoices.length - 1);
-      } else if (e.key === 'Enter' || ((e.ctrlKey || e.metaKey) && e.key === 'Enter')) {
-        // TALLY SHORTCUT: Enter / Ctrl + Enter opens the selected invoice
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        // TALLY SHORTCUT: Ctrl + Enter edits the selected invoice
+        if (focusedIndex >= 0 && focusedIndex < invoices.length) {
+          e.preventDefault();
+          handleStartEdit(invoices[focusedIndex]);
+        }
+      } else if (e.key === 'Enter') {
+        // Enter opens print view
         if (focusedIndex >= 0 && focusedIndex < invoices.length) {
           e.preventDefault();
           router.push(`/sales/${invoices[focusedIndex].id}/print`);
+        }
+      } else if (e.key.toLowerCase() === 'e' && !e.ctrlKey && !e.metaKey) {
+        if (focusedIndex >= 0 && focusedIndex < invoices.length) {
+          e.preventDefault();
+          handleStartEdit(invoices[focusedIndex]);
+        }
+      } else if ((e.altKey && e.key.toLowerCase() === 'd') || e.key === 'Delete') {
+        if (focusedIndex >= 0 && focusedIndex < invoices.length) {
+          e.preventDefault();
+          const target = invoices[focusedIndex];
+          handleDeleteInvoice(target.id, target.voucher_number);
         }
       } else if (e.key.toLowerCase() === 'p' && !e.ctrlKey && !e.metaKey) {
         if (focusedIndex >= 0 && focusedIndex < invoices.length) {
@@ -104,7 +161,7 @@ export default function SalesInvoiceList() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [invoices, focusedIndex, router]);
+  }, [invoices, focusedIndex, router, isEditModalOpen, deleteConfirmParams]);
 
   return (
     <DashboardLayout>
@@ -115,7 +172,8 @@ export default function SalesInvoiceList() {
             <p className="text-xs text-muted-foreground mt-1">Outward tax invoices and billing records</p>
           </div>
           <Link href="/sales/new" className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow hover:bg-blue-700 transition-all flex items-center gap-1.5">
-            <span>+ Create Invoice</span>
+            <Plus className="w-3.5 h-3.5" />
+            <span>Create Invoice</span>
             <kbd className="bg-white/20 px-1.5 py-0.5 rounded text-[10px]">F8</kbd>
           </Link>
         </div>
@@ -123,7 +181,7 @@ export default function SalesInvoiceList() {
         <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border flex-1 overflow-hidden flex flex-col">
           <div className="px-5 py-3.5 border-b border-border bg-gray-50 dark:bg-zinc-800/50 flex items-center justify-between">
             <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Previous Invoices</span>
-            <span className="text-xs text-muted-foreground">Use ↑ / ↓ arrow keys to navigate and Enter to inspect</span>
+            <span className="text-xs text-muted-foreground">Use ↑ / ↓ arrow keys to navigate, Ctrl+Enter to edit, Enter to print</span>
           </div>
           {loading ? (
             <div className="flex items-center justify-center h-full text-gray-500">Loading invoices...</div>
@@ -176,9 +234,34 @@ export default function SalesInvoiceList() {
                           </span>
                         </td>
                         <td className="p-4 text-right">
-                          <Link href={`/sales/${inv.id}/print`} className="text-blue-500 hover:text-blue-400 font-medium px-2.5 py-1 rounded bg-blue-500/10 border border-blue-500/20 text-xs">
-                            Print Invoice
-                          </Link>
+                          <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => handleStartEdit(inv)}
+                              className="px-2.5 py-1 bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                              title="Edit Sales Invoice"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                              <span>Edit</span>
+                            </button>
+
+                            <Link
+                              href={`/sales/${inv.id}/print`}
+                              className="px-2.5 py-1 bg-muted/60 hover:bg-muted text-foreground rounded-lg text-xs font-semibold border border-border/70 transition-colors flex items-center gap-1 cursor-pointer"
+                              title="Print Invoice"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span>Print</span>
+                            </Link>
+
+                            <button
+                              onClick={() => handleDeleteInvoice(inv.id, inv.voucher_number)}
+                              className="px-2.5 py-1 bg-rose-600/15 hover:bg-rose-600/25 text-rose-400 rounded-lg text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                              title="Delete Invoice"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Delete</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -196,8 +279,22 @@ export default function SalesInvoiceList() {
                   </span>
                   <span>•</span>
                   <span className="flex items-center gap-1">
+                    <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Ctrl</kbd>
+                    <span>+</span>
                     <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Enter</kbd>
-                    <span className="text-[11px]">Open / Print (Tally Drilldown)</span>
+                    <span className="text-[11px]">Edit Invoice</span>
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Enter</kbd>
+                    <span className="text-[11px]">Print / View</span>
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Alt</kbd>
+                    <span>+</span>
+                    <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">D</kbd>
+                    <span className="text-[11px]">Delete</span>
                   </span>
                   <span>•</span>
                   <span className="flex items-center gap-1">
@@ -214,6 +311,38 @@ export default function SalesInvoiceList() {
             </div>
           )}
         </div>
+
+        {/* Edit Sales Invoice Modal */}
+        <EditSalesInvoiceModal
+          isOpen={isEditModalOpen}
+          onClose={() => {
+            setIsEditModalOpen(false);
+            setEditingVoucher(null);
+          }}
+          voucher={editingVoucher}
+          onUpdateSuccess={fetchInvoices}
+        />
+
+        {/* Confirm Delete Modal */}
+        <ConfirmModal
+          isOpen={deleteConfirmParams !== null}
+          onClose={() => setDeleteConfirmParams(null)}
+          onConfirm={() => {
+            if (deleteConfirmParams) {
+              executeDelete(deleteConfirmParams.id);
+            }
+          }}
+          title="Delete Sales Invoice?"
+          description={
+            <span>
+              Are you sure you want to permanently delete Sales Invoice{" "}
+              <strong className="text-white">#{deleteConfirmParams?.number}</strong>?
+              This will cancel the voucher, reverse the customer ledger entry, restore deducted inventory stock, and reverse GST liability.
+            </span>
+          }
+          confirmText="Delete & Reverse"
+          variant="danger"
+        />
       </div>
     </DashboardLayout>
   );

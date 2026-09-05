@@ -532,49 +532,113 @@ class VoucherDetailAPIView(APIView):
                         total_igst += taxes['igst']
                         total_invoice_value += total_line_amount
 
-                    voucher.total_amount = total_invoice_value
+                    # Apply Round Off calculation
+                    unrounded_total = total_invoice_value
+                    integer_part = Decimal(int(unrounded_total))
+                    decimal_part = unrounded_total - integer_part
+                    if decimal_part < Decimal('0.50'):
+                        rounded_total = integer_part.quantize(Decimal('0.01'))
+                    else:
+                        rounded_total = (integer_part + Decimal('1.00')).quantize(Decimal('0.01'))
+                    round_off = (rounded_total - unrounded_total).quantize(Decimal('0.01'))
+
+                    voucher.total_amount = rounded_total
                     voucher.status = 'DRAFT'
                     voucher.save()
 
-                    # 4. Re-create double-entry ledger entries
-                    if party_ledger:
+                    from apps.ledgers.models import Ledger, LedgerGroup
+
+                    # 4. Re-create double-entry ledger entries based on voucher_type
+                    if voucher.voucher_type == 'SALES':
+                        # Debit Party (Customer)
+                        if party_ledger:
+                            LedgerEntry.objects.create(
+                                voucher=voucher,
+                                ledger=party_ledger,
+                                debit_amount=rounded_total,
+                                credit_amount=Decimal('0.00')
+                            )
+
+                        sales_ledger = Ledger.objects.filter(company=company, ledger_type='SALES').first() or \
+                                       Ledger.objects.filter(company=company, name__icontains='Sales').first()
+                        if not sales_ledger:
+                            income_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Sales Accounts', defaults={'nature': 'INCOME'})
+                            sales_ledger, _ = Ledger.objects.get_or_create(company=company, name='Sales Account', defaults={'group': income_grp, 'ledger_type': 'SALES'})
+
                         LedgerEntry.objects.create(
                             voucher=voucher,
-                            ledger=party_ledger,
+                            ledger=sales_ledger,
                             debit_amount=Decimal('0.00'),
-                            credit_amount=total_invoice_value
+                            credit_amount=total_taxable_value
                         )
 
-                    from apps.ledgers.models import Ledger, LedgerGroup
-                    purchase_ledger = Ledger.objects.filter(company=company, name__icontains='Purchase').first()
-                    if not purchase_ledger:
-                        exp_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Purchase Accounts', defaults={'nature': 'EXPENSE'})
-                        purchase_ledger, _ = Ledger.objects.get_or_create(company=company, name='Purchase Account', defaults={'group': exp_grp, 'ledger_type': 'GENERAL'})
+                        tax_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Duties & Taxes', defaults={'nature': 'LIABILITY'})
+                        if total_cgst > 0:
+                            output_cgst, _ = Ledger.objects.get_or_create(company=company, name='Output CGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
+                            LedgerEntry.objects.create(voucher=voucher, ledger=output_cgst, debit_amount=Decimal('0.00'), credit_amount=total_cgst)
+                        if total_sgst > 0:
+                            output_sgst, _ = Ledger.objects.get_or_create(company=company, name='Output SGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
+                            LedgerEntry.objects.create(voucher=voucher, ledger=output_sgst, debit_amount=Decimal('0.00'), credit_amount=total_sgst)
+                        if total_igst > 0:
+                            output_igst, _ = Ledger.objects.get_or_create(company=company, name='Output IGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
+                            LedgerEntry.objects.create(voucher=voucher, ledger=output_igst, debit_amount=Decimal('0.00'), credit_amount=total_igst)
 
-                    LedgerEntry.objects.create(
-                        voucher=voucher,
-                        ledger=purchase_ledger,
-                        debit_amount=total_taxable_value,
-                        credit_amount=Decimal('0.00')
-                    )
+                        if round_off != Decimal('0.00'):
+                            from apps.accounting.services.sales_service import SalesInvoiceService
+                            round_off_ledger = SalesInvoiceService._get_or_create_round_off_ledger(company)
+                            if round_off < Decimal('0.00'):
+                                LedgerEntry.objects.create(voucher=voucher, ledger=round_off_ledger, debit_amount=abs(round_off), credit_amount=Decimal('0.00'))
+                            else:
+                                LedgerEntry.objects.create(voucher=voucher, ledger=round_off_ledger, debit_amount=Decimal('0.00'), credit_amount=round_off)
 
-                    tax_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Duties & Taxes', defaults={'nature': 'LIABILITY'})
-                    if total_cgst > 0:
-                        input_cgst, _ = Ledger.objects.get_or_create(company=company, name='Input CGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
-                        LedgerEntry.objects.create(voucher=voucher, ledger=input_cgst, debit_amount=total_cgst, credit_amount=Decimal('0.00'))
-                    if total_sgst > 0:
-                        input_sgst, _ = Ledger.objects.get_or_create(company=company, name='Input SGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
-                        LedgerEntry.objects.create(voucher=voucher, ledger=input_sgst, debit_amount=total_sgst, credit_amount=Decimal('0.00'))
-                    if total_igst > 0:
-                        input_igst, _ = Ledger.objects.get_or_create(company=company, name='Input IGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
-                        LedgerEntry.objects.create(voucher=voucher, ledger=input_igst, debit_amount=total_igst, credit_amount=Decimal('0.00'))
+                    else:
+                        # PURCHASE Voucher
+                        if party_ledger:
+                            LedgerEntry.objects.create(
+                                voucher=voucher,
+                                ledger=party_ledger,
+                                debit_amount=Decimal('0.00'),
+                                credit_amount=rounded_total
+                            )
+
+                        purchase_ledger = Ledger.objects.filter(company=company, ledger_type='PURCHASE').first() or \
+                                          Ledger.objects.filter(company=company, name__icontains='Purchase').first()
+                        if not purchase_ledger:
+                            exp_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Purchase Accounts', defaults={'nature': 'EXPENSE'})
+                            purchase_ledger, _ = Ledger.objects.get_or_create(company=company, name='Purchase Account', defaults={'group': exp_grp, 'ledger_type': 'PURCHASE'})
+
+                        LedgerEntry.objects.create(
+                            voucher=voucher,
+                            ledger=purchase_ledger,
+                            debit_amount=total_taxable_value,
+                            credit_amount=Decimal('0.00')
+                        )
+
+                        tax_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Duties & Taxes', defaults={'nature': 'LIABILITY'})
+                        if total_cgst > 0:
+                            input_cgst, _ = Ledger.objects.get_or_create(company=company, name='Input CGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
+                            LedgerEntry.objects.create(voucher=voucher, ledger=input_cgst, debit_amount=total_cgst, credit_amount=Decimal('0.00'))
+                        if total_sgst > 0:
+                            input_sgst, _ = Ledger.objects.get_or_create(company=company, name='Input SGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
+                            LedgerEntry.objects.create(voucher=voucher, ledger=input_sgst, debit_amount=total_sgst, credit_amount=Decimal('0.00'))
+                        if total_igst > 0:
+                            input_igst, _ = Ledger.objects.get_or_create(company=company, name='Input IGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
+                            LedgerEntry.objects.create(voucher=voucher, ledger=input_igst, debit_amount=total_igst, credit_amount=Decimal('0.00'))
+
+                        if round_off != Decimal('0.00'):
+                            from apps.accounting.services.purchase_service import PurchaseInvoiceService
+                            round_off_ledger = PurchaseInvoiceService._get_or_create_round_off_ledger(company)
+                            if round_off > Decimal('0.00'):
+                                LedgerEntry.objects.create(voucher=voucher, ledger=round_off_ledger, debit_amount=round_off, credit_amount=Decimal('0.00'))
+                            else:
+                                LedgerEntry.objects.create(voucher=voucher, ledger=round_off_ledger, debit_amount=Decimal('0.00'), credit_amount=abs(round_off))
 
                     # 5. Re-post voucher to update stock & balances
                     VoucherService.post_voucher(voucher)
                 else:
                     voucher.save()
 
-            return Response({"success": True, "message": "Purchase invoice and items updated successfully."})
+            return Response({"success": True, "message": f"{voucher.voucher_type.title()} invoice updated successfully."})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
