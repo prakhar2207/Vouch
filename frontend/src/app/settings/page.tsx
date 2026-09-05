@@ -28,6 +28,7 @@ export default function SettingsPage() {
   const [proprietorName, setProprietorName] = useState('');
   const [proprietorPhone, setProprietorPhone] = useState('');
   const [signature, setSignature] = useState<File | null>(null);
+  const [signaturePreview, setSignaturePreview] = useState<string | null>(null);
   
   const [tagline, setTagline] = useState('');
   const [bankName, setBankName] = useState('');
@@ -118,6 +119,9 @@ export default function SettingsPage() {
       if (signature) {
         formData.append('proprietor_signature', signature);
       }
+      if (signaturePreview) {
+        formData.append('signature_data', signaturePreview);
+      }
       formData.append('tagline', tagline);
       formData.append('bank_name', bankName);
       formData.append('bank_account_number', bankAccountNumber);
@@ -143,7 +147,15 @@ export default function SettingsPage() {
 
   const handleSignatureChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setSignature(e.target.files[0]);
+      const file = e.target.files[0];
+      setSignature(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          setSignaturePreview(reader.result);
+        }
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -231,9 +243,20 @@ export default function SettingsPage() {
                 </div>
                 <div className="col-span-2 mt-2">
                   <label className="block text-sm text-gray-400 mb-2">Digital Signature</label>
-                  {company.proprietor_signature && (
+                  {(signaturePreview || company.signature_data || company.proprietor_signature) && (
                     <div className="mb-3 p-2 bg-white rounded w-fit">
-                      <img src={`${API_BASE_URL}${company.proprietor_signature}`} alt="Signature" className="h-16 object-contain" />
+                      <img 
+                        src={
+                          signaturePreview || 
+                          (company.signature_data ? company.signature_data : 
+                            (company.proprietor_signature?.startsWith('http') ? company.proprietor_signature : `${API_BASE_URL}${company.proprietor_signature}`))
+                        } 
+                        alt="Signature" 
+                        className="h-16 object-contain" 
+                        onError={(e) => {
+                          (e.target as HTMLElement).style.display = 'none';
+                        }}
+                      />
                     </div>
                   )}
                   <input type="file" accept="image/*" onChange={handleSignatureChange} className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-500/10 file:text-blue-400 hover:file:bg-blue-500/20" />

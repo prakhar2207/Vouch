@@ -20,6 +20,8 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from django.conf import settings
 from django.conf.urls.static import static
+from django.urls import re_path
+from django.views.static import serve
 
 from django.http import JsonResponse
 from apps.accounting.views import UniversalVoucherAPIView, VoucherDetailAPIView
@@ -90,4 +92,5 @@ urlpatterns = [
     path('api/v1/accounting/period-trial-balance/', apps.accounting.period_views.PeriodTrialBalanceAPIView.as_view(), name='period_trial_balance'),
     path('api/v1/accounting/split-company/audit/', apps.accounting.period_views.SplitCompanyAuditAPIView.as_view(), name='split_company_audit'),
     path('api/v1/accounting/split-company/', apps.accounting.period_views.SplitCompanyExecuteAPIView.as_view(), name='split_company_execute'),
+    re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

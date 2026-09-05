@@ -15,8 +15,23 @@ class CompanyViewSet(viewsets.ModelViewSet):
         return Company.objects.filter(id__in=user_companies)
 
     def perform_create(self, serializer):
+        import base64
         # Create the company
         company = serializer.save()
+        sig_file = self.request.FILES.get('proprietor_signature')
+        if sig_file:
+            try:
+                sig_file.seek(0)
+                raw = sig_file.read()
+                mime = getattr(sig_file, 'content_type', 'image/png')
+                company.signature_data = f"data:{mime};base64,{base64.b64encode(raw).decode('utf-8')}"
+                company.save(update_fields=['signature_data'])
+            except Exception as e:
+                print(f"Error encoding signature: {e}")
+        elif 'signature_data' in self.request.data and self.request.data['signature_data']:
+            company.signature_data = self.request.data['signature_data']
+            company.save(update_fields=['signature_data'])
+
         # Automatically map the user as the OWNER of the newly created company
         UserCompany.objects.create(
             user=self.request.user,
@@ -26,6 +41,23 @@ class CompanyViewSet(viewsets.ModelViewSet):
         # Create default settings
         from .models import CompanySettings
         CompanySettings.objects.create(company=company)
+
+    def perform_update(self, serializer):
+        import base64
+        instance = serializer.save()
+        sig_file = self.request.FILES.get('proprietor_signature')
+        if sig_file:
+            try:
+                sig_file.seek(0)
+                raw = sig_file.read()
+                mime = getattr(sig_file, 'content_type', 'image/png')
+                instance.signature_data = f"data:{mime};base64,{base64.b64encode(raw).decode('utf-8')}"
+                instance.save(update_fields=['signature_data'])
+            except Exception as e:
+                print(f"Error encoding signature: {e}")
+        elif 'signature_data' in self.request.data and self.request.data['signature_data']:
+            instance.signature_data = self.request.data['signature_data']
+            instance.save(update_fields=['signature_data'])
 
     def create(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)

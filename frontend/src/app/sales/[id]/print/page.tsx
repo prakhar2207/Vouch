@@ -117,8 +117,28 @@ export default function PrintInvoicePage() {
   });
 
   const subtotalWithTaxes = totalTaxable + (isInterState ? totalIgst : (totalCgst + totalSgst));
-  const roundOff = Number(invoice.total_amount) - subtotalWithTaxes;
+  
+  let finalGrandTotal = Number(invoice.total_amount);
+  let roundOff = Math.round((finalGrandTotal - subtotalWithTaxes) * 100) / 100;
+
+  const integerPart = Math.floor(subtotalWithTaxes);
+  const decimalPart = Math.round((subtotalWithTaxes - integerPart) * 100) / 100;
+
+  // If the invoice was saved with unrounded amount (or round off was not applied at creation)
+  if (Math.abs(roundOff) < 0.005 && decimalPart > 0) {
+    finalGrandTotal = decimalPart < 0.5 ? integerPart : integerPart + 1;
+    roundOff = Math.round((finalGrandTotal - subtotalWithTaxes) * 100) / 100;
+  }
+
   const hasRoundOff = Math.abs(roundOff) >= 0.005;
+
+  const getSignatureUrl = (sig: string | null | undefined) => {
+    if (!sig) return '';
+    if (sig.startsWith('data:') || sig.startsWith('http://') || sig.startsWith('https://')) {
+      return sig;
+    }
+    return `${API_BASE_URL}${sig.startsWith('/') ? '' : '/'}${sig}`;
+  };
 
   return (
     <div className="bg-white text-black min-h-screen">
@@ -312,7 +332,7 @@ export default function PrintInvoicePage() {
                     <span className="border-b border-black px-4 pb-0.5">{totalQty.toFixed(2)} {invoice.items[0]?.unit || 'Pcs'}</span>
                 </div>
                 <div className="w-28 border-l border-b border-black h-full flex items-center justify-end pr-2">
-                    {Number(invoice.total_amount).toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                    {finalGrandTotal.toLocaleString('en-IN', {minimumFractionDigits: 2})}
                 </div>
             </div>
 
@@ -352,7 +372,7 @@ export default function PrintInvoicePage() {
             {/* Amount in Words */}
             <div className="p-2 border-b border-black text-[12px]">
                 <span className="font-semibold">Total Amount in Words : </span>
-                <span className="font-bold">₹ {numberToWords(Math.round(invoice.total_amount))}</span>
+                <span className="font-bold">₹ {numberToWords(Math.round(finalGrandTotal))}</span>
             </div>
 
             {/* Bank Details */}
@@ -391,11 +411,14 @@ export default function PrintInvoicePage() {
                         <div className="font-bold text-sm text-right mt-4">for {invoice.company.name}</div>
                         
                         <div className="flex justify-end w-full my-auto">
-                            {invoice.company.proprietor_signature && (
+                            {invoice.company?.proprietor_signature && (
                                 <img 
-                                    src={`${API_BASE_URL}${invoice.company.proprietor_signature}`} 
+                                    src={getSignatureUrl(invoice.company.proprietor_signature)} 
                                     alt="Signature" 
                                     className="h-16 object-contain" 
+                                    onError={(e) => {
+                                        (e.target as HTMLElement).style.display = 'none';
+                                    }}
                                 />
                             )}
                         </div>

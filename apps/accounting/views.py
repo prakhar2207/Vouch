@@ -303,6 +303,23 @@ class VoucherDetailAPIView(APIView):
                     "total_amount": item.total_amount
                 })
             
+            sig_data = getattr(voucher.company, 'signature_data', None)
+            if not sig_data and voucher.company.proprietor_signature:
+                try:
+                    import os, base64
+                    sig_path = voucher.company.proprietor_signature.path
+                    if os.path.exists(sig_path):
+                        with open(sig_path, 'rb') as f:
+                            raw = f.read()
+                            b64 = base64.b64encode(raw).decode('utf-8')
+                            sig_data = f"data:image/png;base64,{b64}"
+                            voucher.company.signature_data = sig_data
+                            voucher.company.save(update_fields=['signature_data'])
+                except Exception:
+                    pass
+                if not sig_data:
+                    sig_data = voucher.company.proprietor_signature.url
+
             data = {
                 "id": str(voucher.id),
                 "voucher_number": voucher.voucher_number,
@@ -321,7 +338,7 @@ class VoucherDetailAPIView(APIView):
                     "phone": voucher.company.phone,
                     "email": voucher.company.email,
                     "tagline": voucher.company.tagline,
-                    "proprietor_signature": voucher.company.proprietor_signature.url if voucher.company.proprietor_signature else None,
+                    "proprietor_signature": sig_data,
                     "bank_name": voucher.company.bank_name,
                     "bank_account_number": voucher.company.bank_account_number,
                     "bank_ifsc": voucher.company.bank_ifsc,
