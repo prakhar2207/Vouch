@@ -63,10 +63,10 @@ class PurchaseInvoiceService:
                 category_id = item.get('category_id')
                 category_name = item.get('category_name')
 
-                if category_id:
+                if category_id and str(category_id).strip():
                     try:
-                        category = ProductCategory.objects.get(id=category_id, company=company)
-                    except ProductCategory.DoesNotExist:
+                        category = ProductCategory.objects.filter(id=category_id, company=company).first()
+                    except Exception:
                         pass
                 
                 if not category and category_name and str(category_name).strip():

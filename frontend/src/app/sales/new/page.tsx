@@ -136,9 +136,9 @@ export default function SalesPage() {
           ? ledgerList.find((l:any) => l.name.toLowerCase().includes('sales')) 
           : genericSales;
           
-      const cgst = ledgerList.find((l:any) => l.name === 'CGST');
-      const sgst = ledgerList.find((l:any) => l.name === 'SGST');
-      const igst = ledgerList.find((l:any) => l.name === 'IGST');
+      const cgst = ledgerList.find((l:any) => l.name === 'CGST' || l.name === 'Output CGST' || l.name.toLowerCase().includes('cgst'));
+      const sgst = ledgerList.find((l:any) => l.name === 'SGST' || l.name === 'Output SGST' || l.name.toLowerCase().includes('sgst'));
+      const igst = ledgerList.find((l:any) => l.name === 'IGST' || l.name === 'Output IGST' || l.name.toLowerCase().includes('igst'));
       
       if (party) {
         setPartyLedgerId(party.id);
@@ -222,18 +222,23 @@ export default function SalesPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       
-      const payload = {
+      const payload: any = {
         company_id: companyId,
         party_ledger_id: partyLedgerId,
-        sales_ledger_id: salesLedgerId,
-        cgst_ledger_id: cgstLedgerId,
-        sgst_ledger_id: sgstLedgerId,
-        igst_ledger_id: igstLedgerId,
         voucher_number: enableManualInvoice ? invoiceNumber : undefined,
         voucher_date: invoiceDate,
-        items: flatItems,
+        items: flatItems.map((it: any) => {
+          const itemCopy = { ...it };
+          if (!itemCopy.product_id) delete itemCopy.product_id;
+          if (!itemCopy.category_id) delete itemCopy.category_id;
+          return itemCopy;
+        }),
         post_immediately: true
       };
+      if (salesLedgerId) payload.sales_ledger_id = salesLedgerId;
+      if (cgstLedgerId) payload.cgst_ledger_id = cgstLedgerId;
+      if (sgstLedgerId) payload.sgst_ledger_id = sgstLedgerId;
+      if (igstLedgerId) payload.igst_ledger_id = igstLedgerId;
       
       const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/sales-invoice/`, payload, { headers });
       toast.success(`Sales Invoice generated!`, `Voucher: ${res.data.voucher_number}`);

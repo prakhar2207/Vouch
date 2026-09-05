@@ -38,12 +38,74 @@ class CreateSalesInvoiceAPIView(APIView):
         """
         data = request.data
         try:
+            from apps.ledgers.models import LedgerGroup
             company = Company.objects.get(id=data['company_id'], users__user=request.user)
             party_ledger = Ledger.objects.get(id=data['party_ledger_id'], company=company)
-            sales_ledger = Ledger.objects.get(id=data['sales_ledger_id'], company=company)
-            cgst_ledger = Ledger.objects.get(id=data['cgst_ledger_id'], company=company)
-            sgst_ledger = Ledger.objects.get(id=data['sgst_ledger_id'], company=company)
-            igst_ledger = Ledger.objects.get(id=data['igst_ledger_id'], company=company)
+
+            # Resolve sales ledger
+            sales_ledger = None
+            sales_ledger_id = data.get('sales_ledger_id')
+            if sales_ledger_id and str(sales_ledger_id).strip():
+                try:
+                    sales_ledger = Ledger.objects.filter(id=sales_ledger_id, company=company).first()
+                except Exception:
+                    sales_ledger = None
+            if not sales_ledger:
+                sales_ledger = Ledger.objects.filter(company=company, ledger_type='SALES').first() or \
+                               Ledger.objects.filter(company=company, name__icontains='Sales').first()
+                if not sales_ledger:
+                    income_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Sales Accounts', defaults={'nature': 'INCOME'})
+                    sales_ledger, _ = Ledger.objects.get_or_create(company=company, name='Sales Account', defaults={'group': income_grp, 'ledger_type': 'SALES'})
+
+            # Resolve tax ledgers
+            tax_grp = None
+            def get_or_create_duties_grp():
+                nonlocal tax_grp
+                if not tax_grp:
+                    tax_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Duties & Taxes', defaults={'nature': 'LIABILITY'})
+                return tax_grp
+
+            cgst_ledger = None
+            cgst_id = data.get('cgst_ledger_id')
+            if cgst_id and str(cgst_id).strip():
+                try:
+                    cgst_ledger = Ledger.objects.filter(id=cgst_id, company=company).first()
+                except Exception:
+                    cgst_ledger = None
+            if not cgst_ledger:
+                cgst_ledger = Ledger.objects.filter(company=company, name__iexact='Output CGST').first() or \
+                              Ledger.objects.filter(company=company, name__iexact='CGST').first() or \
+                              Ledger.objects.filter(company=company, name__icontains='CGST').first()
+                if not cgst_ledger:
+                    cgst_ledger, _ = Ledger.objects.get_or_create(company=company, name='Output CGST', defaults={'group': get_or_create_duties_grp(), 'ledger_type': 'TAX'})
+
+            sgst_ledger = None
+            sgst_id = data.get('sgst_ledger_id')
+            if sgst_id and str(sgst_id).strip():
+                try:
+                    sgst_ledger = Ledger.objects.filter(id=sgst_id, company=company).first()
+                except Exception:
+                    sgst_ledger = None
+            if not sgst_ledger:
+                sgst_ledger = Ledger.objects.filter(company=company, name__iexact='Output SGST').first() or \
+                              Ledger.objects.filter(company=company, name__iexact='SGST').first() or \
+                              Ledger.objects.filter(company=company, name__icontains='SGST').first()
+                if not sgst_ledger:
+                    sgst_ledger, _ = Ledger.objects.get_or_create(company=company, name='Output SGST', defaults={'group': get_or_create_duties_grp(), 'ledger_type': 'TAX'})
+
+            igst_ledger = None
+            igst_id = data.get('igst_ledger_id')
+            if igst_id and str(igst_id).strip():
+                try:
+                    igst_ledger = Ledger.objects.filter(id=igst_id, company=company).first()
+                except Exception:
+                    igst_ledger = None
+            if not igst_ledger:
+                igst_ledger = Ledger.objects.filter(company=company, name__iexact='Output IGST').first() or \
+                              Ledger.objects.filter(company=company, name__iexact='IGST').first() or \
+                              Ledger.objects.filter(company=company, name__icontains='IGST').first()
+                if not igst_ledger:
+                    igst_ledger, _ = Ledger.objects.get_or_create(company=company, name='Output IGST', defaults={'group': get_or_create_duties_grp(), 'ledger_type': 'TAX'})
             
             with transaction.atomic():
                 # 1. Orchestrate Invoice Creation
@@ -81,12 +143,74 @@ class CreatePurchaseInvoiceAPIView(APIView):
     def post(self, request):
         data = request.data
         try:
+            from apps.ledgers.models import LedgerGroup
             company = Company.objects.get(id=data['company_id'], users__user=request.user)
             party_ledger = Ledger.objects.get(id=data['party_ledger_id'], company=company)
-            purchase_ledger = Ledger.objects.get(id=data['purchase_ledger_id'], company=company)
-            cgst_ledger = Ledger.objects.get(id=data['input_cgst_ledger_id'], company=company)
-            sgst_ledger = Ledger.objects.get(id=data['input_sgst_ledger_id'], company=company)
-            igst_ledger = Ledger.objects.get(id=data['input_igst_ledger_id'], company=company)
+
+            # Resolve purchase ledger
+            purchase_ledger = None
+            purchase_id = data.get('purchase_ledger_id')
+            if purchase_id and str(purchase_id).strip():
+                try:
+                    purchase_ledger = Ledger.objects.filter(id=purchase_id, company=company).first()
+                except Exception:
+                    purchase_ledger = None
+            if not purchase_ledger:
+                purchase_ledger = Ledger.objects.filter(company=company, ledger_type='PURCHASE').first() or \
+                                  Ledger.objects.filter(company=company, name__icontains='Purchase').first()
+                if not purchase_ledger:
+                    exp_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Purchase Accounts', defaults={'nature': 'EXPENSE'})
+                    purchase_ledger, _ = Ledger.objects.get_or_create(company=company, name='Purchase Account', defaults={'group': exp_grp, 'ledger_type': 'PURCHASE'})
+
+            # Resolve input tax ledgers
+            tax_grp = None
+            def get_or_create_purchase_duties_grp():
+                nonlocal tax_grp
+                if not tax_grp:
+                    tax_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Duties & Taxes', defaults={'nature': 'LIABILITY'})
+                return tax_grp
+
+            input_cgst = None
+            input_cgst_id = data.get('input_cgst_ledger_id') or data.get('cgst_ledger_id')
+            if input_cgst_id and str(input_cgst_id).strip():
+                try:
+                    input_cgst = Ledger.objects.filter(id=input_cgst_id, company=company).first()
+                except Exception:
+                    input_cgst = None
+            if not input_cgst:
+                input_cgst = Ledger.objects.filter(company=company, name__iexact='Input CGST').first() or \
+                             Ledger.objects.filter(company=company, name__iexact='CGST').first() or \
+                             Ledger.objects.filter(company=company, name__icontains='CGST').first()
+                if not input_cgst:
+                    input_cgst, _ = Ledger.objects.get_or_create(company=company, name='Input CGST', defaults={'group': get_or_create_purchase_duties_grp(), 'ledger_type': 'TAX'})
+
+            input_sgst = None
+            input_sgst_id = data.get('input_sgst_ledger_id') or data.get('sgst_ledger_id')
+            if input_sgst_id and str(input_sgst_id).strip():
+                try:
+                    input_sgst = Ledger.objects.filter(id=input_sgst_id, company=company).first()
+                except Exception:
+                    input_sgst = None
+            if not input_sgst:
+                input_sgst = Ledger.objects.filter(company=company, name__iexact='Input SGST').first() or \
+                             Ledger.objects.filter(company=company, name__iexact='SGST').first() or \
+                             Ledger.objects.filter(company=company, name__icontains='SGST').first()
+                if not input_sgst:
+                    input_sgst, _ = Ledger.objects.get_or_create(company=company, name='Input SGST', defaults={'group': get_or_create_purchase_duties_grp(), 'ledger_type': 'TAX'})
+
+            input_igst = None
+            input_igst_id = data.get('input_igst_ledger_id') or data.get('igst_ledger_id')
+            if input_igst_id and str(input_igst_id).strip():
+                try:
+                    input_igst = Ledger.objects.filter(id=input_igst_id, company=company).first()
+                except Exception:
+                    input_igst = None
+            if not input_igst:
+                input_igst = Ledger.objects.filter(company=company, name__iexact='Input IGST').first() or \
+                             Ledger.objects.filter(company=company, name__iexact='IGST').first() or \
+                             Ledger.objects.filter(company=company, name__icontains='IGST').first()
+                if not input_igst:
+                    input_igst, _ = Ledger.objects.get_or_create(company=company, name='Input IGST', defaults={'group': get_or_create_purchase_duties_grp(), 'ledger_type': 'TAX'})
             
             with transaction.atomic():
                 voucher = PurchaseInvoiceService.generate_purchase_invoice(
@@ -95,9 +219,9 @@ class CreatePurchaseInvoiceAPIView(APIView):
                     party_ledger=party_ledger,
                     items_data=data['items'],
                     purchase_ledger=purchase_ledger,
-                    input_cgst_ledger=cgst_ledger,
-                    input_sgst_ledger=sgst_ledger,
-                    input_igst_ledger=igst_ledger,
+                    input_cgst_ledger=input_cgst,
+                    input_sgst_ledger=input_sgst,
+                    input_igst_ledger=input_igst,
                     supplier_invoice_number=data.get('voucher_number') or data.get('supplier_invoice_number'),
                     voucher_date=data.get('voucher_date')
                 )

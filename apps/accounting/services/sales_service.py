@@ -46,10 +46,15 @@ class SalesInvoiceService:
         total_igst = Decimal('0.00')
         
         for item in items_data:
+            product = None
             product_id = item.get('product_id')
-            if product_id:
-                product = Product.objects.get(id=product_id)
-            else:
+            if product_id and str(product_id).strip():
+                try:
+                    product = Product.objects.filter(id=product_id, company=company).first()
+                except Exception:
+                    product = None
+
+            if not product:
                 # Auto-create product on the fly if it doesn't exist
                 name = item.get('product_name', 'Unnamed Product')
                 import uuid
@@ -65,14 +70,15 @@ class SalesInvoiceService:
                 
                 # Link category and inherit if available
                 category_id = item.get('category_id')
-                if category_id:
+                if category_id and str(category_id).strip():
                     from apps.inventory.models import ProductCategory
                     try:
-                        category = ProductCategory.objects.get(id=category_id)
-                        defaults_dict['category'] = category
-                        defaults_dict['hsn_code'] = category.hsn_code
-                        defaults_dict['gst_rate'] = category.gst_rate
-                    except ProductCategory.DoesNotExist:
+                        category = ProductCategory.objects.filter(id=category_id, company=company).first()
+                        if category:
+                            defaults_dict['category'] = category
+                            defaults_dict['hsn_code'] = category.hsn_code
+                            defaults_dict['gst_rate'] = category.gst_rate
+                    except Exception:
                         pass
                 
                 product, created = Product.objects.get_or_create(

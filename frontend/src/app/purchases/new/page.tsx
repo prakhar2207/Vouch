@@ -87,9 +87,9 @@ export default function PurchasePage() {
           ? ledgerList.find((l:any) => l.name.toLowerCase().includes('purchase')) 
           : genericPurchase;
           
-      const cgst = ledgerList.find((l:any) => l.name === 'CGST');
-      const sgst = ledgerList.find((l:any) => l.name === 'SGST');
-      const igst = ledgerList.find((l:any) => l.name === 'IGST');
+      const cgst = ledgerList.find((l:any) => l.name === 'CGST' || l.name === 'Input CGST' || l.name.toLowerCase().includes('cgst'));
+      const sgst = ledgerList.find((l:any) => l.name === 'SGST' || l.name === 'Input SGST' || l.name.toLowerCase().includes('sgst'));
+      const igst = ledgerList.find((l:any) => l.name === 'IGST' || l.name === 'Input IGST' || l.name.toLowerCase().includes('igst'));
       
       if (party) setPartyLedgerId(party.id);
       if (purchase) setPurchaseLedgerId(purchase.id);
@@ -141,18 +141,23 @@ export default function PurchasePage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       
-      const payload = {
+      const payload: any = {
         company_id: companyId,
         party_ledger_id: partyLedgerId,
-        purchase_ledger_id: purchaseLedgerId,
-        input_cgst_ledger_id: cgstLedgerId,
-        input_sgst_ledger_id: sgstLedgerId,
-        input_igst_ledger_id: igstLedgerId,
         voucher_number: invoiceNumber || undefined,
         voucher_date: invoiceDate,
-        items: flatItems,
+        items: flatItems.map((it: any) => {
+          const itemCopy = { ...it };
+          if (!itemCopy.product_id) delete itemCopy.product_id;
+          if (!itemCopy.category_id) delete itemCopy.category_id;
+          return itemCopy;
+        }),
         post_immediately: true
       };
+      if (purchaseLedgerId) payload.purchase_ledger_id = purchaseLedgerId;
+      if (cgstLedgerId) payload.input_cgst_ledger_id = cgstLedgerId;
+      if (sgstLedgerId) payload.input_sgst_ledger_id = sgstLedgerId;
+      if (igstLedgerId) payload.input_igst_ledger_id = igstLedgerId;
       
       const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/purchase-invoice/`, payload, { headers });
       toast.success(`Purchase Invoice recorded!`, `Voucher: ${res.data.voucher_number}`);
