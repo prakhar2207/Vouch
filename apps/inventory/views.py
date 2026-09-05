@@ -256,9 +256,23 @@ class ProductDetailView(APIView):
                     "error": f"Cannot delete {product.name} because it is used in one or more vouchers. Please delete the vouchers first or just rename this item."
                 }, status=400)
                 
+            # Check if product has inventory entries (opening stock, etc.)
+            from apps.inventory.models import InventoryEntry
+            if InventoryEntry.objects.filter(product=product).exists():
+                return Response({
+                    "success": False, 
+                    "error": f"Cannot delete {product.name} because it has active stock entries. Please clear its stock first or just rename this item."
+                }, status=400)
+                
             product.delete()
             return Response({"success": True, "message": "Product deleted successfully"})
         except Exception as e:
+            # Generic fallback for ProtectedError
+            if 'ProtectedError' in type(e).__name__ or 'protected foreign keys' in str(e):
+                return Response({
+                    "success": False,
+                    "error": f"Cannot delete {product.name} because it is being used by other records in the system."
+                }, status=400)
             return Response({"success": False, "error": str(e)}, status=400)
 
 
