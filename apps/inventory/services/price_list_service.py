@@ -175,6 +175,7 @@ class PriceListService:
         active_key = (custom_api_key or "").strip() or os.environ.get("GEMINI_API_KEY")
         if active_key and len(raw_bytes) < 30 * 1024 * 1024:
             models_to_try = [
+                "gemini-3.6-flash",
                 "gemini-2.5-flash",
                 "gemini-2.0-flash",
                 "gemini-1.5-flash",

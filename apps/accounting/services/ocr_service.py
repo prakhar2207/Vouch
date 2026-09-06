@@ -115,12 +115,15 @@ class InvoiceOCRService:
             )
 
             models_to_try = [
+                "gemini-3.6-flash",
                 "gemini-2.5-flash",
                 "gemini-2.0-flash",
                 "gemini-1.5-flash",
                 "gemini-2.0-flash-lite",
+                "gemini-1.5-pro",
             ]
             max_retries = 2
+            last_gemini_error = ""
 
             try:
                 from google import genai
@@ -152,6 +155,7 @@ class InvoiceOCRService:
                                         it["quantity"] = int(round(float(it.get("quantity", 1))))
                                 return result
                         except Exception as gemini_err:
+                            last_gemini_error = str(gemini_err)
                             err_str = str(gemini_err).lower()
                             if "429" in err_str or "quota" in err_str or "exhausted" in err_str or "rate" in err_str:
                                 sleep_seconds = (2.0 * (attempt + 1)) + random.uniform(0.5, 1.5)
@@ -162,6 +166,7 @@ class InvoiceOCRService:
                                 print(f"[Gemini Error] Model {model_name} attempt error: {gemini_err}")
                                 continue
             except Exception as e:
+                last_gemini_error = str(e)
                 print(f"Gemini SDK invocation failed: {e}")
 
         # -------------------------------------------------------------
@@ -174,7 +179,12 @@ class InvoiceOCRService:
                 pdf_parsed_data["is_mock"] = False
                 return pdf_parsed_data
 
-        return InvoiceOCRService._fallback_mock(error="Unable to detect readable invoice text from this photo. Please ensure GEMINI_API_KEY is configured.")
+        if last_gemini_error:
+            # Avoid confusing the user when key is present but model was rate limited or failed
+            clean_err = last_gemini_error[:160].replace("\n", " ")
+            return InvoiceOCRService._fallback_mock(error=f"Gemini AI issue: {clean_err}. Please verify fields manually.")
+
+        return InvoiceOCRService._fallback_mock(error="Unable to detect readable invoice text from this photo.")
 
     @staticmethod
     def _extract_from_pdf(raw_bytes: bytes) -> Optional[dict]:
