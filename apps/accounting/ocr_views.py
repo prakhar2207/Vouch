@@ -25,9 +25,15 @@ class OCRExtractAPIView(APIView):
             )
 
         custom_api_key = request.headers.get('X-Gemini-Key') or request.data.get('gemini_api_key')
+        scan_mode = request.data.get('scan_mode', 'auto')
 
         try:
-            extracted_data = InvoiceOCRService.extract_from_base64(file_base64, mime_type, custom_api_key=custom_api_key)
+            extracted_data = InvoiceOCRService.extract_from_base64(
+                file_base64, 
+                mime_type, 
+                custom_api_key=custom_api_key,
+                scan_mode=scan_mode
+            )
             return Response({
                 "success": True,
                 "data": extracted_data

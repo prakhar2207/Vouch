@@ -66,12 +66,15 @@ def parse_words_to_number(text: str) -> float:
 
 class InvoiceOCRService:
     @staticmethod
-    def extract_from_base64(base64_data: str, mime_type: str = "image/png", custom_api_key: Optional[str] = None) -> dict:
+    def extract_from_base64(base64_data: str, mime_type: str = "image/png", custom_api_key: Optional[str] = None, scan_mode: str = "auto") -> dict:
         """
-        Extracts invoice header & line-item details using a 3-tier resilient architecture:
-        Tier 1: Google Gemini Vision AI (high-accuracy semantic vision)
-        Tier 2: High-speed native RapidOCR for Photos/Images (local, zero external dependencies)
-        Tier 3: PDF text stream tokenizer using PyPDF (for digital vector PDFs)
+        Extracts invoice header & line-item details using a Smart Hybrid Multi-Tier architecture:
+        Tier 1: Google Gemini Dual-Engine:
+                - gemini-3.1-flash-lite (high RPD, 2x speed for printed invoices, clean receipts)
+                - gemini-3.6-flash (deep vision reasoning for handwritten, faint, or irregular tables)
+                - Seamless auto-promotion: if Flash-Lite returns 0 items, auto-promotes to 3.6-flash
+        Tier 2: PDF text stream tokenizer using PyPDF (for digital vector PDFs)
+        Tier 3: Graceful fallback error reporting
         """
         if "," in base64_data:
             header, base64_data = base64_data.split(",", 1)
@@ -95,7 +98,7 @@ class InvoiceOCRService:
         is_pdf = raw_bytes and ("pdf" in mime_type or raw_bytes[:4] == b'%PDF')
 
         # -------------------------------------------------------------
-        # TIER 1: Try Gemini Vision AI if API key is provided or set in env
+        # TIER 1: Try Gemini Vision AI Dual-Engine
         # -------------------------------------------------------------
         active_key = (custom_api_key or "").strip() or os.environ.get("GEMINI_API_KEY")
         if active_key and raw_bytes:
@@ -114,14 +117,26 @@ class InvoiceOCRService:
                 "Output strict JSON following the schema."
             )
 
-            models_to_try = [
-                "gemini-3.6-flash",
-                "gemini-2.5-flash",
-                "gemini-2.0-flash",
-                "gemini-1.5-flash",
-                "gemini-2.0-flash-lite",
-                "gemini-1.5-pro",
-            ]
+            # Smart Hybrid Engine selection:
+            # - 'handwritten' / 'complex': prioritizes 3.6-flash for deep handwritten reasoning
+            # - 'printed' / 'auto': prioritizes 3.1-flash-lite for maximum RPD quota & ultra-fast speed
+            if scan_mode in ["handwritten", "complex", "deep"]:
+                models_to_try = [
+                    "gemini-3.6-flash",
+                    "gemini-3.1-flash-lite",
+                    "gemini-2.5-flash",
+                    "gemini-2.0-flash",
+                    "gemini-1.5-flash",
+                ]
+            else:
+                models_to_try = [
+                    "gemini-3.1-flash-lite",
+                    "gemini-3.6-flash",
+                    "gemini-2.5-flash",
+                    "gemini-2.0-flash",
+                    "gemini-1.5-flash",
+                ]
+
             max_retries = 2
             last_gemini_error = ""
 
@@ -146,10 +161,19 @@ class InvoiceOCRService:
                                 )
                             )
                             result = json.loads(response.text)
-                            if result and (result.get("invoice_number") or result.get("supplier_name")):
+                            items = result.get("line_items", []) if isinstance(result, dict) else []
+
+                            # Smart Auto-Promotion: If Flash-Lite parsed 0 items, auto-promote to 3.6-flash
+                            if "lite" in model_name.lower() and (not items or len(items) == 0) and "gemini-3.6-flash" in models_to_try:
+                                print(f"[Hybrid OCR Engine] {model_name} parsed 0 items. Auto-promoting to gemini-3.6-flash for deeper vision...")
+                                continue
+
+                            if result and (result.get("invoice_number") or result.get("supplier_name") or items):
                                 result["is_mock"] = False
-                                result["source"] = "AI_GEMINI_VISION"
-                                for it in result.get("line_items", []):
+                                result["source"] = f"AI_GEMINI_VISION ({model_name})"
+                                result["model_used"] = model_name
+                                result["scan_mode"] = scan_mode
+                                for it in items:
                                     u = str(it.get("unit") or "PCS").strip().upper()
                                     if u in ["PCS", "PIECES", "NOS", "NO", "PC", "PKT", "PACKET", "BOX", "BAG", "SET", "DOZ", "CAN", "BTL"]:
                                         it["quantity"] = int(round(float(it.get("quantity", 1))))

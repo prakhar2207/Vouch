@@ -262,6 +262,7 @@ export default function PriceListImportModal({
               filename: selectedFile.name,
               brand: brand.trim(),
               gemini_api_key: effectiveGeminiKey || undefined,
+              scan_mode: "printed",
             },
             { headers }
           );
@@ -270,6 +271,7 @@ export default function PriceListImportModal({
           const formData = new FormData();
           formData.append("file", selectedFile);
           formData.append("filename", selectedFile.name);
+          formData.append("scan_mode", "printed");
           if (brand.trim()) {
             formData.append("brand", brand.trim());
           }
@@ -314,9 +316,19 @@ export default function PriceListImportModal({
           if (res.data.effective_date) {
             setEffectiveDate(res.data.effective_date);
           }
+
+          const src = String(res.data.source || "");
+          const model = String(res.data.model_used || "");
+          const isLite = src.includes("flash-lite") || model.includes("flash-lite");
+          const isFlash36 = src.includes("3.6-flash") || model.includes("3.6-flash");
+
           setParsingEngine(
-            res.data.source === "AI_GEMINI_VISION"
-              ? "Gemini Vision AI OCR"
+            isLite
+              ? "⚡ Gemini 3.1 Flash-Lite AI OCR"
+              : isFlash36
+              ? "🧠 Gemini 3.6 Flash AI OCR"
+              : src.startsWith("AI_GEMINI_VISION")
+              ? "✨ Gemini Vision AI OCR"
               : "Multi-Column Industrial Parser"
           );
           toast.success(`Extracted ${rawItems.length} items from PDF price list`);

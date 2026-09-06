@@ -154,11 +154,11 @@ class PriceListService:
         return active_section or "Standard"
 
     @staticmethod
-    def parse_pdf_price_list(file_obj, custom_api_key: str = None, filename: str = "", user_brand: str = ""):
+    def parse_pdf_price_list(file_obj, custom_api_key: str = None, filename: str = "", user_brand: str = "", scan_mode: str = "auto"):
         """
         Parses manufacturer/distributor price list PDFs.
         Supports both:
-        1. Gemini Vision AI OCR (using the same official Google Gemini models as purchase OCR)
+        1. Gemini Vision AI Dual-Engine (gemini-3.1-flash-lite for 2x speed / high quota & gemini-3.6-flash fallback)
         2. High-speed multi-column deterministic tokenizer with custom CID font decoding (works offline)
         """
         if isinstance(file_obj, bytes):
@@ -174,14 +174,22 @@ class PriceListService:
         # Tier 1: Try Gemini Vision AI if API key is provided or set in environment
         active_key = (custom_api_key or "").strip() or os.environ.get("GEMINI_API_KEY")
         if active_key and len(raw_bytes) < 30 * 1024 * 1024:
-            models_to_try = [
-                "gemini-3.6-flash",
-                "gemini-2.5-flash",
-                "gemini-2.0-flash",
-                "gemini-1.5-flash",
-                "gemini-2.0-flash-lite",
-                "gemini-1.5-pro",
-            ]
+            if scan_mode in ["handwritten", "complex", "deep"]:
+                models_to_try = [
+                    "gemini-3.6-flash",
+                    "gemini-3.1-flash-lite",
+                    "gemini-2.5-flash",
+                    "gemini-2.0-flash",
+                    "gemini-1.5-flash",
+                ]
+            else:
+                models_to_try = [
+                    "gemini-3.1-flash-lite",
+                    "gemini-3.6-flash",
+                    "gemini-2.5-flash",
+                    "gemini-2.0-flash",
+                    "gemini-1.5-flash",
+                ]
             try:
                 from google import genai
                 from google.genai import types
@@ -219,6 +227,13 @@ class PriceListService:
                             )
                         )
                         parsed_json = json.loads(response.text)
+                        raw_items = parsed_json.get("items") if isinstance(parsed_json, dict) else []
+
+                        # If flash-lite returned 0 items, auto-promote to 3.6-flash
+                        if "lite" in model_name.lower() and (not raw_items or len(raw_items) == 0) and "gemini-3.6-flash" in models_to_try:
+                            print(f"[PriceList Hybrid] {model_name} returned 0 items; auto-promoting to gemini-3.6-flash...")
+                            continue
+
                         if isinstance(parsed_json, dict) and "items" in parsed_json and len(parsed_json["items"]) > 0:
                             formatted_items = []
                             for it in parsed_json["items"]:
@@ -242,6 +257,8 @@ class PriceListService:
                                     "brand": parsed_json.get("brand") or user_brand or "",
                                     "effective_date": parsed_json.get("effective_date") or "",
                                     "source": f"AI_GEMINI_VISION ({model_name})",
+                                    "model_used": model_name,
+                                    "scan_mode": scan_mode,
                                     "items": formatted_items,
                                     "total_extracted": len(formatted_items)
                                 }

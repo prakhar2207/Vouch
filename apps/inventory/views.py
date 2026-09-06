@@ -489,6 +489,7 @@ class ParsePriceListPdfAPIView(APIView):
             custom_api_key = request.headers.get('X-Gemini-Key') or request.data.get('gemini_api_key')
             filename = request.data.get('filename', '')
             brand = request.data.get('brand', '')
+            scan_mode = request.data.get('scan_mode', 'auto')
 
             file_obj = request.FILES.get('file')
             file_base64 = request.data.get('file_base64')
@@ -512,7 +513,8 @@ class ParsePriceListPdfAPIView(APIView):
                 raw_bytes, 
                 custom_api_key=custom_api_key, 
                 filename=filename, 
-                user_brand=brand
+                user_brand=brand,
+                scan_mode=scan_mode
             )
             return Response(result)
         except Exception as e:

@@ -34,6 +34,8 @@ interface ExtractedInvoice {
   is_mock?: boolean;
   mock_reason?: string;
   source?: string;
+  model_used?: string;
+  scan_mode?: string;
 }
 
 interface PurchaseOcrSplitViewProps {
@@ -46,6 +48,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [scanMode, setScanMode] = useState<'printed' | 'handwritten'>('printed');
   const [fileBase64, setFileBase64] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [fileMimeType, setFileMimeType] = useState<string>("application/pdf");
@@ -195,10 +198,15 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
     }
   };
 
-  const processOcr = async (base64: string, mime: string) => {
+  const processOcr = async (base64: string, mime: string, overrideMode?: 'printed' | 'handwritten') => {
+    const activeMode = overrideMode || scanMode;
     setLoading(true);
     setError(null);
-    setScanStatusToast("AI is scanning your bill, please wait a few seconds...");
+    setScanStatusToast(
+      activeMode === 'handwritten'
+        ? "🧠 Gemini 3.6 Flash deep vision analyzing handwritten notes & irregular tables..."
+        : "⚡ Gemini 3.1 Flash-Lite ultra-fast analyzing printed invoice..."
+    );
 
     const maxRetries = 3;
     let attempt = 0;
@@ -208,14 +216,18 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       try {
         attempt++;
         if (attempt > 1) {
-          setScanStatusToast(`AI is scanning your bill, please wait a few seconds... (Attempt ${attempt}/${maxRetries})`);
-          await new Promise((res) => setTimeout(res, 2500));
+          setScanStatusToast(`Analyzing bill... (Attempt ${attempt}/${maxRetries})`);
+          await new Promise((res) => setTimeout(res, 2000));
         }
 
         const token = getAccessToken();
+        const effectiveKey = geminiApiKey?.trim() || (typeof window !== "undefined" ? localStorage.getItem("vouch_gemini_key") || "" : "");
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (token) {
           headers["Authorization"] = `Bearer ${token}`;
+        }
+        if (effectiveKey) {
+          headers["X-Gemini-Key"] = effectiveKey;
         }
 
         const res = await axios.post(
@@ -223,7 +235,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           {
             file_base64: base64,
             mime_type: mime,
-            gemini_api_key: geminiApiKey?.trim() || undefined
+            gemini_api_key: effectiveKey || undefined,
+            scan_mode: activeMode,
           },
           { headers }
         );
@@ -374,6 +387,88 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
   return (
     <div className="space-y-6">
+      {/* Dual-Engine Hybrid Mode Bar */}
+      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-zinc-900/90 border border-zinc-800 p-3.5 rounded-2xl shadow-sm">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2.5">
+          <span className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-1.5">
+            <span>⚡</span> OCR Engine:
+          </span>
+          <div className="inline-flex rounded-xl bg-zinc-950 p-1 border border-zinc-800">
+            <button
+              type="button"
+              onClick={() => setScanMode("printed")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                scanMode === "printed"
+                  ? "bg-blue-600 text-white shadow-md"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              <span>⚡ Printed Bill</span>
+              <span className="text-[10px] opacity-80 hidden sm:inline font-normal">(Flash-Lite: 2x Faster, High Quota)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setScanMode("handwritten")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                scanMode === "handwritten"
+                  ? "bg-purple-600 text-white shadow-md"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              <span>🧠 Handwritten / Kaccha</span>
+              <span className="text-[10px] opacity-80 hidden sm:inline font-normal">(3.6 Flash: Deep Vision)</span>
+            </button>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setShowApiKeyAccordion(!showApiKeyAccordion)}
+          className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1.5 underline cursor-pointer self-end md:self-auto"
+        >
+          <span>🔑</span>
+          <span>{showApiKeyAccordion ? "Hide API Key" : geminiApiKey ? "Gemini Key Configured ✓" : "Configure Custom API Key"}</span>
+        </button>
+      </div>
+
+      {/* Collapsible API Key Configuration */}
+      {showApiKeyAccordion && (
+        <div className="p-3.5 bg-purple-500/10 border border-purple-500/25 rounded-2xl space-y-2">
+          <div className="flex items-center justify-between text-xs text-purple-300 font-semibold">
+            <span>Google Gemini API Key (saved in browser localStorage):</span>
+            {geminiApiKey && (
+              <button
+                type="button"
+                onClick={() => {
+                  setGeminiApiKey("");
+                  if (typeof window !== "undefined") localStorage.removeItem("vouch_gemini_key");
+                }}
+                className="text-[11px] text-red-400 hover:text-red-300 cursor-pointer font-bold"
+              >
+                Clear Key
+              </button>
+            )}
+          </div>
+          <input
+            type="password"
+            placeholder="Paste your Gemini API Key here (AIzaSy...)"
+            value={geminiApiKey}
+            onChange={(e) => {
+              const val = e.target.value.trim();
+              setGeminiApiKey(val);
+              if (typeof window !== "undefined") {
+                if (val) localStorage.setItem("vouch_gemini_key", val);
+                else localStorage.removeItem("vouch_gemini_key");
+              }
+            }}
+            className="w-full bg-zinc-950 border border-purple-500/35 text-white px-3 py-2 rounded-xl text-xs font-mono outline-none focus:ring-1 focus:ring-purple-500"
+          />
+          <p className="text-[10px] text-gray-400">
+            Key is used for both Purchase OCR & Price List PDF imports. It is passed securely to Google AI Studio.
+          </p>
+        </div>
+      )}
+
       {/* Upload Banner */}
       {!fileBase64 && (
         <div className="border-2 border-dashed border-zinc-700 bg-zinc-900/40 rounded-2xl p-10 text-center hover:border-blue-500 transition-colors">
@@ -391,7 +486,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
             <div className="space-y-1">
               <h3 className="text-lg font-bold text-white">Upload Supplier Invoice (Photo or PDF)</h3>
               <p className="text-xs text-gray-400">
-                Supports camera photos (JPEG, PNG, WebP) and digital or scanned PDFs.
+                Active engine: <strong className="text-white">{scanMode === 'printed' ? '⚡ Gemini 3.1 Flash-Lite (Fast & High Quota)' : '🧠 Gemini 3.6 Flash (Handwritten / Deep Vision)'}</strong>
               </p>
             </div>
             <button
@@ -408,11 +503,15 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       {loading && (
         <div className="p-8 bg-zinc-900 border border-blue-500/30 rounded-2xl flex flex-col items-center justify-center space-y-3 shadow-xl animate-in fade-in">
           <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-          <div className="text-sm font-bold text-white flex items-center gap-2">
+          <div className="text-sm font-bold text-white flex items-center gap-2 text-center px-4">
             <span>{scanStatusToast || "Scanning your bill, please wait a few seconds..."}</span>
           </div>
-          <div className="text-xs text-blue-400 font-mono bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20 animate-pulse">
-            {geminiApiKey.trim() ? "Gemini Vision AI Processing" : "Native Vision OCR Processing"}
+          <div className="text-xs font-mono px-3 py-1 rounded-full border animate-pulse flex items-center gap-1.5 bg-blue-500/10 text-blue-400 border-blue-500/20">
+            {scanMode === 'handwritten' ? (
+              <><span>🧠</span><span>Gemini 3.6 Flash (Deep Handwriting Vision)</span></>
+            ) : (
+              <><span>⚡</span><span>Gemini 3.1 Flash-Lite (High-Speed Engine)</span></>
+            )}
           </div>
         </div>
       )}
@@ -454,9 +553,19 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
               <div>
                 <div className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
                   <span>{fileName}</span>
-                  {invoice.source === "AI_GEMINI_VISION" && (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                      ✨ Gemini Vision AI
+                  {invoice.source?.startsWith("AI_GEMINI_VISION") && (
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
+                      (invoice.source?.includes("flash-lite") || invoice.model_used?.includes("flash-lite"))
+                        ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                        : "bg-purple-500/10 text-purple-400 border-purple-500/20"
+                    }`}>
+                      {(invoice.source?.includes("flash-lite") || invoice.model_used?.includes("flash-lite")) ? (
+                        <><span>⚡</span><span>Gemini 3.1 Flash-Lite</span></>
+                      ) : (invoice.source?.includes("3.6-flash") || invoice.model_used?.includes("3.6-flash")) ? (
+                        <><span>🧠</span><span>Gemini 3.6 Flash</span></>
+                      ) : (
+                        <><span>✨</span><span>Gemini Vision AI</span></>
+                      )}
                     </span>
                   )}
                   {invoice.source === "RAPID_OCR_VISION" && (
@@ -469,6 +578,21 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                       📄 PDF Text Stream
                     </span>
                   )}
+
+                  {/* Quick Engine Re-scan Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextMode = (invoice.model_used?.includes("flash-lite") || invoice.source?.includes("flash-lite")) ? "handwritten" : "printed";
+                      setScanMode(nextMode);
+                      processOcr(fileBase64, fileMimeType, nextMode);
+                    }}
+                    disabled={loading}
+                    className="px-2 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-gray-300 rounded text-[10px] font-medium border border-zinc-700 transition-colors flex items-center gap-1 cursor-pointer ml-1"
+                    title="Re-run OCR using the complementary engine"
+                  >
+                    <span>🔄 Re-scan with {(invoice.model_used?.includes("flash-lite") || invoice.source?.includes("flash-lite")) ? "🧠 3.6 Flash" : "⚡ Flash-Lite"}</span>
+                  </button>
                 </div>
                 <div className="text-xs text-gray-400 font-mono mt-0.5">
                   {fileMimeType} • Extracted in-memory
