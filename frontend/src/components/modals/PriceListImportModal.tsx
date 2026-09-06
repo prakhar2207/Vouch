@@ -235,14 +235,25 @@ export default function PriceListImportModal({
         const formData = new FormData();
         formData.append("file", selectedFile);
         formData.append("filename", selectedFile.name);
+        if (brand.trim()) {
+          formData.append("brand", brand.trim());
+        }
+
+        const effectiveGeminiKey =
+          geminiApiKey.trim() ||
+          (typeof window !== "undefined" ? localStorage.getItem("vouch_gemini_key") || "" : "");
+
+        if (effectiveGeminiKey) {
+          formData.append("gemini_api_key", effectiveGeminiKey);
+        }
 
         const headers: Record<string, string> = {
           Authorization: `Bearer ${token}`,
           "Content-Type": "multipart/form-data",
         };
 
-        if (geminiApiKey.trim()) {
-          headers["X-Gemini-Key"] = geminiApiKey.trim();
+        if (effectiveGeminiKey) {
+          headers["X-Gemini-Key"] = effectiveGeminiKey;
         }
 
         const res = await axios.post(
@@ -558,12 +569,26 @@ export default function PriceListImportModal({
                   Supports multi-column catalogs (PIX V-Belts, NBC Bearings, SKF), spreadsheets & CSVs
                 </p>
               </div>
-              {parsing && (
+              {parsing ? (
                 <div className="text-xs text-blue-400 font-medium animate-pulse mt-1 flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>Extracting items, prices, case quantities & sections...</span>
                 </div>
-              )}
+              ) : file ? (
+                <div className="flex items-center gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      parseFile(file);
+                    }}
+                    className="px-3 py-1 bg-blue-600/90 hover:bg-blue-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Re-scan File with AI OCR</span>
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
 

@@ -117,14 +117,34 @@ class PriceListService:
             return 'SPB SECTION (17 x 14 mm)'
         elif n.startswith("SPC"):
             return 'SPC SECTION (22 x 18 mm)'
+        elif n.startswith("AX"):
+            return 'AX COGGED (13 x 8 mm)'
+        elif n.startswith("BX"):
+            return 'BX COGGED (17 x 11 mm)'
+        elif n.startswith("CX"):
+            return 'CX COGGED (22 x 14 mm)'
+        elif n.startswith("XPZ"):
+            return 'XPZ WEDGE COGGED (10 x 8 mm)'
+        elif n.startswith("XPA"):
+            return 'XPA WEDGE COGGED (13 x 10 mm)'
+        elif n.startswith("XPB"):
+            return 'XPB WEDGE COGGED (17 x 14 mm)'
+        elif n.startswith("XPC"):
+            return 'XPC WEDGE COGGED (22 x 18 mm)'
+        elif "PK" in n:
+            return 'POLY-V PK SECTION'
+        elif "PJ" in n:
+            return 'POLY-V PJ SECTION'
+        elif "PL" in n:
+            return 'POLY-V PL SECTION'
         return active_section or "Standard"
 
     @staticmethod
-    def parse_pdf_price_list(file_obj, custom_api_key: str = None, filename: str = ""):
+    def parse_pdf_price_list(file_obj, custom_api_key: str = None, filename: str = "", user_brand: str = ""):
         """
         Parses manufacturer/distributor price list PDFs.
         Supports both:
-        1. Gemini Vision AI OCR (when key is available)
+        1. Gemini Vision AI OCR (using the same official Google Gemini models as purchase OCR)
         2. High-speed multi-column deterministic tokenizer with custom CID font decoding (works offline)
         """
         raw_bytes = file_obj.read()
@@ -132,62 +152,81 @@ class PriceListService:
         fname = filename or getattr(file_obj, "name", "")
         
         # Tier 1: Try Gemini Vision AI if API key is provided or set in environment
-        active_key = custom_api_key or os.environ.get("GEMINI_API_KEY")
-        if active_key and len(raw_bytes) < 20 * 1024 * 1024:
+        active_key = (custom_api_key or "").strip() or os.environ.get("GEMINI_API_KEY")
+        if active_key and len(raw_bytes) < 30 * 1024 * 1024:
+            models_to_try = [
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+                "gemini-1.5-flash",
+                "gemini-2.0-flash-lite",
+                "gemini-1.5-pro",
+            ]
             try:
                 from google import genai
                 from google.genai import types
+                import time, random
                 client = genai.Client(api_key=active_key)
                 
+                brand_hint = f" The expected brand is '{user_brand}'." if user_brand else ""
                 prompt = (
-                    "You are an expert industrial catalog AI. Analyze this manufacturer price list PDF. "
-                    "Extract the Brand Name, Effective Date (w.e.f.), and ALL items across all columns and pages. "
+                    f"You are an expert industrial catalog and price list parsing AI.{brand_hint} "
+                    "Analyze this manufacturer price list / catalog PDF thoroughly across all pages and all columns. "
+                    "Extract the Brand Name, Effective Date (e.g. w.e.f. date), and ALL product line items. "
                     "For each item extract: "
-                    "- item_name: (clean title, bearing number, or belt size e.g. 'A 18', '6204', 'NBC AP3 GREASE 100GM') "
-                    "- mrp: (numerical price in INR) "
-                    "- case_qty: (packaging quantity or MOQ if given, default 1) "
-                    "- section: (section or category e.g. 'Deep Groove Ball Bearings', 'A SECTION (13 x 8 mm)') "
-                    "- unit: (default 'PCS') "
+                    "- item_name: exact part number, belt size, or bearing number (e.g. 'A 18', 'B 42', 'SPZ 800', 'SPA 1250', '6204', 'NBC AP3 GREASE 100GM') "
+                    "- mrp: list price / MRP as a float number in INR "
+                    "- case_qty: package / case quantity or MOQ (default 1) "
+                    "- section: belt section or bearing category (e.g. 'A SECTION (13 x 8 mm)', 'Deep Groove Ball Bearings', 'SPA WEDGE', 'POLY-F') "
+                    "- unit: standard unit (default 'PCS') "
                     "Return strict JSON matching: "
                     "{\"brand\": string, \"effective_date\": string, \"items\": [{\"item_name\": string, \"mrp\": number, \"case_qty\": number, \"section\": string, \"unit\": string}]}"
                 )
                 
-                response = client.models.generate_content(
-                    model="gemini-3.6-flash",
-                    contents=[
-                        types.Part.from_bytes(data=raw_bytes, mime_type="application/pdf"),
-                        prompt
-                    ],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.0
-                    )
-                )
-                
-                parsed_json = json.loads(response.text)
-                if isinstance(parsed_json, dict) and "items" in parsed_json and len(parsed_json["items"]) > 0:
-                    formatted_items = []
-                    for it in parsed_json["items"]:
-                        mrp = float(it.get("mrp") or 0)
-                        formatted_items.append({
-                            "name": str(it.get("item_name") or "").strip(),
-                            "mrp": mrp,
-                            "purchase_price": round(mrp * 0.70, 2),
-                            "case_qty": int(it.get("case_qty") or 1),
-                            "section": str(it.get("section") or "").strip(),
-                            "unit": str(it.get("unit") or "PCS").strip().upper(),
-                            "opening_qty": 0
-                        })
-                    return {
-                        "success": True,
-                        "brand": parsed_json.get("brand") or "",
-                        "effective_date": parsed_json.get("effective_date") or "",
-                        "source": "AI_GEMINI_VISION",
-                        "items": formatted_items,
-                        "total_extracted": len(formatted_items)
-                    }
+                for model_name in models_to_try:
+                    try:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=[
+                                types.Part.from_bytes(data=raw_bytes, mime_type="application/pdf"),
+                                prompt
+                            ],
+                            config=types.GenerateContentConfig(
+                                response_mime_type="application/json",
+                                temperature=0.1
+                            )
+                        )
+                        parsed_json = json.loads(response.text)
+                        if isinstance(parsed_json, dict) and "items" in parsed_json and len(parsed_json["items"]) > 0:
+                            formatted_items = []
+                            for it in parsed_json["items"]:
+                                raw_mrp = str(it.get("mrp") or 0).replace(",", "")
+                                mrp = float(raw_mrp) if raw_mrp else 0.0
+                                name = str(it.get("item_name") or "").strip()
+                                if not name:
+                                    continue
+                                formatted_items.append({
+                                    "name": name,
+                                    "mrp": mrp,
+                                    "purchase_price": round(mrp * 0.70, 2),
+                                    "case_qty": int(it.get("case_qty") or 1),
+                                    "section": str(it.get("section") or PriceListService.infer_belt_or_bearing_section(name)).strip(),
+                                    "unit": str(it.get("unit") or "PCS").strip().upper(),
+                                    "opening_qty": 0
+                                })
+                            if len(formatted_items) > 0:
+                                return {
+                                    "success": True,
+                                    "brand": parsed_json.get("brand") or user_brand or "",
+                                    "effective_date": parsed_json.get("effective_date") or "",
+                                    "source": f"AI_GEMINI_VISION ({model_name})",
+                                    "items": formatted_items,
+                                    "total_extracted": len(formatted_items)
+                                }
+                    except Exception as model_err:
+                        print(f"[PriceListService] Gemini model {model_name} failed: {model_err}")
+                        continue
             except Exception as e:
-                print(f"[PriceListService] Gemini Vision fallback: {e}")
+                print(f"[PriceListService] Gemini Vision initialization failed: {e}")
 
         # Tier 2: Deterministic Multi-Column Tokenizer with CID Font Decoding
         import pypdf
@@ -196,11 +235,11 @@ class PriceListService:
         extracted_items = []
         seen_names = set()
         
-        detected_brand = ""
+        detected_brand = (user_brand or "").strip()
         effective_date = ""
         current_section = ""
 
-        brand_candidates = ["PIX", "NBC", "SKF", "FENNER", "GATES", "TIMKEN", "FAG", "NTN", "KOYO", "SCHAEFFLER"]
+        brand_candidates = ["PIX", "NBC", "SKF", "FENNER", "GATES", "TIMKEN", "FAG", "NTN", "KOYO", "SCHAEFFLER", "CONTITECH", "BANDO", "OPTIBELT"]
 
         # Check filename for brand
         for b in brand_candidates:
@@ -242,14 +281,14 @@ class PriceListService:
 
                 # Strategy 1: [Item] [Price] [CaseQty] multi-column (e.g. NBC Bearings)
                 three_col = re.findall(
-                    r'([A-Za-z0-9<>\-\/\.\s]{2,30}?)\s+([0-9]+(?:\.[0-9]{1,2})?)\s+([0-9]{1,4})(?=\s+[A-Za-z0-9<>]|\s*$)',
+                    r'([A-Za-z0-9<>\-\/\.\s]{2,30}?)\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)\s+([0-9]{1,4})(?=\s+[A-Za-z0-9<>]|\s*$)',
                     line_clean
                 )
                 if three_col and len(three_col) > 0:
                     for m in three_col:
                         name = m[0].strip()
                         try:
-                            price = float(m[1])
+                            price = float(m[1].replace(',', ''))
                             case_qty = int(m[2])
                         except:
                             continue
@@ -268,14 +307,14 @@ class PriceListService:
 
                 # Strategy 2: [Item] [Price] multi-column (e.g. PIX V-Belts)
                 two_col = re.findall(
-                    r'([A-Za-z0-9\-\/\.]{1,15}(?:\s+[A-Za-z0-9\-\/\.]{1,10})?)\s+([0-9]+(?:\.[0-9]{1,2})?)(?=\s+[A-Za-z]|\s*$)',
+                    r'([A-Za-z0-9\-\/\.]{1,15}(?:\s+[A-Za-z0-9\-\/\.]{1,10})?)\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)(?=\s+[A-Za-z]|\s*$)',
                     line_clean
                 )
                 if two_col and len(two_col) > 0:
                     for m in two_col:
                         name = m[0].strip()
                         try:
-                            price = float(m[1])
+                            price = float(m[1].replace(',', ''))
                         except:
                             continue
                         if len(name) >= 2 and price > 0 and name not in seen_names:
@@ -290,6 +329,31 @@ class PriceListService:
                                 "opening_qty": 0
                             })
                     continue
+
+                # Strategy 3: Dedicated Belt & Industrial Catalog Matcher (e.g. Fenner Poly-F, Classical, Wedge)
+                belt_matches = re.findall(
+                    r'\b((?:[A-D]|BB|SPZ|SPA|SPB|SPC|AX|BX|CX|XPZ|XPA|XPB|XPC|FHP|PJ|PK|PL)\s*[-]?\s*[0-9]{1,5}(?:\.[0-9]{1,2})?)\b[^\d\n\r]*?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]{2,5}\.[0-9]{2})',
+                    line_clean,
+                    re.IGNORECASE
+                )
+                if belt_matches and len(belt_matches) > 0:
+                    for b_name, b_price in belt_matches:
+                        clean_n = re.sub(r'\s+', ' ', b_name).strip().upper()
+                        try:
+                            p_val = float(b_price.replace(',', ''))
+                        except:
+                            continue
+                        if p_val > 0 and clean_n not in seen_names:
+                            seen_names.add(clean_n)
+                            extracted_items.append({
+                                "name": clean_n,
+                                "mrp": p_val,
+                                "purchase_price": round(p_val * 0.70, 2),
+                                "case_qty": 1,
+                                "section": PriceListService.infer_belt_or_bearing_section(clean_n, current_section),
+                                "unit": "PCS",
+                                "opening_qty": 0
+                            })
 
         return {
             "success": True,
