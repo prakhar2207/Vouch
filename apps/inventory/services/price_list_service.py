@@ -161,8 +161,14 @@ class PriceListService:
         1. Gemini Vision AI OCR (using the same official Google Gemini models as purchase OCR)
         2. High-speed multi-column deterministic tokenizer with custom CID font decoding (works offline)
         """
-        raw_bytes = file_obj.read()
-        file_obj.seek(0)
+        if isinstance(file_obj, bytes):
+            raw_bytes = file_obj
+        else:
+            raw_bytes = file_obj.read()
+            try:
+                file_obj.seek(0)
+            except Exception:
+                pass
         fname = filename or getattr(file_obj, "name", "")
         
         # Tier 1: Try Gemini Vision AI if API key is provided or set in environment

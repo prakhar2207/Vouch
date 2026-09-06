@@ -182,4 +182,9 @@ CSRF_TRUSTED_ORIGINS = [
     'http://127.0.0.1:8000',
 ]
 
+# Upload limits (50 MB) to prevent RequestDataTooBig on manufacturer price lists and high-res bills
+DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800
+FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000
+
 

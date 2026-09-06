@@ -232,35 +232,57 @@ export default function PriceListImportModal({
         toast.success(`Extracted ${items.length} items from spreadsheet`);
       } else if (fileName.endsWith(".pdf")) {
         const token = getAccessToken();
-        const formData = new FormData();
-        formData.append("file", selectedFile);
-        formData.append("filename", selectedFile.name);
-        if (brand.trim()) {
-          formData.append("brand", brand.trim());
-        }
-
         const effectiveGeminiKey =
           geminiApiKey.trim() ||
           (typeof window !== "undefined" ? localStorage.getItem("vouch_gemini_key") || "" : "");
 
-        if (effectiveGeminiKey) {
-          formData.append("gemini_api_key", effectiveGeminiKey);
-        }
-
         const headers: Record<string, string> = {
           Authorization: `Bearer ${token}`,
-          "Content-Type": "multipart/form-data",
         };
 
         if (effectiveGeminiKey) {
           headers["X-Gemini-Key"] = effectiveGeminiKey;
         }
 
-        const res = await axios.post(
-          `${API_BASE_URL}/api/v1/inventory/parse-price-list-pdf/${companyId}/`,
-          formData,
-          { headers }
-        );
+        let res;
+        // If file <= 15MB, use Base64 JSON for 100% reliable cross-origin parsing (identical to Purchase OCR)
+        if (selectedFile.size <= 15 * 1024 * 1024) {
+          headers["Content-Type"] = "application/json";
+          const base64Data = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = (e) => reject(e);
+            reader.readAsDataURL(selectedFile);
+          });
+
+          res = await axios.post(
+            `${API_BASE_URL}/api/v1/inventory/parse-price-list-pdf/${companyId}/`,
+            {
+              file_base64: base64Data,
+              filename: selectedFile.name,
+              brand: brand.trim(),
+              gemini_api_key: effectiveGeminiKey || undefined,
+            },
+            { headers }
+          );
+        } else {
+          // For very large files > 15MB, use FormData without setting Content-Type so browser sets boundary
+          const formData = new FormData();
+          formData.append("file", selectedFile);
+          formData.append("filename", selectedFile.name);
+          if (brand.trim()) {
+            formData.append("brand", brand.trim());
+          }
+          if (effectiveGeminiKey) {
+            formData.append("gemini_api_key", effectiveGeminiKey);
+          }
+
+          res = await axios.post(
+            `${API_BASE_URL}/api/v1/inventory/parse-price-list-pdf/${companyId}/`,
+            formData,
+            { headers }
+          );
+        }
 
         let rawList: any[] = [];
         if (Array.isArray(res.data.items)) {

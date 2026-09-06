@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from .models import Product, ProductCategory
 from apps.companies.models import Company
 
@@ -469,9 +470,11 @@ class PriceListBulkImportAPIView(APIView):
 
 class ParsePriceListPdfAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request, company_id):
         try:
+            import base64
             from apps.companies.models import Company
             from .services.price_list_service import PriceListService
             company = Company.objects.filter(id=company_id).first()
@@ -483,16 +486,30 @@ class ParsePriceListPdfAPIView(APIView):
                 if not has_access:
                     return Response({"success": False, "error": "Unauthorized access to this company."}, status=403)
 
-            file_obj = request.FILES.get('file')
-            if not file_obj:
-                return Response({"success": False, "error": "PDF file is required."}, status=400)
-
             custom_api_key = request.headers.get('X-Gemini-Key') or request.data.get('gemini_api_key')
-            filename = file_obj.name or request.data.get('filename', '')
+            filename = request.data.get('filename', '')
             brand = request.data.get('brand', '')
 
+            file_obj = request.FILES.get('file')
+            file_base64 = request.data.get('file_base64')
+
+            if not file_obj and not file_base64:
+                return Response({"success": False, "error": "PDF file or file_base64 is required."}, status=400)
+
+            if file_obj:
+                raw_bytes = file_obj.read()
+                filename = filename or getattr(file_obj, 'name', '')
+            else:
+                b64 = file_base64
+                if "," in b64:
+                    b64 = b64.split(",", 1)[1]
+                missing_padding = len(b64) % 4
+                if missing_padding:
+                    b64 += '=' * (4 - missing_padding)
+                raw_bytes = base64.b64decode(b64)
+
             result = PriceListService.parse_pdf_price_list(
-                file_obj, 
+                raw_bytes, 
                 custom_api_key=custom_api_key, 
                 filename=filename, 
                 user_brand=brand
