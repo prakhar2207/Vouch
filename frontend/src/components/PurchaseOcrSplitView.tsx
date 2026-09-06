@@ -58,6 +58,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
   const [invoice, setInvoice] = useState<ExtractedInvoice | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
+  const [mobileTab, setMobileTab] = useState<'DOCUMENT' | 'FORM'>('FORM');
+  const [autoFilled, setAutoFilled] = useState<boolean>(false);
 
   // Gemini API Key State (synchronized with localStorage vouch_gemini_key)
   const [geminiApiKey, setGeminiApiKey] = useState<string>("");
@@ -105,7 +107,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
     };
   }, [blobUrl]);
 
-  // Client-side image compressor if > 2MB
+  // Canvas-based compression utility to resize mobile camera captures (max 1600px, 0.8 JPEG quality)
   const compressImageFile = (file: File): Promise<{ base64: string; compressedSize: number }> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -114,7 +116,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         img.onload = () => {
           const canvas = document.createElement("canvas");
           let { width, height } = img;
-          const maxDim = 1800;
+          const maxDim = 1600; // max 1600px per specification
           if (width > maxDim || height > maxDim) {
             if (width > height) {
               height = Math.round((height * maxDim) / width);
@@ -133,13 +135,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           }
           ctx.drawImage(img, 0, 0, width, height);
 
-          let quality = 0.85;
-          let dataUrl = canvas.toDataURL("image/jpeg", quality);
-          // If still > 2MB, reduce quality
-          while (dataUrl.length * 0.75 > 1.9 * 1024 * 1024 && quality > 0.4) {
-            quality -= 0.15;
-            dataUrl = canvas.toDataURL("image/jpeg", quality);
-          }
+          const quality = 0.8; // 0.8 JPEG quality per specification
+          const dataUrl = canvas.toDataURL("image/jpeg", quality);
           resolve({ base64: dataUrl, compressedSize: Math.round(dataUrl.length * 0.75) });
         };
         img.onerror = () => resolve({ base64: e.target?.result as string, compressedSize: file.size });
@@ -158,19 +155,18 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       setFileMimeType(mime);
       setCompressionNotice(null);
       setError(null);
+      setAutoFilled(false);
 
       // Create native Blob URL for 100% reliable PDF / Image rendering
       const newBlobUrl = URL.createObjectURL(file);
       setBlobUrl(newBlobUrl);
 
-      const MAX_BYTES = 2 * 1024 * 1024; // 2MB
-      const origSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-
-      if (mime.startsWith("image/") && file.size > MAX_BYTES) {
+      if (mime.startsWith("image/")) {
         try {
           const { base64, compressedSize } = await compressImageFile(file);
+          const origSizeMB = (file.size / (1024 * 1024)).toFixed(2);
           const newSizeMB = (compressedSize / (1024 * 1024)).toFixed(2);
-          setCompressionNotice(`⚡ Auto-compressed image from ${origSizeMB} MB to ${newSizeMB} MB for storage.`);
+          setCompressionNotice(`⚡ PWA Camera Optimizer: Resized to max 1600px (${origSizeMB} MB → ${newSizeMB} MB).`);
           setFileBase64(base64);
           processOcr(base64, "image/jpeg");
         } catch {
@@ -183,8 +179,10 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           reader.readAsDataURL(file);
         }
       } else {
+        const MAX_BYTES = 2 * 1024 * 1024; // 2MB notice
+        const origSizeMB = (file.size / (1024 * 1024)).toFixed(2);
         if (file.size > MAX_BYTES) {
-          setCompressionNotice(`⚡ PDF is ${origSizeMB} MB. Stored copy will be auto-compressed under 2MB.`);
+          setCompressionNotice(`⚡ PDF is ${origSizeMB} MB. Stored copy will be processed in-memory without disk overhead.`);
         }
         const reader = new FileReader();
         reader.onload = (event) => {
@@ -232,6 +230,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
         if (res.data.success) {
           setInvoice(res.data.data);
+          setAutoFilled(true);
           success = true;
           setScanStatusToast(null);
         } else {
@@ -499,10 +498,39 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
             </div>
           </div>
 
-          {/* 50 / 50 Split Grid */}
+          {/* Mobile Screen Segmented Switcher (< lg) */}
+          <div className="flex lg:hidden items-center bg-zinc-900 border border-zinc-800 p-1 rounded-xl shadow-inner mb-2">
+            <button
+              type="button"
+              onClick={() => setMobileTab('DOCUMENT')}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                mobileTab === 'DOCUMENT'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <span>📄 Bill Preview</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileTab('FORM')}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                mobileTab === 'FORM'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <span>✍️ Form ({invoice.line_items.length} items)</span>
+              {autoFilled && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+            </button>
+          </div>
+
+          {/* Responsive Split Grid: Desktop Side-by-Side with Sticky Preview; Mobile Tabbed */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-            {/* Left Pane: Document Viewer */}
-            <div className="bg-card border border-border rounded-xl p-4 shadow-sm flex flex-col h-[750px] overflow-hidden">
+            {/* Left Pane: Document Viewer (Sticky on Desktop) */}
+            <div className={`bg-card border border-border rounded-xl p-4 shadow-sm flex flex-col h-[650px] lg:h-[780px] lg:sticky lg:top-4 overflow-hidden ${
+              mobileTab === 'DOCUMENT' ? 'block' : 'hidden lg:flex'
+            }`}>
               <div className="flex items-center justify-between border-b border-border pb-3 mb-3 text-xs text-gray-400">
                 <span className="font-semibold text-gray-200">Original Document Preview</span>
                 <div className="flex items-center gap-2">
@@ -549,30 +577,54 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
             </div>
 
             {/* Right Pane: Pre-filled Human-in-the-Loop Form */}
-            <div className="bg-card border border-border rounded-xl p-5 shadow-sm space-y-6 h-[750px] overflow-y-auto">
+            <div className={`bg-card border border-border rounded-xl p-5 shadow-sm space-y-6 h-[650px] lg:h-[780px] overflow-y-auto ${
+              mobileTab === 'FORM' ? 'block' : 'hidden lg:block'
+            }`}>
               <div>
-                <h3 className="text-base font-bold text-white border-b border-border pb-2 mb-4">
-                  Extracted Bill Details (Review & Edit)
-                </h3>
+                <div className="flex items-center justify-between border-b border-border pb-2 mb-4">
+                  <h3 className="text-base font-bold text-white">
+                    Extracted Bill Details (Review & Edit)
+                  </h3>
+                  {autoFilled && (
+                    <span className="px-2.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-full text-[11px] font-semibold flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      Auto-filled by AI
+                    </span>
+                  )}
+                </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2">
-                    <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Supplier Name</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-400 uppercase">Supplier Name</label>
+                      {autoFilled && invoice.supplier_name && (
+                        <span className="text-[10px] text-emerald-400 font-medium">✨ AI Auto-Filled</span>
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={invoice.supplier_name}
                       onChange={(e) => setInvoice({ ...invoice, supplier_name: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded-lg text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full bg-zinc-900 border ${
+                        autoFilled && invoice.supplier_name ? 'border-emerald-500/40 focus:ring-emerald-500' : 'border-zinc-700 focus:ring-blue-500'
+                      } text-white p-2.5 rounded-lg text-sm font-semibold outline-none focus:ring-2`}
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Supplier GSTIN</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-400 uppercase">Supplier GSTIN</label>
+                      {autoFilled && invoice.supplier_gstin && (
+                        <span className="text-[10px] text-emerald-400 font-medium">✨ AI Auto-Filled</span>
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={invoice.supplier_gstin}
                       onChange={(e) => setInvoice({ ...invoice, supplier_gstin: e.target.value.toUpperCase() })}
-                      className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded-lg text-sm font-mono uppercase outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full bg-zinc-900 border ${
+                        autoFilled && invoice.supplier_gstin ? 'border-emerald-500/40 focus:ring-emerald-500' : 'border-zinc-700 focus:ring-blue-500'
+                      } text-white p-2.5 rounded-lg text-sm font-mono uppercase outline-none focus:ring-2`}
                     />
                   </div>
 
@@ -585,22 +637,36 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Invoice Number</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-400 uppercase">Invoice Number</label>
+                      {autoFilled && invoice.invoice_number && (
+                        <span className="text-[10px] text-emerald-400 font-medium">✨ AI Auto-Filled</span>
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={invoice.invoice_number}
                       onChange={(e) => setInvoice({ ...invoice, invoice_number: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded-lg text-sm font-mono outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full bg-zinc-900 border ${
+                        autoFilled && invoice.invoice_number ? 'border-emerald-500/40 focus:ring-emerald-500' : 'border-zinc-700 focus:ring-blue-500'
+                      } text-white p-2.5 rounded-lg text-sm font-mono outline-none focus:ring-2`}
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Invoice Date</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-400 uppercase">Invoice Date</label>
+                      {autoFilled && invoice.invoice_date && (
+                        <span className="text-[10px] text-emerald-400 font-medium">✨ AI Auto-Filled</span>
+                      )}
+                    </div>
                     <input
                       type="date"
                       value={invoice.invoice_date}
                       onChange={(e) => setInvoice({ ...invoice, invoice_date: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded-lg text-sm font-mono outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full bg-zinc-900 border ${
+                        autoFilled && invoice.invoice_date ? 'border-emerald-500/40 focus:ring-emerald-500' : 'border-zinc-700 focus:ring-blue-500'
+                      } text-white p-2.5 rounded-lg text-sm font-mono outline-none focus:ring-2`}
                     />
                   </div>
                 </div>
@@ -669,7 +735,14 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
               {/* Line Items Table */}
               <div>
                 <div className="flex items-center justify-between border-b border-border pb-2 mb-3">
-                  <h4 className="text-xs font-bold text-gray-300 uppercase tracking-wider">Line Items</h4>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-bold text-gray-300 uppercase tracking-wider">Line Items</h4>
+                    {autoFilled && invoice.line_items.length > 0 && (
+                      <span className="text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                        ✨ {invoice.line_items.length} items parsed
+                      </span>
+                    )}
+                  </div>
                   <button onClick={addLineItem} type="button" className="text-xs text-blue-400 hover:text-blue-300 font-bold cursor-pointer">
                     + Add Item
                   </button>
@@ -677,7 +750,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
                 <div className="space-y-3">
                   {invoice.line_items.map((item, idx) => (
-                    <div key={idx} className="p-3 bg-zinc-900/80 border border-zinc-800 rounded-lg space-y-2 text-xs">
+                    <div key={idx} className={`p-3 bg-zinc-900/80 border ${autoFilled ? 'border-emerald-500/25 hover:border-emerald-500/50' : 'border-zinc-800'} rounded-lg space-y-2 text-xs transition-colors`}>
                       <div className="flex items-center justify-between gap-2">
                         <input
                           type="text"

@@ -306,7 +306,12 @@ export default function PriceListImportModal({
       }
     } catch (err: any) {
       console.error(err);
-      toast.error("Failed to parse file", err.message || "Unknown error");
+      const msg =
+        err.response?.data?.error ||
+        (err.message === "Network Error"
+          ? "Backend connection or timeout error. Please check your network or ensure your Gemini API Key is configured."
+          : err.message || "Unknown error");
+      toast.error("Failed to parse file", msg);
     } finally {
       setParsing(false);
     }

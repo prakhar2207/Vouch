@@ -474,7 +474,15 @@ class ParsePriceListPdfAPIView(APIView):
         try:
             from apps.companies.models import Company
             from .services.price_list_service import PriceListService
-            company = Company.objects.get(id=company_id, users__user=request.user)
+            company = Company.objects.filter(id=company_id).first()
+            if not company:
+                return Response({"success": False, "error": "Company not found."}, status=404)
+
+            if not request.user.is_superuser:
+                has_access = company.users.filter(user=request.user).exists()
+                if not has_access:
+                    return Response({"success": False, "error": "Unauthorized access to this company."}, status=403)
+
             file_obj = request.FILES.get('file')
             if not file_obj:
                 return Response({"success": False, "error": "PDF file is required."}, status=400)

@@ -3,9 +3,23 @@ import re
 import uuid
 import json
 from decimal import Decimal
+from typing import List, Optional
+from pydantic import BaseModel, Field
 from django.db import transaction
 from apps.companies.models import Company
 from apps.inventory.models import Product, ProductCategory
+
+class PriceListItemSchema(BaseModel):
+    item_name: str = Field(description="Exact part number, belt size, or bearing number (e.g. 'A 18', 'SPZ 800', '6204', 'SPA 1250')")
+    mrp: float = Field(default=0.0, description="List price / MRP as a float number in INR")
+    case_qty: Optional[int] = Field(default=1, description="Package / case quantity or MOQ (default 1)")
+    section: Optional[str] = Field(default="", description="Belt section or bearing category (e.g. 'A SECTION (13 x 8 mm)', 'Deep Groove Ball Bearings', 'SPA WEDGE', 'POLY-F')")
+    unit: Optional[str] = Field(default="PCS", description="Standard unit of measure (default 'PCS')")
+
+class PriceListExtractionSchema(BaseModel):
+    brand: Optional[str] = Field(default="", description="Brand name detected or confirmed from catalog")
+    effective_date: Optional[str] = Field(default="", description="Effective price list date (e.g. w.e.f. date or YYYY-MM-DD)")
+    items: List[PriceListItemSchema] = Field(default_factory=list, description="All extracted product line items")
 
 CID_MAP = str.maketrans({
     'Ϭ': '0', 'ϭ': '1', 'Ϯ': '2', 'ϯ': '3', 'ϰ': '4',
@@ -169,17 +183,18 @@ class PriceListService:
                 
                 brand_hint = f" The expected brand is '{user_brand}'." if user_brand else ""
                 prompt = (
-                    f"You are an expert industrial catalog and price list parsing AI.{brand_hint} "
-                    "Analyze this manufacturer price list / catalog PDF thoroughly across all pages and all columns. "
-                    "Extract the Brand Name, Effective Date (e.g. w.e.f. date), and ALL product line items. "
-                    "For each item extract: "
-                    "- item_name: exact part number, belt size, or bearing number (e.g. 'A 18', 'B 42', 'SPZ 800', 'SPA 1250', '6204', 'NBC AP3 GREASE 100GM') "
-                    "- mrp: list price / MRP as a float number in INR "
+                    f"You are an expert industrial catalog and manufacturer price list parsing AI.{brand_hint} "
+                    "Analyze this manufacturer price list / catalog PDF thoroughly across all pages, columns, and tables. "
+                    "Key rules: "
+                    "1. Resolve any ditto marks (\", '', do) or section headers by carrying forward belt sections or product classifications to all relevant rows. "
+                    "2. Extract the Brand Name, Effective Date (e.g. w.e.f. date or YYYY-MM-DD), and ALL product line items. "
+                    "3. For each item extract: "
+                    "- item_name: exact part number, belt size, or bearing number (e.g. 'A 18', 'B 42', 'SPZ 800', 'SPA 1250', '6204-2RS', 'NBC AP3 GREASE 100GM') "
+                    "- mrp: list price / MRP as a float number in INR (remove commas and currency signs) "
                     "- case_qty: package / case quantity or MOQ (default 1) "
                     "- section: belt section or bearing category (e.g. 'A SECTION (13 x 8 mm)', 'Deep Groove Ball Bearings', 'SPA WEDGE', 'POLY-F') "
                     "- unit: standard unit (default 'PCS') "
-                    "Return strict JSON matching: "
-                    "{\"brand\": string, \"effective_date\": string, \"items\": [{\"item_name\": string, \"mrp\": number, \"case_qty\": number, \"section\": string, \"unit\": string}]}"
+                    "Output strict JSON adhering to the schema."
                 )
                 
                 for model_name in models_to_try:
@@ -192,6 +207,7 @@ class PriceListService:
                             ],
                             config=types.GenerateContentConfig(
                                 response_mime_type="application/json",
+                                response_schema=PriceListExtractionSchema,
                                 temperature=0.1
                             )
                         )
@@ -262,7 +278,10 @@ class PriceListService:
         if wef_match:
             effective_date = wef_match.group(1).strip()
 
-        for page in reader.pages:
+        # Process up to 25 pages to avoid Render memory and timeout exhaustion
+        pages_to_process = min(len(reader.pages), 25)
+        for page_idx in range(pages_to_process):
+            page = reader.pages[page_idx]
             raw_page_text = page.extract_text() or ""
             # Apply CID font decoding to translate custom encoded digits & symbols
             page_text = raw_page_text.translate(CID_MAP)

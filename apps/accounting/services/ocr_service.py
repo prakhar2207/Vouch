@@ -103,10 +103,14 @@ class InvoiceOCRService:
             import random
 
             prompt = (
-                "You are an expert accounts payable AI. Analyze this Indian GST tax invoice or purchase bill carefully. "
-                "Extract the exact Supplier Name, Supplier GSTIN, Invoice Number, Invoice Date (in YYYY-MM-DD), "
-                "Subtotal, Taxes (CGST, SGST, IGST), Total Amount, and all Line Items with their full Description, Brand (if mentioned), "
-                "exact HSN code, Quantity, Unit, Rate (MRP/price before discount), Discount Percentage (if any), and Amount (after discount). "
+                "You are an expert accounts payable AI specialized in Indian GST tax invoices, bills of supply, and handwritten or printed purchase receipts. "
+                "Carefully analyze this entire document image or PDF in-memory. "
+                "Key parsing rules: "
+                "1. Resolve ditto marks (\", '', do, as above) by carrying forward values, rates, or descriptions from the preceding line. "
+                "2. Interpret handwriting shorthand, abbreviations (e.g., 'pkg', 'bx', 'mtr', 'nos'), and handwritten digits accurately. "
+                "3. Extract the exact Supplier Name, Supplier GSTIN, Invoice/Bill Number, Invoice Date (in YYYY-MM-DD format), Place of Supply / State Code. "
+                "4. Accurately extract all itemized line items: full Description, Brand (e.g. Fenner, SKF, PIX, NBC if mentioned), HSN code, Quantity, Unit, Rate (MRP or price before discount), Discount Percentage, and Taxable Amount. "
+                "5. Extract Subtotal, CGST, SGST, IGST, and Grand Total Amount. Verify and reconcile mathematics where visible. "
                 "Output strict JSON following the schema."
             )
 
@@ -115,7 +119,6 @@ class InvoiceOCRService:
                 "gemini-2.0-flash",
                 "gemini-1.5-flash",
                 "gemini-2.0-flash-lite",
-                "gemini-1.5-pro",
             ]
             max_retries = 2
 
@@ -164,7 +167,6 @@ class InvoiceOCRService:
         # -------------------------------------------------------------
         # TIER 2: If PDF, attempt PyPDF text stream extraction
         # -------------------------------------------------------------
-        pdf_parsed_data = None
         if is_pdf:
             pdf_parsed_data = InvoiceOCRService._extract_from_pdf(raw_bytes)
             if pdf_parsed_data and (pdf_parsed_data.get("invoice_number") or pdf_parsed_data.get("supplier_name")):
@@ -172,52 +174,7 @@ class InvoiceOCRService:
                 pdf_parsed_data["is_mock"] = False
                 return pdf_parsed_data
 
-        # -------------------------------------------------------------
-        # TIER 3: Local Image OCR with RapidOCR (For Photos & Scanned Docs)
-        # -------------------------------------------------------------
-        image_parsed_data = None
-        if not is_pdf:
-            image_parsed_data = InvoiceOCRService._extract_from_image_ocr(raw_bytes)
-        else:
-            # If PDF was scanned image without text stream, try OCR on page image
-            try:
-                from pypdf import PdfReader
-                reader = PdfReader(io.BytesIO(raw_bytes))
-                if reader.pages and len(reader.pages[0].images) > 0:
-                    page_img_bytes = reader.pages[0].images[0].data
-                    image_parsed_data = InvoiceOCRService._extract_from_image_ocr(page_img_bytes)
-            except Exception as e:
-                print(f"Failed to extract scanned PDF page image: {e}")
-
-        if image_parsed_data and (image_parsed_data.get("supplier_name") or image_parsed_data.get("invoice_number") or image_parsed_data.get("supplier_gstin")):
-            image_parsed_data["source"] = "RAPID_OCR_VISION"
-            image_parsed_data["is_mock"] = False
-            return image_parsed_data
-
-        if pdf_parsed_data:
-            pdf_parsed_data["source"] = "PDF_TEXT_STREAM"
-            pdf_parsed_data["is_mock"] = False
-            return pdf_parsed_data
-
-        if image_parsed_data:
-            image_parsed_data["source"] = "RAPID_OCR_VISION"
-            image_parsed_data["is_mock"] = False
-            return image_parsed_data
-
-        return InvoiceOCRService._fallback_mock(error="Unable to detect readable invoice text from this photo.")
-
-    @staticmethod
-    def _extract_from_image_ocr(raw_bytes: bytes) -> Optional[dict]:
-        """Runs native RapidOCR on image bytes and parses Indian GST invoice structure."""
-        try:
-            # Disabled RapidOCR temporarily to prevent Out of Memory (OOM) 
-            # crashes on Render's 512MB free tier instances.
-            # Falling back to mock/graceful failure if Gemini AI is not configured.
-            print("RapidOCR disabled due to memory constraints on Render free tier.")
-            return None
-        except Exception as e:
-            print(f"Error running RapidOCR on image: {e}")
-            return None
+        return InvoiceOCRService._fallback_mock(error="Unable to detect readable invoice text from this photo. Please ensure GEMINI_API_KEY is configured.")
 
     @staticmethod
     def _extract_from_pdf(raw_bytes: bytes) -> Optional[dict]:
