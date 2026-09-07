@@ -717,8 +717,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="col-span-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <div className="sm:col-span-2">
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-xs font-semibold text-gray-400 uppercase">Supplier Name</label>
                       {autoFilled && invoice.supplier_name && (
@@ -875,25 +875,30 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                 <div className="space-y-3">
                   {invoice.line_items.map((item, idx) => (
                     <div key={idx} className={`p-3 bg-zinc-900/80 border ${autoFilled ? 'border-emerald-500/25 hover:border-emerald-500/50' : 'border-zinc-800'} rounded-lg space-y-2 text-xs transition-colors`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <input
-                          type="text"
-                          value={item.description}
-                          onChange={(e) => updateItem(idx, "description", e.target.value)}
-                          placeholder="Item Description / Product Name"
-                          className="flex-1 bg-zinc-950 border border-zinc-700 text-white p-1.5 rounded outline-none font-medium"
-                        />
-                        <input
-                          type="text"
-                          value={item.brand || ""}
-                          onChange={(e) => updateItem(idx, "brand", e.target.value)}
-                          placeholder="Brand (e.g. Fenner, SKF)"
-                          className="w-44 bg-zinc-950 border border-zinc-700 text-white p-1.5 rounded outline-none text-xs"
-                        />
-                        <button onClick={() => removeLineItem(idx)} className="text-red-400 hover:text-red-300 px-1 font-bold cursor-pointer">✕</button>
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                        <div className="flex-1 flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={item.description}
+                            onChange={(e) => updateItem(idx, "description", e.target.value)}
+                            placeholder="Item Description / Product Name"
+                            className="flex-1 bg-zinc-950 border border-zinc-700 text-white p-2 sm:p-1.5 rounded outline-none font-medium"
+                          />
+                          <button onClick={() => removeLineItem(idx)} className="sm:hidden text-red-400 hover:text-red-300 p-1 font-bold cursor-pointer" title="Delete item">✕</button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={item.brand || ""}
+                            onChange={(e) => updateItem(idx, "brand", e.target.value)}
+                            placeholder="Brand (e.g. Fenner, SKF)"
+                            className="flex-1 sm:w-44 bg-zinc-950 border border-zinc-700 text-white p-2 sm:p-1.5 rounded outline-none text-xs"
+                          />
+                          <button onClick={() => removeLineItem(idx)} className="hidden sm:inline-block text-red-400 hover:text-red-300 px-1 font-bold cursor-pointer" title="Delete item">✕</button>
+                        </div>
                       </div>
 
-                      <div className="grid grid-cols-5 gap-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                         <div>
                           <label className="block text-[10px] text-gray-400">HSN</label>
                           <input
@@ -930,7 +935,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                             className="w-full bg-zinc-950 border border-zinc-700 text-white p-1.5 rounded outline-none font-mono"
                           />
                         </div>
-                        <div>
+                        <div className="col-span-2 sm:col-span-1">
                           <label className="block text-[10px] text-gray-400">Taxable (₹)</label>
                           <input
                             type="number"

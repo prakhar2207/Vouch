@@ -128,18 +128,18 @@ export default function Dashboard() {
       <div className="space-y-6 pb-12">
         
         {/* Task 2: Clean Dashboard Header & Action Cluster */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border/60 pb-4">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Business Overview</h1>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">Business Overview</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
               Real-time summary of sales, outstandings, and operational activity.
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <button
               onClick={() => setIsHelpOpen(true)}
-              className="p-2 text-muted-foreground hover:text-foreground rounded-lg border border-border/50 hover:bg-muted/60 transition-colors"
+              className="p-2 text-muted-foreground hover:text-foreground rounded-lg border border-border/50 hover:bg-muted/60 transition-colors cursor-pointer"
               title="Help & Shortcuts (F1)"
             >
               <HelpCircle className="w-4 h-4" />
@@ -148,21 +148,21 @@ export default function Dashboard() {
             <Link
               id="tour-sales-btn"
               href="/sales/new"
-              className="px-3.5 py-1.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg text-xs font-semibold shadow-2xs transition-all flex items-center gap-1.5"
+              className="flex-1 sm:flex-none justify-center px-3.5 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg text-xs font-semibold shadow-2xs transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Sales</span>
-              <kbd className="text-[9px] font-mono px-1 py-0.2 bg-primary-foreground/20 rounded">F8</kbd>
+              <kbd className="hidden sm:inline text-[9px] font-mono px-1 py-0.2 bg-primary-foreground/20 rounded">F8</kbd>
             </Link>
 
             <Link
               id="tour-purchase-btn"
               href="/purchases/new"
-              className="px-3.5 py-1.5 bg-secondary text-foreground hover:bg-secondary/80 border border-border/60 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5"
+              className="flex-1 sm:flex-none justify-center px-3.5 py-2 bg-secondary text-foreground hover:bg-secondary/80 border border-border/60 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5 text-muted-foreground" />
               <span>Purchase</span>
-              <kbd className="text-[9px] font-mono px-1 py-0.2 bg-muted border border-border/50 rounded text-muted-foreground">F9</kbd>
+              <kbd className="hidden sm:inline text-[9px] font-mono px-1 py-0.2 bg-muted border border-border/50 rounded text-muted-foreground">F9</kbd>
             </Link>
           </div>
         </div>
@@ -408,7 +408,7 @@ export default function Dashboard() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full min-w-[520px] text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-border/60 text-muted-foreground">
                   <th className="py-2 font-medium">Voucher No.</th>

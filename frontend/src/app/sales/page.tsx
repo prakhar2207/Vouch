@@ -166,12 +166,13 @@ export default function SalesInvoiceList() {
   return (
     <DashboardLayout>
       <div className="space-y-6 flex flex-col h-full">
-        <div className="flex justify-between items-center border-b border-border pb-4">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
           <div>
-            <h1 className="text-3xl font-bold">Sales Invoices</h1>
-            <p className="text-xs text-muted-foreground mt-1">Outward tax invoices and billing records</p>
+            <h1 className="text-2xl sm:text-3xl font-bold">Sales Invoices</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">Outward tax invoices and billing records</p>
           </div>
-          <Link href="/sales/new" className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow hover:bg-blue-700 transition-all flex items-center gap-1.5">
+          <Link href="/sales/new" className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow hover:bg-blue-700 transition-all flex items-center justify-center gap-1.5">
             <Plus className="w-3.5 h-3.5" />
             <span>Create Invoice</span>
             <kbd className="bg-white/20 px-1.5 py-0.5 rounded text-[10px]">F8</kbd>
@@ -181,7 +182,7 @@ export default function SalesInvoiceList() {
         <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border flex-1 overflow-hidden flex flex-col">
           <div className="px-5 py-3.5 border-b border-border bg-gray-50 dark:bg-zinc-800/50 flex items-center justify-between">
             <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Previous Invoices</span>
-            <span className="text-xs text-muted-foreground">Use ↑ / ↓ arrow keys to navigate, Ctrl+Enter to edit, Enter to print</span>
+            <span className="text-xs text-muted-foreground hidden sm:inline">Use ↑ / ↓ arrow keys to navigate, Ctrl+Enter to edit, Enter to print</span>
           </div>
           {loading ? (
             <div className="flex items-center justify-center h-full text-gray-500">Loading invoices...</div>
@@ -198,7 +199,57 @@ export default function SalesInvoiceList() {
             </div>
           ) : (
             <div className="flex-1 w-full overflow-auto flex flex-col justify-between">
-              <table className="w-full text-left border-collapse">
+              {/* Mobile Cards (block md:hidden) */}
+              <div className="block md:hidden divide-y divide-border/60">
+                {invoices.map((inv, idx) => (
+                  <div key={inv.id || idx} className="p-3.5 space-y-2.5 bg-card">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-foreground text-sm">{inv.voucher_number}</span>
+                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${inv.status === 'POSTED' ? 'bg-green-500/10 text-green-500 border-green-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>
+                          {inv.status}
+                        </span>
+                      </div>
+                      <span className="text-xs text-muted-foreground font-mono">{inv.date}</span>
+                    </div>
+
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="font-semibold text-foreground text-xs truncate max-w-[180px]">{inv.party_name}</span>
+                      <span className="font-bold text-emerald-400 font-mono text-sm">
+                        ₹{parseFloat(inv.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-border/40">
+                      <button
+                        onClick={() => handleStartEdit(inv)}
+                        className="px-2.5 py-1 bg-blue-600/15 text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/30 flex items-center gap-1"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        <span>Edit</span>
+                      </button>
+                      <Link
+                        href={`/sales/${inv.id}/print`}
+                        className="px-2.5 py-1 bg-muted/60 text-foreground rounded-lg text-xs font-semibold border border-border/70 flex items-center gap-1"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>Print</span>
+                      </Link>
+                      <button
+                        onClick={() => handleDeleteInvoice(inv.id, inv.voucher_number)}
+                        className="px-2.5 py-1 bg-rose-600/15 text-rose-400 rounded-lg text-xs font-semibold border border-rose-500/30 flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop Table (hidden md:block) */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-zinc-800 bg-zinc-900/40 text-xs font-semibold text-gray-400 uppercase tracking-wider">
                     <th className="p-4">Invoice No.</th>
@@ -268,10 +319,11 @@ export default function SalesInvoiceList() {
                   })}
                 </tbody>
               </table>
+              </div>
 
               {/* Keyboard Shortcuts Hint Bar */}
               <div className="p-3 border-t border-zinc-800 bg-zinc-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-muted-foreground">
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="hidden sm:flex items-center gap-2 flex-wrap">
                   <span className="flex items-center gap-1">
                     <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">↑</kbd>
                     <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">↓</kbd>

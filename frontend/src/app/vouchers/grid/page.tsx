@@ -517,17 +517,17 @@ function AgGridVoucherEntryContent() {
 
   return (
     <DashboardLayout>
-      <div className="h-[calc(100vh-5rem)] flex flex-col max-w-[1600px] mx-auto px-2 sm:px-4 py-2 gap-2.5 overflow-hidden">
+      <div className="min-h-[calc(100vh-5rem)] sm:h-[calc(100vh-5rem)] flex flex-col max-w-[1600px] mx-auto px-2 sm:px-4 py-2 gap-2.5 overflow-y-auto sm:overflow-hidden">
         
         {/* Compact Header Bar */}
-        <div className="bg-card border border-border/80 px-4 py-2.5 rounded-xl shadow-sm flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-3">
+        <div className="bg-card border border-border/80 p-3 sm:px-4 sm:py-2.5 rounded-xl shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-sm shrink-0">
               <Layers className="w-4 h-4" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base font-black tracking-tight text-foreground">Quick Journal Entry</h1>
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <h1 className="text-sm sm:text-base font-black tracking-tight text-foreground">Quick Journal Entry</h1>
                 <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full border ${typeConfig.badge}`}>
                   {typeConfig.label}
                 </span>
@@ -544,33 +544,33 @@ function AgGridVoucherEntryContent() {
           </div>
 
           {/* Quick Actions */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <button
               onClick={addRow}
               type="button"
-              className="px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-bold border border-border transition-all flex items-center gap-1 shadow-sm cursor-pointer"
+              className="flex-1 sm:flex-none justify-center px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-bold border border-border transition-all flex items-center gap-1 shadow-sm cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5 text-blue-400" />
               <span>Add Line</span>
-              <span className="text-[10px] text-muted-foreground font-mono ml-0.5">Alt+A</span>
+              <span className="text-[10px] text-muted-foreground font-mono ml-0.5 hidden sm:inline">Alt+A</span>
             </button>
 
             {!isBalanced && difference > 0 && (
               <button
                 onClick={autoBalance}
                 type="button"
-                className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 rounded-lg text-xs font-bold border border-amber-500/30 transition-all flex items-center gap-1 shadow-sm cursor-pointer"
+                className="flex-1 sm:flex-none justify-center px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 rounded-lg text-xs font-bold border border-amber-500/30 transition-all flex items-center gap-1 shadow-sm cursor-pointer"
                 title="Auto-fill the difference into a balancing line"
               >
                 <Scale className="w-3.5 h-3.5" />
-                <span>Auto-Balance (₹{difference.toFixed(2)})</span>
+                <span>Auto-Balance</span>
               </button>
             )}
 
             <button
               onClick={handleSubmit}
               disabled={saving || !isBalanced || isReadOnly}
-              className={`px-4 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer ${
+              className={`w-full sm:w-auto justify-center px-4 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer ${
                 isReadOnly
                   ? "bg-amber-500/15 text-amber-400 border border-amber-500/30 cursor-not-allowed opacity-80"
                   : isBalanced
@@ -589,7 +589,7 @@ function AgGridVoucherEntryContent() {
                 <>
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>Post Voucher</span>
-                  <span className="text-[10px] font-mono px-1 py-0.2 bg-black/20 rounded">Ctrl+S</span>
+                  <span className="text-[10px] font-mono px-1 py-0.2 bg-black/20 rounded hidden sm:inline">Ctrl+S</span>
                 </>
               )}
             </button>
@@ -706,7 +706,7 @@ function AgGridVoucherEntryContent() {
           </div>
 
           {/* Grid Viewport */}
-          <div className="ag-theme-quartz ag-theme-quartz-dark w-full flex-1 min-h-0">
+          <div className="ag-theme-quartz ag-theme-quartz-dark w-full flex-1 min-h-[320px] sm:min-h-0">
             <AgGridReact
               rowData={rowData}
               columnDefs={columnDefs}

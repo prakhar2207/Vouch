@@ -107,12 +107,12 @@ export default function NewInvoice() {
   };
 
   return (
-    <div className="p-8 max-w-4xl mx-auto space-y-6 bg-background text-foreground transition-colors duration-200">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold">Create Invoice</h1>
+    <div className="p-4 sm:p-8 max-w-4xl mx-auto space-y-6 bg-background text-foreground transition-colors duration-200">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
+        <h1 className="text-2xl sm:text-3xl font-bold">Create Invoice</h1>
         <div className="flex items-center gap-4">
           <ThemeToggle />
-          <button onClick={() => router.push('/')} className="text-blue-600 dark:text-blue-400 hover:underline">
+          <button onClick={() => router.push('/')} className="text-blue-600 dark:text-blue-400 hover:underline text-sm">
             Back to Dashboard
           </button>
         </div>
@@ -233,7 +233,7 @@ export default function NewInvoice() {
       <div className="flex justify-end pt-4">
         <button 
           onClick={handleSubmit} 
-          className="bg-green-600 text-white px-8 py-3 rounded-lg font-bold shadow hover:bg-green-700 transition-colors"
+          className="w-full sm:w-auto bg-green-600 text-white px-8 py-3 rounded-lg font-bold shadow hover:bg-green-700 transition-colors"
         >
           Generate Invoice
         </button>

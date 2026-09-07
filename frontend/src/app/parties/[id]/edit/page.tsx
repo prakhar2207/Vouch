@@ -142,14 +142,14 @@ export default function EditPartyPage() {
       <div className="space-y-6 max-w-3xl mx-auto pb-12">
 
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border pb-4">
-          <div className="flex items-center gap-4">
-            <Link href="/parties" className="text-gray-400 hover:text-white transition-colors">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <Link href="/parties" className="text-gray-400 hover:text-white transition-colors p-1">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
             </Link>
             <div>
-              <h1 className="text-3xl font-bold">Edit {formData.name}</h1>
-              <p className="text-gray-400 mt-1 text-sm">
+              <h1 className="text-2xl sm:text-3xl font-bold">Edit {formData.name}</h1>
+              <p className="text-gray-400 mt-1 text-xs sm:text-sm">
                 Update profile for this {isCustomer ? 'Customer' : 'Supplier'} &middot; <span className="text-zinc-500">{formData.group}</span>
               </p>
             </div>
@@ -158,7 +158,7 @@ export default function EditPartyPage() {
           <button
             type="button"
             onClick={() => setIsDeleteOpen(true)}
-            className="px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="w-full sm:w-auto justify-center px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
             title="Delete Party (Alt+D)"
           >
             <Trash2 className="w-4 h-4" />
@@ -177,7 +177,7 @@ export default function EditPartyPage() {
         </div>
 
         {/* Edit Form */}
-        <form id="edit-party-form" onSubmit={handleSave} className="bg-card border border-border rounded-xl p-8 shadow-sm space-y-6">
+        <form id="edit-party-form" onSubmit={handleSave} className="bg-card border border-border rounded-xl p-4 sm:p-8 shadow-sm space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
             {/* Name */}
@@ -279,8 +279,8 @@ export default function EditPartyPage() {
             </div>
           </div>
 
-          <div className="flex justify-between items-center pt-4 border-t border-zinc-800">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-zinc-800">
+            <div className="flex items-center justify-between sm:justify-start gap-3">
               <Link href="/parties" className="text-gray-400 hover:text-white text-sm transition-colors">
                 ← Cancel
               </Link>
@@ -290,16 +290,16 @@ export default function EditPartyPage() {
                 onClick={() => setIsDeleteOpen(true)}
                 className="text-rose-500 hover:text-rose-400 text-xs font-semibold transition-colors cursor-pointer"
               >
-                Delete (Alt+D)
+                Delete Party
               </button>
             </div>
 
             <button
               type="submit"
               disabled={saving}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-semibold shadow-lg transition-all disabled:opacity-50 text-sm cursor-pointer"
+              className="w-full sm:w-auto justify-center bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-semibold shadow-lg transition-all disabled:opacity-50 text-sm cursor-pointer"
             >
-              {saving ? 'Saving...' : 'Save Changes (Ctrl+Enter)'}
+              {saving ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
         </form>

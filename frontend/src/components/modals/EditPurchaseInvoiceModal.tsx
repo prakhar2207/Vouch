@@ -313,8 +313,8 @@ export default function EditPurchaseInvoiceModal({
                 </button>
               </div>
 
-              <div className="border border-border/70 rounded-xl overflow-hidden">
-                <table className="w-full text-xs text-left border-collapse">
+              <div className="border border-border/70 rounded-xl overflow-x-auto">
+                <table className="w-full min-w-[620px] text-xs text-left border-collapse">
                   <thead className="bg-muted/40 border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
                     <tr>
                       <th className="p-2.5 w-6">#</th>

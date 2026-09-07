@@ -116,24 +116,24 @@ export default function VoucherEntry() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-[#0a0a0a] text-foreground transition-colors duration-200">
-      <div className="max-w-7xl mx-auto p-8 h-screen flex flex-col">
-        <div className="flex justify-between items-center mb-8">
+      <div className="max-w-7xl mx-auto p-4 sm:p-8 min-h-screen sm:h-screen flex flex-col">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
           <div>
-            <h1 className="text-4xl font-extrabold tracking-tight">Voucher Entry</h1>
-            <p className="text-gray-500 dark:text-gray-400 text-sm mt-2">Use <kbd className="bg-gray-200 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono text-xs">F4-F9</kbd> to rapidly switch voucher types.</p>
+            <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight">Voucher Entry</h1>
+            <p className="text-gray-500 dark:text-gray-400 text-xs sm:text-sm mt-1 sm:mt-2">Use <kbd className="bg-gray-200 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono text-xs">F4-F9</kbd> to rapidly switch voucher types.</p>
           </div>
-          <div className="flex items-center gap-5">
-            <span className={`px-5 py-2.5 font-bold rounded-lg shadow-sm border ${voucherType === 'F8' || voucherType === 'F9' ? 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:border-blue-800' : 'bg-white text-gray-800 border-gray-200 dark:bg-zinc-800 dark:text-gray-200 dark:border-zinc-700'}`}>
+          <div className="flex flex-wrap items-center gap-3 sm:gap-5">
+            <span className={`px-4 sm:px-5 py-2 sm:py-2.5 font-bold text-xs sm:text-sm rounded-lg shadow-sm border ${voucherType === 'F8' || voucherType === 'F9' ? 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:border-blue-800' : 'bg-white text-gray-800 border-gray-200 dark:bg-zinc-800 dark:text-gray-200 dark:border-zinc-700'}`}>
               <span className="opacity-70 mr-2">{voucherType}</span> {voucherNames[voucherType]}
             </span>
             <ThemeToggle />
-            <button onClick={() => router.push('/')} className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium transition-colors">
+            <button onClick={() => router.push('/')} className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 text-xs sm:text-sm font-medium transition-colors cursor-pointer">
               &larr; Dashboard
             </button>
           </div>
         </div>
 
-        <div className={`flex-1 mb-8 shadow-xl rounded-xl overflow-hidden border border-gray-200 dark:border-zinc-800 ${resolvedTheme === 'dark' ? 'ag-theme-quartz-dark' : 'ag-theme-quartz'}`}>
+        <div className={`min-h-[350px] flex-1 mb-6 sm:mb-8 shadow-xl rounded-xl overflow-hidden border border-gray-200 dark:border-zinc-800 ${resolvedTheme === 'dark' ? 'ag-theme-quartz-dark' : 'ag-theme-quartz'}`}>
           <AgGridReact
             ref={gridRef}
             theme="legacy"
@@ -148,15 +148,15 @@ export default function VoucherEntry() {
           />
         </div>
 
-        <div className="flex justify-between items-center bg-white dark:bg-zinc-900 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-800">
-          <div className="text-gray-500 dark:text-gray-400 text-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-zinc-900 p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-800">
+          <div className="text-gray-500 dark:text-gray-400 text-xs sm:text-sm">
             Total Rows: <span className="font-bold text-gray-800 dark:text-gray-200">{rowData.length}</span>
           </div>
-          <div className="flex gap-4">
-            <button onClick={() => setRowData([{ id: 1, type: 'Dr', ledger: '', amount: 0 }])} className="text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-zinc-700 px-6 py-2.5 rounded-lg font-semibold transition-colors">
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <button onClick={() => setRowData([{ id: 1, type: 'Dr', ledger: '', amount: 0 }])} className="flex-1 sm:flex-initial text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-zinc-700 px-4 sm:px-6 py-2.5 rounded-lg text-xs sm:text-sm font-semibold transition-colors cursor-pointer">
               Reset Grid
             </button>
-            <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/30 px-8 py-2.5 rounded-lg font-semibold transition-all hover:scale-[1.02]">
+            <button onClick={handleSave} className="flex-1 sm:flex-initial bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/30 px-6 sm:px-8 py-2.5 rounded-lg text-xs sm:text-sm font-semibold transition-all hover:scale-[1.02] cursor-pointer">
               Save Voucher
             </button>
           </div>

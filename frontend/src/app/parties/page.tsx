@@ -235,8 +235,8 @@ export default function PartiesPage() {
         {/* Header */}
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-border pb-6">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Parties</h1>
-            <p className="text-gray-400 mt-1 text-sm">Manage your Customers and Suppliers accounts</p>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Parties</h1>
+            <p className="text-gray-400 mt-1 text-xs sm:text-sm">Manage your Customers and Suppliers accounts</p>
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
@@ -431,7 +431,7 @@ export default function PartiesPage() {
                     </div>
 
                     {/* Top Action Buttons */}
-                    <div className="flex items-center gap-1 opacity-75 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-1 opacity-100 sm:opacity-75 sm:group-hover:opacity-100 transition-opacity">
                       <Link 
                         href={`/parties/${party.id}/edit`} 
                         onClick={e => e.stopPropagation()}

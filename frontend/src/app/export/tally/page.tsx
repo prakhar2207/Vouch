@@ -221,7 +221,7 @@ export default function TallyExportPage() {
                 <span>1. Select Export Scope</span>
               </h2>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
                 <button
                   type="button"
                   onClick={() => setExportType("all")}
@@ -264,13 +264,13 @@ export default function TallyExportPage() {
             </div>
 
             {/* Date Range Selection */}
-            <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
-              <div className="flex items-center justify-between">
+            <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                 <h2 className="text-sm font-bold text-white flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-blue-400" />
                   <span>2. Accounting Date Period</span>
                 </h2>
-                <div className="flex gap-1">
+                <div className="flex flex-wrap gap-1">
                   <button
                     onClick={() => setPreset("this_month")}
                     className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-gray-300 rounded text-[10px] font-semibold"
@@ -298,7 +298,7 @@ export default function TallyExportPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 text-xs">
                 <div>
                   <label className="block text-gray-400 font-semibold mb-1">From Date</label>
                   <input

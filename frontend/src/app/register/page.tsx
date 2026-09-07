@@ -109,8 +109,8 @@ export default function Register() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background text-foreground py-12 px-4">
-      <div className="bg-card text-card-foreground p-8 rounded-2xl shadow-xl border border-border w-full max-w-lg">
+    <div className="flex min-h-screen items-center justify-center bg-background text-foreground py-6 sm:py-12 px-3 sm:px-4">
+      <div className="bg-card text-card-foreground p-5 sm:p-8 rounded-2xl shadow-xl border border-border w-full max-w-lg">
         
         {/* Header */}
         <div className="mb-8 text-center">

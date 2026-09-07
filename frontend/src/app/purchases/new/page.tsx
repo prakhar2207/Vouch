@@ -253,39 +253,39 @@ export default function PurchasePage() {
         
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-border pb-4 gap-4">
-          <div className="flex items-center gap-4">
-            <Link href="/purchases" className="text-gray-400 hover:text-white transition-colors">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <Link href="/purchases" className="text-gray-400 hover:text-white transition-colors p-1">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
             </Link>
             <div>
-              <h1 className="text-3xl font-bold">New Purchase Invoice</h1>
-              <p className="text-sm text-gray-400 mt-0.5">Automated Accounts Payable & Double-Entry Inward Bills</p>
+              <h1 className="text-2xl sm:text-3xl font-bold">New Purchase Invoice</h1>
+              <p className="text-xs sm:text-sm text-gray-400 mt-0.5">Automated Accounts Payable & Inward Bills</p>
             </div>
           </div>
           
           {/* Mode Switcher */}
-          <div className="flex items-center bg-zinc-900 border border-zinc-700 p-1 rounded-xl shadow-inner">
+          <div className="w-full sm:w-auto grid grid-cols-2 sm:flex items-center bg-zinc-900 border border-zinc-700 p-1 rounded-xl shadow-inner gap-1">
             <button
               onClick={() => setActiveTab('OCR')}
               type="button"
-              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+              className={`px-3 sm:px-4 py-2 sm:py-1.5 rounded-lg text-xs font-bold transition-all text-center justify-center flex items-center gap-1.5 ${
                 activeTab === 'OCR'
                   ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-md'
                   : 'text-gray-400 hover:text-white'
               }`}
             >
-              <span>✨ AI OCR Auto-Fill (Split Screen)</span>
+              <span>✨ AI OCR</span>
             </button>
             <button
               onClick={() => setActiveTab('MANUAL')}
               type="button"
-              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              className={`px-3 sm:px-4 py-2 sm:py-1.5 rounded-lg text-xs font-bold transition-all text-center justify-center flex items-center gap-1.5 ${
                 activeTab === 'MANUAL'
                   ? 'bg-zinc-800 text-white shadow-md'
                   : 'text-gray-400 hover:text-white'
               }`}
             >
-              <span>📝 Manual Voucher Entry</span>
+              <span>📝 Manual Entry</span>
             </button>
           </div>
         </div>
@@ -299,7 +299,7 @@ export default function PurchasePage() {
         {activeTab === 'MANUAL' && (
           <div className="space-y-6">
             <div className="flex justify-end">
-              <button onClick={handleSave} disabled={saving} className="bg-red-600 hover:bg-red-700 text-white px-6 py-2.5 rounded-lg shadow-lg font-medium transition-colors disabled:opacity-50 flex items-center gap-2">
+              <button onClick={handleSave} disabled={saving} className="w-full sm:w-auto justify-center bg-red-600 hover:bg-red-700 text-white px-6 py-2.5 rounded-lg shadow-lg font-medium transition-colors disabled:opacity-50 flex items-center gap-2 cursor-pointer">
                 {saving ? 'Posting...' : 'Post Purchase Invoice'}
               </button>
             </div>
@@ -358,8 +358,8 @@ export default function PurchasePage() {
             <div className="p-2 space-y-6">
                 {groupedItems.map((group, gIndex) => (
                     <div key={gIndex} className="border border-zinc-800 rounded-lg overflow-hidden bg-zinc-900/30">
-                        <div className="p-4 bg-zinc-900/80 border-b border-zinc-800 flex items-center justify-between">
-                            <div className="flex-1 max-w-md flex items-center gap-3">
+                        <div className="p-3 sm:p-4 bg-zinc-900/80 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="flex-1 max-w-md flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                                 <label className="text-sm font-medium text-gray-400 whitespace-nowrap">Category:</label>
                                 <select 
                                     value={group.category_id} 
@@ -372,8 +372,8 @@ export default function PurchasePage() {
                                     ))}
                                 </select>
                             </div>
-                            <div className="flex items-center gap-4 text-sm text-gray-500">
-                                <span>Default HSN: <strong className="text-gray-300">{group.hsn_code || 'N/A'}</strong></span>
+                            <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-4 text-sm text-gray-500">
+                                <span className="text-xs sm:text-sm">Default HSN: <strong className="text-gray-300">{group.hsn_code || 'N/A'}</strong></span>
                                 {isInterState ? (
                                     <span className="bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20 text-xs font-medium">
                                         IGST: {group.gst_rate}%
@@ -384,14 +384,14 @@ export default function PurchasePage() {
                                         <span className="bg-zinc-800 text-gray-300 px-2 py-0.5 rounded border border-zinc-700 text-xs font-medium">SGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
                                     </div>
                                 )}
-                                <button onClick={() => removeCategoryGroup(gIndex)} className="text-red-500 hover:text-red-400 ml-4 p-1">
+                                <button onClick={() => removeCategoryGroup(gIndex)} className="text-red-500 hover:text-red-400 ml-auto sm:ml-4 p-1" title="Delete category group">
                                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                 </button>
                             </div>
                         </div>
                         
                         <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse">
+                            <table className="w-full min-w-[550px] text-left border-collapse">
                                 <thead className="bg-zinc-900/40 text-gray-400 text-xs uppercase tracking-wider">
                                     <tr>
                                         <th className="p-3 font-medium">Product Name</th>

@@ -216,14 +216,14 @@ export default function InventoryPage() {
       <div className="space-y-6 pb-12">
         
         {/* Header */}
-        <div className="flex justify-between items-center border-b border-border pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
           <div>
-            <h1 className="text-3xl font-bold">Inventory</h1>
-            <p className="text-sm text-gray-400 mt-1">Manage product categories and items</p>
+            <h1 className="text-2xl sm:text-3xl font-bold">Inventory</h1>
+            <p className="text-xs sm:text-sm text-gray-400 mt-0.5">Manage product categories and items</p>
           </div>
-          <Link href="/inventory/categories/new" className="bg-blue-600 text-white px-5 py-2.5 rounded-lg shadow hover:bg-blue-700 transition-colors font-medium flex items-center gap-2">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
-            New Category
+          <Link href="/inventory/categories/new" className="bg-blue-600 text-white px-4 sm:px-5 py-2 sm:py-2.5 rounded-lg shadow hover:bg-blue-700 transition-colors font-medium flex items-center justify-center gap-2 text-xs sm:text-sm">
+            <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
+            <span>New Category</span>
           </Link>
         </div>
 
@@ -418,7 +418,7 @@ export default function InventoryPage() {
                       </div>
                     ) : (
                       <>
-                        <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="absolute top-3 right-3 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                           <button onClick={(e) => startEdit(cat, e)} className="p-1.5 bg-zinc-800 hover:bg-blue-500 text-gray-400 hover:text-white rounded transition-colors" title="Edit Category (Ctrl+Enter)">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                           </button>

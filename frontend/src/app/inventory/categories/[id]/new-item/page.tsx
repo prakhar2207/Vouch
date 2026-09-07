@@ -193,7 +193,7 @@ export default function NewItemInCategoryPage() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {/* Brand */}
                       <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1.5">Brand</label>
@@ -210,7 +210,7 @@ export default function NewItemInCategoryPage() {
                     {/* Unit Selector */}
                     <div>
                       <label className="block text-sm font-medium text-gray-400 mb-2">Primary Unit of Measure</label>
-                      <div className="grid grid-cols-4 gap-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         {units.map(u => (
                           <button
                             key={u.value}
@@ -231,7 +231,7 @@ export default function NewItemInCategoryPage() {
                   </div>
                     {/* Simplified Pricing & Stock (Only visible if advanced mode is disabled) */}
                     {!enableAdvancedItemCreation && (
-                      <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-zinc-800">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6 pt-6 border-t border-zinc-800">
                         <div>
                           <label className="block text-sm font-medium text-blue-400 mb-1.5">Maximum Retail Price (MRP) (₹) *</label>
                           <input

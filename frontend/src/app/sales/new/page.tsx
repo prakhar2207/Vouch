@@ -460,13 +460,13 @@ export default function SalesPage() {
       <div className="max-w-6xl mx-auto space-y-6 pb-20">
         
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border pb-4">
-          <div className="flex items-center gap-4">
-            <Link href="/sales" className="text-gray-400 hover:text-white transition-colors">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-4">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <Link href="/sales" className="text-gray-400 hover:text-white transition-colors p-1">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
             </Link>
             <div>
-              <h1 className="text-3xl font-bold">New Sales Invoice</h1>
+              <h1 className="text-2xl sm:text-3xl font-bold">New Sales Invoice</h1>
               {activeFY && (
                 <div className="text-xs text-gray-400 mt-0.5">
                   Financial Year: <span className="font-semibold text-white">{activeFY.name}</span> ({activeFY.start_date} ~ {activeFY.end_date})
@@ -477,7 +477,7 @@ export default function SalesPage() {
           <button
             onClick={handleSave}
             disabled={saving || isReadOnly}
-            className={`px-6 py-2.5 rounded-lg shadow-lg font-medium transition-colors flex items-center gap-2 cursor-pointer ${
+            className={`w-full sm:w-auto justify-center px-6 py-2.5 rounded-lg shadow-lg font-medium transition-colors flex items-center gap-2 cursor-pointer ${
               isReadOnly
                 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 cursor-not-allowed opacity-80'
                 : 'bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50'
@@ -578,8 +578,8 @@ export default function SalesPage() {
             <div className="p-2 space-y-6">
                 {groupedItems.map((group, gIndex) => (
                     <div key={gIndex} className="border border-zinc-800 rounded-lg overflow-hidden bg-zinc-900/30">
-                        <div className="p-4 bg-zinc-900/80 border-b border-zinc-800 flex items-center justify-between">
-                            <div className="flex-1 max-w-md flex items-center gap-3">
+                        <div className="p-3 sm:p-4 bg-zinc-900/80 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="flex-1 max-w-md flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                                 <label className="text-sm font-medium text-gray-400 whitespace-nowrap">Category:</label>
                                 <select 
                                     value={group.category_id} 
@@ -588,12 +588,12 @@ export default function SalesPage() {
                                 >
                                     <option value="">-- Select Category --</option>
                                     {categories.map(c => (
-                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                         <option key={c.id} value={c.id}>{c.name}</option>
                                     ))}
                                 </select>
                             </div>
-                            <div className="flex items-center gap-4 text-sm text-gray-500">
-                                <span>Default HSN: <strong className="text-gray-300">{group.hsn_code || 'N/A'}</strong></span>
+                            <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-4 text-sm text-gray-500">
+                                <span className="text-xs sm:text-sm">Default HSN: <strong className="text-gray-300">{group.hsn_code || 'N/A'}</strong></span>
                                 {isInterState ? (
                                     <span className="bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20 text-xs font-medium">
                                         IGST: {group.gst_rate}%
@@ -604,7 +604,7 @@ export default function SalesPage() {
                                         <span className="bg-zinc-800 text-gray-300 px-2 py-0.5 rounded border border-zinc-700 text-xs font-medium">SGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
                                     </div>
                                 )}
-                                <button onClick={() => removeCategoryGroup(gIndex)} className="text-red-500 hover:text-red-400 ml-4 p-1">
+                                <button onClick={() => removeCategoryGroup(gIndex)} className="text-red-500 hover:text-red-400 ml-auto sm:ml-4 p-1" title="Delete category group">
                                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                 </button>
                             </div>
@@ -629,7 +629,7 @@ export default function SalesPage() {
                                     })}
                             </datalist>
 
-                            <table className="w-full text-left border-collapse">
+                            <table className="w-full min-w-[550px] text-left border-collapse">
                                 <thead className="bg-zinc-900/40 text-gray-400 text-xs uppercase tracking-wider">
                                     <tr>
                                         <th className="p-3 font-medium">Product Name</th>

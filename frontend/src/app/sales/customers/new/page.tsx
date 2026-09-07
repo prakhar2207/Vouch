@@ -62,23 +62,23 @@ export default function NewCustomerPage() {
   return (
     <DashboardLayout>
       <div className="max-w-2xl mx-auto space-y-6">
-        <div className="flex items-center gap-4 border-b border-border pb-4">
-          <Link href="/sales/new" className="text-gray-400 hover:text-white transition-colors">
+        <div className="flex items-center gap-3 sm:gap-4 border-b border-border pb-4">
+          <Link href="/sales/new" className="text-gray-400 hover:text-white transition-colors p-1">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
           </Link>
-          <h1 className="text-3xl font-bold">New Customer</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">New Customer</h1>
         </div>
         
-        <form onSubmit={handleSave} className="bg-card border border-border rounded-xl shadow-sm p-6 space-y-6">
-          <div className="grid grid-cols-2 gap-6">
-            <div className="col-span-2">
+        <form onSubmit={handleSave} className="bg-card border border-border rounded-xl shadow-sm p-4 sm:p-6 space-y-5 sm:space-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+            <div className="sm:col-span-2">
               <label className="block text-sm font-medium text-gray-400 mb-1.5">Customer Name *</label>
               <input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
             </div>
             
             <div>
               <label className="block text-sm font-medium text-gray-400 mb-1.5">GSTIN</label>
-              <input type="text" placeholder="15-digit GSTIN" value={formData.gstin} onChange={e => setFormData({...formData, gstin: e.target.value})} className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
+              <input type="text" placeholder="15-digit GSTIN" value={formData.gstin} onChange={e => setFormData({...formData, gstin: e.target.value})} className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono" />
             </div>
             
             <div>
@@ -101,7 +101,7 @@ export default function NewCustomerPage() {
             </div>
 
             {/* Default Customer Discount */}
-            <div className="col-span-2 bg-zinc-900/50 border border-zinc-800 p-4 rounded-xl space-y-2">
+            <div className="sm:col-span-2 bg-zinc-900/50 border border-zinc-800 p-4 rounded-xl space-y-2">
               <div className="flex justify-between items-center">
                 <label className="block text-sm font-semibold text-gray-200">
                   Default Customer Discount (%)
@@ -128,14 +128,14 @@ export default function NewCustomerPage() {
               </p>
             </div>
             
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <label className="block text-sm font-medium text-gray-400 mb-1.5">Billing Address</label>
-              <textarea rows={3} value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"></textarea>
+              <textarea rows={3} value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none"></textarea>
             </div>
           </div>
           
           <div className="flex justify-end pt-4">
-            <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg shadow-lg font-medium transition-colors disabled:opacity-50">
+            <button type="submit" disabled={saving} className="w-full sm:w-auto justify-center bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg shadow-lg font-medium transition-colors disabled:opacity-50 cursor-pointer">
               {saving ? 'Saving...' : 'Save Customer'}
             </button>
           </div>

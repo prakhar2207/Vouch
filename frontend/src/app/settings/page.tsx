@@ -172,7 +172,7 @@ export default function SettingsPage() {
             {/* Company Profile Edit */}
             <div>
               <h2 className="text-lg font-semibold text-white mb-4 border-b border-zinc-800 pb-2">Firm Details</h2>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-gray-400 mb-1">Firm Name</label>
                   <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
@@ -197,11 +197,11 @@ export default function SettingsPage() {
                     placeholder="Search state by name or code (e.g. 09 / Uttar Pradesh)"
                   />
                 </div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-400 mb-1">Billing Address</label>
                   <textarea value={address} onChange={e => setAddress(e.target.value)} rows={3} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none resize-none" />
                 </div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-400 mb-1">Tagline / Subheading (Printed below firm name)</label>
                   <input type="text" value={tagline} onChange={e => setTagline(e.target.value)} placeholder="e.g. HARDWARE, MILL STORES, PNEUMATICS" className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
                 </div>
@@ -210,8 +210,8 @@ export default function SettingsPage() {
 
             <div>
               <h2 className="text-lg font-semibold text-white mb-4 border-b border-zinc-800 pb-2">Bank Details</h2>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-400 mb-1">Bank Name</label>
                   <input type="text" value={bankName} onChange={e => setBankName(e.target.value)} placeholder="e.g. State Bank of India" className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
                 </div>
@@ -223,7 +223,7 @@ export default function SettingsPage() {
                   <label className="block text-sm text-gray-400 mb-1">IFSC Code</label>
                   <input type="text" value={bankIfsc} onChange={e => setBankIfsc(e.target.value.toUpperCase())} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none uppercase" />
                 </div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-400 mb-1">Branch</label>
                   <input type="text" value={bankBranch} onChange={e => setBankBranch(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
                 </div>
@@ -232,7 +232,7 @@ export default function SettingsPage() {
 
             <div>
               <h2 className="text-lg font-semibold text-white mb-4 border-b border-zinc-800 pb-2">Proprietor Details</h2>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-gray-400 mb-1">Proprietor Name</label>
                   <input type="text" value={proprietorName} onChange={e => setProprietorName(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
@@ -241,7 +241,7 @@ export default function SettingsPage() {
                   <label className="block text-sm text-gray-400 mb-1">Proprietor Phone</label>
                   <input type="tel" value={proprietorPhone} onChange={e => setProprietorPhone(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
                 </div>
-                <div className="col-span-2 mt-2">
+                <div className="sm:col-span-2 mt-2">
                   <label className="block text-sm text-gray-400 mb-2">Digital Signature</label>
                   {(signaturePreview || company.signature_data || company.proprietor_signature) && (
                     <div className="mb-3 p-2 bg-white rounded w-fit">
@@ -399,10 +399,10 @@ export default function SettingsPage() {
             </div>
 
             {/* Financial Years & Period Closing Section */}
-            <div className="bg-card border border-border rounded-xl p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
+            <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2 flex-wrap">
                     <span>Financial Years & Period Closing</span>
                     <span className="text-[10px] font-mono px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded font-bold">
                       GST Rule 46(b)
@@ -415,7 +415,7 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   onClick={() => setIsClosingModalOpen(true)}
-                  className="px-4 py-2 bg-amber-600/15 hover:bg-amber-600/25 text-amber-400 border border-amber-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
+                  className="w-full sm:w-auto justify-center px-4 py-2 bg-amber-600/15 hover:bg-amber-600/25 text-amber-400 border border-amber-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <span>🔒</span>
                   <span>Close Year & Roll-Forward</span>
@@ -423,7 +423,7 @@ export default function SettingsPage() {
               </div>
 
               <div className="overflow-x-auto rounded-xl border border-zinc-800">
-                <table className="w-full text-left text-xs">
+                <table className="w-full text-left text-xs min-w-[500px]">
                   <thead className="bg-zinc-900/90 text-zinc-400 font-semibold border-b border-zinc-800">
                     <tr>
                       <th className="px-4 py-2.5">Financial Year</th>
@@ -477,7 +477,7 @@ export default function SettingsPage() {
               <button 
                 onClick={saveSettings} 
                 disabled={saving}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium shadow transition-colors disabled:opacity-50"
+                className="w-full sm:w-auto justify-center bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium shadow transition-colors disabled:opacity-50 cursor-pointer"
               >
                 {saving ? 'Saving...' : 'Save Changes'}
               </button>

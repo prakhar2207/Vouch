@@ -188,26 +188,26 @@ export default function PurchaseInvoiceList() {
       <div className="space-y-6 flex flex-col h-full pb-12">
         
         {/* Header */}
-        <div className="flex justify-between items-center border-b border-border pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
           <div>
-            <h1 className="text-3xl font-black text-foreground tracking-tight">Purchase Invoices</h1>
+            <h1 className="text-2xl sm:text-3xl font-black text-foreground tracking-tight">Purchase Invoices</h1>
             <p className="text-xs text-muted-foreground mt-1">Inward supplier bills and attached documents</p>
           </div>
           <Link
             href="/purchases/new"
-            className="bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2 rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-1.5"
+            className="w-full sm:w-auto justify-center bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2.5 rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-1.5"
           >
             <Plus className="w-4 h-4" />
             <span>Create / Scan Invoice</span>
-            <kbd className="bg-primary-foreground/20 px-1.5 py-0.5 rounded text-[10px]">F9</kbd>
+            <kbd className="hidden sm:inline bg-primary-foreground/20 px-1.5 py-0.5 rounded text-[10px]">F9</kbd>
           </Link>
         </div>
 
         {/* Invoices Table Card */}
         <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/80 flex-1 overflow-hidden flex flex-col">
-          <div className="px-5 py-3.5 border-b border-border/70 bg-muted/20 flex items-center justify-between">
+          <div className="px-4 sm:px-5 py-3.5 border-b border-border/70 bg-muted/20 flex items-center justify-between">
             <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Previous Invoices</span>
-            <span className="text-xs text-muted-foreground">Click any row to inspect original bill & line items</span>
+            <span className="text-xs text-muted-foreground hidden sm:inline">Click any row to inspect original bill & line items</span>
           </div>
 
           {loading ? (
@@ -233,6 +233,74 @@ export default function PurchaseInvoiceList() {
             </div>
           ) : (
             <div className="flex-1 w-full overflow-auto">
+              {/* Mobile Card List (< md) */}
+              <div className="block md:hidden divide-y divide-border/40">
+                {invoices.map((inv, idx) => (
+                  <div
+                    key={inv.id}
+                    onClick={() => {
+                      setFocusedIndex(idx);
+                      handleOpenVoucherDetail(inv.id);
+                    }}
+                    className="p-4 space-y-2.5 cursor-pointer hover:bg-muted/10 active:bg-muted/20 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-foreground text-sm">{inv.voucher_number}</span>
+                        {inv.has_attachment && (
+                          <span className="px-1.5 py-0.5 bg-blue-500/15 text-blue-400 rounded text-[10px] font-bold border border-blue-500/30">
+                            📎 Doc
+                          </span>
+                        )}
+                      </div>
+                      <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
+                        inv.status === "POSTED"
+                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                          : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                      }`}>
+                        {inv.status}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-medium text-foreground truncate max-w-[200px]">{inv.party_name}</span>
+                      <span className="text-muted-foreground font-mono">{inv.date}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="font-bold text-base font-mono text-foreground">
+                        ₹{parseFloat(inv.total_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </span>
+                      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => handleOpenVoucherDetail(inv.id)}
+                          className="p-2 bg-muted/60 hover:bg-muted text-foreground rounded-lg text-xs font-semibold border border-border/70 transition-colors cursor-pointer"
+                          title="View Document"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleStartEdit(inv)}
+                          className="p-2 bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/30 transition-colors cursor-pointer"
+                          title="Edit Invoice"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteInvoice(inv.id, inv.voucher_number)}
+                          className="p-2 bg-rose-600/15 hover:bg-rose-600/25 text-rose-400 rounded-lg text-xs font-semibold border border-rose-500/30 transition-colors cursor-pointer"
+                          title="Delete Invoice"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop Table (>= md) */}
+              <div className="hidden md:block">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-border/70 bg-muted/30 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -329,9 +397,10 @@ export default function PurchaseInvoiceList() {
                   })}
                 </tbody>
               </table>
+              </div>
 
               {/* Keyboard Shortcuts Hint Bar */}
-              <div className="p-3 border-t border-border/60 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-muted-foreground">
+              <div className="p-3 border-t border-border/60 bg-muted/20 hidden sm:flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-muted-foreground">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="flex items-center gap-1">
                     <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/70 font-mono text-[10px] text-foreground font-bold">↑</kbd>

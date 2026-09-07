@@ -104,7 +104,7 @@ export default function NewCategoryPage() {
           </div>
 
           {/* Row 2: HSN and unified GST Rate (with explicit breakdown) */}
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-400 mb-1.5">HSN Code</label>
               <input

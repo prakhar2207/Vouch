@@ -143,13 +143,16 @@ export default function PrintInvoicePage() {
   return (
     <div className="bg-white text-black min-h-screen">
       {/* Print Button (Hidden on Print) */}
-      <div className="print:hidden p-4 bg-gray-100 border-b border-gray-300 flex justify-between items-center">
-         <button onClick={() => router.back()} className="text-gray-600 hover:text-gray-900 font-medium">&larr; Back</button>
-         <button onClick={() => window.print()} className="bg-blue-600 text-white px-6 py-2 rounded shadow font-medium">Print Invoice (A4)</button>
+      <div className="print:hidden p-3 sm:p-4 bg-gray-100 border-b border-gray-300 flex justify-between items-center gap-2">
+         <button onClick={() => router.back()} className="text-gray-600 hover:text-gray-900 font-medium text-xs sm:text-sm cursor-pointer">&larr; Back</button>
+         <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-4 sm:px-6 py-2 rounded shadow font-semibold text-xs sm:text-sm cursor-pointer transition-colors">
+           Print Invoice (A4)
+         </button>
       </div>
 
-      {/* A4 Sheet Container */}
-      <div className="w-[210mm] min-h-[297mm] mx-auto bg-white p-8 pb-12 shadow-[0_0_10px_rgba(0,0,0,0.1)] print:shadow-none print:p-0">
+      {/* A4 Sheet Container Wrapper with mobile horizontal scroll */}
+      <div className="w-full overflow-x-auto p-2 sm:p-8 flex justify-start sm:justify-center">
+        <div className="w-[210mm] min-w-[210mm] min-h-[297mm] bg-white p-8 pb-12 shadow-[0_0_10px_rgba(0,0,0,0.1)] print:shadow-none print:p-0 print:w-[210mm]">
         
         {/* Main Border Box */}
         <div className="border-2 border-black h-full flex flex-col">
@@ -429,6 +432,7 @@ export default function PrintInvoicePage() {
             </div>
 
         </div>
+      </div>
       </div>
     </div>
   );

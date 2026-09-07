@@ -24,8 +24,8 @@ export default function Login() {
   };
 
   return (
-    <div className="flex h-screen items-center justify-center bg-background text-foreground">
-      <div className="bg-card text-card-foreground p-8 rounded shadow-md border border-border w-96">
+    <div className="flex min-h-screen items-center justify-center bg-background text-foreground p-4">
+      <div className="bg-card text-card-foreground p-6 sm:p-8 rounded-2xl shadow-xl border border-border w-full max-w-sm">
         <h1 className="text-2xl font-bold mb-6">Vouch Login</h1>
         {error && <p className="text-red-500 mb-4 text-sm">{error}</p>}
         <form onSubmit={handleLogin} className="space-y-4">
