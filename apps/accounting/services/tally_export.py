@@ -287,6 +287,10 @@ class TallyXMLExporter:
             return "Purchase Accounts"
         elif "sale" in l_type or "sales" in g_name:
             return "Sales Accounts"
+        elif "indirect expense" in g_name or "round_off" in l_type or "round off" in (ledger.name or "").lower():
+            return "Indirect Expenses"
+        elif "indirect income" in g_name:
+            return "Indirect Incomes"
         elif ledger.group:
             if ledger.group.nature == "EXPENSE":
                 return "Direct Expenses"

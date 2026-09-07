@@ -245,21 +245,26 @@ class SalesInvoiceService:
     @staticmethod
     def _get_or_create_round_off_ledger(company: Company) -> Ledger:
         from apps.ledgers.models import LedgerGroup
+        indirect_grp = LedgerGroup.objects.filter(company=company, name__iexact="Indirect Expenses").first() or \
+                       LedgerGroup.objects.filter(company=company, name__icontains="Indirect Expense").first()
+        if not indirect_grp:
+            indirect_grp, _ = LedgerGroup.objects.get_or_create(
+                company=company,
+                name="Indirect Expenses",
+                defaults={"nature": "EXPENSE"}
+            )
+
         round_off = Ledger.objects.filter(company=company, name__iexact="Round Off").first()
         if not round_off:
-            expense_grp = LedgerGroup.objects.filter(company=company, nature="EXPENSE").first()
-            if not expense_grp:
-                expense_grp = LedgerGroup.objects.filter(company=company, name__icontains="Expense").first()
-            if not expense_grp:
-                expense_grp = LedgerGroup.objects.create(
-                    company=company,
-                    name="Indirect Expenses",
-                    nature="EXPENSE"
-                )
             round_off = Ledger.objects.create(
                 company=company,
-                group=expense_grp,
+                group=indirect_grp,
                 name="Round Off",
                 ledger_type="ROUND_OFF"
             )
+        elif round_off.group_id != indirect_grp.id:
+            # Self-healing: if Round Off was previously assigned to Purchase Accounts, reassign to Indirect Expenses
+            round_off.group = indirect_grp
+            round_off.save(update_fields=['group'])
+
         return round_off
