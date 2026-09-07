@@ -111,10 +111,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* TOP NAVIGATION BAR */}
       <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-card/90 backdrop-blur-md">
-        <div className="w-full px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
+        <div className="w-full px-3 sm:px-6 h-14 flex items-center justify-between gap-2 sm:gap-4">
           
           {/* Left Section: Brand & Core Nav */}
-          <div className="flex items-center gap-6 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-6 min-w-0">
             {/* Mobile Hamburger Button */}
             <button
               onClick={() => setIsMobileNavOpen(true)}
@@ -330,9 +330,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
 
           {/* Right Section: Unified Context Pill, Search, Utilities & Profile */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Unified Compact Context Pill: FY · Date · Alt+F2 */}
-            <div ref={fyRef} className="relative">
+            <div ref={fyRef} className="relative hidden md:block">
               <button
                 onClick={() => setIsPeriodModalOpen(true)}
                 className="flex items-center gap-2 px-2.5 py-1 rounded-md border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs"
@@ -353,7 +353,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <button
               id="tour-command-palette-btn"
               onClick={() => setIsCommandPaletteOpen(true)}
-              className="flex items-center gap-2 px-2 py-1 rounded-md border border-border/50 bg-muted/20 hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs"
+              className="flex items-center gap-1.5 sm:gap-2 p-1.5 sm:px-2 sm:py-1 rounded-md border border-border/50 bg-muted/20 hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs"
               title="Command Search (Ctrl+K)"
             >
               <Search className="w-3.5 h-3.5 text-muted-foreground" />
@@ -367,7 +367,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <button
               id="tour-help-btn"
               onClick={() => setIsHelpOpen(true)}
-              className="p-1.5 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted/60 transition-colors cursor-pointer"
+              className="hidden md:inline-flex p-1.5 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted/60 transition-colors cursor-pointer"
               title="Keyboard Shortcuts & Help (F1)"
             >
               <HelpCircle className="w-4 h-4" />
