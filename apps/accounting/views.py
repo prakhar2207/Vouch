@@ -291,10 +291,12 @@ class VoucherDetailAPIView(APIView):
             for item in items:
                 items_data.append({
                     "id": str(item.id),
-                    "product_name": item.product.name,
-                    "hsn_code": item.product.hsn_code,
+                    "product_id": str(item.product.id) if item.product else None,
+                    "product_name": item.product.name if item.product else "Unnamed Product",
+                    "brand": item.product.brand or "" if item.product else "",
+                    "hsn_code": item.product.hsn_code if item.product else "",
                     "quantity": item.quantity,
-                    "unit": item.product.unit,
+                    "unit": item.product.unit if item.product else "PCS",
                     "rate": item.rate,
                     "discount_percent": item.discount_percent,
                     "discount_amount": item.discount_amount,
@@ -435,21 +437,13 @@ class VoucherDetailAPIView(APIView):
 
                 # Full line items update
                 if 'items' in data and isinstance(data['items'], list):
-                    # 1. Reverse previous accounting & stock if POSTED
-                    if voucher.status == 'POSTED':
-                        VoucherService.cancel_voucher(voucher)
+                    # 1. Reverse previous accounting & stock if POSTED or VALIDATING
+                    if voucher.status in ['POSTED', 'VALIDATING']:
+                        VoucherService.cancel_voucher(voucher, user=request.user)
 
-                    old_product_ids = list(voucher.items.values_list('product_id', flat=True))
-
-                    # 2. Clear old items and ledger entries
+                    # 2. Clear old items and ledger entries (never delete product master records during edit)
                     voucher.items.all().delete()
                     voucher.ledger_entries.all().delete()
-                    
-                    # Cleanup orphaned products from the previous version of this invoice
-                    for pid in set(old_product_ids):
-                        prod = Product.objects.filter(id=pid).first()
-                        if prod and not prod.voucher_items.exists() and not prod.entries.exists():
-                            prod.delete()
 
                     # 3. Process each updated line item
                     total_invoice_value = Decimal('0.00')
@@ -474,13 +468,21 @@ class VoucherDetailAPIView(APIView):
                         if unit not in fractional_units:
                             qty = Decimal(str(int(round(float(qty)))))
 
-                        # Resolve or create product (respecting brand vs unbranded)
-                        item_brand = str(item.get('brand', '')).strip()
+                        # Resolve product: check product_id first, then name + brand, then company-wide name/canonical match
                         from apps.inventory.services.normalization_service import normalize_product_name, get_canonical_key
                         clean_item_name = normalize_product_name(raw_name)
                         canon_key = get_canonical_key(raw_name)
+                        item_brand = str(item.get('brand', '')).strip()
 
-                        if item_brand:
+                        product = None
+                        prod_id = item.get('product_id')
+                        if prod_id and str(prod_id).strip():
+                            try:
+                                product = Product.objects.filter(id=prod_id, company=company).first()
+                            except Exception:
+                                product = None
+
+                        if not product and item_brand:
                             product = Product.objects.filter(
                                 company=company,
                                 name__iexact=clean_item_name,
@@ -490,31 +492,25 @@ class VoucherDetailAPIView(APIView):
                                 for p in Product.objects.filter(company=company, brand__iexact=item_brand):
                                     if get_canonical_key(p.name) == canon_key:
                                         product = p
-                                        if p.name != clean_item_name:
-                                            p.name = clean_item_name
-                                            p.save(update_fields=['name'])
                                         break
-                        else:
-                            # No brand in purchase bill -> Do not touch branded items, target unbranded
+
+                        if not product:
+                            # Search company-wide without brand restriction
                             product = Product.objects.filter(
                                 company=company,
-                                name__iexact=clean_item_name,
-                                brand__in=["", None, "Unbranded", "Generic"]
+                                name__iexact=clean_item_name
                             ).first()
                             if not product:
-                                for p in Product.objects.filter(company=company, brand__in=["", None, "Unbranded", "Generic"]):
+                                for p in Product.objects.filter(company=company):
                                     if get_canonical_key(p.name) == canon_key:
                                         product = p
-                                        if p.name != clean_item_name:
-                                            p.name = clean_item_name
-                                            p.save(update_fields=['name'])
                                         break
 
                         discount_pct = Decimal(str(item.get('discount_percent', '0.00')))
                         net_rate = (rate * (Decimal('100') - discount_pct) / Decimal('100')).quantize(Decimal('0.01'))
 
                         if not product:
-                            # Try to inherit category from existing sibling product of same name
+                            # Auto-create product only if no product exists with this name in inventory
                             category = None
                             existing_sibling = Product.objects.filter(company=company, name__iexact=clean_item_name).first()
                             if existing_sibling and existing_sibling.category:
@@ -525,7 +521,7 @@ class VoucherDetailAPIView(APIView):
                             if not category:
                                 category = ProductCategory.objects.create(
                                     company=company,
-                                    name="General Purchases",
+                                    name="General Belts" if "BELT" in clean_item_name.upper() else "General Products",
                                     hsn_code=hsn,
                                     gst_rate=gst_pct
                                 )
@@ -540,14 +536,16 @@ class VoucherDetailAPIView(APIView):
                                 hsn_code=hsn or category.hsn_code,
                                 gst_rate=gst_pct,
                                 unit=unit,
-                                purchase_price=net_rate,
-                                purchase_price_from_invoice=True,
-                                selling_price=rate * Decimal('1.25')
+                                purchase_price=net_rate if voucher.voucher_type == 'PURCHASE' else Decimal('0.00'),
+                                purchase_price_from_invoice=(voucher.voucher_type == 'PURCHASE'),
+                                selling_price=rate if voucher.voucher_type == 'SALES' else rate * Decimal('1.25')
                             )
                         else:
-                            if net_rate > Decimal('0.00'):
+                            if voucher.voucher_type == 'PURCHASE' and net_rate > Decimal('0.00'):
                                 product.purchase_price = net_rate
                                 product.purchase_price_from_invoice = True
+                            elif voucher.voucher_type == 'SALES' and rate > Decimal('0.00'):
+                                product.selling_price = rate
                             if hsn:
                                 product.hsn_code = hsn
                             if gst_pct > Decimal('0.00'):

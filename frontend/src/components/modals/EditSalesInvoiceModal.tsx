@@ -20,7 +20,9 @@ import {
 
 interface EditableSalesItem {
   id?: string;
+  product_id?: string;
   product_name: string;
+  brand?: string;
   hsn_code: string;
   quantity: number;
   unit: string;
@@ -74,12 +76,14 @@ export default function EditSalesInvoiceModal({
 
         const loadedItems: EditableSalesItem[] = (v.items || []).map((item: any) => ({
           id: item.id,
+          product_id: item.product_id || undefined,
           product_name: item.product_name || "",
+          brand: item.brand || "",
           hsn_code: item.hsn_code || "",
           quantity: parseFloat(item.quantity) || 1,
           unit: item.unit || "PCS",
           rate: parseFloat(item.rate) || 0,
-          discount_percent: parseFloat(item.discount_percent) || 0,
+          discount_percent: item.discount_percent !== undefined && item.discount_percent !== null ? parseFloat(item.discount_percent) : 0,
           gst_rate: parseFloat(item.gst_rate) || 18,
         }));
 
@@ -197,12 +201,14 @@ export default function EditSalesInvoiceModal({
         party_name: partyName.trim(),
         narration: narration.trim(),
         items: items.map((it) => ({
+          product_id: it.product_id,
           product_name: it.product_name.trim(),
+          brand: it.brand?.trim() || "",
           hsn_code: it.hsn_code.trim(),
           quantity: it.quantity,
           rate: it.rate,
           unit: it.unit.trim().toUpperCase() || "PCS",
-          discount_percent: it.discount_percent || 0,
+          discount_percent: it.discount_percent !== undefined && it.discount_percent !== null ? Number(it.discount_percent) : 0,
           gst_rate: it.gst_rate,
         })),
       };

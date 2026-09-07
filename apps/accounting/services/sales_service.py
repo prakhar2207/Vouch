@@ -95,8 +95,8 @@ class SalesInvoiceService:
             if rate <= Decimal('0.00') and product.selling_price > Decimal('0.00'):
                 rate = product.selling_price
                 
-            # Automatically apply party's default discount if discount_percent is 0
-            if discount_pct <= Decimal('0.00') and party_ledger.discount_percent > Decimal('0.00'):
+            # Only apply party's default discount if discount_percent is not provided in item
+            if item.get('discount_percent') is None and party_ledger.discount_percent > Decimal('0.00'):
                 discount_pct = party_ledger.discount_percent
 
             gross = qty * rate
