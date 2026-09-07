@@ -304,3 +304,135 @@ class SalesInvoiceService:
                 defaults={'group': tax_grp, 'ledger_type': 'TAX'}
             )
         return ledger
+
+    @classmethod
+    def reassign_misallocated_tax_entries(cls, company: Company = None):
+        """
+        Auto-heals and enforces strict GST tax separation:
+        1. Any SALES voucher credit entry hitting an INPUT tax ledger or generic tax ledger
+           is reassigned to the corresponding OUTPUT tax ledger.
+        2. Any PURCHASE voucher debit entry hitting an OUTPUT tax ledger
+           is reassigned to the corresponding INPUT tax ledger.
+        3. Recalculates current_balance and LedgerBalance for all affected ledgers from scratch.
+        """
+        from apps.companies.models import Company as CompanyModel
+        from apps.accounting.models import LedgerEntry, LedgerBalance
+        from apps.accounting.services.purchase_service import PurchaseInvoiceService
+        from decimal import Decimal
+
+        companies = [company] if company else list(CompanyModel.objects.all())
+
+        for comp in companies:
+            # Fast-path check: do we have any misallocated entries in this company?
+            misallocated_sales = LedgerEntry.objects.filter(
+                voucher__company=comp,
+                voucher__voucher_type='SALES',
+                credit_amount__gt=0
+            ).select_related('ledger')
+
+            has_misallocated_sales = any(
+                'INPUT' in (e.ledger.name or '').upper() or (e.ledger.name or '').strip().upper() in ['CGST', 'SGST', 'IGST']
+                for e in misallocated_sales
+            )
+
+            misallocated_purchases = LedgerEntry.objects.filter(
+                voucher__company=comp,
+                voucher__voucher_type='PURCHASE',
+                debit_amount__gt=0
+            ).select_related('ledger')
+
+            has_misallocated_purchases = any(
+                'OUTPUT' in (e.ledger.name or '').upper()
+                for e in misallocated_purchases
+            )
+
+            if not has_misallocated_sales and not has_misallocated_purchases:
+                continue
+
+            output_cgst = cls._get_or_create_output_tax_ledger(comp, 'CGST')
+            output_sgst = cls._get_or_create_output_tax_ledger(comp, 'SGST')
+            output_igst = cls._get_or_create_output_tax_ledger(comp, 'IGST')
+
+            input_cgst = PurchaseInvoiceService._get_or_create_input_tax_ledger(comp, 'CGST')
+            input_sgst = PurchaseInvoiceService._get_or_create_input_tax_ledger(comp, 'SGST')
+            input_igst = PurchaseInvoiceService._get_or_create_input_tax_ledger(comp, 'IGST')
+
+            affected_ledgers = set()
+
+            # Fix Sales tax entries
+            if has_misallocated_sales:
+                for entry in misallocated_sales:
+                    lname = (entry.ledger.name or '').strip().upper()
+                    if 'INPUT' in lname or lname in ['CGST', 'SGST', 'IGST']:
+                        affected_ledgers.add(entry.ledger)
+                        if 'CGST' in lname:
+                            entry.ledger = output_cgst
+                            affected_ledgers.add(output_cgst)
+                        elif 'SGST' in lname or 'UTGST' in lname:
+                            entry.ledger = output_sgst
+                            affected_ledgers.add(output_sgst)
+                        elif 'IGST' in lname:
+                            entry.ledger = output_igst
+                            affected_ledgers.add(output_igst)
+                        entry.save(update_fields=['ledger'])
+
+            # Fix Purchase tax entries
+            if has_misallocated_purchases:
+                for entry in misallocated_purchases:
+                    lname = (entry.ledger.name or '').strip().upper()
+                    if 'OUTPUT' in lname:
+                        affected_ledgers.add(entry.ledger)
+                        if 'CGST' in lname:
+                            entry.ledger = input_cgst
+                            affected_ledgers.add(input_cgst)
+                        elif 'SGST' in lname or 'UTGST' in lname:
+                            entry.ledger = input_sgst
+                            affected_ledgers.add(input_sgst)
+                        elif 'IGST' in lname:
+                            entry.ledger = input_igst
+                            affected_ledgers.add(input_igst)
+                        entry.save(update_fields=['ledger'])
+
+            # Recalculate closing balances for all affected ledgers
+            for ldr in affected_ledgers:
+                op_balance = Decimal(str(ldr.opening_balance or '0.00'))
+                entries = LedgerEntry.objects.filter(ledger=ldr, voucher__status='POSTED')
+                total_dr = Decimal('0.00')
+                total_cr = Decimal('0.00')
+                for e in entries:
+                    total_dr += Decimal(str(e.debit_amount or '0.00'))
+                    total_cr += Decimal(str(e.credit_amount or '0.00'))
+
+                if ldr.opening_balance_type == 'DEBIT':
+                    ldr.current_balance = op_balance + total_dr - total_cr
+                else:
+                    ldr.current_balance = op_balance + total_cr - total_dr
+
+                ldr.save(update_fields=['current_balance'])
+
+                # Update LedgerBalance (FY level balances) if exists
+                for lb in LedgerBalance.objects.filter(ledger=ldr).select_related('financial_year'):
+                    fy = lb.financial_year
+                    fy_entries = LedgerEntry.objects.filter(
+                        ledger=ldr,
+                        voucher__status='POSTED',
+                        voucher__voucher_date__gte=fy.start_date,
+                        voucher__voucher_date__lte=fy.end_date
+                    )
+                    fy_dr = Decimal('0.00')
+                    fy_cr = Decimal('0.00')
+                    for e in fy_entries:
+                        fy_dr += Decimal(str(e.debit_amount or '0.00'))
+                        fy_cr += Decimal(str(e.credit_amount or '0.00'))
+                    
+                    lb_op = Decimal(str(lb.opening_balance or '0.00'))
+                    if lb.opening_type == 'DR':
+                        net = lb_op + fy_dr - fy_cr
+                        lb.closing_type = 'DR' if net >= 0 else 'CR'
+                        lb.closing_balance = abs(net)
+                    else:
+                        net = lb_op + fy_cr - fy_dr
+                        lb.closing_type = 'CR' if net >= 0 else 'DR'
+                        lb.closing_balance = abs(net)
+                    lb.save(update_fields=['closing_balance', 'closing_type'])
+

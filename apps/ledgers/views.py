@@ -69,6 +69,11 @@ class LedgerListView(APIView):
     def get(self, request, company_id):
         try:
             company = Company.objects.get(id=company_id, users__user=request.user)
+            
+            # Enforce strict GST separation & auto-heal historical entries
+            from apps.accounting.services.sales_service import SalesInvoiceService
+            SalesInvoiceService.reassign_misallocated_tax_entries(company)
+
             ledgers = Ledger.objects.filter(company=company).select_related('group').order_by('name')
             data = [
                 {

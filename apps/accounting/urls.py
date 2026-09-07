@@ -2,7 +2,8 @@ from django.urls import path
 from .views import (
     CreateSalesInvoiceAPIView, CreatePurchaseInvoiceAPIView, TrialBalanceAPIView, 
     ListVouchersAPIView, VoucherDetailAPIView, LedgerStatementAPIView, 
-    CreatePaymentReceiptAPIView, ListPaymentReceiptAPIView, UniversalVoucherAPIView
+    CreatePaymentReceiptAPIView, ListPaymentReceiptAPIView, UniversalVoucherAPIView,
+    SyncTaxLedgersAPIView
 )
 from .ocr_views import OCRExtractAPIView
 from .b2b_views import (
@@ -31,5 +32,9 @@ urlpatterns = [
 
     # Tally Export
     path('export/tally/xml/', TallyExportAPIView.as_view(), name='export_tally_xml'),
+
+    # Tax Ledgers Auto-healing & Sync
+    path('sync-tax-ledgers/', SyncTaxLedgersAPIView.as_view(), name='sync_tax_ledgers'),
+    path('sync-tax-ledgers/<uuid:company_id>/', SyncTaxLedgersAPIView.as_view(), name='sync_tax_ledgers_company'),
 ]
 

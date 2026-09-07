@@ -757,6 +757,10 @@ class LedgerStatementAPIView(APIView):
             import collections
 
             company = Company.objects.get(id=company_id, users__user=request.user)
+            
+            # Enforce strict GST separation & auto-heal historical misallocated entries
+            SalesInvoiceService.reassign_misallocated_tax_entries(company)
+
             ledger = Ledger.objects.select_related('group').get(id=ledger_id, company=company)
 
             # Date Range Filters
@@ -1313,4 +1317,26 @@ class UniversalVoucherAPIView(APIView):
 
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class SyncTaxLedgersAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, company_id=None):
+        try:
+            from apps.companies.models import Company
+            from apps.accounting.services.sales_service import SalesInvoiceService
+            if company_id:
+                company = Company.objects.get(id=company_id, users__user=request.user)
+                SalesInvoiceService.reassign_misallocated_tax_entries(company)
+            else:
+                user_companies = Company.objects.filter(users__user=request.user)
+                for comp in user_companies:
+                    SalesInvoiceService.reassign_misallocated_tax_entries(comp)
+            return Response({"success": True, "message": "All Input and Output tax ledgers successfully synchronized."})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def get(self, request, company_id=None):
+        return self.post(request, company_id)
+
 
