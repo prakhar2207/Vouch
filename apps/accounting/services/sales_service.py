@@ -10,11 +10,27 @@ from apps.gst.services.gst_calculator import GSTCalculator
 class SalesInvoiceService:
     @staticmethod
     @transaction.atomic
-    def generate_sales_invoice(company: Company, user, party_ledger: Ledger, items_data: list, sales_ledger: Ledger, cgst_ledger: Ledger, sgst_ledger: Ledger, igst_ledger: Ledger, manual_voucher_number=None, manual_voucher_date=None):
+    def generate_sales_invoice(
+        company: Company, 
+        user, 
+        party_ledger: Ledger, 
+        items_data: list, 
+        sales_ledger: Ledger, 
+        cgst_ledger: Ledger, 
+        sgst_ledger: Ledger, 
+        igst_ledger: Ledger, 
+        manual_voucher_number=None, 
+        manual_voucher_date=None,
+        buyer_name=None,
+        buyer_address=None,
+        buyer_gstin=None,
+        buyer_state_code=None,
+        buyer_phone=None
+    ):
         """
         End-to-End orchestration of a Sales Invoice.
         1. Calculates precise GST and discounts.
-        2. Generates Voucher and VoucherItems.
+        2. Generates Voucher and VoucherItems (with optional ad-hoc buyer details).
         3. Generates the exact 5-way double-entry accounting strings.
         Returns the DRAFT voucher.
         """
@@ -27,6 +43,8 @@ class SalesInvoiceService:
         else:
             v_num, fy = InvoiceSequenceService.get_next_number(company, 'SALES', v_date)
         
+        narration_text = f"Sales to {buyer_name} (Settlement: {party_ledger.name})" if buyer_name else f"Sales to {party_ledger.name}"
+        
         voucher = Voucher.objects.create(
             company=company,
             financial_year=fy,
@@ -34,9 +52,14 @@ class SalesInvoiceService:
             voucher_number=v_num,
             voucher_date=v_date,
             party_ledger=party_ledger,
+            buyer_name=buyer_name,
+            buyer_address=buyer_address,
+            buyer_gstin=buyer_gstin,
+            buyer_state_code=buyer_state_code,
+            buyer_phone=buyer_phone,
             status='DRAFT',
             created_by=user,
-            narration=f"Sales to {party_ledger.name}"
+            narration=narration_text
         )
         
         total_invoice_value = Decimal('0.00')

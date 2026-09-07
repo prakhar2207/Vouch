@@ -31,6 +31,7 @@ export default function NewItemInCategoryPage() {
     wholesaler_price: '',
     min_selling_price: '',
     purchase_price: '',
+    costing_method: 'AVG_COST',
     opening_qty: '',
     warehouse_id: '',
     opening_batch_number: '',
@@ -229,8 +230,8 @@ export default function NewItemInCategoryPage() {
                       </div>
                     </div>
                   </div>
-                    {/* Pricing & Stock */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6 pt-6 border-t border-zinc-800">
+                    {/* Pricing, Costing & Stock */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6 pt-6 border-t border-zinc-800">
                       <div>
                         <label className="block text-sm font-medium text-blue-400 mb-1.5">Maximum Retail Price (MRP) (₹) *</label>
                         <input
@@ -260,6 +261,22 @@ export default function NewItemInCategoryPage() {
                             </span>
                           </p>
                         )}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-amber-400 mb-1.5">Costing / Valuation Method</label>
+                        <select
+                          value={formData.costing_method}
+                          onChange={e => setFormData({ ...formData, costing_method: e.target.value })}
+                          className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-all text-sm"
+                        >
+                          <option value="AVG_COST">Average Cost (Moving)</option>
+                          <option value="FIFO">FIFO (First-In, First-Out)</option>
+                          <option value="STD_COST">Standard Cost</option>
+                          <option value="LIFO">LIFO (Last-In, First-Out)</option>
+                        </select>
+                        <p className="text-[11px] text-zinc-500 mt-1">
+                          Determines COGS calculation & export valuation
+                        </p>
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1.5">Opening Quantity (Optional)</label>

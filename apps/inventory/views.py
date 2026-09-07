@@ -184,6 +184,7 @@ class ProductListView(APIView):
                     "purchase_price_from_invoice": getattr(p, 'purchase_price_from_invoice', False) and has_posted_purchase,
                     "stock_quantity": int(round(p.stock_quantity)) if is_integer_unit(p.unit) else p.stock_quantity,
                     "has_invoice_stock": has_posted_purchase,
+                    "costing_method": getattr(p, 'costing_method', 'AVG_COST') or 'AVG_COST',
                     "track_batches": p.track_batches,
                     "track_serial_numbers": p.track_serial_numbers
                 })
@@ -252,6 +253,7 @@ class ProductListView(APIView):
                 min_selling_price=data.get('min_selling_price', 0.00),
                 purchase_price=data.get('purchase_price', 0.00),
                 reorder_level=data.get('reorder_level', 0.00),
+                costing_method=data.get('costing_method', 'AVG_COST'),
                 track_batches=data.get('track_batches', False),
                 track_serial_numbers=data.get('track_serial_numbers', False)
             )
@@ -321,6 +323,7 @@ class ProductDetailView(APIView):
                 product.purchase_price_from_invoice = False
             if 'sku' in data: product.sku = data['sku']
             if 'unit' in data: product.unit = data['unit']
+            if 'costing_method' in data: product.costing_method = data['costing_method']
             
             if 'stock_quantity' in data:
                 new_stock = float(data['stock_quantity'])

@@ -1,4 +1,4 @@
-﻿import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET
 from xml.dom import minidom
 from datetime import datetime
 from typing import Optional, List
@@ -148,6 +148,19 @@ class TallyXMLExporter:
                 rate_node = ET.SubElement(item_el, "STANDARDCOST")
                 rate_node.text = str(prod.purchase_price)
 
+            # Costing and Valuation Method
+            costing_map = {
+                'AVG_COST': 'Avg. Cost',
+                'FIFO': 'FIFO',
+                'LIFO': 'LIFO Annual',
+                'STD_COST': 'Standard Cost'
+            }
+            method_str = costing_map.get(getattr(prod, 'costing_method', 'AVG_COST'), 'Avg. Cost')
+            costing_node = ET.SubElement(item_el, "COSTINGMETHOD")
+            costing_node.text = method_str
+            val_node = ET.SubElement(item_el, "VALUATIONMETHOD")
+            val_node.text = method_str
+
     @classmethod
     def _append_vouchers(
         cls,
@@ -192,6 +205,26 @@ class TallyXMLExporter:
             if vch.party_ledger:
                 party_node = ET.SubElement(vch_el, "PARTYLEDGERNAME")
                 party_node.text = vch.party_ledger.name
+
+            # Ad-hoc buyer details for cash / counter sales
+            if getattr(vch, 'buyer_name', None):
+                buyer_node = ET.SubElement(vch_el, "BASICBUYERNAME")
+                buyer_node.text = vch.buyer_name
+
+            if getattr(vch, 'buyer_address', None):
+                addr_list = ET.SubElement(vch_el, "BUYERADDRESS.LIST")
+                for line in vch.buyer_address.split("\n"):
+                    if line.strip():
+                        addr_line = ET.SubElement(addr_list, "BUYERADDRESS")
+                        addr_line.text = line.strip()
+
+            if getattr(vch, 'buyer_state_code', None):
+                pos_node = ET.SubElement(vch_el, "PLACEOFSUPPLY")
+                pos_node.text = vch.buyer_state_code
+
+            if getattr(vch, 'buyer_gstin', None):
+                gstin_node = ET.SubElement(vch_el, "PARTYGSTIN")
+                gstin_node.text = vch.buyer_gstin
 
             if vch.narration:
                 nar_node = ET.SubElement(vch_el, "NARRATION")

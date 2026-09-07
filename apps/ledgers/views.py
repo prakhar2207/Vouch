@@ -4,6 +4,65 @@ from rest_framework.permissions import IsAuthenticated
 from .models import Ledger
 from apps.companies.models import Company
 
+class LedgerGroupListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, company_id):
+        try:
+            from .models import LedgerGroup
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            groups = LedgerGroup.objects.filter(company=company).order_by('nature', 'name')
+            data = [
+                {
+                    "id": str(g.id),
+                    "name": g.name,
+                    "nature": g.nature,
+                    "parent_group_id": str(g.parent_group_id) if g.parent_group_id else None,
+                    "parent_group_name": g.parent_group.name if g.parent_group else None,
+                }
+                for g in groups
+            ]
+            return Response({"success": True, "data": data})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
+    def post(self, request, company_id):
+        try:
+            from .models import LedgerGroup
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            data = request.data
+            name = str(data.get('name') or '').strip()
+            nature = str(data.get('nature') or 'ASSET').strip().upper()
+            parent_id = data.get('parent_group_id')
+            
+            if not name:
+                return Response({"success": False, "error": "Group name is required."}, status=400)
+            
+            parent_group = None
+            if parent_id:
+                parent_group = LedgerGroup.objects.filter(id=parent_id, company=company).first()
+                if parent_group:
+                    nature = parent_group.nature
+                    
+            group, created = LedgerGroup.objects.get_or_create(
+                company=company,
+                name=name,
+                defaults={'nature': nature, 'parent_group': parent_group}
+            )
+            return Response({
+                "success": True,
+                "data": {
+                    "id": str(group.id),
+                    "name": group.name,
+                    "nature": group.nature,
+                    "parent_group_id": str(group.parent_group_id) if group.parent_group_id else None
+                },
+                "created": created
+            }, status=201 if created else 200)
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
+
 class LedgerListView(APIView):
     permission_classes = [IsAuthenticated]
     
@@ -15,7 +74,9 @@ class LedgerListView(APIView):
                 {
                     "id": str(l.id),
                     "name": l.name,
+                    "group_id": str(l.group_id) if l.group_id else None,
                     "group": l.group.name if l.group else "",
+                    "nature": l.group.nature if l.group else "ASSET",
                     "ledger_type": l.ledger_type,
                     "gstin": l.gstin or "",
                     "state_code": l.state_code or "",
@@ -23,8 +84,10 @@ class LedgerListView(APIView):
                     "email": l.email or "",
                     "address": l.address or "",
                     "current_balance": l.current_balance,
+                    "opening_balance": float(l.opening_balance or 0),
                     "opening_balance_type": l.opening_balance_type,
                     "discount_percent": float(l.discount_percent or 0),
+                    "is_active": l.is_active,
                 } for l in ledgers
             ]
             return Response({"success": True, "data": data})
@@ -91,11 +154,16 @@ class LedgerListView(APIView):
 
             # Find or create the group
             from .models import LedgerGroup
-            group = LedgerGroup.objects.filter(company=company, name__icontains=group_name).first()
+            group = None
+            if data.get('group_id'):
+                group = LedgerGroup.objects.filter(company=company, id=data.get('group_id')).first()
+            if not group:
+                group = LedgerGroup.objects.filter(company=company, name__iexact=group_name).first() or \
+                        LedgerGroup.objects.filter(company=company, name__icontains=group_name).first()
             if not group:
                 # Default nature mapping based on common groups
                 nature = 'ASSET'
-                if 'Creditor' in group_name or 'Capital' in group_name or 'Loan' in group_name:
+                if 'Creditor' in group_name or 'Capital' in group_name or 'Loan' in group_name or 'Duties' in group_name or 'Taxes' in group_name or 'Liability' in group_name:
                     nature = 'LIABILITY'
                 elif 'Income' in group_name or 'Sales' in group_name:
                     nature = 'INCOME'
@@ -115,6 +183,13 @@ class LedgerListView(APIView):
                 except Exception:
                     pass
 
+            op_balance = Decimal('0.00')
+            if 'opening_balance' in data and data.get('opening_balance') is not None and str(data.get('opening_balance')).strip() != '':
+                try:
+                    op_balance = Decimal(str(data.get('opening_balance')))
+                except Exception:
+                    pass
+
             # Create ledger
             ledger = Ledger.objects.create(
                 company=company,
@@ -127,6 +202,8 @@ class LedgerListView(APIView):
                 email=data.get('email', ''),
                 address=data.get('address', ''),
                 discount_percent=discount_percent,
+                opening_balance=op_balance,
+                current_balance=op_balance,
                 opening_balance_type=data.get('opening_balance_type', 'DEBIT')
             )
             return Response({
@@ -134,10 +211,14 @@ class LedgerListView(APIView):
                 "data": {
                     "id": str(ledger.id), 
                     "name": ledger.name,
+                    "group_id": str(ledger.group_id) if ledger.group_id else None,
                     "group": ledger.group.name if ledger.group else "",
+                    "nature": ledger.group.nature if ledger.group else "ASSET",
                     "ledger_type": ledger.ledger_type,
                     "gstin": ledger.gstin or "",
-                    "discount_percent": float(ledger.discount_percent or 0)
+                    "discount_percent": float(ledger.discount_percent or 0),
+                    "opening_balance": float(ledger.opening_balance or 0),
+                    "current_balance": float(ledger.current_balance or 0),
                 }
             }, status=201)
         except Exception as e:
@@ -154,16 +235,20 @@ class LedgerDetailView(APIView):
             data = {
                 "id": str(l.id),
                 "name": l.name,
-                "group": l.group.name,
+                "group_id": str(l.group_id) if l.group_id else None,
+                "group": l.group.name if l.group else "",
+                "nature": l.group.nature if l.group else "ASSET",
+                "ledger_type": l.ledger_type,
                 "gstin": l.gstin or "",
                 "state_code": l.state_code or "",
                 "phone": l.phone or "",
                 "email": l.email or "",
                 "address": l.address or "",
-                "current_balance": l.current_balance,
-                "opening_balance": l.opening_balance,
+                "current_balance": float(l.current_balance or 0),
+                "opening_balance": float(l.opening_balance or 0),
                 "opening_balance_type": l.opening_balance_type,
                 "discount_percent": float(l.discount_percent or 0),
+                "is_active": l.is_active,
             }
             return Response({"success": True, "data": data})
         except Exception as e:
@@ -172,6 +257,7 @@ class LedgerDetailView(APIView):
     def patch(self, request, company_id, ledger_id):
         try:
             from decimal import Decimal
+            from .models import LedgerGroup
             company = Company.objects.get(id=company_id, users__user=request.user)
             ledger = Ledger.objects.get(id=ledger_id, company=company)
             data = request.data
@@ -182,6 +268,21 @@ class LedgerDetailView(APIView):
             if 'phone' in data: ledger.phone = data['phone']
             if 'email' in data: ledger.email = data['email']
             if 'address' in data: ledger.address = data['address']
+            if 'ledger_type' in data: ledger.ledger_type = data['ledger_type']
+            if 'is_active' in data: ledger.is_active = bool(data['is_active'])
+            if 'opening_balance_type' in data: ledger.opening_balance_type = data['opening_balance_type']
+            
+            if 'group_id' in data and data['group_id']:
+                grp = LedgerGroup.objects.filter(company=company, id=data['group_id']).first()
+                if grp:
+                    ledger.group = grp
+
+            if 'opening_balance' in data and data.get('opening_balance') is not None and str(data.get('opening_balance')).strip() != '':
+                try:
+                    ledger.opening_balance = Decimal(str(data['opening_balance']))
+                except Exception:
+                    pass
+
             if 'discount_percent' in data and data.get('discount_percent') is not None and str(data.get('discount_percent')).strip() != '':
                 try:
                     ledger.discount_percent = Decimal(str(data['discount_percent']))
@@ -189,7 +290,17 @@ class LedgerDetailView(APIView):
                     pass
 
             ledger.save()
-            return Response({"success": True, "data": {"id": str(ledger.id), "name": ledger.name, "discount_percent": float(ledger.discount_percent or 0)}})
+            return Response({
+                "success": True, 
+                "data": {
+                    "id": str(ledger.id), 
+                    "name": ledger.name,
+                    "group": ledger.group.name if ledger.group else "",
+                    "nature": ledger.group.nature if ledger.group else "ASSET",
+                    "discount_percent": float(ledger.discount_percent or 0),
+                    "is_active": ledger.is_active
+                }
+            })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 

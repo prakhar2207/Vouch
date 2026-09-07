@@ -169,6 +169,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 Parties
               </Link>
 
+              {/* Chart of Accounts / Ledgers */}
+              <Link
+                id="tour-ledgers-link"
+                href="/ledgers"
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                  pathname.startsWith("/ledgers")
+                    ? "text-foreground bg-muted font-semibold shadow-2xs"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                Chart of Accounts
+              </Link>
+
               {/* Inventory */}
               <Link
                 id="tour-inventory-link"
@@ -525,6 +538,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 }`}
               >
                 Parties & Customers
+              </Link>
+              <Link
+                href="/ledgers"
+                onClick={() => setIsMobileNavOpen(false)}
+                className={`flex items-center px-3 py-2 rounded-lg text-sm transition-colors ${
+                  pathname.startsWith("/ledgers") ? "bg-muted font-semibold text-foreground" : "text-muted-foreground hover:bg-muted/60"
+                }`}
+              >
+                Chart of Accounts
               </Link>
               <Link
                 href="/inventory"

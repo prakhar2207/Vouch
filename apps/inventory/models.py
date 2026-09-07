@@ -72,6 +72,15 @@ class Product(models.Model):
     track_batches = models.BooleanField(default=False)
     track_serial_numbers = models.BooleanField(default=False)
     
+    # Feature 8: Inventory Valuation & Costing Method
+    COSTING_METHOD_CHOICES = (
+        ('AVG_COST', 'Average Cost'),
+        ('FIFO', 'FIFO'),
+        ('LIFO', 'LIFO'),
+        ('STD_COST', 'Standard Cost'),
+    )
+    costing_method = models.CharField(max_length=20, choices=COSTING_METHOD_CHOICES, default='AVG_COST')
+    
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

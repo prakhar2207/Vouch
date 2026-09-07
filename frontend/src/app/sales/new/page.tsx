@@ -35,6 +35,14 @@ export default function SalesPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   
+  // Ad-hoc Walk-in / Cash Customer Details
+  const [buyerName, setBuyerName] = useState('');
+  const [buyerPhone, setBuyerPhone] = useState('');
+  const [buyerAddress, setBuyerAddress] = useState('');
+  const [buyerGstin, setBuyerGstin] = useState('');
+  const [buyerStateCode, setBuyerStateCode] = useState('');
+  const [showBuyerDetails, setShowBuyerDetails] = useState(false);
+  
   const [categories, setCategories] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [groupedItems, setGroupedItems] = useState<any[]>([
@@ -170,6 +178,18 @@ export default function SalesPage() {
     const party = ledgers.find(l => l.id === selectedId);
     const disc = Number(party?.discount_percent || 0);
 
+    // If Cash or Bank ledger, auto-expand walk-in buyer details
+    const isCashOrBank = party && (
+      party.ledger_type === 'CASH' ||
+      party.ledger_type === 'BANK' ||
+      party.group?.toLowerCase().includes('cash') ||
+      party.group?.toLowerCase().includes('bank') ||
+      party.name?.toLowerCase().includes('cash')
+    );
+    if (isCashOrBank) {
+      setShowBuyerDetails(true);
+    }
+
     // Auto-populate customer's default discount across all line items
     setGroupedItems(prev => prev.map((group: any) => ({
       ...group,
@@ -235,6 +255,12 @@ export default function SalesPage() {
         }),
         post_immediately: true
       };
+      if (buyerName.trim()) payload.buyer_name = buyerName.trim();
+      if (buyerPhone.trim()) payload.buyer_phone = buyerPhone.trim();
+      if (buyerAddress.trim()) payload.buyer_address = buyerAddress.trim();
+      if (buyerGstin.trim()) payload.buyer_gstin = buyerGstin.trim().toUpperCase();
+      if (buyerStateCode.trim()) payload.buyer_state_code = buyerStateCode.trim();
+      
       if (salesLedgerId) payload.sales_ledger_id = salesLedgerId;
       if (cgstLedgerId) payload.cgst_ledger_id = cgstLedgerId;
       if (sgstLedgerId) payload.sgst_ledger_id = sgstLedgerId;
@@ -539,10 +565,18 @@ export default function SalesPage() {
                 onChange={e => handlePartyChange(e.target.value)}
                 className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
               >
-                <option value="">-- Select Customer --</option>
-                {ledgers.filter(l => l.group.includes('Debtor') || l.group.includes('Creditor') || l.ledger_type === 'CUSTOMER').map(l => (
+                <option value="">-- Select Customer / Cash / Bank --</option>
+                {ledgers.filter(l => 
+                  l.group?.includes('Debtor') || 
+                  l.group?.includes('Cash') || 
+                  l.group?.includes('Bank') || 
+                  l.ledger_type === 'CUSTOMER' || 
+                  l.ledger_type === 'CASH' || 
+                  l.ledger_type === 'BANK' ||
+                  l.name?.toLowerCase().includes('cash')
+                ).map(l => (
                   <option key={l.id} value={l.id}>
-                    {l.name} {Number(l.discount_percent || 0) > 0 ? `(${Number(l.discount_percent)}% Disc)` : ''}
+                    {l.name} {l.group ? `[${l.group}]` : ''} {Number(l.discount_percent || 0) > 0 ? `(${Number(l.discount_percent)}% Disc)` : ''}
                   </option>
                 ))}
               </select>
@@ -565,6 +599,70 @@ export default function SalesPage() {
                     <option key={l.id} value={l.id}>{l.name}</option>
                   ))}
                 </select>
+              </div>
+            )}
+          </div>
+
+          {/* Ad-hoc Buyer Details Subform for Cash / Walk-in Customers */}
+          <div className="mt-5 pt-4 border-t border-zinc-800">
+            <div 
+              className="flex items-center justify-between cursor-pointer select-none bg-zinc-900/40 hover:bg-zinc-900/80 p-3 rounded-lg border border-zinc-800/80 transition-all"
+              onClick={() => setShowBuyerDetails(!showBuyerDetails)}
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span className="text-sm font-semibold text-zinc-200">Buyer Details (Optional — Cash / Counter Walk-in)</span>
+                <span className="text-[11px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-mono">
+                  Prints on bill without creating a Debtor
+                </span>
+              </div>
+              <span className="text-xs text-zinc-400 hover:text-white font-medium">
+                {showBuyerDetails ? '▲ Hide Details' : '▼ Enter Walk-in Details'}
+              </span>
+            </div>
+
+            {showBuyerDetails && (
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-zinc-900/40 border border-zinc-800/60 rounded-xl">
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1.5">Walk-in Buyer Name</label>
+                  <input
+                    type="text"
+                    value={buyerName}
+                    onChange={e => setBuyerName(e.target.value)}
+                    placeholder="e.g. Ramesh Kumar"
+                    className="w-full bg-zinc-900 border border-zinc-700 text-white text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-zinc-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1.5">Mobile / Phone</label>
+                  <input
+                    type="text"
+                    value={buyerPhone}
+                    onChange={e => setBuyerPhone(e.target.value)}
+                    placeholder="e.g. 9876543210"
+                    className="w-full bg-zinc-900 border border-zinc-700 text-white text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-zinc-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1.5">GSTIN (Optional)</label>
+                  <input
+                    type="text"
+                    value={buyerGstin}
+                    onChange={e => setBuyerGstin(e.target.value.toUpperCase())}
+                    placeholder="Unregistered or 15-digit GSTIN"
+                    className="w-full bg-zinc-900 border border-zinc-700 text-white text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none uppercase font-mono placeholder:text-zinc-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1.5">Billing Address / City</label>
+                  <input
+                    type="text"
+                    value={buyerAddress}
+                    onChange={e => setBuyerAddress(e.target.value)}
+                    placeholder="City, State"
+                    className="w-full bg-zinc-900 border border-zinc-700 text-white text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-zinc-600"
+                  />
+                </div>
               </div>
             )}
           </div>

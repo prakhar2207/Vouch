@@ -120,7 +120,12 @@ class CreateSalesInvoiceAPIView(APIView):
                     sgst_ledger=sgst_ledger,
                     igst_ledger=igst_ledger,
                     manual_voucher_number=data.get('voucher_number'),
-                    manual_voucher_date=data.get('voucher_date')
+                    manual_voucher_date=data.get('voucher_date'),
+                    buyer_name=data.get('buyer_name'),
+                    buyer_address=data.get('buyer_address'),
+                    buyer_gstin=data.get('buyer_gstin'),
+                    buyer_state_code=data.get('buyer_state_code'),
+                    buyer_phone=data.get('buyer_phone')
                 )
                 
                 # 2. Automatically post it if requested
@@ -347,11 +352,20 @@ class VoucherDetailAPIView(APIView):
                     "bank_ifsc": voucher.company.bank_ifsc,
                     "bank_branch": voucher.company.bank_branch,
                 },
+                "buyer_details": {
+                    "buyer_name": voucher.buyer_name or "",
+                    "buyer_address": voucher.buyer_address or "",
+                    "buyer_gstin": voucher.buyer_gstin or "",
+                    "buyer_state_code": voucher.buyer_state_code or "",
+                    "buyer_phone": voucher.buyer_phone or "",
+                },
                 "party": {
-                    "name": voucher.party_ledger.name if voucher.party_ledger else "N/A",
-                    "address": voucher.party_ledger.address if voucher.party_ledger else "",
-                    "gstin": voucher.party_ledger.gstin if voucher.party_ledger else "",
-                    "state_code": voucher.party_ledger.state_code if voucher.party_ledger else "",
+                    "name": voucher.buyer_name if voucher.buyer_name else (voucher.party_ledger.name if voucher.party_ledger else "N/A"),
+                    "settlement_ledger": voucher.party_ledger.name if voucher.party_ledger else "N/A",
+                    "address": voucher.buyer_address if voucher.buyer_address else (voucher.party_ledger.address if voucher.party_ledger else ""),
+                    "gstin": voucher.buyer_gstin if voucher.buyer_gstin else (voucher.party_ledger.gstin if voucher.party_ledger else ""),
+                    "state_code": voucher.buyer_state_code if voucher.buyer_state_code else (voucher.party_ledger.state_code if voucher.party_ledger else ""),
+                    "phone": voucher.buyer_phone if voucher.buyer_phone else (voucher.party_ledger.phone if voucher.party_ledger else ""),
                 } if voucher.party_ledger else None,
                 "attachment_data": voucher.attachment_data,
                 "attachment_mime": voucher.attachment_mime,
