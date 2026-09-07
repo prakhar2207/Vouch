@@ -57,6 +57,8 @@ urlpatterns = [
     # Top-Level Direct API Endpoints
     path('api/vouchers/', UniversalVoucherAPIView.as_view(), name='api_vouchers_root'),
     path('api/vouchers/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='api_voucher_detail_root'),
+    path('api/vouchers/detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='api_voucher_detail_nested_root'),
+    path('api/voucher-detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='api_voucher_detail_alias_root'),
     path('api/ocr/extract/', OCRExtractAPIView.as_view(), name='api_ocr_extract_root'),
     path('api/insights/', InsightsAPIView.as_view(), name='api_insights_root'),
     

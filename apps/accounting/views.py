@@ -362,23 +362,38 @@ class VoucherDetailAPIView(APIView):
         try:
             from apps.accounting.models import Voucher
             from apps.accounting.services.voucher_service import VoucherService
-            voucher = Voucher.objects.get(id=voucher_id, company__users__user=request.user)
+            
+            voucher = Voucher.objects.filter(id=voucher_id, company__users__user=request.user).first()
+            if not voucher:
+                return Response({
+                    "success": False, 
+                    "error": "Voucher not found or you do not have permission to delete it."
+                }, status=status.HTTP_404_NOT_FOUND)
 
             with transaction.atomic():
                 product_ids = list(voucher.items.values_list('product_id', flat=True))
-                
-                if voucher.status == 'POSTED':
-                    VoucherService.cancel_voucher(voucher)
-                
                 voucher_num = voucher.voucher_number
+                
+                # If voucher is posted or validating, safely cancel & reverse accounting/stock first
+                if voucher.status in ['POSTED', 'VALIDATING']:
+                    VoucherService.cancel_voucher(voucher, user=request.user)
+                
+                # Delete voucher (cascades items, ledger_entries, and EDI requests)
                 voucher.delete()
                 
-                # Cleanup orphaned products that were only used in this deleted invoice
+                # Safe cleanup: only delete auto-created ad-hoc products with no category, no stock, no other entries
                 from apps.inventory.models import Product
                 for pid in set(product_ids):
-                    prod = Product.objects.filter(id=pid).first()
-                    if prod and not prod.voucher_items.exists() and not prod.entries.exists():
-                        prod.delete()
+                    try:
+                        prod = Product.objects.filter(id=pid).first()
+                        if (prod and 
+                            prod.category is None and 
+                            prod.stock_quantity <= 0 and 
+                            not prod.voucher_items.exists() and 
+                            not prod.entries.exists()):
+                            prod.delete()
+                    except Exception:
+                        pass
 
             return Response({
                 "success": True, 

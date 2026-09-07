@@ -77,9 +77,9 @@ class VoucherService:
 
     @staticmethod
     @transaction.atomic
-    def cancel_voucher(voucher: Voucher):
-        if voucher.status != 'POSTED':
-            raise ValidationError("Only posted vouchers can be cancelled.")
+    def cancel_voucher(voucher: Voucher, user=None):
+        if voucher.status not in ['POSTED', 'VALIDATING']:
+            raise ValidationError(f"Only posted or validating vouchers can be cancelled (current status: {voucher.status}).")
             
         # Revert Stock
         if voucher.voucher_type in ['SALES', 'PURCHASE']:
@@ -90,10 +90,11 @@ class VoucherService:
         entries = voucher.ledger_entries.all()
         for entry in entries:
             ledger = entry.ledger
+            current_bal = ledger.current_balance if ledger.current_balance is not None else Decimal('0.00')
             if ledger.opening_balance_type == 'DEBIT':
-                ledger.current_balance = ledger.current_balance - entry.debit_amount + entry.credit_amount
+                ledger.current_balance = current_bal - entry.debit_amount + entry.credit_amount
             else:
-                ledger.current_balance = ledger.current_balance - entry.credit_amount + entry.debit_amount
+                ledger.current_balance = current_bal - entry.credit_amount + entry.debit_amount
             ledger.save(update_fields=['current_balance'])
             
         voucher.status = 'CANCELLED'
@@ -103,7 +104,7 @@ class VoucherService:
         from apps.audit.services.audit_service import AuditService
         AuditService.log_action(
             company=voucher.company,
-            user=voucher.created_by,
+            user=user or voucher.created_by,
             action='CANCEL',
             model_name='Voucher',
             record_id=voucher.id,

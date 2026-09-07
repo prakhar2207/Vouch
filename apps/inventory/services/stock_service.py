@@ -53,21 +53,43 @@ class StockService:
     def revert_voucher_stock(voucher: Voucher):
         """
         Reverse stock impact if a voucher is cancelled.
+        Guarantees stock integrity by checking InventoryEntry records or falling back
+        directly to VoucherItem lines.
         """
+        company_settings = getattr(voucher.company, 'settings', None)
+        allow_negative = company_settings.allow_negative_stock if company_settings else False
+
         entries = InventoryEntry.objects.filter(voucher_id=voucher.id)
-        for entry in entries:
-            product = entry.product
-            # Reverse the movement
-            if entry.movement_type == 'OUT':
-                product.stock_quantity += entry.quantity
-            else:
-                product.stock_quantity -= entry.quantity
+        if entries.exists():
+            for entry in entries:
+                product = entry.product
+                if not product:
+                    continue
+                # Reverse the movement:
+                # If OUT (Sales), restore stock by adding back quantity
+                # If IN (Purchase), deduct stock
+                if entry.movement_type == 'OUT':
+                    product.stock_quantity += entry.quantity
+                else:
+                    product.stock_quantity -= entry.quantity
+                    
+                if product.stock_quantity < 0 and not allow_negative:
+                    raise ValidationError(f"Cannot cancel voucher. {product.name} stock would fall below zero ({product.stock_quantity}).")
+                    
+                product.save(update_fields=['stock_quantity'])
                 
-            # Prevent reversing purchase if stock has already been sold
-            if product.stock_quantity < 0:
-                raise ValidationError(f"Cannot cancel voucher. {product.name} stock would fall below zero.")
-                
-            product.save(update_fields=['stock_quantity'])
-            
-        # Delete the inventory ledger entries
-        entries.delete()
+            # Delete the inventory ledger entries
+            entries.delete()
+        else:
+            # Fallback directly to voucher items if InventoryEntry was not explicitly generated
+            for item in voucher.items.select_related('product').all():
+                product = item.product
+                if not product:
+                    continue
+                if voucher.voucher_type == 'SALES':
+                    product.stock_quantity += item.quantity
+                elif voucher.voucher_type == 'PURCHASE':
+                    product.stock_quantity -= item.quantity
+                    if product.stock_quantity < 0 and not allow_negative:
+                        raise ValidationError(f"Cannot cancel voucher. {product.name} stock would fall below zero ({product.stock_quantity}).")
+                product.save(update_fields=['stock_quantity'])

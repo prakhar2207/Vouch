@@ -64,7 +64,7 @@ export default function SalesInvoiceList() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.delete(`${API_BASE_URL}/api/vouchers/detail/${voucherId}/`, { headers });
+      const res = await axios.delete(`${API_BASE_URL}/api/vouchers/${voucherId}/`, { headers });
 
       if (res.data.success) {
         toast.success(res.data.message || 'Sales invoice deleted and reversed successfully!');
