@@ -23,7 +23,8 @@ import {
   X,
   Info,
   Percent,
-  Boxes
+  Boxes,
+  Sparkles
 } from 'lucide-react';
 
 type SortOption = 
@@ -77,6 +78,8 @@ export default function CategoryDetailPage() {
   // Modals state
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isBulkDiscountModalOpen, setIsBulkDiscountModalOpen] = useState(false);
+  const [isMergeModalOpen, setIsMergeModalOpen] = useState(false);
+  const [isMerging, setIsMerging] = useState(false);
   const [deleteConfirmParams, setDeleteConfirmParams] = useState<{ id: string, name: string } | null>(null);
 
   // Edit state
@@ -114,6 +117,31 @@ export default function CategoryDetailPage() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleMergeDuplicates = async () => {
+    if (!companyId) return;
+    setIsMerging(true);
+    try {
+      const token = getAccessToken();
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/inventory/combine-items/${companyId}/`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.data.success) {
+        toast.success(
+          "Items Combined Successfully",
+          `Cleaned & merged ${res.data.total_merged_groups} duplicate groups and normalized ${res.data.total_renamed_items} item names to standard single-space format.`
+        );
+        fetchData();
+      }
+    } catch (err: any) {
+      toast.error("Combine Failed", err.response?.data?.error || "Failed to combine duplicate items.");
+    } finally {
+      setIsMerging(false);
+      setIsMergeModalOpen(false);
     }
   };
 
@@ -552,11 +580,11 @@ export default function CategoryDetailPage() {
               </div>
             ) : (
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto">
-                <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto">
+                <div className="grid grid-cols-3 gap-2 w-full sm:flex sm:w-auto">
                   {/* Bulk Discount Trigger */}
                   <button
                     onClick={() => setIsBulkDiscountModalOpen(true)}
-                    className="justify-center bg-muted/60 hover:bg-muted text-foreground border border-border/80 px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="justify-center bg-muted/60 hover:bg-muted text-foreground border border-border/80 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                   >
                     <Percent className="w-3.5 h-3.5 text-blue-400" />
                     <span>Brand Disc.</span>
@@ -565,10 +593,21 @@ export default function CategoryDetailPage() {
                   {/* Import Price List Trigger */}
                   <button
                     onClick={() => setIsImportModalOpen(true)}
-                    className="justify-center bg-muted/60 hover:bg-muted text-foreground border border-border/80 px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="justify-center bg-muted/60 hover:bg-muted text-foreground border border-border/80 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                   >
                     <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
                     <span>Import List</span>
+                  </button>
+
+                  {/* Combine Duplicates Trigger */}
+                  <button
+                    onClick={() => setIsMergeModalOpen(true)}
+                    disabled={isMerging}
+                    className="justify-center bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    title="Clean and combine duplicate sizes (e.g. A-31 and A 31 -> A 31, B92 -> B 92) and preserve invoice tags"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{isMerging ? 'Combining...' : 'Combine'}</span>
                   </button>
                 </div>
 
@@ -1278,6 +1317,22 @@ export default function CategoryDetailPage() {
           confirmText="Delete"
           cancelText="Cancel"
           variant="danger"
+        />
+
+        {/* Combine Duplicates Confirmation Modal */}
+        <ConfirmModal
+          isOpen={isMergeModalOpen}
+          onClose={() => setIsMergeModalOpen(false)}
+          onConfirm={handleMergeDuplicates}
+          title="Combine Duplicate Inventory Items?"
+          description={
+            <span>
+              This will scan your inventory, combine all duplicate sizes with hyphens or spaces (e.g. <strong className="text-white">A-31</strong> & <strong className="text-white">A 31</strong> into <strong className="text-emerald-400">A 31</strong>, <strong className="text-white">B92</strong> into <strong className="text-emerald-400">B 92</strong>), sum their stock quantities, re-link all purchase & sales vouchers, and ensure the green <strong className="text-emerald-400">Invoice</strong> tag is preserved on items uploaded from invoices.
+            </span>
+          }
+          confirmText={isMerging ? "Combining..." : "Combine & Clean Items"}
+          cancelText="Cancel"
+          variant="info"
         />
       </div>
     </DashboardLayout>

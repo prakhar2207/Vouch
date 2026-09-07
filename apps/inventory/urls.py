@@ -7,7 +7,8 @@ from .views import (
     ProductCategoryDetailView,
     PriceListBulkImportAPIView,
     ParsePriceListPdfAPIView,
-    BulkBrandDiscountUpdateAPIView
+    BulkBrandDiscountUpdateAPIView,
+    CombineInventoryItemsAPIView
 )
 
 urlpatterns = [
@@ -19,4 +20,5 @@ urlpatterns = [
     path('brand-discount-update/<uuid:company_id>/', BulkBrandDiscountUpdateAPIView.as_view(), name='brand_discount_update'),
     path('price-list-import/<uuid:company_id>/', PriceListBulkImportAPIView.as_view(), name='price_list_bulk_import'),
     path('parse-price-list-pdf/<uuid:company_id>/', ParsePriceListPdfAPIView.as_view(), name='parse_price_list_pdf'),
+    path('combine-items/<uuid:company_id>/', CombineInventoryItemsAPIView.as_view(), name='combine_inventory_items'),
 ]

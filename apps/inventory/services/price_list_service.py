@@ -59,12 +59,24 @@ class PriceListService:
                 desc_parts.append(f"Case Qty: {case_qty}")
             final_desc = " | ".join(desc_parts)
 
+            from apps.inventory.services.normalization_service import normalize_product_name, get_canonical_key
+            clean_item_name = normalize_product_name(raw_name)
+            canon_key = get_canonical_key(raw_name)
+
             existing = Product.objects.filter(
                 company=company,
                 category=category,
-                name__iexact=raw_name,
+                name__iexact=clean_item_name,
                 brand__iexact=brand_clean
             ).first()
+            if not existing:
+                candidates = Product.objects.filter(company=company, category=category, brand__iexact=brand_clean)
+                for cand in candidates:
+                    if get_canonical_key(cand.name) == canon_key:
+                        existing = cand
+                        if cand.name != clean_item_name:
+                            cand.name = clean_item_name
+                        break
             
             if existing:
                 existing.selling_price = selling_price
@@ -78,14 +90,14 @@ class PriceListService:
                 existing.save()
                 updated_count += 1
             else:
-                clean_name = re.sub(r'[^A-Za-z0-9]', '', raw_name)[:6].upper()
+                clean_name = re.sub(r'[^A-Za-z0-9]', '', clean_item_name)[:6].upper()
                 clean_b = re.sub(r'[^A-Za-z0-9]', '', brand_clean)[:4].upper()
                 sku = f"{clean_name}-{clean_b}-{uuid.uuid4().hex[:6].upper()}"
                 
                 Product.objects.create(
                     company=company,
                     category=category,
-                    name=raw_name,
+                    name=clean_item_name,
                     brand=brand_clean,
                     sku=sku,
                     unit=unit,

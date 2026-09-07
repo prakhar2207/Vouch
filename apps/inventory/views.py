@@ -519,3 +519,20 @@ class ParsePriceListPdfAPIView(APIView):
             return Response(result)
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
+
+
+class CombineInventoryItemsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, company_id):
+        try:
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            from apps.inventory.services.normalization_service import combine_and_deduplicate_inventory
+            dry_run = request.data.get('dry_run', False)
+            report = combine_and_deduplicate_inventory(company_id=company.id, dry_run=dry_run)
+            return Response(report, status=200)
+        except Company.DoesNotExist:
+            return Response({"success": False, "error": "Company not found or unauthorized."}, status=404)
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=500)
+

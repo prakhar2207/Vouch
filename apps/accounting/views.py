@@ -461,19 +461,39 @@ class VoucherDetailAPIView(APIView):
 
                         # Resolve or create product (respecting brand vs unbranded)
                         item_brand = str(item.get('brand', '')).strip()
+                        from apps.inventory.services.normalization_service import normalize_product_name, get_canonical_key
+                        clean_item_name = normalize_product_name(raw_name)
+                        canon_key = get_canonical_key(raw_name)
+
                         if item_brand:
                             product = Product.objects.filter(
                                 company=company,
-                                name__iexact=raw_name,
+                                name__iexact=clean_item_name,
                                 brand__iexact=item_brand
                             ).first()
+                            if not product:
+                                for p in Product.objects.filter(company=company, brand__iexact=item_brand):
+                                    if get_canonical_key(p.name) == canon_key:
+                                        product = p
+                                        if p.name != clean_item_name:
+                                            p.name = clean_item_name
+                                            p.save(update_fields=['name'])
+                                        break
                         else:
                             # No brand in purchase bill -> Do not touch branded items, target unbranded
                             product = Product.objects.filter(
                                 company=company,
-                                name__iexact=raw_name,
+                                name__iexact=clean_item_name,
                                 brand__in=["", None, "Unbranded", "Generic"]
                             ).first()
+                            if not product:
+                                for p in Product.objects.filter(company=company, brand__in=["", None, "Unbranded", "Generic"]):
+                                    if get_canonical_key(p.name) == canon_key:
+                                        product = p
+                                        if p.name != clean_item_name:
+                                            p.name = clean_item_name
+                                            p.save(update_fields=['name'])
+                                        break
 
                         discount_pct = Decimal(str(item.get('discount_percent', '0.00')))
                         net_rate = (rate * (Decimal('100') - discount_pct) / Decimal('100')).quantize(Decimal('0.01'))
@@ -481,7 +501,7 @@ class VoucherDetailAPIView(APIView):
                         if not product:
                             # Try to inherit category from existing sibling product of same name
                             category = None
-                            existing_sibling = Product.objects.filter(company=company, name__iexact=raw_name).first()
+                            existing_sibling = Product.objects.filter(company=company, name__iexact=clean_item_name).first()
                             if existing_sibling and existing_sibling.category:
                                 category = existing_sibling.category
                             else:
@@ -495,11 +515,11 @@ class VoucherDetailAPIView(APIView):
                                     gst_rate=gst_pct
                                 )
                             import uuid
-                            sku = f"{raw_name[:4].upper()}-{uuid.uuid4().hex[:6].upper()}"
+                            sku = f"{clean_item_name[:4].upper()}-{uuid.uuid4().hex[:6].upper()}"
                             product = Product.objects.create(
                                 company=company,
                                 category=category,
-                                name=raw_name,
+                                name=clean_item_name,
                                 brand=item_brand,
                                 sku=sku,
                                 hsn_code=hsn or category.hsn_code,

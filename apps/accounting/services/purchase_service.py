@@ -46,7 +46,10 @@ class PurchaseInvoiceService:
             if product_id:
                 product = Product.objects.get(id=product_id)
             else:
-                name = str(item.get('product_name') or item.get('name') or 'Unnamed Product').strip()
+                raw_name = str(item.get('product_name') or item.get('name') or 'Unnamed Product').strip()
+                from apps.inventory.services.normalization_service import normalize_product_name, get_canonical_key
+                name = normalize_product_name(raw_name)
+                canon_key = get_canonical_key(raw_name)
                 import uuid
                 sku = item.get('sku', name.upper()[:3] + '-' + str(uuid.uuid4())[:6])
                 
@@ -68,24 +71,12 @@ class PurchaseInvoiceService:
                         category = ProductCategory.objects.filter(id=category_id, company=company).first()
                     except Exception:
                         pass
-                
-                if not category and category_name and str(category_name).strip():
-                    cat_name = str(category_name).strip()
-                    category, _ = ProductCategory.objects.get_or_create(
-                        company=company,
-                        name=cat_name,
-                        defaults={
-                            'hsn_code': item.get('hsn_code', ''),
-                            'gst_rate': Decimal(str(item.get('gst_rate', '18.00')))
-                        }
-                    )
-
-                if not category:
-                    category = ProductCategory.objects.filter(company=company).first()
+                elif category_name and str(category_name).strip():
+                    category = ProductCategory.objects.filter(name__iexact=str(category_name).strip(), company=company).first()
                     if not category:
                         category = ProductCategory.objects.create(
                             company=company,
-                            name="General Purchases",
+                            name=str(category_name).strip(),
                             hsn_code=item.get('hsn_code', ''),
                             gst_rate=Decimal(str(item.get('gst_rate', '18.00')))
                         )
@@ -106,6 +97,17 @@ class PurchaseInvoiceService:
                         brand__iexact=item_brand
                     ).first()
                     if not product:
+                        # Check canonical key match (e.g. matching existing 'A 31' when bill has 'A-31')
+                        all_brand_prods = Product.objects.filter(company=company, brand__iexact=item_brand)
+                        for p in all_brand_prods:
+                            if get_canonical_key(p.name) == canon_key:
+                                product = p
+                                if p.name != name:
+                                    p.name = name
+                                    p.save(update_fields=['name'])
+                                break
+
+                    if not product:
                         defaults_dict['brand'] = item_brand
                         defaults_dict['purchase_price_from_invoice'] = True
                         product = Product.objects.create(
@@ -124,6 +126,16 @@ class PurchaseInvoiceService:
                         name__iexact=name,
                         brand__in=["", None, "Unbranded", "Generic"]
                     ).first()
+                    if not product:
+                        unbranded_prods = Product.objects.filter(company=company, brand__in=["", None, "Unbranded", "Generic"])
+                        for p in unbranded_prods:
+                            if get_canonical_key(p.name) == canon_key:
+                                product = p
+                                if p.name != name:
+                                    p.name = name
+                                    p.save(update_fields=['name'])
+                                break
+
                     if not product:
                         # If an existing branded item exists with this name, inherit its category
                         existing_sibling = Product.objects.filter(company=company, name__iexact=name).first()
