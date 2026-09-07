@@ -597,7 +597,7 @@ class VoucherDetailAPIView(APIView):
                                 unit=unit,
                                 purchase_price=net_rate if voucher.voucher_type == 'PURCHASE' else Decimal('0.00'),
                                 purchase_price_from_invoice=(voucher.voucher_type == 'PURCHASE'),
-                                selling_price=rate if voucher.voucher_type == 'SALES' else rate * Decimal('1.25')
+                                selling_price=rate if voucher.voucher_type == 'SALES' else Decimal('0.00')
                             )
                         else:
                             if item_brand and not product.brand:

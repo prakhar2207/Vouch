@@ -10,6 +10,7 @@ import { useToast } from '@/context/ToastContext';
 import PriceListImportModal from '@/components/modals/PriceListImportModal';
 import BulkBrandDiscountModal from '@/components/modals/BulkBrandDiscountModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
+import ItemHistoryModal from '@/components/modals/ItemHistoryModal';
 import { 
   ArrowUpDown, 
   FileSpreadsheet, 
@@ -24,7 +25,11 @@ import {
   Info,
   Percent,
   Boxes,
-  Sparkles
+  Sparkles,
+  History,
+  BarChart2,
+  FileText,
+  RefreshCw
 } from 'lucide-react';
 
 type SortOption = 
@@ -91,6 +96,33 @@ export default function CategoryDetailPage() {
   const [isCategoryEditing, setIsCategoryEditing] = useState(false);
   const [categoryEditData, setCategoryEditData] = useState({ name: '', hsn_code: '', gst_rate: 18 });
   const [savingCategory, setSavingCategory] = useState(false);
+
+  // Item Bill History & Category Analytics State
+  const [selectedHistoryItem, setSelectedHistoryItem] = useState<any>(null);
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [topAnalytics, setTopAnalytics] = useState<any>(null);
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+
+  const fetchAnalytics = async (cid?: string) => {
+    const targetCompanyId = cid || companyId;
+    if (!targetCompanyId) return;
+    setLoadingAnalytics(true);
+    try {
+      const token = getAccessToken();
+      const headers = { Authorization: `Bearer ${token}` };
+      const res = await axios.get(
+        `${API_BASE_URL}/api/v1/inventory/analytics/${targetCompanyId}/?category_id=${categoryId}&limit=6`,
+        { headers }
+      );
+      if (res.data.success) {
+        setTopAnalytics(res.data.data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch inventory analytics:", err);
+    } finally {
+      setLoadingAnalytics(false);
+    }
+  };
 
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
@@ -580,7 +612,7 @@ export default function CategoryDetailPage() {
               </div>
             ) : (
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto">
-                <div className="grid grid-cols-3 gap-2 w-full sm:flex sm:w-auto">
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:flex gap-2 w-full sm:w-auto">
                   {/* Bulk Discount Trigger */}
                   <button
                     onClick={() => setIsBulkDiscountModalOpen(true)}
@@ -608,6 +640,24 @@ export default function CategoryDetailPage() {
                   >
                     <Sparkles className="w-3.5 h-3.5 text-amber-400" />
                     <span>{isMerging ? 'Combining...' : 'Combine'}</span>
+                  </button>
+
+                  {/* Top Items & Analytics Trigger */}
+                  <button
+                    onClick={() => {
+                      const next = !analyticsOpen;
+                      setAnalyticsOpen(next);
+                      if (next && !topAnalytics) fetchAnalytics();
+                    }}
+                    className={`justify-center px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer border ${
+                      analyticsOpen
+                        ? "bg-blue-500/20 text-blue-400 border-blue-500/40 shadow-xs"
+                        : "bg-muted/60 hover:bg-muted text-foreground border-border/80"
+                    }`}
+                    title="View top sold and purchased items & movement analytics"
+                  >
+                    <BarChart2 className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Analytics</span>
                   </button>
                 </div>
 
@@ -695,6 +745,136 @@ export default function CategoryDetailPage() {
                 </div>
               </div>
             </div>
+
+            {/* Collapsible Top Items & Movement Analytics Panel */}
+            {analyticsOpen && (
+              <div className="p-4 sm:p-5 border-b border-border/60 bg-muted/10 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <BarChart2 className="w-4 h-4 text-blue-400" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">
+                      Item Velocity & Most Frequent Items ({category?.name || "Category"})
+                    </h4>
+                  </div>
+                  <button
+                    onClick={() => fetchAnalytics()}
+                    disabled={loadingAnalytics}
+                    className="p-1 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                    title="Refresh Analytics"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingAnalytics ? 'animate-spin text-blue-400' : ''}`} />
+                  </button>
+                </div>
+
+                {loadingAnalytics ? (
+                  <div className="py-8 text-center text-xs text-muted-foreground">
+                    Analyzing sales and purchase transactions...
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Top Sold Items */}
+                    <div className="bg-muted/20 border border-border/60 rounded-xl p-3.5 space-y-2.5">
+                      <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                        <span className="text-[11px] font-bold text-foreground flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-blue-400"></span>
+                          Most Frequent Items Sold
+                        </span>
+                        <span className="text-[10px] text-muted-foreground font-mono">By Invoice Count</span>
+                      </div>
+
+                      {(!topAnalytics?.top_sold || topAnalytics.top_sold.length === 0) ? (
+                        <div className="py-4 text-center text-xs text-muted-foreground">
+                          No sales recorded for this category yet.
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {topAnalytics.top_sold.map((it: any, idx: number) => (
+                            <div
+                              key={idx}
+                              onClick={() => {
+                                const prod = products.find(p => p.id === it.product_id) || it;
+                                setSelectedHistoryItem(prod);
+                              }}
+                              className="flex items-center justify-between p-2 rounded-lg bg-card/60 hover:bg-muted/40 border border-border/30 text-xs transition-colors cursor-pointer group"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="font-mono text-[10px] text-muted-foreground w-4">#{idx + 1}</span>
+                                <div className="truncate">
+                                  <div className="font-semibold text-foreground group-hover:text-blue-400 transition-colors truncate">
+                                    {it.name}
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground font-mono">
+                                    {it.brand || "Unbranded"} • Stock: {it.current_stock} {it.unit}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-right font-mono shrink-0 ml-2">
+                                <div className="font-bold text-blue-400">
+                                  {it.invoices_count} inv ({it.total_qty} {it.unit})
+                                </div>
+                                <div className="text-[10px] text-muted-foreground">
+                                  ₹{it.total_revenue?.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Top Purchased Items */}
+                    <div className="bg-muted/20 border border-border/60 rounded-xl p-3.5 space-y-2.5">
+                      <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                        <span className="text-[11px] font-bold text-foreground flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                          Most Frequent Items Purchased
+                        </span>
+                        <span className="text-[10px] text-muted-foreground font-mono">By Bill Count</span>
+                      </div>
+
+                      {(!topAnalytics?.top_purchased || topAnalytics.top_purchased.length === 0) ? (
+                        <div className="py-4 text-center text-xs text-muted-foreground">
+                          No purchases recorded for this category yet.
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {topAnalytics.top_purchased.map((it: any, idx: number) => (
+                            <div
+                              key={idx}
+                              onClick={() => {
+                                const prod = products.find(p => p.id === it.product_id) || it;
+                                setSelectedHistoryItem(prod);
+                              }}
+                              className="flex items-center justify-between p-2 rounded-lg bg-card/60 hover:bg-muted/40 border border-border/30 text-xs transition-colors cursor-pointer group"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="font-mono text-[10px] text-muted-foreground w-4">#{idx + 1}</span>
+                                <div className="truncate">
+                                  <div className="font-semibold text-foreground group-hover:text-emerald-400 transition-colors truncate">
+                                    {it.name}
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground font-mono">
+                                    {it.brand || "Unbranded"} • Stock: {it.current_stock} {it.unit}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-right font-mono shrink-0 ml-2">
+                                <div className="font-bold text-emerald-400">
+                                  {it.bills_count} bills ({it.total_qty} {it.unit})
+                                </div>
+                                <div className="text-[10px] text-muted-foreground">
+                                  ₹{it.total_spend?.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Brand Filter Pill Bar */}
             {existingBrandList.length > 0 && (
@@ -902,14 +1082,26 @@ export default function CategoryDetailPage() {
                                     {v.sku}
                                   </span>
                                 )}
-                                {v.purchase_price_from_invoice && (
-                                  <span className="text-[9px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1 rounded font-mono font-bold">
+                                {(v.purchase_price_from_invoice || v.has_invoice_stock) && (
+                                  <button
+                                    onClick={() => setSelectedHistoryItem(v)}
+                                    className="text-[9px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded font-mono font-bold flex items-center gap-1 hover:bg-emerald-500/25 transition-colors cursor-pointer"
+                                    title="Purchased via bill - click to inspect invoice history"
+                                  >
+                                    <FileText className="w-2.5 h-2.5" />
                                     Invoice
-                                  </span>
+                                  </button>
                                 )}
                               </div>
 
                               <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  onClick={() => setSelectedHistoryItem(v)}
+                                  className="p-1.5 text-muted-foreground hover:text-emerald-400 rounded-lg hover:bg-muted/60 transition-colors"
+                                  title="View Bill History & Analytics"
+                                >
+                                  <History className="w-3.5 h-3.5" />
+                                </button>
                                 <button
                                   onClick={() => startEdit(v)}
                                   className="p-1.5 text-muted-foreground hover:text-blue-400 rounded-lg hover:bg-muted/60 transition-colors"
@@ -1066,7 +1258,22 @@ export default function CategoryDetailPage() {
 
                           {/* SKU & Tags */}
                           <td className="p-3.5 align-middle">
-                            <p className="text-muted-foreground font-mono text-xs">{v.sku}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {v.sku && <p className="text-muted-foreground font-mono text-xs">{v.sku}</p>}
+                              {(v.purchase_price_from_invoice || v.has_invoice_stock) && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedHistoryItem(v);
+                                  }}
+                                  className="text-[9px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded font-mono font-bold flex items-center gap-1 cursor-pointer hover:bg-emerald-500/25 transition-colors"
+                                  title="Purchased via bill - click to inspect invoice history"
+                                >
+                                  <FileText className="w-2.5 h-2.5" />
+                                  Invoice
+                                </button>
+                              )}
+                            </div>
                             <div className="flex gap-1 mt-1 flex-wrap">
                               {v.tax_override && <span className="bg-red-500/10 text-red-400 text-[9px] px-1.5 py-0.5 rounded border border-red-500/20">Tax Override</span>}
                               {v.track_batches && <span className="bg-green-500/10 text-green-400 text-[9px] px-1.5 py-0.5 rounded border border-green-500/20">Batches</span>}
@@ -1132,10 +1339,17 @@ export default function CategoryDetailPage() {
                                 <span className="text-muted-foreground font-medium text-xs">
                                   {parseFloat(v.purchase_price) > 0 ? `₹${parseFloat(v.purchase_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
                                 </span>
-                                {v.purchase_price_from_invoice && (
-                                  <span title="Purchase price set from Purchase Invoice" className="text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1 rounded font-mono font-bold">
+                                {(v.purchase_price_from_invoice || v.has_invoice_stock) && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedHistoryItem(v);
+                                    }}
+                                    title="Purchase price set from Purchase Invoice - click to inspect bills"
+                                    className="text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded font-mono font-bold hover:bg-emerald-500/25 transition-colors cursor-pointer"
+                                  >
                                     Invoice
-                                  </span>
+                                  </button>
                                 )}
                               </div>
                             )}
@@ -1207,6 +1421,16 @@ export default function CategoryDetailPage() {
                               </div>
                             ) : (
                               <div className="flex items-center justify-center gap-1">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedHistoryItem(v);
+                                  }}
+                                  className="text-muted-foreground hover:text-emerald-400 p-1.5 rounded hover:bg-muted/60 transition-colors"
+                                  title="View Bill History & Analytics"
+                                >
+                                  <History className="w-3.5 h-3.5" />
+                                </button>
                                 <button
                                   onClick={() => startEdit(v)}
                                   className="text-muted-foreground hover:text-blue-400 p-1.5 rounded hover:bg-muted/60 transition-colors"
@@ -1333,6 +1557,15 @@ export default function CategoryDetailPage() {
           confirmText={isMerging ? "Combining..." : "Combine & Clean Items"}
           cancelText="Cancel"
           variant="info"
+        />
+
+        {/* Item Invoice History & Analytics Modal */}
+        <ItemHistoryModal
+          isOpen={selectedHistoryItem !== null}
+          onClose={() => setSelectedHistoryItem(null)}
+          productId={selectedHistoryItem?.id || null}
+          productName={selectedHistoryItem ? `${selectedHistoryItem.name}${selectedHistoryItem.brand ? ` (${selectedHistoryItem.brand})` : ''}` : ''}
+          companyId={companyId}
         />
       </div>
     </DashboardLayout>

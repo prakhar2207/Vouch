@@ -536,3 +536,33 @@ class CombineInventoryItemsAPIView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=500)
 
+
+class ProductHistoryAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, company_id, product_id):
+        try:
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            from apps.inventory.services.item_analytics_service import ItemAnalyticsService
+            result = ItemAnalyticsService.get_product_invoice_history(product_id=product_id, company=company)
+            if not result:
+                return Response({"success": False, "error": "Product not found."}, status=404)
+            return Response({"success": True, "data": result})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
+
+class InventoryItemAnalyticsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, company_id):
+        try:
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            category_id = request.query_params.get('category_id')
+            limit = int(request.query_params.get('limit', 10))
+            from apps.inventory.services.item_analytics_service import ItemAnalyticsService
+            result = ItemAnalyticsService.get_top_moving_items(company=company, category_id=category_id, limit=limit)
+            return Response({"success": True, "data": result})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+

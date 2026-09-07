@@ -77,6 +77,7 @@ urlpatterns = [
     path('api/v1/accounting/', include('apps.accounting.urls')),
     path('api/v1/analytics/', include('apps.analytics.urls')),
     path('api/v1/inventory/', include('apps.inventory.urls')),
+    path('api/inventory/', include('apps.inventory.urls')),
     path('api/v1/ledgers/', include('apps.ledgers.urls')),
 
     # Direct Financial Years & Ledger Statement Routes

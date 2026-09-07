@@ -1,4 +1,4 @@
-﻿# Generated manually to repair Invoice #355 line items and transfer stock from PIX to Modicord
+# Generated manually to repair Invoice #355 line items and transfer stock from PIX to Modicord
 from decimal import Decimal
 import uuid
 from django.db import migrations
@@ -64,7 +64,7 @@ def relink_invoice_355_to_modicord(apps, schema_editor):
                         stock_quantity=Decimal('0.00'),
                         purchase_price=rate,
                         purchase_price_from_invoice=True,
-                        selling_price=old_prod.selling_price
+                        selling_price=Decimal('0.00')
                     )
 
                 # 3. Add stock to the Modicord product and update purchase price
@@ -90,7 +90,7 @@ def reverse_relink(apps, schema_editor):
 class Migration(migrations.Migration):
     dependencies = [
         ('accounting', '0006_resync_sequences_and_recalculate_ledger_balances'),
-        ('inventory', '0001_initial'),
+        ('inventory', '0005_product_purchase_price_from_invoice'),
     ]
 
     operations = [
