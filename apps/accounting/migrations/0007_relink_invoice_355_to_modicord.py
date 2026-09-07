@@ -41,7 +41,12 @@ def relink_invoice_355_to_modicord(apps, schema_editor):
 
                 # 1. Deduct stock from the mistakenly credited product (e.g. PIX)
                 old_prod.stock_quantity = max(Decimal('0.00'), old_prod.stock_quantity - qty)
-                old_prod.save(update_fields=['stock_quantity'])
+                remaining_purchases = old_prod.voucher_items.filter(voucher__voucher_type='PURCHASE').exclude(voucher_id=v.id)
+                if not remaining_purchases.exists():
+                    old_prod.purchase_price_from_invoice = False
+                    if (old_prod.brand or '').strip().upper() == 'PIX' and old_prod.selling_price > Decimal('0.00'):
+                        old_prod.purchase_price = (old_prod.selling_price * Decimal('0.38')).quantize(Decimal('0.01'))
+                old_prod.save(update_fields=['stock_quantity', 'purchase_price', 'purchase_price_from_invoice'])
 
                 # 2. Find or create the Modicord product
                 new_prod = Product.objects.filter(

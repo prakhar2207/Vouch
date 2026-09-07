@@ -150,15 +150,20 @@ class ProductListView(APIView):
             company = Company.objects.get(id=company_id, users__user=request.user)
             category_id = request.query_params.get('category')
             
-            qs = Product.objects.filter(company=company).select_related('category').prefetch_related('voucher_items').order_by('-created_at')
+            qs = Product.objects.filter(company=company).select_related('category').prefetch_related('voucher_items__voucher').order_by('-created_at')
             if category_id:
                 if category_id == 'unassigned':
                     qs = qs.filter(category__isnull=True)
                 else:
                     qs = qs.filter(category_id=category_id)
                 
-            data = [
-                {
+            data = []
+            for p in qs:
+                has_posted_purchase = any(
+                    item.voucher and item.voucher.voucher_type == 'PURCHASE' and item.voucher.status == 'POSTED'
+                    for item in p.voucher_items.all()
+                )
+                data.append({
                     "id": str(p.id),
                     "name": p.name,
                     "alias": p.alias or "",
@@ -176,13 +181,12 @@ class ProductListView(APIView):
                     "wholesaler_price": p.wholesaler_price,
                     "min_selling_price": p.min_selling_price,
                     "purchase_price": p.purchase_price,
-                    "purchase_price_from_invoice": getattr(p, 'purchase_price_from_invoice', False),
+                    "purchase_price_from_invoice": getattr(p, 'purchase_price_from_invoice', False) and has_posted_purchase,
                     "stock_quantity": int(round(p.stock_quantity)) if is_integer_unit(p.unit) else p.stock_quantity,
-                    "has_invoice_stock": len(p.voucher_items.all()) > 0,
+                    "has_invoice_stock": has_posted_purchase,
                     "track_batches": p.track_batches,
                     "track_serial_numbers": p.track_serial_numbers
-                } for p in qs
-            ]
+                })
             category_stock_val = sum(float(p.stock_quantity) * float(p.purchase_price) for p in qs if p.stock_quantity > 0)
             category_retail_val = sum(float(p.stock_quantity) * float(p.selling_price) for p in qs if p.stock_quantity > 0)
             category_stock_qty = sum(float(p.stock_quantity) for p in qs if p.stock_quantity > 0)
@@ -312,7 +316,9 @@ class ProductDetailView(APIView):
             if 'selling_price' in data: product.selling_price = data['selling_price']
             if 'wholesaler_price' in data: product.wholesaler_price = data['wholesaler_price']
             if 'min_selling_price' in data: product.min_selling_price = data['min_selling_price']
-            if 'purchase_price' in data: product.purchase_price = data['purchase_price']
+            if 'purchase_price' in data: 
+                product.purchase_price = data['purchase_price']
+                product.purchase_price_from_invoice = False
             if 'sku' in data: product.sku = data['sku']
             if 'unit' in data: product.unit = data['unit']
             
