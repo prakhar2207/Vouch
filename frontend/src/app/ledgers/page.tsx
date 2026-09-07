@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { API_BASE_URL } from '@/utils/api';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
@@ -20,7 +21,14 @@ import {
   Wallet,
   X,
   RefreshCw,
-  Lock
+  Lock,
+  Receipt,
+  FileText,
+  Scale,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  ArrowRight
 } from 'lucide-react';
 
 interface LedgerItem {
@@ -59,7 +67,8 @@ export default function LedgersPage() {
   const [groups, setGroups] = useState<LedgerGroupItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'ALL' | 'ASSET' | 'LIABILITY' | 'INCOME' | 'EXPENSE'>('ALL');
+  const [activeTab, setActiveTab] = useState<'ALL' | 'ASSET' | 'LIABILITY' | 'INCOME' | 'EXPENSE' | 'TAX'>('ALL');
+  const [isGstWidgetExpanded, setIsGstWidgetExpanded] = useState(true);
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -275,10 +284,87 @@ export default function LedgersPage() {
     return { total: ledgers.length, assets, liabilities, income, expenses };
   }, [ledgers]);
 
+  // Tax Summary Calculation (Input Tax Credit vs Output Tax Liability)
+  const taxSummary = useMemo(() => {
+    let inputCgst = 0;
+    let inputSgst = 0;
+    let inputIgst = 0;
+    let otherInput = 0;
+
+    let outputCgst = 0;
+    let outputSgst = 0;
+    let outputIgst = 0;
+    let otherOutput = 0;
+
+    let taxLedgersCount = 0;
+
+    ledgers.forEach(l => {
+      const isTax =
+        l.ledger_type === 'TAX' ||
+        l.group?.toLowerCase().includes('duties') ||
+        l.group?.toLowerCase().includes('tax') ||
+        /^(input|output)\s+(cgst|sgst|igst|tax)/i.test(l.name) ||
+        /^(cgst|sgst|igst)$/i.test(l.name);
+
+      if (!isTax) return;
+      taxLedgersCount++;
+
+      const isCreditType = l.opening_balance_type === 'CREDIT';
+      const raw = Number(l.current_balance || 0);
+      const netDebit = isCreditType ? -raw : raw;
+      const netCredit = isCreditType ? raw : -raw;
+      const name = l.name.toLowerCase();
+
+      if (name.includes('input') || (!name.includes('output') && netDebit > 0)) {
+        const val = Math.max(0, netDebit);
+        if (name.includes('cgst')) inputCgst += val;
+        else if (name.includes('sgst') || name.includes('utgst')) inputSgst += val;
+        else if (name.includes('igst')) inputIgst += val;
+        else otherInput += val;
+      } else if (name.includes('output') || (!name.includes('input') && netCredit > 0)) {
+        const val = Math.max(0, netCredit);
+        if (name.includes('cgst')) outputCgst += val;
+        else if (name.includes('sgst') || name.includes('utgst')) outputSgst += val;
+        else if (name.includes('igst')) outputIgst += val;
+        else otherOutput += val;
+      }
+    });
+
+    const totalInput = inputCgst + inputSgst + inputIgst + otherInput;
+    const totalOutput = outputCgst + outputSgst + outputIgst + otherOutput;
+    const netDiff = totalOutput - totalInput;
+
+    return {
+      inputCgst,
+      inputSgst,
+      inputIgst,
+      otherInput,
+      totalInput,
+      outputCgst,
+      outputSgst,
+      outputIgst,
+      otherOutput,
+      totalOutput,
+      netPayable: netDiff > 0 ? netDiff : 0,
+      netItcCarryForward: netDiff < 0 ? Math.abs(netDiff) : 0,
+      taxLedgersCount,
+    };
+  }, [ledgers]);
+
   // Filtering
   const filteredLedgers = useMemo(() => {
     return ledgers.filter(l => {
-      if (activeTab !== 'ALL' && l.nature !== activeTab) return false;
+      if (activeTab === 'TAX') {
+        const isTax =
+          l.ledger_type === 'TAX' ||
+          l.group?.toLowerCase().includes('duties') ||
+          l.group?.toLowerCase().includes('tax') ||
+          /^(input|output)\s+(cgst|sgst|igst|tax)/i.test(l.name) ||
+          /^(cgst|sgst|igst)$/i.test(l.name);
+        if (!isTax) return false;
+      } else if (activeTab !== 'ALL' && l.nature !== activeTab) {
+        return false;
+      }
       if (searchTerm.trim()) {
         const q = searchTerm.toLowerCase();
         const matchName = l.name?.toLowerCase().includes(q);
@@ -357,24 +443,247 @@ export default function LedgersPage() {
           </div>
         </div>
 
+        {/* GST Tax Position (Input vs. Output Summary) */}
+        <div className="bg-card border border-border rounded-2xl p-5 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-border/60 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+                <Receipt className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-foreground">GST Tax Summary</h2>
+                  <span className="text-[11px] bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-0.5 rounded-full font-medium">
+                    Input Tax Credit vs. Output Liability
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Live statutory balance aggregated across all Duties &amp; Taxes ledgers
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button
+                onClick={() => {
+                  setActiveTab('TAX');
+                  setSearchTerm('');
+                }}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer w-full sm:w-auto ${
+                  activeTab === 'TAX'
+                    ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
+                    : 'border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300'
+                }`}
+              >
+                <span>Filter Tax Ledgers</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => setIsGstWidgetExpanded(!isGstWidgetExpanded)}
+                className="p-1.5 rounded-lg border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                title={isGstWidgetExpanded ? 'Collapse GST Summary' : 'Expand GST Summary'}
+              >
+                {isGstWidgetExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          {isGstWidgetExpanded && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+              {/* Total Input Tax Credit (ITC) */}
+              <div className="bg-muted/30 border border-border/80 rounded-xl p-4 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wide flex items-center gap-1">
+                      <ArrowDownLeft className="w-3.5 h-3.5" /> Total Input Tax (ITC)
+                    </span>
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded font-mono">
+                      Purchases (Dr)
+                    </span>
+                  </div>
+                  <div className="text-2xl font-bold font-mono text-emerald-400 mt-2">
+                    ₹{taxSummary.totalInput.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Total tax paid on purchases eligible for input credit
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-border/50 text-center font-mono">
+                  <div className="bg-background/50 rounded p-1.5 border border-border/40">
+                    <div className="text-[10px] text-muted-foreground font-sans">Input CGST</div>
+                    <div className="text-xs font-semibold text-foreground mt-0.5">
+                      ₹{taxSummary.inputCgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                  <div className="bg-background/50 rounded p-1.5 border border-border/40">
+                    <div className="text-[10px] text-muted-foreground font-sans">Input SGST</div>
+                    <div className="text-xs font-semibold text-foreground mt-0.5">
+                      ₹{taxSummary.inputSgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                  <div className="bg-background/50 rounded p-1.5 border border-border/40">
+                    <div className="text-[10px] text-muted-foreground font-sans">Input IGST</div>
+                    <div className="text-xs font-semibold text-foreground mt-0.5">
+                      ₹{taxSummary.inputIgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Total Output Tax Liability */}
+              <div className="bg-muted/30 border border-border/80 rounded-xl p-4 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-amber-400 uppercase tracking-wide flex items-center gap-1">
+                      <ArrowUpRight className="w-3.5 h-3.5" /> Total Output Tax
+                    </span>
+                    <span className="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded font-mono">
+                      Sales (Cr)
+                    </span>
+                  </div>
+                  <div className="text-2xl font-bold font-mono text-amber-400 mt-2">
+                    ₹{taxSummary.totalOutput.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Total tax collected on sales invoices payable to gov
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-border/50 text-center font-mono">
+                  <div className="bg-background/50 rounded p-1.5 border border-border/40">
+                    <div className="text-[10px] text-muted-foreground font-sans">Output CGST</div>
+                    <div className="text-xs font-semibold text-foreground mt-0.5">
+                      ₹{taxSummary.outputCgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                  <div className="bg-background/50 rounded p-1.5 border border-border/40">
+                    <div className="text-[10px] text-muted-foreground font-sans">Output SGST</div>
+                    <div className="text-xs font-semibold text-foreground mt-0.5">
+                      ₹{taxSummary.outputSgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                  <div className="bg-background/50 rounded p-1.5 border border-border/40">
+                    <div className="text-[10px] text-muted-foreground font-sans">Output IGST</div>
+                    <div className="text-xs font-semibold text-foreground mt-0.5">
+                      ₹{taxSummary.outputIgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Net GST Position */}
+              <div
+                className={`rounded-xl p-4 flex flex-col justify-between border ${
+                  taxSummary.netPayable > 0
+                    ? 'bg-rose-500/5 border-rose-500/20'
+                    : taxSummary.netItcCarryForward > 0
+                    ? 'bg-emerald-500/5 border-emerald-500/20'
+                    : 'bg-muted/30 border-border/80'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1">
+                      <Scale className="w-3.5 h-3.5 text-blue-400" /> Net GST Position
+                    </span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-medium ${
+                        taxSummary.netPayable > 0
+                          ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                          : taxSummary.netItcCarryForward > 0
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          : 'bg-zinc-500/10 text-zinc-400 border border-zinc-500/20'
+                      }`}
+                    >
+                      {taxSummary.netPayable > 0
+                        ? 'Net Payable'
+                        : taxSummary.netItcCarryForward > 0
+                        ? 'ITC Surplus'
+                        : 'Reconciled'}
+                    </span>
+                  </div>
+                  <div
+                    className={`text-2xl font-bold font-mono mt-2 ${
+                      taxSummary.netPayable > 0
+                        ? 'text-rose-400'
+                        : taxSummary.netItcCarryForward > 0
+                        ? 'text-emerald-400'
+                        : 'text-foreground'
+                    }`}
+                  >
+                    ₹{(taxSummary.netPayable || taxSummary.netItcCarryForward || 0).toLocaleString('en-IN', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    {taxSummary.netPayable > 0
+                      ? 'Net statutory liability to be paid after setting off input credit'
+                      : taxSummary.netItcCarryForward > 0
+                      ? 'Unutilized ITC surplus available to offset future sales liability'
+                      : 'All input and output tax balances are completely balanced'}
+                  </p>
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-border/50 flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Filing Action:</span>
+                  <span
+                    className={`font-semibold ${
+                      taxSummary.netPayable > 0
+                        ? 'text-rose-400'
+                        : taxSummary.netItcCarryForward > 0
+                        ? 'text-emerald-400'
+                        : 'text-zinc-400'
+                    }`}
+                  >
+                    {taxSummary.netPayable > 0
+                      ? `Deposit ₹${taxSummary.netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                      : taxSummary.netItcCarryForward > 0
+                      ? `Carry forward ₹${taxSummary.netItcCarryForward.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                      : 'Zero Tax Due'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Search & Tabs Toolbar */}
         <div className="bg-card border border-border p-4 rounded-2xl shadow-sm space-y-3">
           <div className="flex flex-col md:flex-row items-center justify-between gap-3">
             {/* Tabs */}
             <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border/60 w-full md:w-auto overflow-x-auto">
-              {(['ALL', 'ASSET', 'LIABILITY', 'INCOME', 'EXPENSE'] as const).map(tab => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-                    activeTab === tab
-                      ? 'bg-card text-foreground shadow-2xs font-semibold'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {tab === 'ALL' ? 'All Heads' : tab.charAt(0) + tab.slice(1).toLowerCase() + 's'}
-                </button>
-              ))}
+              {(['ALL', 'ASSET', 'LIABILITY', 'INCOME', 'EXPENSE', 'TAX'] as const).map(tab => {
+                const isTaxTab = tab === 'TAX';
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                      activeTab === tab
+                        ? isTaxTab
+                          ? 'bg-purple-600 text-white shadow-2xs font-semibold'
+                          : 'bg-card text-foreground shadow-2xs font-semibold'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {isTaxTab ? (
+                      <>
+                        <Receipt className="w-3.5 h-3.5" />
+                        <span>Duties & Taxes (GST)</span>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                          activeTab === 'TAX' ? 'bg-purple-700 text-white' : 'bg-purple-500/15 text-purple-300'
+                        }`}>
+                          {taxSummary.taxLedgersCount}
+                        </span>
+                      </>
+                    ) : tab === 'ALL' ? (
+                      'All Heads'
+                    ) : (
+                      tab.charAt(0) + tab.slice(1).toLowerCase() + 's'
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Search Input */}
@@ -439,7 +748,14 @@ export default function LedgersPage() {
                     <tr key={l.id} className="hover:bg-muted/30 transition-colors">
                       <td className="py-3 px-4 font-medium">
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-sm">{l.name}</span>
+                          <Link
+                            href={`/parties/${l.id}/statement`}
+                            className="font-semibold text-sm hover:text-blue-400 hover:underline transition-colors flex items-center gap-1 group"
+                            title="View Account Statement & Invoices"
+                          >
+                            <span>{l.name}</span>
+                            <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 text-blue-400 transition-opacity" />
+                          </Link>
                           {Number(l.discount_percent || 0) > 0 && (
                             <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.2 rounded font-mono">
                               {Number(l.discount_percent)}% Disc
@@ -481,12 +797,28 @@ export default function LedgersPage() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right font-mono font-medium">
-                        <span className={Number(l.current_balance || 0) >= 0 ? 'text-foreground' : 'text-rose-400'}>
-                          ₹{Math.abs(Number(l.current_balance || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground ml-1">
-                          {Number(l.current_balance || 0) >= 0 ? 'Dr' : 'Cr'}
-                        </span>
+                        {(() => {
+                          const isCreditType = l.opening_balance_type === 'CREDIT';
+                          const raw = Number(l.current_balance || 0);
+                          const isDr = isCreditType ? raw < 0 : raw >= 0;
+                          const absVal = Math.abs(raw);
+                          return (
+                            <div className="inline-flex items-center justify-end gap-1">
+                              <span className={isDr ? 'text-foreground' : 'text-amber-400'}>
+                                ₹{absVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </span>
+                              <span
+                                className={`text-[10px] font-semibold px-1 py-0.2 rounded ${
+                                  isDr
+                                    ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                }`}
+                              >
+                                {isDr ? 'Dr' : 'Cr'}
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="py-3 px-4 text-center">
                         <span
@@ -498,6 +830,13 @@ export default function LedgersPage() {
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          <Link
+                            href={`/parties/${l.id}/statement`}
+                            className="p-1.5 rounded-lg border border-border/60 hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-colors cursor-pointer"
+                            title="View Account Statement & Invoices"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                          </Link>
                           <button
                             onClick={() => handleOpenEditModal(l)}
                             className="p-1.5 rounded-lg border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
