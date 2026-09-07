@@ -229,33 +229,56 @@ export default function NewItemInCategoryPage() {
                       </div>
                     </div>
                   </div>
-                    {/* Simplified Pricing & Stock (Only visible if advanced mode is disabled) */}
-                    {!enableAdvancedItemCreation && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6 pt-6 border-t border-zinc-800">
-                        <div>
-                          <label className="block text-sm font-medium text-blue-400 mb-1.5">Maximum Retail Price (MRP) (₹) *</label>
-                          <input
-                            required
-                            type="number"
-                            step="0.01"
-                            placeholder="0.00"
-                            value={formData.selling_price}
-                            onChange={e => setFormData({ ...formData, selling_price: e.target.value })}
-                            className="w-full bg-zinc-900 border border-blue-500/30 text-green-400 font-bold p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-400 mb-1.5">Opening Quantity (Optional)</label>
-                          <input
-                            type="number"
-                            placeholder="0"
-                            value={formData.opening_qty}
-                            onChange={e => setFormData({ ...formData, opening_qty: e.target.value })}
-                            className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                          />
-                        </div>
+                    {/* Pricing & Stock */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6 pt-6 border-t border-zinc-800">
+                      <div>
+                        <label className="block text-sm font-medium text-blue-400 mb-1.5">Maximum Retail Price (MRP) (₹) *</label>
+                        <input
+                          required
+                          type="number"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={formData.selling_price}
+                          onChange={e => setFormData({ ...formData, selling_price: e.target.value })}
+                          className="w-full bg-zinc-900 border border-blue-500/30 text-green-400 font-bold p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                        />
                       </div>
-                    )}
+                      <div>
+                        <label className="block text-sm font-medium text-emerald-400 mb-1.5">Purchase / Cost Price (₹)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={formData.purchase_price}
+                          onChange={e => setFormData({ ...formData, purchase_price: e.target.value })}
+                          className="w-full bg-zinc-900 border border-zinc-700 text-white font-medium p-3 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                        />
+                        {parseFloat(formData.selling_price) > 0 && parseFloat(formData.purchase_price) > 0 && (
+                          <p className="text-[11px] text-muted-foreground mt-1">
+                            Margin: <span className={margin >= 0 ? "text-emerald-400 font-semibold" : "text-rose-400 font-semibold"}>
+                              {margin >= 0 ? `+${margin.toFixed(1)}%` : `${margin.toFixed(1)}%`}
+                            </span>
+                          </p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1.5">Opening Quantity (Optional)</label>
+                        <input
+                          type="number"
+                          placeholder="0"
+                          value={formData.opening_qty}
+                          onChange={e => setFormData({ ...formData, opening_qty: e.target.value })}
+                          className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                        />
+                        {parseFloat(formData.opening_qty) > 0 && parseFloat(formData.purchase_price) > 0 && (
+                          <p className="text-[11px] text-muted-foreground mt-1">
+                            Opening Val: <span className="text-emerald-400 font-semibold font-mono">
+                              ₹{(parseFloat(formData.opening_qty) * parseFloat(formData.purchase_price)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                            </span>
+                          </p>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
                 {/* ───── ZONE 2 & 3: ADVANCED (Conditionally rendered) ───── */}
@@ -536,6 +559,14 @@ export default function NewItemInCategoryPage() {
                             Tax: ₹{formData.selling_price ? (parseFloat(formData.selling_price) * (parseFloat(activeGst?.toString() || '18') / 100)).toFixed(2) : '0.00'}
                           </span>
                         </div>
+                        {parseFloat(formData.purchase_price) > 0 && (
+                          <div className="border-t border-zinc-800/60 bg-zinc-900/40 px-3 py-2 flex justify-between text-xs font-mono">
+                            <span className="text-gray-500">Purchase / Cost:</span>
+                            <span className="text-emerald-400 font-medium">
+                              ₹{parseFloat(formData.purchase_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
