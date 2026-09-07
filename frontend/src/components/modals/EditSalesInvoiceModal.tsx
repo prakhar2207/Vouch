@@ -123,6 +123,7 @@ export default function EditSalesInvoiceModal({
       ...prev,
       {
         product_name: "",
+        brand: "",
         hsn_code: "",
         quantity: 1,
         unit: "PCS",
@@ -242,7 +243,7 @@ export default function EditSalesInvoiceModal({
       <div className="fixed inset-0 bg-black/75 backdrop-blur-xs" onClick={onClose} />
 
       {/* Modal Card */}
-      <div className="relative bg-card border border-border/80 w-full max-w-5xl rounded-2xl shadow-2xl overflow-hidden z-10 animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[92vh]">
+      <div className="relative bg-card border border-border/80 w-full max-w-6xl rounded-2xl shadow-2xl overflow-hidden z-10 animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="px-6 py-4 border-b border-border/60 bg-muted/20 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -341,6 +342,7 @@ export default function EditSalesInvoiceModal({
                     <tr>
                       <th className="p-2.5 w-6">#</th>
                       <th className="p-2.5">Item Name / Size</th>
+                      <th className="p-2.5 w-28">Brand</th>
                       <th className="p-2.5 w-24">HSN Code</th>
                       <th className="p-2.5 w-20 text-right">Qty</th>
                       <th className="p-2.5 w-16">Unit</th>
@@ -376,6 +378,17 @@ export default function EditSalesInvoiceModal({
                                 updateItemField(idx, "product_name", e.target.value)
                               }
                               className="w-full bg-muted/40 border border-border/50 text-foreground font-medium px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </td>
+
+                          {/* Brand */}
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              placeholder="e.g. Modicord"
+                              value={item.brand || ""}
+                              onChange={(e) => updateItemField(idx, "brand", e.target.value)}
+                              className="w-full bg-muted/40 border border-border/50 text-foreground text-xs px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500 font-medium"
                             />
                           </td>
 

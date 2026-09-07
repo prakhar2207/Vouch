@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
@@ -522,7 +523,18 @@ class VoucherDetailAPIView(APIView):
                             except Exception:
                                 product = None
 
+                        # If product was fetched by ID, verify that the brand has not been changed
+                        if product:
+                            existing_brand = (product.brand or '').strip()
+                            if item_brand:
+                                if existing_brand.lower() != item_brand.lower():
+                                    product = None
+                            else:
+                                if existing_brand and existing_brand.lower() not in ['unbranded', 'generic']:
+                                    product = None
+
                         if not product and item_brand:
+                            # Strict brand search - only match products belonging to this specific brand
                             product = Product.objects.filter(
                                 company=company,
                                 name__iexact=clean_item_name,
@@ -537,14 +549,15 @@ class VoucherDetailAPIView(APIView):
                                             p.save(update_fields=['name'])
                                         break
 
-                        if not product:
-                            # Search company-wide without brand restriction
+                        if not product and not item_brand:
+                            # Strict unbranded search - NEVER hijack a branded product (like PIX or Modicord)
+                            unbranded_q = Q(brand__isnull=True) | Q(brand='') | Q(brand__iexact='unbranded') | Q(brand__iexact='generic')
                             product = Product.objects.filter(
                                 company=company,
                                 name__iexact=clean_item_name
-                            ).first()
+                            ).filter(unbranded_q).first()
                             if not product:
-                                for p in Product.objects.filter(company=company):
+                                for p in Product.objects.filter(company=company).filter(unbranded_q):
                                     if get_canonical_key(p.name, p.category.name if p.category else cat_name) == canon_key:
                                         product = p
                                         if p.name != clean_item_name:
@@ -556,7 +569,7 @@ class VoucherDetailAPIView(APIView):
                         net_rate = (rate * (Decimal('100') - discount_pct) / Decimal('100')).quantize(Decimal('0.01'))
 
                         if not product:
-                            # Auto-create product only if no product exists with this name in inventory
+                            # Auto-create product only if no product exists with this name and brand in inventory
                             if not category:
                                 existing_sibling = Product.objects.filter(company=company, name__iexact=clean_item_name).first()
                                 if existing_sibling and existing_sibling.category:
@@ -587,6 +600,8 @@ class VoucherDetailAPIView(APIView):
                                 selling_price=rate if voucher.voucher_type == 'SALES' else rate * Decimal('1.25')
                             )
                         else:
+                            if item_brand and not product.brand:
+                                product.brand = item_brand
                             if not product.category and category:
                                 product.category = category
                             if voucher.voucher_type == 'PURCHASE' and net_rate > Decimal('0.00'):
