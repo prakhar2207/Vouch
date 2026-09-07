@@ -14,6 +14,15 @@ class PurchaseInvoiceService:
         """
         End-to-End orchestration of a Purchase Invoice.
         """
+        # 0. Safeguard: Ensure tax ledgers are strictly INPUT tax ledgers (never Output)
+        if not input_cgst_ledger or 'output' in input_cgst_ledger.name.lower():
+            input_cgst_ledger = PurchaseInvoiceService._get_or_create_input_tax_ledger(company, 'CGST')
+        if not input_sgst_ledger or 'output' in input_sgst_ledger.name.lower():
+            input_sgst_ledger = PurchaseInvoiceService._get_or_create_input_tax_ledger(company, 'SGST')
+        if not input_igst_ledger or 'output' in input_igst_ledger.name.lower():
+            input_igst_ledger = PurchaseInvoiceService._get_or_create_input_tax_ledger(company, 'IGST')
+
+        # 1. Create Voucher Header
         from apps.accounting.services.sequence_service import InvoiceSequenceService
         v_date = voucher_date if voucher_date else timezone.now().date()
         if supplier_invoice_number and supplier_invoice_number.strip():
@@ -311,3 +320,31 @@ class PurchaseInvoiceService:
             round_off.save(update_fields=['group'])
 
         return round_off
+
+    @staticmethod
+    def _get_or_create_input_tax_ledger(company: Company, tax_type: str) -> Ledger:
+        """
+        Safely gets or creates the Input tax ledger for PURCHASES.
+        tax_type: 'CGST', 'SGST', or 'IGST'
+        Guarantees:
+        - NEVER matches an 'Output' ledger.
+        - Checks for exact 'Input <tax_type>' or '<tax_type> Input'.
+        - If neither exists, creates 'Input <tax_type>' under 'Duties & Taxes' (LIABILITY).
+        """
+        from apps.ledgers.models import LedgerGroup
+        tax_grp, _ = LedgerGroup.objects.get_or_create(
+            company=company,
+            name='Duties & Taxes',
+            defaults={'nature': 'LIABILITY'}
+        )
+        target_name = f"Input {tax_type.upper()}"
+        ledger = Ledger.objects.filter(company=company, name__iexact=target_name).first()
+        if not ledger:
+            ledger = Ledger.objects.filter(company=company, name__iexact=f"{tax_type.upper()} Input").first()
+        if not ledger:
+            ledger = Ledger.objects.get_or_create(
+                company=company,
+                name=target_name,
+                defaults={'group': tax_grp, 'ledger_type': 'TAX'}
+            )[0]
+        return ledger

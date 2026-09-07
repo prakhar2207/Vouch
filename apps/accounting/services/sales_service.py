@@ -34,6 +34,14 @@ class SalesInvoiceService:
         3. Generates the exact 5-way double-entry accounting strings.
         Returns the DRAFT voucher.
         """
+        # 0. Safeguard: Ensure tax ledgers are strictly OUTPUT tax ledgers (never Input)
+        if not cgst_ledger or 'input' in cgst_ledger.name.lower():
+            cgst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'CGST')
+        if not sgst_ledger or 'input' in sgst_ledger.name.lower():
+            sgst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'SGST')
+        if not igst_ledger or 'input' in igst_ledger.name.lower():
+            igst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'IGST')
+
         # 1. Create Voucher Header
         from apps.accounting.services.sequence_service import InvoiceSequenceService
         v_date = manual_voucher_date if manual_voucher_date else timezone.now().date()
@@ -268,3 +276,31 @@ class SalesInvoiceService:
             round_off.save(update_fields=['group'])
 
         return round_off
+
+    @staticmethod
+    def _get_or_create_output_tax_ledger(company: Company, tax_type: str) -> Ledger:
+        """
+        Safely gets or creates the Output tax ledger for SALES.
+        tax_type: 'CGST', 'SGST', or 'IGST'
+        Guarantees:
+        - NEVER matches an 'Input' ledger.
+        - Checks for exact 'Output <tax_type>' or '<tax_type> Output'.
+        - If neither exists, creates 'Output <tax_type>' under 'Duties & Taxes' (LIABILITY).
+        """
+        from apps.ledgers.models import LedgerGroup
+        tax_grp, _ = LedgerGroup.objects.get_or_create(
+            company=company,
+            name='Duties & Taxes',
+            defaults={'nature': 'LIABILITY'}
+        )
+        target_name = f"Output {tax_type.upper()}"
+        ledger = Ledger.objects.filter(company=company, name__iexact=target_name).first()
+        if not ledger:
+            ledger = Ledger.objects.filter(company=company, name__iexact=f"{tax_type.upper()} Output").first()
+        if not ledger:
+            ledger, _ = Ledger.objects.get_or_create(
+                company=company,
+                name=target_name,
+                defaults={'group': tax_grp, 'ledger_type': 'TAX'}
+            )
+        return ledger
