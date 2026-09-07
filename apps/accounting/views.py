@@ -774,32 +774,200 @@ class LedgerStatementAPIView(APIView):
     
     def get(self, request, company_id, ledger_id):
         try:
-            from apps.accounting.models import LedgerEntry
+            from apps.accounting.models import LedgerEntry, Voucher
+            from apps.ledgers.models import Ledger
+            from decimal import Decimal
+            from datetime import datetime
+            import collections
+
             company = Company.objects.get(id=company_id, users__user=request.user)
-            ledger = Ledger.objects.get(id=ledger_id, company=company)
-            
-            entries = LedgerEntry.objects.filter(ledger=ledger).select_related('voucher').order_by('voucher__voucher_date', 'created_at')
-            
-            data = [
-                {
+            ledger = Ledger.objects.select_related('group').get(id=ledger_id, company=company)
+
+            # Date Range Filters
+            from_date_str = request.query_params.get('from_date')
+            to_date_str = request.query_params.get('to_date')
+
+            from_date = None
+            to_date = None
+            if from_date_str and from_date_str.strip():
+                try:
+                    from_date = datetime.strptime(from_date_str.strip(), '%Y-%m-%d').date()
+                except ValueError:
+                    pass
+            if to_date_str and to_date_str.strip():
+                try:
+                    to_date = datetime.strptime(to_date_str.strip(), '%Y-%m-%d').date()
+                except ValueError:
+                    pass
+
+            # Determine normal balance type
+            # Asset and Expense are Debit-normal; Liability, Equity, Income are Credit-normal.
+            ledger_nature = ledger.group.nature if ledger.group else 'ASSET'
+            is_debit_normal = ledger_nature in ['ASSET', 'EXPENSE'] or ledger.opening_balance_type == 'DEBIT'
+            normal_balance_type = 'DEBIT' if is_debit_normal else 'CREDIT'
+
+            # Calculate Period Opening Balance:
+            # Starts with ledger.opening_balance (and opening_balance_type)
+            # If from_date is provided, accumulate all transactions strictly BEFORE from_date into opening balance!
+            initial_op_amount = Decimal(str(ledger.opening_balance or '0.00'))
+            initial_op_type = ledger.opening_balance_type or ('DEBIT' if is_debit_normal else 'CREDIT')
+
+            # Convert initial opening balance to signed net based on ledger's normal type
+            if is_debit_normal:
+                # Positive means Dr, Negative means Cr
+                period_running = initial_op_amount if initial_op_type == 'DEBIT' else -initial_op_amount
+            else:
+                # Positive means Cr, Negative means Dr
+                period_running = initial_op_amount if initial_op_type == 'CREDIT' else -initial_op_amount
+
+            if from_date:
+                prior_entries = LedgerEntry.objects.filter(
+                    ledger=ledger,
+                    voucher__company=company,
+                    voucher__voucher_date__lt=from_date
+                ).values_list('debit_amount', 'credit_amount')
+                for dr, cr in prior_entries:
+                    dr_dec = Decimal(str(dr or '0.00'))
+                    cr_dec = Decimal(str(cr or '0.00'))
+                    if is_debit_normal:
+                        period_running += (dr_dec - cr_dec)
+                    else:
+                        period_running += (cr_dec - dr_dec)
+
+            if is_debit_normal:
+                period_opening_amount = abs(period_running)
+                period_opening_type = 'DEBIT' if period_running >= 0 else 'CREDIT'
+            else:
+                period_opening_amount = abs(period_running)
+                period_opening_type = 'CREDIT' if period_running >= 0 else 'DEBIT'
+
+            # Query entries within the period
+            entries_qs = LedgerEntry.objects.filter(
+                ledger=ledger,
+                voucher__company=company
+            ).select_related('voucher', 'voucher__party_ledger')
+
+            if from_date:
+                entries_qs = entries_qs.filter(voucher__voucher_date__gte=from_date)
+            if to_date:
+                entries_qs = entries_qs.filter(voucher__voucher_date__lte=to_date)
+
+            entries = list(entries_qs.order_by('voucher__voucher_date', 'created_at', 'id'))
+
+            # Batch fetch opposing entries across all vouchers in 1 single query
+            voucher_ids = [e.voucher_id for e in entries if e.voucher_id]
+            siblings = LedgerEntry.objects.filter(
+                voucher_id__in=voucher_ids
+            ).select_related('ledger', 'ledger__group')
+
+            voucher_entries_map = collections.defaultdict(list)
+            for s in siblings:
+                voucher_entries_map[s.voucher_id].append(s)
+
+            # Build statement rows and compute dynamic running balance
+            running_signed = period_running
+            statement_rows = []
+            total_debit = Decimal('0.00')
+            total_credit = Decimal('0.00')
+
+            for e in entries:
+                dr = Decimal(str(e.debit_amount or '0.00'))
+                cr = Decimal(str(e.credit_amount or '0.00'))
+                total_debit += dr
+                total_credit += cr
+
+                if is_debit_normal:
+                    running_signed += (dr - cr)
+                    row_bal = abs(running_signed)
+                    row_bal_type = 'DR' if running_signed >= 0 else 'CR'
+                else:
+                    running_signed += (cr - dr)
+                    row_bal = abs(running_signed)
+                    row_bal_type = 'CR' if running_signed >= 0 else 'DR'
+
+                # Opposing ledger logic:
+                v_sibs = voucher_entries_map.get(e.voucher_id, [])
+                if dr > 0:
+                    opp = [s for s in v_sibs if s.id != e.id and s.credit_amount > 0]
+                else:
+                    opp = [s for s in v_sibs if s.id != e.id and s.debit_amount > 0]
+
+                if not opp:
+                    opp = [s for s in v_sibs if s.id != e.id]
+
+                # Format particulars:
+                # Standard double-entry naming:
+                # If entry was Dr, opposing was credited: "To <Opposing Ledger>"
+                # If entry was Cr, opposing was debited: "By <Opposing Ledger>"
+                prefix = "To " if dr > 0 else "By "
+                opposing_details = []
+                for o in opp:
+                    amt = o.credit_amount if dr > 0 else o.debit_amount
+                    opposing_details.append({
+                        "ledger_id": str(o.ledger_id),
+                        "ledger_name": o.ledger.name,
+                        "amount": float(amt)
+                    })
+
+                if len(opp) == 0:
+                    particulars = e.narration or "Adjustment"
+                elif len(opp) == 1:
+                    opp_name = opp[0].ledger.name
+                    # If cash voucher has ad-hoc buyer
+                    if opp[0].ledger.ledger_type == 'CASH' and e.voucher and e.voucher.buyer_name:
+                        opp_name = f"{opp_name} ({e.voucher.buyer_name})"
+                    particulars = f"{prefix}{opp_name}"
+                else:
+                    # Multiple opposing entries
+                    main_opp = opp[0].ledger.name
+                    particulars = f"{prefix}{main_opp} (+ {len(opp) - 1} other{'s' if len(opp) > 2 else ''})"
+
+                statement_rows.append({
                     "id": str(e.id),
-                    "date": e.voucher.voucher_date.strftime('%Y-%m-%d') if e.voucher else None,
+                    "voucher_id": str(e.voucher_id) if e.voucher_id else None,
+                    "date": e.voucher.voucher_date.strftime('%Y-%m-%d') if (e.voucher and e.voucher.voucher_date) else None,
+                    "particulars": particulars,
+                    "opposing_ledger_name": opp[0].ledger.name if opp else "As per details",
+                    "opposing_details": opposing_details,
                     "voucher_number": e.voucher.voucher_number if e.voucher else "Opening Balance",
                     "voucher_type": e.voucher.voucher_type if e.voucher else "-",
-                    "narration": e.narration,
-                    "debit": e.debit_amount,
-                    "credit": e.credit_amount,
-                } for e in entries
-            ]
-            
+                    "narration": e.narration or (e.voucher.narration if e.voucher else ""),
+                    "debit": float(dr),
+                    "credit": float(cr),
+                    "running_balance": float(row_bal),
+                    "running_balance_type": row_bal_type,
+                })
+
+            # Calculate Closing Balance
+            if is_debit_normal:
+                closing_amount = abs(running_signed)
+                closing_type = 'DEBIT' if running_signed >= 0 else 'CREDIT'
+            else:
+                closing_amount = abs(running_signed)
+                closing_type = 'CREDIT' if running_signed >= 0 else 'DEBIT'
+
             return Response({
-                "success": True, 
+                "success": True,
                 "data": {
+                    "ledger_id": str(ledger.id),
                     "ledger_name": ledger.name,
-                    "current_balance": ledger.current_balance,
-                    "opening_balance": ledger.opening_balance,
-                    "opening_balance_type": ledger.opening_balance_type,
-                    "entries": data
+                    "group_name": ledger.group.name if ledger.group else "",
+                    "nature": ledger_nature,
+                    "normal_balance_type": normal_balance_type,
+                    "gstin": ledger.gstin or "",
+                    "state_code": ledger.state_code or "",
+                    "phone": ledger.phone or "",
+                    "email": ledger.email or "",
+                    "from_date": from_date_str or None,
+                    "to_date": to_date_str or None,
+                    "period_opening_balance": float(period_opening_amount),
+                    "period_opening_type": period_opening_type,
+                    "total_debit": float(total_debit),
+                    "total_credit": float(total_credit),
+                    "net_movement": float(total_debit - total_credit if is_debit_normal else total_credit - total_debit),
+                    "closing_balance": float(closing_amount),
+                    "closing_type": closing_type,
+                    "entries": statement_rows
                 }
             })
         except Exception as e:

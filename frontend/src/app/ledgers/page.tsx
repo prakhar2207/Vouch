@@ -745,12 +745,17 @@ export default function LedgersPage() {
                   </tr>
                 ) : (
                   filteredLedgers.map(l => (
-                    <tr key={l.id} className="hover:bg-muted/30 transition-colors">
+                    <tr
+                      key={l.id}
+                      onClick={() => router.push(`/ledgers/${l.id}/statement`)}
+                      className="hover:bg-muted/30 transition-colors cursor-pointer group"
+                    >
                       <td className="py-3 px-4 font-medium">
                         <div className="flex items-center gap-2">
                           <Link
-                            href={`/parties/${l.id}/statement`}
-                            className="font-semibold text-sm hover:text-blue-400 hover:underline transition-colors flex items-center gap-1 group"
+                            href={`/ledgers/${l.id}/statement`}
+                            onClick={e => e.stopPropagation()}
+                            className="font-semibold text-sm group-hover:text-blue-400 group-hover:underline transition-colors flex items-center gap-1"
                             title="View Account Statement & Invoices"
                           >
                             <span>{l.name}</span>
@@ -828,24 +833,28 @@ export default function LedgersPage() {
                           title={l.is_active !== false ? 'Active' : 'Archived'}
                         />
                       </td>
-                      <td className="py-3 px-4 text-right">
+                      <td className="py-3 px-4 text-right" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1.5">
                           <Link
-                            href={`/parties/${l.id}/statement`}
+                            href={`/ledgers/${l.id}/statement`}
                             className="p-1.5 rounded-lg border border-border/60 hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-colors cursor-pointer"
                             title="View Account Statement & Invoices"
                           >
                             <FileText className="w-3.5 h-3.5" />
                           </Link>
                           <button
-                            onClick={() => handleOpenEditModal(l)}
+                            onClick={e => {
+                              e.stopPropagation();
+                              handleOpenEditModal(l);
+                            }}
                             className="p-1.5 rounded-lg border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                             title="Edit Account Head"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={() => {
+                            onClick={e => {
+                              e.stopPropagation();
                               setDeleteError('');
                               setDeletingLedger(l);
                             }}
