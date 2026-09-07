@@ -284,6 +284,7 @@ export default function SalesPage() {
             product_id: match.id,
             brand: match.brand || item.brand || '',
             unit: match.unit || item.unit || 'PCS',
+            stock_quantity: match.stock_quantity ?? 0,
             rate: mrp > 0 ? mrp : item.rate,
             discount_percent: (!item.discount_percent || Number(item.discount_percent) === 0) && currentPartyDiscount > 0
               ? currentPartyDiscount
@@ -331,6 +332,7 @@ export default function SalesPage() {
           item.product_id = match.id;
           item.brand = match.brand || '';
           item.unit = match.unit || 'PCS';
+          item.stock_quantity = match.stock_quantity ?? 0;
           
           // Auto-apply customer discount if item currently has 0 discount
           if ((!item.discount_percent || Number(item.discount_percent) === 0) && currentPartyDiscount > 0) {
@@ -618,12 +620,16 @@ export default function SalesPage() {
                                     .map((p: any) => {
                                         const mrp = parseFloat(p.selling_price) || 0;
                                         const brandStr = p.brand ? `[${p.brand}] ` : '';
+                                        const stock = Number(p.stock_quantity ?? 0);
+                                        const unit = p.unit || 'PCS';
+                                        const labelText = `${brandStr}${p.name} — MRP: ₹${mrp.toFixed(2)} • Avail: ${stock} ${unit}`;
                                         return (
                                             <option 
                                                 key={p.id} 
                                                 value={p.name}
+                                                label={labelText}
                                             >
-                                                {brandStr}{p.name} — MRP: ₹{mrp.toFixed(2)}
+                                                {labelText}
                                             </option>
                                         );
                                     })}
@@ -663,7 +669,7 @@ export default function SalesPage() {
                                                     className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-sm font-medium" 
                                                 />
                                                 {item.product_name && (
-                                                    <div className="flex items-center gap-2 mt-0.5 px-1.5">
+                                                    <div className="flex items-center gap-2 mt-0.5 px-1.5 flex-wrap">
                                                         {Number(item.rate) > 0 ? (
                                                             <span className="text-[11px] text-blue-400 font-mono flex items-center gap-1">
                                                                 <span>MRP:</span>
@@ -677,6 +683,26 @@ export default function SalesPage() {
                                                                 {item.brand}
                                                             </span>
                                                         )}
+                                                        {(() => {
+                                                            const cleanName = String(item.product_name || '').trim().toLowerCase();
+                                                            const matched = products.find((p: any) => 
+                                                                (item.product_id && p.id === item.product_id) || 
+                                                                p.name.toLowerCase() === cleanName
+                                                            );
+                                                            if (!matched) return null;
+                                                            const availStock = Number(matched.stock_quantity ?? 0);
+                                                            const isPositive = availStock > 0;
+                                                            return (
+                                                                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border font-medium flex items-center gap-1 ${
+                                                                    isPositive 
+                                                                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' 
+                                                                        : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                                                                }`}>
+                                                                    <span>Avail:</span>
+                                                                    <strong>{availStock} {matched.unit || 'PCS'}</strong>
+                                                                </span>
+                                                            );
+                                                        })()}
                                                     </div>
                                                 )}
                                             </td>
@@ -689,6 +715,21 @@ export default function SalesPage() {
                                                     onChange={e => updateItem(gIndex, iIndex, 'quantity', e.target.value)} 
                                                     className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-center text-sm font-medium" 
                                                 />
+                                                {(() => {
+                                                    const cleanName = String(item.product_name || '').trim().toLowerCase();
+                                                    const matched = products.find((p: any) => 
+                                                        (item.product_id && p.id === item.product_id) || 
+                                                        p.name.toLowerCase() === cleanName
+                                                    );
+                                                    if (matched && Number(matched.stock_quantity ?? 0) < Number(item.quantity)) {
+                                                        return (
+                                                            <div className="text-[10px] text-amber-400 font-mono text-center font-medium mt-0.5" title={`Available stock: ${matched.stock_quantity ?? 0} ${matched.unit || 'PCS'}`}>
+                                                                Max: {matched.stock_quantity ?? 0}
+                                                            </div>
+                                                        );
+                                                    }
+                                                    return null;
+                                                })()}
                                             </td>
                                             <td className="p-2">
                                                 <input 
