@@ -111,4 +111,45 @@ class VoucherService:
             changes={"status": "CANCELLED"}
         )
         
+        # Ensure single-source-of-truth accuracy for all affected ledgers
+        for entry in entries:
+            VoucherService.recalculate_ledger_balance(entry.ledger)
+        if voucher.party_ledger:
+            VoucherService.recalculate_ledger_balance(voucher.party_ledger)
+
         return voucher
+
+    @staticmethod
+    def recalculate_ledger_balance(ledger) -> Decimal:
+        """
+        Recalculates ledger.current_balance strictly from the single source of truth:
+        Opening Balance + Sum of all posted LedgerEntry Debits/Credits.
+        Completely eliminates drift caused by voucher deletion, cancellation, or partial updates.
+        """
+        if not ledger:
+            return Decimal('0.00')
+
+        from apps.accounting.models import LedgerEntry
+        from django.db.models import Sum
+
+        op_balance = Decimal(str(ledger.opening_balance or '0.00'))
+        
+        # Only POSTED vouchers affect accounting balances
+        totals = LedgerEntry.objects.filter(
+            ledger=ledger,
+            voucher__status='POSTED'
+        ).aggregate(
+            total_dr=Sum('debit_amount'),
+            total_cr=Sum('credit_amount')
+        )
+
+        total_dr = Decimal(str(totals['total_dr'] or '0.00'))
+        total_cr = Decimal(str(totals['total_cr'] or '0.00'))
+
+        if ledger.opening_balance_type == 'DEBIT':
+            ledger.current_balance = op_balance + total_dr - total_cr
+        else:
+            ledger.current_balance = op_balance + total_cr - total_dr
+
+        ledger.save(update_fields=['current_balance'])
+        return ledger.current_balance

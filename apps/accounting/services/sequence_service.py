@@ -54,6 +54,80 @@ class InvoiceSequenceService:
         return fy
 
     @staticmethod
+    def resync_sequence(company: Company, financial_year: FinancialYear, voucher_type: str, prefix: str = None) -> int:
+        """
+        Inspects all existing vouchers for the given company, financial year, and voucher_type.
+        Finds the highest trailing sequence number among them (or 0 if no vouchers exist).
+        Updates VoucherSequence.last_number to match this max value so deleted invoices roll back
+        the sequence counter cleanly, preventing sequence gaps.
+        Returns the resynced last_number.
+        """
+        import re
+        from apps.accounting.models import Voucher
+
+        if not company or not financial_year:
+            return 0
+
+        v_type = voucher_type.upper()
+        prefix = (prefix or DEFAULT_PREFIXES.get(v_type, 'VCH')).strip().upper()
+
+        vouchers = Voucher.objects.filter(
+            company=company,
+            financial_year=financial_year,
+            voucher_type=v_type
+        ).values_list('voucher_number', flat=True)
+
+        prefix_fy = f"{prefix}/{financial_year.code}/".upper()
+        prefix_dash = f"{prefix}-".upper()
+        prefix_slash = f"{prefix}/".upper()
+
+        max_num = 0
+        for v_num in vouchers:
+            if not v_num:
+                continue
+            v_str = str(v_num).strip().upper()
+            num = None
+            if v_str.startswith(prefix_fy):
+                tail = v_str[len(prefix_fy):].strip()
+                if tail.isdigit():
+                    num = int(tail)
+            elif v_str.startswith(prefix_dash):
+                tail = v_str[len(prefix_dash):].strip()
+                if tail.isdigit():
+                    num = int(tail)
+            elif v_str.startswith(prefix_slash):
+                tail = v_str[len(prefix_slash):].strip()
+                if tail.isdigit():
+                    num = int(tail)
+            elif v_str.isdigit():
+                num = int(v_str)
+            else:
+                m = re.search(r'(\d+)$', v_str)
+                if m:
+                    try:
+                        num = int(m.group(1))
+                    except ValueError:
+                        pass
+
+            if num is not None and num > max_num:
+                max_num = num
+
+        seq, created = VoucherSequence.objects.get_or_create(
+            company=company,
+            financial_year=financial_year,
+            voucher_type=v_type,
+            defaults={
+                'prefix': prefix,
+                'last_number': max_num
+            }
+        )
+        if not created and seq.last_number != max_num:
+            seq.last_number = max_num
+            seq.save(update_fields=['last_number', 'updated_at'])
+
+        return max_num
+
+    @staticmethod
     def get_next_number(company: Company, voucher_type: str, voucher_date=None, custom_prefix=None):
         """
         Thread-safe, atomic sequence generator enforcing Indian GST Rule 46(b) (<= 16 characters).
@@ -95,6 +169,10 @@ class InvoiceSequenceService:
                 }
             )
 
+            # Auto-resync: if last_number differs from highest existing voucher
+            InvoiceSequenceService.resync_sequence(company, fy, voucher_type, prefix)
+            seq.refresh_from_db()
+
             seq.last_number += 1
             formatted = f"{seq.prefix}/{fy.code}/{seq.last_number:04d}"
 
@@ -128,6 +206,9 @@ class InvoiceSequenceService:
             fy = InvoiceSequenceService.get_or_create_active_fy(company, voucher_date)
 
         prefix = (custom_prefix or DEFAULT_PREFIXES.get(voucher_type, 'VCH')).strip().upper()
+
+        # Resync before preview to reflect any deleted invoices immediately
+        InvoiceSequenceService.resync_sequence(company, fy, voucher_type, prefix)
 
         seq = VoucherSequence.objects.filter(
             company=company,

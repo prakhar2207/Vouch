@@ -364,6 +364,8 @@ class VoucherDetailAPIView(APIView):
         try:
             from apps.accounting.models import Voucher
             from apps.accounting.services.voucher_service import VoucherService
+            from apps.accounting.services.sequence_service import InvoiceSequenceService
+            from apps.ledgers.models import Ledger
             
             voucher = Voucher.objects.filter(id=voucher_id, company__users__user=request.user).first()
             if not voucher:
@@ -373,9 +375,17 @@ class VoucherDetailAPIView(APIView):
                 }, status=status.HTTP_404_NOT_FOUND)
 
             with transaction.atomic():
+                company = voucher.company
+                financial_year = voucher.financial_year
+                voucher_type = voucher.voucher_type
                 product_ids = list(voucher.items.values_list('product_id', flat=True))
                 voucher_num = voucher.voucher_number
                 
+                # Track all affected ledgers (party ledger + any ledger referenced in ledger entries)
+                affected_ledger_ids = set(voucher.ledger_entries.values_list('ledger_id', flat=True))
+                if voucher.party_ledger_id:
+                    affected_ledger_ids.add(voucher.party_ledger_id)
+
                 # If voucher is posted or validating, safely cancel & reverse accounting/stock first
                 if voucher.status in ['POSTED', 'VALIDATING']:
                     VoucherService.cancel_voucher(voucher, user=request.user)
@@ -396,6 +406,16 @@ class VoucherDetailAPIView(APIView):
                             prod.delete()
                     except Exception:
                         pass
+
+                # Single-source-of-truth recalculation for all affected ledgers
+                for lid in affected_ledger_ids:
+                    l = Ledger.objects.filter(id=lid).first()
+                    if l:
+                        VoucherService.recalculate_ledger_balance(l)
+
+                # Resync sequence counter so deleted vouchers roll back sequence
+                if financial_year:
+                    InvoiceSequenceService.resync_sequence(company, financial_year, voucher_type)
 
             return Response({
                 "success": True, 
