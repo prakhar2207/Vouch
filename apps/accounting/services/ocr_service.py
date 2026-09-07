@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 
 class InvoiceItemSchema(BaseModel):
-    description: str = Field(description="Description or name of the product/service")
+    description: str = Field(description="Description or size/model number of the product without redundant category prefix, e.g. 'B 34', 'B 79', 'C 120', '6204-2RS' instead of 'V Belt B34'")
+    category: Optional[str] = Field(default="", description="Inferred category for this specific item if identifiable, e.g. 'V Belts', 'Bearings'")
     brand: Optional[str] = Field(default="", description="Brand, make, or manufacturer of the item if mentioned on the bill, e.g. Fenner, SKF, Havells")
     hsn_code: Optional[str] = Field(default="", description="HSN or SAC code")
     quantity: float = Field(default=1.0, description="Quantity")
@@ -29,6 +30,9 @@ class InvoiceExtractionSchema(BaseModel):
     sgst_amount: Optional[float] = Field(default=0.0, description="SGST amount if applicable")
     igst_amount: Optional[float] = Field(default=0.0, description="IGST amount if applicable")
     total_amount: float = Field(default=0.0, description="Grand total invoice amount")
+    category_detected: Optional[str] = Field(default="", description="Dominant item category clearly stated or indicated on the bill (e.g., 'V Belts', 'Bearings', 'Pulleys', 'Hardware'). Empty if not clearly determinable.")
+    requires_category_confirmation: bool = Field(default=False, description="Set to True if the bill does not clearly state a category, or if items might belong to multiple or ambiguous categories, so user confirmation is needed.")
+    categories_found: List[str] = Field(default_factory=list, description="List of any distinct product categories mentioned or inferred from the document")
     line_items: List[InvoiceItemSchema] = Field(default_factory=list, description="List of invoiced items")
 
 def parse_words_to_number(text: str) -> float:
@@ -109,11 +113,16 @@ class InvoiceOCRService:
                 "You are an expert accounts payable AI specialized in Indian GST tax invoices, bills of supply, and handwritten or printed purchase receipts. "
                 "Carefully analyze this entire document image or PDF in-memory. "
                 "Key parsing rules: "
-                "1. Resolve ditto marks (\", '', do, as above) by carrying forward values, rates, or descriptions from the preceding line. "
-                "2. Interpret handwriting shorthand, abbreviations (e.g., 'pkg', 'bx', 'mtr', 'nos'), and handwritten digits accurately. "
-                "3. Extract the exact Supplier Name, Supplier GSTIN, Invoice/Bill Number, Invoice Date (in YYYY-MM-DD format), Place of Supply / State Code. "
-                "4. Accurately extract all itemized line items: full Description, Brand (e.g. Fenner, SKF, PIX, NBC if mentioned), HSN code, Quantity, Unit, Rate (MRP or price before discount), Discount Percentage, and Taxable Amount. "
-                "5. Extract Subtotal, CGST, SGST, IGST, and Grand Total Amount. Verify and reconcile mathematics where visible. "
+                "1. SMART CATEGORY DIFFERENTIATION: Many handwritten or printed bills write a category header at the top or repeat it on lines (e.g. 'V BELT', 'V Belts', 'Bearings', 'Pulleys'). "
+                "   DO NOT include the category inside the item description! For example: "
+                "   - If the bill heading says 'V BELTS' with items 'B 34', 'B 79', 'C 120', or writes 'V BELT B34': "
+                "     Set category_detected = 'V Belts', and set the line item description to clean size/item code: 'B 34' (NOT 'V Belt B34'). "
+                "   - If the category cannot be determined with certainty, or if items are mixed/unknown, set requires_category_confirmation = True. "
+                "2. Resolve ditto marks (\", '', do, as above) by carrying forward values, rates, or descriptions from the preceding line. "
+                "3. Interpret handwriting shorthand, abbreviations (e.g., 'pkg', 'bx', 'mtr', 'nos'), and handwritten digits accurately. "
+                "4. Extract the exact Supplier Name, Supplier GSTIN, Invoice/Bill Number, Invoice Date (in YYYY-MM-DD format), Place of Supply / State Code. "
+                "5. Accurately extract all itemized line items: clean Description, Category, Brand (e.g. Fenner, SKF, PIX, NBC if mentioned), HSN code, Quantity, Unit, Rate (MRP or price before discount), Discount Percentage, and Taxable Amount. "
+                "6. Extract Subtotal, CGST, SGST, IGST, and Grand Total Amount. Verify and reconcile mathematics where visible. "
                 "Output strict JSON following the schema."
             )
 
@@ -173,10 +182,17 @@ class InvoiceOCRService:
                                 result["source"] = f"AI_GEMINI_VISION ({model_name})"
                                 result["model_used"] = model_name
                                 result["scan_mode"] = scan_mode
+                                from apps.inventory.services.normalization_service import strip_category_prefix
+                                cat_detected = result.get("category_detected") or ""
                                 for it in items:
                                     u = str(it.get("unit") or "PCS").strip().upper()
                                     if u in ["PCS", "PIECES", "NOS", "NO", "PC", "PKT", "PACKET", "BOX", "BAG", "SET", "DOZ", "CAN", "BTL"]:
                                         it["quantity"] = int(round(float(it.get("quantity", 1))))
+                                    desc = it.get("description", "")
+                                    item_cat = it.get("category") or cat_detected
+                                    cleaned_desc = strip_category_prefix(desc, item_cat)
+                                    if cleaned_desc:
+                                        it["description"] = cleaned_desc
                                 return result
                         except Exception as gemini_err:
                             last_gemini_error = str(gemini_err)
@@ -516,6 +532,9 @@ class InvoiceOCRService:
             "sgst_amount": 0.00,
             "igst_amount": 0.00,
             "total_amount": 0.00,
+            "category_detected": "",
+            "requires_category_confirmation": True,
+            "categories_found": [],
             "line_items": [],
             "is_mock": True,
             "mock_reason": error or "Could not extract readable invoice data from this file."

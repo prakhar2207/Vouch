@@ -488,10 +488,30 @@ class VoucherDetailAPIView(APIView):
                         if unit not in fractional_units:
                             qty = Decimal(str(int(round(float(qty)))))
 
-                        # Resolve product: check product_id first, then name + brand, then company-wide name/canonical match
-                        from apps.inventory.services.normalization_service import normalize_product_name, get_canonical_key
-                        clean_item_name = normalize_product_name(raw_name)
-                        canon_key = get_canonical_key(raw_name)
+                        # Resolve category first (especially for purchase vouchers)
+                        from apps.inventory.models import ProductCategory
+                        from apps.inventory.services.normalization_service import normalize_product_name, get_canonical_key, strip_category_prefix
+                        category = None
+                        category_id = item.get('category_id') or data.get('category_id')
+                        category_name = item.get('category_name') or data.get('category_name')
+                        if category_id and str(category_id).strip():
+                            try:
+                                category = ProductCategory.objects.filter(id=category_id, company=company).first()
+                            except Exception:
+                                pass
+                        elif category_name and str(category_name).strip():
+                            category = ProductCategory.objects.filter(name__iexact=str(category_name).strip(), company=company).first()
+                            if not category:
+                                category = ProductCategory.objects.create(
+                                    company=company,
+                                    name=str(category_name).strip(),
+                                    hsn_code=hsn,
+                                    gst_rate=gst_pct
+                                )
+
+                        cat_name = category.name if category else None
+                        clean_item_name = normalize_product_name(raw_name, cat_name)
+                        canon_key = get_canonical_key(raw_name, cat_name)
                         item_brand = str(item.get('brand', '')).strip()
 
                         product = None
@@ -510,8 +530,11 @@ class VoucherDetailAPIView(APIView):
                             ).first()
                             if not product:
                                 for p in Product.objects.filter(company=company, brand__iexact=item_brand):
-                                    if get_canonical_key(p.name) == canon_key:
+                                    if get_canonical_key(p.name, p.category.name if p.category else cat_name) == canon_key:
                                         product = p
+                                        if p.name != clean_item_name:
+                                            p.name = clean_item_name
+                                            p.save(update_fields=['name'])
                                         break
 
                         if not product:
@@ -522,8 +545,11 @@ class VoucherDetailAPIView(APIView):
                             ).first()
                             if not product:
                                 for p in Product.objects.filter(company=company):
-                                    if get_canonical_key(p.name) == canon_key:
+                                    if get_canonical_key(p.name, p.category.name if p.category else cat_name) == canon_key:
                                         product = p
+                                        if p.name != clean_item_name:
+                                            p.name = clean_item_name
+                                            p.save(update_fields=['name'])
                                         break
 
                         discount_pct = Decimal(str(item.get('discount_percent', '0.00')))
@@ -531,12 +557,12 @@ class VoucherDetailAPIView(APIView):
 
                         if not product:
                             # Auto-create product only if no product exists with this name in inventory
-                            category = None
-                            existing_sibling = Product.objects.filter(company=company, name__iexact=clean_item_name).first()
-                            if existing_sibling and existing_sibling.category:
-                                category = existing_sibling.category
-                            else:
-                                category = ProductCategory.objects.filter(company=company).first()
+                            if not category:
+                                existing_sibling = Product.objects.filter(company=company, name__iexact=clean_item_name).first()
+                                if existing_sibling and existing_sibling.category:
+                                    category = existing_sibling.category
+                                else:
+                                    category = ProductCategory.objects.filter(company=company).first()
                             
                             if not category:
                                 category = ProductCategory.objects.create(
@@ -561,6 +587,8 @@ class VoucherDetailAPIView(APIView):
                                 selling_price=rate if voucher.voucher_type == 'SALES' else rate * Decimal('1.25')
                             )
                         else:
+                            if not product.category and category:
+                                product.category = category
                             if voucher.voucher_type == 'PURCHASE' and net_rate > Decimal('0.00'):
                                 product.purchase_price = net_rate
                                 product.purchase_price_from_invoice = True

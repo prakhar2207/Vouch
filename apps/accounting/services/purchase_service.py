@@ -47,21 +47,10 @@ class PurchaseInvoiceService:
                 product = Product.objects.get(id=product_id)
             else:
                 raw_name = str(item.get('product_name') or item.get('name') or 'Unnamed Product').strip()
-                from apps.inventory.services.normalization_service import normalize_product_name, get_canonical_key
-                name = normalize_product_name(raw_name)
-                canon_key = get_canonical_key(raw_name)
-                import uuid
-                sku = item.get('sku', name.upper()[:3] + '-' + str(uuid.uuid4())[:6])
-                
-                defaults_dict = {
-                    'sku': sku,
-                    'hsn_code': item.get('hsn_code', ''),
-                    'gst_rate': Decimal(str(item.get('gst_rate', '18.00'))),
-                    'purchase_price': Decimal(str(item.get('rate', '0.00'))),
-                    'unit': item.get('unit', 'PCS')
-                }
-                
                 from apps.inventory.models import ProductCategory
+                from apps.inventory.services.normalization_service import normalize_product_name, get_canonical_key, strip_category_prefix
+                import uuid
+
                 category = None
                 category_id = item.get('category_id')
                 category_name = item.get('category_name')
@@ -81,6 +70,19 @@ class PurchaseInvoiceService:
                             gst_rate=Decimal(str(item.get('gst_rate', '18.00')))
                         )
 
+                cat_name = category.name if category else None
+                name = normalize_product_name(raw_name, cat_name)
+                canon_key = get_canonical_key(raw_name, cat_name)
+                sku = item.get('sku', name.upper()[:3] + '-' + str(uuid.uuid4())[:6])
+                
+                defaults_dict = {
+                    'sku': sku,
+                    'hsn_code': item.get('hsn_code', ''),
+                    'gst_rate': Decimal(str(item.get('gst_rate', '18.00'))),
+                    'purchase_price': Decimal(str(item.get('rate', '0.00'))),
+                    'unit': item.get('unit', 'PCS')
+                }
+                
                 if category:
                     defaults_dict['category'] = category
                     if not defaults_dict.get('hsn_code'):
@@ -100,7 +102,7 @@ class PurchaseInvoiceService:
                         # Check canonical key match (e.g. matching existing 'A 31' when bill has 'A-31')
                         all_brand_prods = Product.objects.filter(company=company, brand__iexact=item_brand)
                         for p in all_brand_prods:
-                            if get_canonical_key(p.name) == canon_key:
+                            if get_canonical_key(p.name, p.category.name if p.category else cat_name) == canon_key:
                                 product = p
                                 if p.name != name:
                                     p.name = name
@@ -129,7 +131,7 @@ class PurchaseInvoiceService:
                     if not product:
                         unbranded_prods = Product.objects.filter(company=company, brand__in=["", None, "Unbranded", "Generic"])
                         for p in unbranded_prods:
-                            if get_canonical_key(p.name) == canon_key:
+                            if get_canonical_key(p.name, p.category.name if p.category else cat_name) == canon_key:
                                 product = p
                                 if p.name != name:
                                     p.name = name

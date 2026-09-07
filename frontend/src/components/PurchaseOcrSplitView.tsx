@@ -30,6 +30,9 @@ interface ExtractedInvoice {
   sgst_amount: number;
   igst_amount: number;
   total_amount: number;
+  category_detected?: string;
+  requires_category_confirmation?: boolean;
+  categories_found?: string[];
   line_items: LineItem[];
   is_mock?: boolean;
   mock_reason?: string;
@@ -80,6 +83,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>("");
   const [isCreatingNewCategory, setIsCreatingNewCategory] = useState<boolean>(false);
   const [newCategoryName, setNewCategoryName] = useState<string>("");
+  const [categoryDetectedMsg, setCategoryDetectedMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (companyId) {
@@ -242,10 +246,46 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         );
 
         if (res.data.success) {
-          setInvoice(res.data.data);
+          const data: ExtractedInvoice = res.data.data;
+
+          // Strip redundant category prefix from line item descriptions
+          const catDetected = (data.category_detected || "").trim();
+          const cleanPrefixRegex = /^(?:(?:v[\s\-_]*)?belts?|fan[\s\-_]*belts?|timing[\s\-_]*belts?|conveyor[\s\-_]*belts?|bearings?|pulleys?|oil[\s\-_]*seals?)\s*[:\-_]?\s*/i;
+          if (data.line_items && data.line_items.length > 0) {
+            data.line_items = data.line_items.map((item) => {
+              let d = (item.description || "").trim();
+              if (catDetected) {
+                const escaped = catDetected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[\s\-_]+/g, '[\\s\\-_]*');
+                d = d.replace(new RegExp(`^${escaped}(?:s|es)?\\s*[:\\-_]?\\s*`, 'i'), '').trim();
+              }
+              d = d.replace(cleanPrefixRegex, '').trim();
+              return { ...item, description: d || item.description };
+            });
+          }
+
+          setInvoice(data);
           setAutoFilled(true);
           success = true;
           setScanStatusToast(null);
+
+          // Smart Category Differentiation & Pre-Selection
+          if (catDetected) {
+            const detectedLower = catDetected.toLowerCase();
+            const matchedCat = categories.find((c) => {
+              const cName = (c.name || "").toLowerCase().trim();
+              return cName === detectedLower || detectedLower.includes(cName) || cName.includes(detectedLower);
+            });
+
+            if (matchedCat) {
+              setSelectedCategoryId(matchedCat.id);
+              setIsCreatingNewCategory(false);
+              setCategoryDetectedMsg(`Identified category "${matchedCat.name}" from bill.`);
+            } else {
+              setIsCreatingNewCategory(true);
+              setNewCategoryName(catDetected);
+              setCategoryDetectedMsg(`Detected new category "${catDetected}" from bill (will be created in database first).`);
+            }
+          }
         } else {
           if (attempt >= maxRetries) {
             setError(res.data.error || "Failed to extract invoice data.");
@@ -316,6 +356,20 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
   const handleSaveToAccounting = async () => {
     if (!invoice || !companyId) return;
+
+    // Validate category requirement (enforce category created first)
+    if (isCreatingNewCategory) {
+      if (!newCategoryName.trim()) {
+        setError("Category name is required. Please provide a category name before saving.");
+        toast.error("Category Required", "Please enter a category name (e.g. V Belts).");
+        return;
+      }
+    } else if (!selectedCategoryId) {
+      setError("Please select an inventory category for these items before saving.");
+      toast.error("Category Required", "Please select an inventory category.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -323,7 +377,32 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
 
-      // 1. Create or get Party Ledger for the Supplier
+      let effectiveCategoryId = selectedCategoryId;
+
+      // 1. Create Category FIRST in database before purchase voucher if user specified new category
+      if (isCreatingNewCategory && newCategoryName.trim()) {
+        const defaultHsn = invoice.line_items[0]?.hsn_code || "";
+        const defaultGst = invoice.line_items[0]?.gst_rate || 18;
+        const catRes = await axios.post(
+          `${API_BASE_URL}/api/v1/inventory/categories/${companyId}/`,
+          {
+            name: newCategoryName.trim(),
+            hsn_code: defaultHsn,
+            gst_rate: defaultGst,
+          },
+          { headers }
+        );
+        if (catRes.data.success && catRes.data.data?.id) {
+          effectiveCategoryId = catRes.data.data.id;
+          setCategories((prev) => [...prev, catRes.data.data]);
+          setSelectedCategoryId(effectiveCategoryId);
+          setIsCreatingNewCategory(false);
+        } else {
+          throw new Error(catRes.data.error || "Failed to create category in database.");
+        }
+      }
+
+      // 2. Create or get Party Ledger for the Supplier
       const partyRes = await axios.post(
         `${API_BASE_URL}/api/v1/ledgers/${companyId}/`,
         {
@@ -338,7 +417,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
       const partyLedgerId = partyRes.data.data?.id;
 
-      // 2. Format Items for Voucher Creation with Category Allocation
+      // 3. Format Items for Voucher Creation with Category Allocation
       const formattedItems = invoice.line_items.map((item) => ({
         product_name: item.description,
         brand: item.brand && item.brand.trim() ? item.brand.trim() : undefined,
@@ -348,8 +427,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         unit: item.unit || "PCS",
         discount_percent: item.discount_percent || 0,
         gst_rate: item.gst_rate || 18,
-        category_id: !isCreatingNewCategory && selectedCategoryId ? selectedCategoryId : undefined,
-        category_name: isCreatingNewCategory && newCategoryName.trim() ? newCategoryName.trim() : undefined,
+        category_id: effectiveCategoryId || undefined,
       }));
 
       // 3. Post to Universal Voucher Engine with attached document
@@ -797,11 +875,46 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
               </div>
 
               {/* Inventory Category Allocation Card */}
-              <div className="p-3.5 bg-blue-500/10 border border-blue-500/30 rounded-xl space-y-2">
+              <div className={`p-3.5 rounded-xl space-y-2 border transition-colors ${
+                invoice.requires_category_confirmation
+                  ? 'bg-amber-500/10 border-amber-500/40'
+                  : 'bg-blue-500/10 border-blue-500/30'
+              }`}>
+                {/* AI Category Confirmation Warning Banner */}
+                {invoice.requires_category_confirmation && (
+                  <div className="p-2.5 bg-amber-500/15 border border-amber-500/30 rounded-lg text-xs text-amber-200 flex items-start gap-2">
+                    <span className="text-sm">⚠️</span>
+                    <div className="space-y-0.5">
+                      <div className="font-bold">Category Confirmation Required</div>
+                      <p className="text-[11px] text-amber-300/90 leading-relaxed">
+                        The bill did not clearly specify an inventory category or contains multiple categories. Please confirm or select the correct category below before saving.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* AI Detected Category Notification */}
+                {categoryDetectedMsg && (
+                  <div className="p-2 bg-blue-500/15 border border-blue-500/30 rounded-lg text-xs text-blue-200 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <span>✨</span>
+                      <span>{categoryDetectedMsg}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setCategoryDetectedMsg(null)}
+                      className="text-blue-400 hover:text-blue-200 font-bold ml-2 cursor-pointer text-xs"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
                     <span>📦</span>
-                    <span>Add Scanned Items to Inventory Category:</span>
+                    <span>Add Scanned Items to Inventory Category (Required):</span>
+                    <span className="text-red-400">*</span>
                   </label>
                   {isCreatingNewCategory ? (
                     <button 
@@ -823,13 +936,18 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                 </div>
 
                 {isCreatingNewCategory ? (
-                  <input
-                    type="text"
-                    placeholder="e.g. V Belts, Bearings, Lubricants"
-                    value={newCategoryName}
-                    onChange={(e) => setNewCategoryName(e.target.value)}
-                    className="w-full bg-zinc-950 border border-blue-500/50 text-white p-2 rounded-lg text-xs font-medium outline-none focus:ring-1 focus:ring-blue-500"
-                  />
+                  <div className="space-y-1">
+                    <input
+                      type="text"
+                      placeholder="e.g. V Belts, Bearings, Lubricants"
+                      value={newCategoryName}
+                      onChange={(e) => setNewCategoryName(e.target.value)}
+                      className="w-full bg-zinc-950 border border-blue-500/60 text-white p-2.5 rounded-lg text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <p className="text-[10px] text-emerald-400">
+                      ⚡ This category will be created in the database first before saving voucher items.
+                    </p>
+                  </div>
                 ) : (
                   <select
                     value={selectedCategoryId}
@@ -840,7 +958,9 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                         setSelectedCategoryId(e.target.value);
                       }
                     }}
-                    className="w-full bg-zinc-950 border border-zinc-700 text-white p-2 rounded-lg text-xs font-medium outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                    className={`w-full bg-zinc-950 border ${
+                      !selectedCategoryId ? 'border-amber-500/60 focus:ring-amber-500' : 'border-zinc-700 focus:ring-blue-500'
+                    } text-white p-2.5 rounded-lg text-xs font-medium outline-none focus:ring-2 cursor-pointer`}
                   >
                     <option value="">-- Select Category (e.g. V Belts) --</option>
                     {categories.map((c) => (
