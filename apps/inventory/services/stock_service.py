@@ -5,9 +5,9 @@ from apps.inventory.models import Product, Warehouse, InventoryEntry
 from apps.accounting.models import Voucher, VoucherItem
 
 class StockService:
-    @staticmethod
+    @classmethod
     @transaction.atomic
-    def process_voucher_stock(voucher: Voucher, warehouse: Warehouse):
+    def process_voucher_stock(cls, voucher: Voucher, warehouse: Warehouse):
         """
         Process the stock impact of a posted voucher.
         Sales -> Stock OUT
