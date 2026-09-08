@@ -9,7 +9,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useToast } from '@/context/ToastContext';
 import EditSalesInvoiceModal from '@/components/modals/EditSalesInvoiceModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
-import { Edit2, Trash2, Printer, Plus } from 'lucide-react';
+import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export default function SalesInvoiceList() {
   const router = useRouter();
@@ -17,6 +17,9 @@ export default function SalesInvoiceList() {
 
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState<number>(1);
+  const [pagination, setPagination] = useState<any>(null);
+  const pageSize = 50;
 
   // Edit and Delete state
   const [editingVoucher, setEditingVoucher] = useState<any | null>(null);
@@ -28,10 +31,11 @@ export default function SalesInvoiceList() {
       router.push('/login');
       return;
     }
-    fetchInvoices();
+    fetchInvoices(1);
   }, [router]);
 
-  const fetchInvoices = async () => {
+  const fetchInvoices = async (targetPage: number = page) => {
+    setLoading(true);
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
@@ -39,11 +43,18 @@ export default function SalesInvoiceList() {
       const companyId = compRes.data.data[0]?.id;
       if (!companyId) return;
 
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/`, { headers });
+      const offset = (targetPage - 1) * pageSize;
+      const res = await axios.get(
+        `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?type=SALES&limit=${pageSize}&offset=${offset}`,
+        { headers }
+      );
       
-      // Filter only SALES vouchers
       const salesVouchers = (res.data.data || []).filter((v: any) => v.type === 'SALES');
       setInvoices(salesVouchers);
+      if (res.data.pagination) {
+        setPagination(res.data.pagination);
+      }
+      setPage(targetPage);
     } catch (err) {
       console.error(err);
     } finally {
@@ -320,6 +331,45 @@ export default function SalesInvoiceList() {
                 </tbody>
               </table>
               </div>
+
+              {/* Pagination Controls */}
+              {pagination && pagination.total_count > 0 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-zinc-800 bg-zinc-900/20 text-xs text-muted-foreground">
+                  <div className="font-mono">
+                    Showing <span className="font-semibold text-white">{pagination.offset + 1}</span> to{' '}
+                    <span className="font-semibold text-white">
+                      {Math.min(pagination.offset + pagination.limit, pagination.total_count)}
+                    </span>{' '}
+                    of <span className="font-semibold text-white">{pagination.total_count}</span> invoices
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => fetchInvoices(page - 1)}
+                      disabled={page <= 1 || loading}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-white hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                      <span>Previous</span>
+                    </button>
+
+                    <div className="px-2.5 py-1 text-xs font-mono font-semibold text-white bg-zinc-800 rounded border border-zinc-700">
+                      Page {page} of {pagination.total_pages || 1}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => fetchInvoices(page + 1)}
+                      disabled={!pagination.has_more || page >= pagination.total_pages || loading}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-white hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
+                    >
+                      <span>Next</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Keyboard Shortcuts Hint Bar */}
               <div className="p-3 border-t border-zinc-800 bg-zinc-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-muted-foreground">

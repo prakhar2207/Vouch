@@ -9,7 +9,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
 import EditPurchaseInvoiceModal from "@/components/modals/EditPurchaseInvoiceModal";
 import ConfirmModal from "@/components/modals/ConfirmModal";
-import { Edit2, Trash2, Eye, FileText, Plus } from "lucide-react";
+import { Edit2, Trash2, Eye, FileText, Plus, ChevronLeft, ChevronRight } from "lucide-react";
 
 export default function PurchaseInvoiceList() {
   const router = useRouter();
@@ -17,6 +17,10 @@ export default function PurchaseInvoiceList() {
 
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState<number>(1);
+  const [pagination, setPagination] = useState<any>(null);
+  const pageSize = 50;
+
   const [selectedVoucher, setSelectedVoucher] = useState<any | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
@@ -32,10 +36,11 @@ export default function PurchaseInvoiceList() {
       router.push("/login");
       return;
     }
-    fetchInvoices();
+    fetchInvoices(1);
   }, [router]);
 
-  const fetchInvoices = async () => {
+  const fetchInvoices = async (targetPage: number = page) => {
+    setLoading(true);
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
@@ -43,9 +48,17 @@ export default function PurchaseInvoiceList() {
       const companyId = compRes.data.data[0]?.id;
       if (!companyId) return;
 
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/`, { headers });
+      const offset = (targetPage - 1) * pageSize;
+      const res = await axios.get(
+        `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?type=PURCHASE&limit=${pageSize}&offset=${offset}`,
+        { headers }
+      );
       const purchaseVouchers = (res.data.data || []).filter((v: any) => v.type === "PURCHASE");
       setInvoices(purchaseVouchers);
+      if (res.data.pagination) {
+        setPagination(res.data.pagination);
+      }
+      setPage(targetPage);
     } catch (err) {
       console.error(err);
     } finally {
@@ -398,6 +411,45 @@ export default function PurchaseInvoiceList() {
                 </tbody>
               </table>
               </div>
+
+              {/* Pagination Controls */}
+              {pagination && pagination.total_count > 0 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-border/60 bg-muted/20 text-xs text-muted-foreground">
+                  <div className="font-mono">
+                    Showing <span className="font-semibold text-foreground">{pagination.offset + 1}</span> to{' '}
+                    <span className="font-semibold text-foreground">
+                      {Math.min(pagination.offset + pagination.limit, pagination.total_count)}
+                    </span>{' '}
+                    of <span className="font-semibold text-foreground">{pagination.total_count}</span> purchase invoices
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => fetchInvoices(page - 1)}
+                      disabled={page <= 1 || loading}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-card text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                      <span>Previous</span>
+                    </button>
+
+                    <div className="px-2.5 py-1 text-xs font-mono font-semibold text-foreground bg-muted rounded border border-border">
+                      Page {page} of {pagination.total_pages || 1}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => fetchInvoices(page + 1)}
+                      disabled={!pagination.has_more || page >= pagination.total_pages || loading}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-card text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
+                    >
+                      <span>Next</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Keyboard Shortcuts Hint Bar */}
               <div className="p-3 border-t border-border/60 bg-muted/20 hidden sm:flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-muted-foreground">

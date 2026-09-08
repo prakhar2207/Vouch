@@ -24,6 +24,7 @@ import {
   RefreshCw,
   ExternalLink,
   ChevronRight,
+  ChevronLeft,
   Receipt,
   X
 } from 'lucide-react';
@@ -44,6 +45,15 @@ interface StatementEntry {
   running_balance_type: 'DR' | 'CR';
 }
 
+interface PaginationData {
+  total_count: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+  page: number;
+  total_pages: number;
+}
+
 interface StatementData {
   ledger_id: string;
   ledger_name: string;
@@ -58,12 +68,15 @@ interface StatementData {
   to_date?: string | null;
   period_opening_balance: number;
   period_opening_type: 'DEBIT' | 'CREDIT';
+  page_opening_balance?: number;
+  page_opening_type?: 'DEBIT' | 'CREDIT';
   total_debit: number;
   total_credit: number;
   net_movement: number;
   closing_balance: number;
   closing_type: 'DEBIT' | 'CREDIT';
   entries: StatementEntry[];
+  pagination?: PaginationData;
 }
 
 export default function LedgerStatementPage() {
@@ -75,6 +88,10 @@ export default function LedgerStatementPage() {
   const [companyId, setCompanyId] = useState('');
   const [statementData, setStatementData] = useState<StatementData | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Pagination State
+  const [page, setPage] = useState<number>(1);
+  const pageSize = 50;
 
   // Date Filters
   const [fromDate, setFromDate] = useState('');
@@ -90,7 +107,7 @@ export default function LedgerStatementPage() {
     fetchStatement();
   }, [router, ledgerId]);
 
-  const fetchStatement = async (overrideFrom?: string, overrideTo?: string) => {
+  const fetchStatement = async (overrideFrom?: string, overrideTo?: string, targetPage: number = page) => {
     setLoading(true);
     try {
       const token = getAccessToken();
@@ -109,9 +126,12 @@ export default function LedgerStatementPage() {
       const fDate = overrideFrom !== undefined ? overrideFrom : fromDate;
       const tDate = overrideTo !== undefined ? overrideTo : toDate;
 
+      const offset = (targetPage - 1) * pageSize;
       const queryParams = new URLSearchParams();
       if (fDate) queryParams.append('from_date', fDate);
       if (tDate) queryParams.append('to_date', tDate);
+      queryParams.append('limit', String(pageSize));
+      queryParams.append('offset', String(offset));
 
       const res = await axios.get(
         `${API_BASE_URL}/api/v1/accounting/reports/ledger-statement/${cid}/${ledgerId}/?${queryParams.toString()}`,
@@ -120,6 +140,7 @@ export default function LedgerStatementPage() {
 
       if (res.data.success) {
         setStatementData(res.data.data);
+        setPage(targetPage);
       } else {
         toast.error('Failed to load statement', res.data.error || 'Unknown error');
       }
@@ -140,7 +161,7 @@ export default function LedgerStatementPage() {
     if (preset === 'ALL') {
       setFromDate('');
       setToDate('');
-      fetchStatement('', '');
+      fetchStatement('', '', 1);
     } else if (preset === 'FY') {
       // Indian Financial Year: April 1 to March 31
       const currentYear = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
@@ -150,7 +171,7 @@ export default function LedgerStatementPage() {
       const t = formatDate(end);
       setFromDate(f);
       setToDate(t);
-      fetchStatement(f, t);
+      fetchStatement(f, t, 1);
     } else if (preset === 'MONTH') {
       const start = new Date(today.getFullYear(), today.getMonth(), 1);
       const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
@@ -158,7 +179,7 @@ export default function LedgerStatementPage() {
       const t = formatDate(end);
       setFromDate(f);
       setToDate(t);
-      fetchStatement(f, t);
+      fetchStatement(f, t, 1);
     } else if (preset === '30DAYS') {
       const start = new Date();
       start.setDate(today.getDate() - 30);
@@ -166,7 +187,7 @@ export default function LedgerStatementPage() {
       const t = formatDate(today);
       setFromDate(f);
       setToDate(t);
-      fetchStatement(f, t);
+      fetchStatement(f, t, 1);
     } else if (preset === 'QUARTER') {
       const q = Math.floor(today.getMonth() / 3);
       const start = new Date(today.getFullYear(), q * 3, 1);
@@ -175,14 +196,14 @@ export default function LedgerStatementPage() {
       const t = formatDate(end);
       setFromDate(f);
       setToDate(t);
-      fetchStatement(f, t);
+      fetchStatement(f, t, 1);
     }
   };
 
   const handleApplyFilter = (e: React.FormEvent) => {
     e.preventDefault();
     setActivePreset('ALL');
-    fetchStatement();
+    fetchStatement(fromDate, toDate, 1);
   };
 
   const handleResetFilter = () => {
@@ -190,13 +211,10 @@ export default function LedgerStatementPage() {
     setFromDate('');
     setToDate('');
     setSearchTerm('');
-    fetchStatement('', '');
+    fetchStatement('', '', 1);
   };
 
-  // Dynamic Running Balance Logic (Double-Entry Computation)
-  // Accounts for normal balance type:
-  // - Assets & Expenses: Debit-normal (increase with Debit, decrease with Credit)
-  // - Liabilities, Equity & Income: Credit-normal (increase with Credit, decrease with Debit)
+  // Dynamic Running Balance Logic (Continuous Double-Entry Computation)
   const computedRows = useMemo(() => {
     if (!statementData) return [];
 
@@ -205,20 +223,28 @@ export default function LedgerStatementPage() {
       statementData.nature === 'EXPENSE' ||
       statementData.normal_balance_type === 'DEBIT';
 
-    // Start with Period Opening Balance
+    const startBalance = statementData.page_opening_balance !== undefined
+      ? statementData.page_opening_balance
+      : statementData.period_opening_balance;
+    const startType = statementData.page_opening_type || statementData.period_opening_type;
+
     let runningNet = isDebitNormal
-      ? (statementData.period_opening_type === 'DEBIT'
-          ? statementData.period_opening_balance
-          : -statementData.period_opening_balance)
-      : (statementData.period_opening_type === 'CREDIT'
-          ? statementData.period_opening_balance
-          : -statementData.period_opening_balance);
+      ? (startType === 'DEBIT' ? startBalance : -startBalance)
+      : (startType === 'CREDIT' ? startBalance : -startBalance);
 
     return statementData.entries.map(entry => {
+      // If backend calculated running balance, use it directly (preserves exact ledger continuum across pages)
+      if (entry.running_balance !== undefined) {
+        return {
+          ...entry,
+          dynamic_balance: entry.running_balance,
+          dynamic_balance_type: entry.running_balance_type || 'DR',
+        };
+      }
+
       const dr = Number(entry.debit || 0);
       const cr = Number(entry.credit || 0);
 
-      // Delta from account perspective
       const delta = isDebitNormal ? (dr - cr) : (cr - dr);
       runningNet += delta;
 
@@ -609,47 +635,65 @@ export default function LedgerStatementPage() {
                 {/* 1. Opening Balance Row */}
                 <tr className="bg-muted/20 font-medium text-muted-foreground">
                   <td className="py-3 px-4 font-mono text-[11px]">
-                    {statementData?.from_date || 'Initial'}
+                    {page > 1 ? `Page ${page}` : (statementData?.from_date || 'Initial')}
                   </td>
                   <td className="py-3 px-4">
-                    <span className="font-semibold text-foreground">Opening Balance (b/f)</span>
-                    <span className="text-[10px] text-muted-foreground ml-2">Balance brought forward</span>
+                    <span className="font-semibold text-foreground">
+                      {page > 1 ? `Balance Brought Forward (Page ${page})` : 'Opening Balance (b/f)'}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground ml-2">
+                      {page > 1 ? 'Cumulative balance from prior entries' : 'Balance brought forward'}
+                    </span>
                   </td>
                   <td className="py-3 px-4 font-mono text-[11px]">—</td>
                   <td className="py-3 px-4 font-mono text-[11px]">—</td>
                   <td className="py-3 px-4 text-right font-mono">
-                    {statementData?.period_opening_type === 'DEBIT' && statementData.period_opening_balance > 0 ? (
-                      <span className="text-foreground font-semibold">
-                        ₹{statementData.period_opening_balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                      </span>
-                    ) : (
-                      <span>—</span>
-                    )}
+                    {(() => {
+                      const opBal = page > 1 ? (statementData?.page_opening_balance ?? 0) : (statementData?.period_opening_balance ?? 0);
+                      const opType = page > 1 ? (statementData?.page_opening_type || 'DEBIT') : (statementData?.period_opening_type || 'DEBIT');
+                      return opType === 'DEBIT' && opBal > 0 ? (
+                        <span className="text-foreground font-semibold">
+                          ₹{opBal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </span>
+                      ) : (
+                        <span>—</span>
+                      );
+                    })()}
                   </td>
                   <td className="py-3 px-4 text-right font-mono">
-                    {statementData?.period_opening_type === 'CREDIT' && statementData.period_opening_balance > 0 ? (
-                      <span className="text-foreground font-semibold">
-                        ₹{statementData.period_opening_balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                      </span>
-                    ) : (
-                      <span>—</span>
-                    )}
+                    {(() => {
+                      const opBal = page > 1 ? (statementData?.page_opening_balance ?? 0) : (statementData?.period_opening_balance ?? 0);
+                      const opType = page > 1 ? (statementData?.page_opening_type || 'CREDIT') : (statementData?.period_opening_type || 'CREDIT');
+                      return opType === 'CREDIT' && opBal > 0 ? (
+                        <span className="text-foreground font-semibold">
+                          ₹{opBal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </span>
+                      ) : (
+                        <span>—</span>
+                      );
+                    })()}
                   </td>
                   <td className="py-3 px-4 text-right font-mono font-semibold">
-                    <div className="inline-flex items-center justify-end gap-1">
-                      <span className="text-foreground">
-                        ₹{(statementData?.period_opening_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                      </span>
-                      <span
-                        className={`text-[10px] font-bold px-1 rounded ${
-                          statementData?.period_opening_type === 'DEBIT'
-                            ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                            : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                        }`}
-                      >
-                        {statementData?.period_opening_type === 'DEBIT' ? 'Dr' : 'Cr'}
-                      </span>
-                    </div>
+                    {(() => {
+                      const opBal = page > 1 ? (statementData?.page_opening_balance ?? 0) : (statementData?.period_opening_balance ?? 0);
+                      const opType = page > 1 ? (statementData?.page_opening_type || 'DEBIT') : (statementData?.period_opening_type || 'DEBIT');
+                      return (
+                        <div className="inline-flex items-center justify-end gap-1">
+                          <span className="text-foreground">
+                            ₹{opBal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </span>
+                          <span
+                            className={`text-[10px] font-bold px-1 rounded ${
+                              opType === 'DEBIT'
+                                ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                            }`}
+                          >
+                            {opType === 'DEBIT' ? 'Dr' : 'Cr'}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </td>
                 </tr>
 
@@ -825,6 +869,49 @@ export default function LedgerStatementPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          {statementData?.pagination && statementData.pagination.total_count > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-border bg-muted/20 text-xs text-muted-foreground print:hidden">
+              <div className="font-mono">
+                Showing entries{' '}
+                <span className="font-semibold text-foreground">
+                  {statementData.pagination.total_count === 0 ? 0 : statementData.pagination.offset + 1}
+                </span>{' '}
+                to{' '}
+                <span className="font-semibold text-foreground">
+                  {Math.min(statementData.pagination.offset + statementData.pagination.limit, statementData.pagination.total_count)}
+                </span>{' '}
+                of <span className="font-semibold text-foreground">{statementData.pagination.total_count}</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fetchStatement(fromDate, toDate, page - 1)}
+                  disabled={page <= 1 || loading}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-card text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Previous</span>
+                </button>
+
+                <div className="px-2.5 py-1 text-xs font-mono font-semibold text-foreground bg-muted/50 rounded border border-border">
+                  Page {page} of {statementData.pagination.total_pages || 1}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => fetchStatement(fromDate, toDate, page + 1)}
+                  disabled={!statementData.pagination.has_more || page >= statementData.pagination.total_pages || loading}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-card text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
+                >
+                  <span>Next</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </DashboardLayout>

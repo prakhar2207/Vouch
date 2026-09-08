@@ -237,26 +237,63 @@ class ListVouchersAPIView(APIView):
     def get(self, request, company_id):
         try:
             from apps.accounting.models import Voucher
+            from django.db.models import Case, When, Value, BooleanField
             company = Company.objects.get(id=company_id, users__user=request.user)
-            vouchers = Voucher.objects.filter(company=company)
+
+            try:
+                limit = min(max(int(request.query_params.get('limit', 50)), 1), 50)
+            except (ValueError, TypeError):
+                limit = 50
+
+            try:
+                offset = max(int(request.query_params.get('offset', 0)), 0)
+            except (ValueError, TypeError):
+                offset = 0
+
+            vouchers = Voucher.objects.filter(company=company).select_related('party_ledger')
             v_type = request.query_params.get('type')
             if v_type:
-                vouchers = vouchers.filter(voucher_type=v_type)
-            vouchers = vouchers.order_by('-voucher_date')[:50]
+                vouchers = vouchers.filter(voucher_type=v_type.upper())
+
+            total_count = vouchers.count()
+
+            vouchers = vouchers.annotate(
+                has_attachment_flag=Case(
+                    When(attachment_data__gt='', then=Value(True)),
+                    default=Value(False),
+                    output_field=BooleanField()
+                )
+            ).only(
+                'id', 'voucher_number', 'reference_number', 'voucher_type',
+                'voucher_date', 'status', 'total_amount', 'party_ledger__name'
+            ).order_by('-voucher_date', '-created_at')
+
+            page_vouchers = list(vouchers[offset:offset+limit])
             data = [
                 {
                     "id": str(v.id),
                     "voucher_number": v.reference_number if (v.voucher_type == 'PURCHASE' and v.reference_number and not v.voucher_number.startswith('G/')) else v.voucher_number,
-                    "reference_number": v.reference_number,
+                    "reference_number": v.reference_number or "",
                     "type": v.voucher_type,
                     "date": v.voucher_date.strftime('%Y-%m-%d'),
                     "status": v.status,
                     "total_amount": v.total_amount,
-                    "has_attachment": bool(v.attachment_data),
+                    "has_attachment": bool(v.has_attachment_flag),
                     "party_name": v.party_ledger.name if v.party_ledger else "N/A"
-                } for v in vouchers
+                } for v in page_vouchers
             ]
-            return Response({"success": True, "data": data})
+            return Response({
+                "success": True,
+                "data": data,
+                "pagination": {
+                    "total_count": total_count,
+                    "limit": limit,
+                    "offset": offset,
+                    "has_more": (offset + limit) < total_count,
+                    "page": (offset // limit) + 1,
+                    "total_pages": max(1, (total_count + limit - 1) // limit)
+                }
+            })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -779,6 +816,19 @@ class LedgerStatementAPIView(APIView):
                 except ValueError:
                     pass
 
+            # Pagination parameters (Capped at 50 max rows per request)
+            try:
+                limit = min(max(int(request.query_params.get('limit', 50)), 1), 50)
+            except (ValueError, TypeError):
+                limit = 50
+
+            try:
+                offset = max(int(request.query_params.get('offset', 0)), 0)
+            except (ValueError, TypeError):
+                offset = 0
+
+            from django.db.models import Sum
+
             # Determine normal balance type
             # Asset and Expense are Debit-normal; Liability, Equity, Income are Credit-normal.
             ledger_nature = ledger.group.nature if ledger.group else 'ASSET'
@@ -787,16 +837,14 @@ class LedgerStatementAPIView(APIView):
 
             # Calculate Period Opening Balance:
             # Starts with ledger.opening_balance (and opening_balance_type)
-            # If from_date is provided, accumulate all transactions strictly BEFORE from_date into opening balance!
+            # If from_date is provided, accumulate all transactions strictly BEFORE from_date into opening balance
             initial_op_amount = Decimal(str(ledger.opening_balance or '0.00'))
             initial_op_type = ledger.opening_balance_type or ('DEBIT' if is_debit_normal else 'CREDIT')
 
             # Convert initial opening balance to signed net based on ledger's normal type
             if is_debit_normal:
-                # Positive means Dr, Negative means Cr
                 period_running = initial_op_amount if initial_op_type == 'DEBIT' else -initial_op_amount
             else:
-                # Positive means Cr, Negative means Dr
                 period_running = initial_op_amount if initial_op_type == 'CREDIT' else -initial_op_amount
 
             if from_date:
@@ -820,7 +868,7 @@ class LedgerStatementAPIView(APIView):
                 period_opening_amount = abs(period_running)
                 period_opening_type = 'CREDIT' if period_running >= 0 else 'DEBIT'
 
-            # Query entries within the period
+            # Base query of entries within period
             entries_qs = LedgerEntry.objects.filter(
                 ledger=ledger,
                 voucher__company=company
@@ -831,29 +879,77 @@ class LedgerStatementAPIView(APIView):
             if to_date:
                 entries_qs = entries_qs.filter(voucher__voucher_date__lte=to_date)
 
-            entries = list(entries_qs.order_by('voucher__voucher_date', 'created_at', 'id'))
+            entries_qs = entries_qs.order_by('voucher__voucher_date', 'created_at', 'id')
 
-            # Batch fetch opposing entries across all vouchers in 1 single query
+            # Aggregate total period debit & credit in single fast SQL query
+            total_count = entries_qs.count()
+            period_agg = entries_qs.aggregate(
+                total_dr=Sum('debit_amount'),
+                total_cr=Sum('credit_amount')
+            )
+            total_period_debit = Decimal(str(period_agg['total_dr'] or '0.00'))
+            total_period_credit = Decimal(str(period_agg['total_cr'] or '0.00'))
+
+            if is_debit_normal:
+                period_net = total_period_debit - total_period_credit
+                closing_signed = period_running + period_net
+                closing_amount = abs(closing_signed)
+                closing_type = 'DEBIT' if closing_signed >= 0 else 'CREDIT'
+            else:
+                period_net = total_period_credit - total_period_debit
+                closing_signed = period_running + period_net
+                closing_amount = abs(closing_signed)
+                closing_type = 'CREDIT' if closing_signed >= 0 else 'DEBIT'
+
+            # Calculate running balance at the start of current page (offset > 0)
+            running_signed = period_running
+            if offset > 0 and total_count > 0:
+                prior_ids = entries_qs.values('id')[:offset]
+                prior_offset_agg = LedgerEntry.objects.filter(id__in=prior_ids).aggregate(
+                    prior_dr=Sum('debit_amount'),
+                    prior_cr=Sum('credit_amount')
+                )
+                p_dr = Decimal(str(prior_offset_agg['prior_dr'] or '0.00'))
+                p_cr = Decimal(str(prior_offset_agg['prior_cr'] or '0.00'))
+                if is_debit_normal:
+                    running_signed += (p_dr - p_cr)
+                else:
+                    running_signed += (p_cr - p_dr)
+
+            # Page Opening Balance
+            if is_debit_normal:
+                page_opening_amount = abs(running_signed)
+                page_opening_type = 'DEBIT' if running_signed >= 0 else 'CREDIT'
+            else:
+                page_opening_amount = abs(running_signed)
+                page_opening_type = 'CREDIT' if running_signed >= 0 else 'DEBIT'
+
+            # Project ONLY required table columns (strictly exclude attachment_data)
+            projected_qs = entries_qs.only(
+                'id', 'voucher_id', 'ledger_id', 'debit_amount', 'credit_amount', 'narration', 'created_at',
+                'voucher__id', 'voucher__voucher_number', 'voucher__voucher_type', 'voucher__voucher_date',
+                'voucher__narration', 'voucher__buyer_name', 'voucher__party_ledger__name'
+            )
+            entries = list(projected_qs[offset:offset+limit])
+
+            # Batch fetch opposing entries for ONLY the current page's vouchers
             voucher_ids = [e.voucher_id for e in entries if e.voucher_id]
             siblings = LedgerEntry.objects.filter(
                 voucher_id__in=voucher_ids
-            ).select_related('ledger', 'ledger__group')
+            ).select_related('ledger').only(
+                'id', 'voucher_id', 'ledger_id', 'debit_amount', 'credit_amount',
+                'ledger__name', 'ledger__ledger_type'
+            )
 
             voucher_entries_map = collections.defaultdict(list)
             for s in siblings:
                 voucher_entries_map[s.voucher_id].append(s)
 
-            # Build statement rows and compute dynamic running balance
-            running_signed = period_running
+            # Build statement rows with continuous running balance
             statement_rows = []
-            total_debit = Decimal('0.00')
-            total_credit = Decimal('0.00')
-
             for e in entries:
                 dr = Decimal(str(e.debit_amount or '0.00'))
                 cr = Decimal(str(e.credit_amount or '0.00'))
-                total_debit += dr
-                total_credit += cr
 
                 if is_debit_normal:
                     running_signed += (dr - cr)
@@ -874,10 +970,6 @@ class LedgerStatementAPIView(APIView):
                 if not opp:
                     opp = [s for s in v_sibs if s.id != e.id]
 
-                # Format particulars:
-                # Standard double-entry naming:
-                # If entry was Dr, opposing was credited: "To <Opposing Ledger>"
-                # If entry was Cr, opposing was debited: "By <Opposing Ledger>"
                 prefix = "To " if dr > 0 else "By "
                 opposing_details = []
                 for o in opp:
@@ -892,12 +984,10 @@ class LedgerStatementAPIView(APIView):
                     particulars = e.narration or "Adjustment"
                 elif len(opp) == 1:
                     opp_name = opp[0].ledger.name
-                    # If cash voucher has ad-hoc buyer
                     if opp[0].ledger.ledger_type == 'CASH' and e.voucher and e.voucher.buyer_name:
                         opp_name = f"{opp_name} ({e.voucher.buyer_name})"
                     particulars = f"{prefix}{opp_name}"
                 else:
-                    # Multiple opposing entries
                     main_opp = opp[0].ledger.name
                     particulars = f"{prefix}{main_opp} (+ {len(opp) - 1} other{'s' if len(opp) > 2 else ''})"
 
@@ -917,14 +1007,6 @@ class LedgerStatementAPIView(APIView):
                     "running_balance_type": row_bal_type,
                 })
 
-            # Calculate Closing Balance
-            if is_debit_normal:
-                closing_amount = abs(running_signed)
-                closing_type = 'DEBIT' if running_signed >= 0 else 'CREDIT'
-            else:
-                closing_amount = abs(running_signed)
-                closing_type = 'CREDIT' if running_signed >= 0 else 'DEBIT'
-
             return Response({
                 "success": True,
                 "data": {
@@ -941,12 +1023,22 @@ class LedgerStatementAPIView(APIView):
                     "to_date": to_date_str or None,
                     "period_opening_balance": float(period_opening_amount),
                     "period_opening_type": period_opening_type,
-                    "total_debit": float(total_debit),
-                    "total_credit": float(total_credit),
-                    "net_movement": float(total_debit - total_credit if is_debit_normal else total_credit - total_debit),
+                    "page_opening_balance": float(page_opening_amount),
+                    "page_opening_type": page_opening_type,
+                    "total_debit": float(total_period_debit),
+                    "total_credit": float(total_period_credit),
+                    "net_movement": float(period_net),
                     "closing_balance": float(closing_amount),
                     "closing_type": closing_type,
-                    "entries": statement_rows
+                    "entries": statement_rows,
+                    "pagination": {
+                        "total_count": total_count,
+                        "limit": limit,
+                        "offset": offset,
+                        "has_more": (offset + limit) < total_count,
+                        "page": (offset // limit) + 1,
+                        "total_pages": max(1, (total_count + limit - 1) // limit)
+                    }
                 }
             })
         except Exception as e:
@@ -1044,11 +1136,29 @@ class ListPaymentReceiptAPIView(APIView):
             company = Company.objects.get(id=company_id, users__user=request.user)
             
             voucher_type = request.query_params.get('type')  # PAYMENT or RECEIPT or None for both
-            
-            qs = Voucher.objects.filter(company=company, voucher_type__in=['PAYMENT', 'RECEIPT']).select_related('party_ledger').order_by('-voucher_date', '-created_at')
+            try:
+                limit = min(max(int(request.query_params.get('limit', 50)), 1), 50)
+            except (ValueError, TypeError):
+                limit = 50
+
+            try:
+                offset = max(int(request.query_params.get('offset', 0)), 0)
+            except (ValueError, TypeError):
+                offset = 0
+
+            qs = Voucher.objects.filter(company=company, voucher_type__in=['PAYMENT', 'RECEIPT']).select_related('party_ledger')
             
             if voucher_type in ('PAYMENT', 'RECEIPT'):
                 qs = qs.filter(voucher_type=voucher_type)
+            
+            total_count = qs.count()
+
+            qs = qs.only(
+                'id', 'voucher_number', 'voucher_type', 'voucher_date',
+                'status', 'total_amount', 'party_ledger__name', 'narration'
+            ).order_by('-voucher_date', '-created_at')
+
+            page_vouchers = list(qs[offset:offset+limit])
             
             data = [
                 {
@@ -1060,9 +1170,20 @@ class ListPaymentReceiptAPIView(APIView):
                     "total_amount": str(v.total_amount),
                     "party_name": v.party_ledger.name if v.party_ledger else "N/A",
                     "narration": v.narration or "",
-                } for v in qs
+                } for v in page_vouchers
             ]
-            return Response({"success": True, "data": data})
+            return Response({
+                "success": True,
+                "data": data,
+                "pagination": {
+                    "total_count": total_count,
+                    "limit": limit,
+                    "offset": offset,
+                    "has_more": (offset + limit) < total_count,
+                    "page": (offset // limit) + 1,
+                    "total_pages": max(1, (total_count + limit - 1) // limit)
+                }
+            })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1123,6 +1244,7 @@ class UniversalVoucherAPIView(APIView):
     def get(self, request, company_id=None):
         try:
             from apps.accounting.models import Voucher
+            from django.db.models import Case, When, Value, BooleanField
             if not company_id:
                 company = Company.objects.filter(users__user=request.user).first()
             else:
@@ -1132,25 +1254,63 @@ class UniversalVoucherAPIView(APIView):
                 return Response({"success": False, "error": "Company not found"}, status=404)
 
             v_type = request.query_params.get('type')
-            qs = Voucher.objects.filter(company=company).select_related('party_ledger').order_by('-voucher_date', '-created_at')
+            try:
+                limit = min(max(int(request.query_params.get('limit', 50)), 1), 50)
+            except (ValueError, TypeError):
+                limit = 50
+
+            try:
+                offset = max(int(request.query_params.get('offset', 0)), 0)
+            except (ValueError, TypeError):
+                offset = 0
+
+            qs = Voucher.objects.filter(company=company).select_related('party_ledger')
             if v_type:
                 qs = qs.filter(voucher_type=v_type.upper())
+
+            total_count = qs.count()
+
+            qs = qs.annotate(
+                has_attachment_flag=Case(
+                    When(attachment_data__gt='', then=Value(True)),
+                    default=Value(False),
+                    output_field=BooleanField()
+                )
+            ).only(
+                'id', 'voucher_number', 'reference_number', 'voucher_type',
+                'voucher_date', 'status', 'total_amount', 'party_ledger__name',
+                'narration', 'attachment_mime'
+            ).order_by('-voucher_date', '-created_at')
+
+            page_vouchers = list(qs[offset:offset+limit])
 
             data = [
                 {
                     "id": str(v.id),
-                    "voucher_number": v.voucher_number,
+                    "voucher_number": v.reference_number if (v.voucher_type == 'PURCHASE' and v.reference_number and not v.voucher_number.startswith('G/')) else v.voucher_number,
+                    "reference_number": v.reference_number or "",
                     "type": v.voucher_type,
                     "date": v.voucher_date.strftime('%Y-%m-%d'),
                     "status": v.status,
                     "total_amount": str(v.total_amount),
                     "party_name": v.party_ledger.name if v.party_ledger else "General Entry",
                     "narration": v.narration or "",
-                    "has_attachment": bool(v.attachment_data),
-                    "attachment_mime": v.attachment_mime,
-                } for v in qs
+                    "has_attachment": bool(v.has_attachment_flag),
+                    "attachment_mime": v.attachment_mime or "",
+                } for v in page_vouchers
             ]
-            return Response({"success": True, "data": data})
+            return Response({
+                "success": True,
+                "data": data,
+                "pagination": {
+                    "total_count": total_count,
+                    "limit": limit,
+                    "offset": offset,
+                    "has_more": (offset + limit) < total_count,
+                    "page": (offset // limit) + 1,
+                    "total_pages": max(1, (total_count + limit - 1) // limit)
+                }
+            })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 

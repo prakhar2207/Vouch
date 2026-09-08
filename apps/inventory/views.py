@@ -150,7 +150,24 @@ class ProductListView(APIView):
             company = Company.objects.get(id=company_id, users__user=request.user)
             category_id = request.query_params.get('category')
             
-            qs = Product.objects.filter(company=company).select_related('category').prefetch_related('voucher_items__voucher').order_by('-created_at')
+            from django.db.models import Exists, OuterRef
+            from apps.accounting.models import VoucherItem
+
+            has_posted_purchase_subquery = VoucherItem.objects.filter(
+                product=OuterRef('pk'),
+                voucher__voucher_type='PURCHASE',
+                voucher__status='POSTED'
+            )
+
+            qs = Product.objects.filter(company=company).select_related('category').annotate(
+                has_posted_purchase=Exists(has_posted_purchase_subquery)
+            ).only(
+                'id', 'name', 'alias', 'brand', 'sku', 'category_id', 'category__name', 'category__hsn_code', 'category__gst_rate',
+                'hsn_code', 'unit', 'alternate_unit', 'conversion_factor', 'gst_rate', 'tax_override',
+                'selling_price', 'wholesaler_price', 'min_selling_price', 'purchase_price',
+                'purchase_price_from_invoice', 'stock_quantity', 'costing_method', 'track_batches', 'track_serial_numbers', 'created_at'
+            ).order_by('-created_at')
+
             if category_id:
                 if category_id == 'unassigned':
                     qs = qs.filter(category__isnull=True)
@@ -159,10 +176,7 @@ class ProductListView(APIView):
                 
             data = []
             for p in qs:
-                has_posted_purchase = any(
-                    item.voucher and item.voucher.voucher_type == 'PURCHASE' and item.voucher.status == 'POSTED'
-                    for item in p.voucher_items.all()
-                )
+                has_posted_purchase = bool(getattr(p, 'has_posted_purchase', False))
                 data.append({
                     "id": str(p.id),
                     "name": p.name,

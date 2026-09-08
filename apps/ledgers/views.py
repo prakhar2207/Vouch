@@ -74,7 +74,11 @@ class LedgerListView(APIView):
             from apps.accounting.services.sales_service import SalesInvoiceService
             SalesInvoiceService.reassign_misallocated_tax_entries(company)
 
-            ledgers = Ledger.objects.filter(company=company).select_related('group').order_by('name')
+            ledgers = Ledger.objects.filter(company=company).select_related('group').only(
+                'id', 'name', 'group_id', 'group__name', 'group__nature', 'ledger_type',
+                'gstin', 'state_code', 'phone', 'email', 'address', 'current_balance',
+                'opening_balance', 'opening_balance_type', 'discount_percent', 'is_active'
+            ).order_by('name')
             data = [
                 {
                     "id": str(l.id),

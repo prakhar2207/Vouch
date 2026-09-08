@@ -7,18 +7,23 @@ import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+
 export default function VouchersPage() {
   const router = useRouter();
   const [vouchers, setVouchers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'ALL' | 'PAYMENT' | 'RECEIPT'>('ALL');
+  const [page, setPage] = useState<number>(1);
+  const [pagination, setPagination] = useState<any>(null);
+  const pageSize = 50;
 
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
-    fetchVouchers();
+    fetchVouchers('ALL', 1);
   }, [router]);
 
-  const fetchVouchers = async (typeFilter?: string) => {
+  const fetchVouchers = async (typeFilter: string = filter, targetPage: number = page) => {
     setLoading(true);
     try {
       const token = getAccessToken();
@@ -27,11 +32,16 @@ export default function VouchersPage() {
       const companyId = compRes.data.data[0]?.id;
       if (!companyId) return;
 
-      let url = `${API_BASE_URL}/api/v1/accounting/payment-receipts/${companyId}/`;
-      if (typeFilter && typeFilter !== 'ALL') url += `?type=${typeFilter}`;
+      const offset = (targetPage - 1) * pageSize;
+      let url = `${API_BASE_URL}/api/v1/accounting/payment-receipts/${companyId}/?limit=${pageSize}&offset=${offset}`;
+      if (typeFilter && typeFilter !== 'ALL') url += `&type=${typeFilter}`;
       
       const res = await axios.get(url, { headers });
       setVouchers(res.data.data || []);
+      if (res.data.pagination) {
+        setPagination(res.data.pagination);
+      }
+      setPage(targetPage);
     } catch (err) {
       console.error(err);
     } finally {
@@ -41,7 +51,7 @@ export default function VouchersPage() {
 
   const handleFilter = (f: 'ALL' | 'PAYMENT' | 'RECEIPT') => {
     setFilter(f);
-    fetchVouchers(f);
+    fetchVouchers(f, 1);
   };
 
   const totalPayments = vouchers.filter(v => v.type === 'PAYMENT').reduce((s, v) => s + parseFloat(v.total_amount), 0);
@@ -190,9 +200,42 @@ export default function VouchersPage() {
             </>
           )}
           
-          {vouchers.length > 0 && (
-            <div className="p-4 border-t border-border bg-zinc-900/30 text-right">
-              <span className="text-gray-500 text-sm">Showing {vouchers.length} voucher(s)</span>
+          {/* Pagination Controls */}
+          {pagination && pagination.total_count > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-border bg-zinc-900/30 text-xs text-gray-400">
+              <div className="font-mono">
+                Showing <span className="font-semibold text-white">{pagination.offset + 1}</span> to{' '}
+                <span className="font-semibold text-white">
+                  {Math.min(pagination.offset + pagination.limit, pagination.total_count)}
+                </span>{' '}
+                of <span className="font-semibold text-white">{pagination.total_count}</span> vouchers
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fetchVouchers(filter, page - 1)}
+                  disabled={page <= 1 || loading}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-white hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Previous</span>
+                </button>
+
+                <div className="px-2.5 py-1 text-xs font-mono font-semibold text-white bg-zinc-800 rounded border border-zinc-700">
+                  Page {page} of {pagination.total_pages || 1}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => fetchVouchers(filter, page + 1)}
+                  disabled={!pagination.has_more || page >= pagination.total_pages || loading}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-white hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
+                >
+                  <span>Next</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           )}
         </div>
