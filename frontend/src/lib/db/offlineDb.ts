@@ -20,15 +20,29 @@ export interface MasterCache {
   updatedAt: number;
 }
 
+export interface OcrCache {
+  fileHash: string;
+  fileName: string;
+  fileSize: number;
+  result: any;
+  cachedAt: number;
+}
+
 export class VouchOfflineDB extends Dexie {
   vouchers!: Table<OfflineVoucher, number>;
   masters!: Table<MasterCache, string>;
+  ocrCache!: Table<OcrCache, string>;
 
   constructor() {
     super("VouchOfflineDB");
     this.version(1).stores({
       vouchers: "++id, localId, voucherType, status, createdAt",
       masters: "key, updatedAt",
+    });
+    this.version(2).stores({
+      vouchers: "++id, localId, voucherType, status, createdAt",
+      masters: "key, updatedAt",
+      ocrCache: "fileHash, cachedAt",
     });
   }
 }

@@ -5,6 +5,7 @@ import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
 import { useToast } from "@/context/ToastContext";
+import { offlineDb } from "@/lib/db/offlineDb";
 import {
   Upload,
   FileSpreadsheet,
@@ -244,6 +245,41 @@ export default function PriceListImportModal({
           headers["X-Gemini-Key"] = effectiveGeminiKey;
         }
 
+        // Calculate fast SHA-256 fingerprint of the file for local instant caching
+        const buffer = await selectedFile.arrayBuffer();
+        const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const fileHash = `pdf_${selectedFile.size}_` + hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+
+        // Check offline IndexedDB cache first!
+        try {
+          const cached = await offlineDb.ocrCache.get(fileHash);
+          if (cached && cached.result && cached.result.success && Array.isArray(cached.result.items) && cached.result.items.length > 0) {
+            console.log(`[PWA Cache] Loaded ${cached.result.items.length} items directly from local storage for ${selectedFile.name}`);
+            const rawItems = cached.result.items.map((it: any, idx: number) => ({
+              id: `item_pdf_${idx}`,
+              name: it.name || it.item_name,
+              selling_price: parseFloat(it.mrp || it.selling_price || 0),
+              purchase_price: parseFloat(it.purchase_price || (it.mrp ? it.mrp * 0.70 : 0)),
+              opening_qty: parseFloat(it.opening_qty || 0),
+              case_qty: parseInt(it.case_qty || 1),
+              section: it.section || "",
+              unit: it.unit || "PCS",
+            }));
+            setParsedItems(rawItems);
+            setSelectedSection("ALL");
+            setPreviewPage(1);
+            if (cached.result.brand && !brand) setBrand(cached.result.brand);
+            if (cached.result.effective_date) setEffectiveDate(cached.result.effective_date);
+            setParsingEngine("⚡ Local Instant Offline Cache (0ms)");
+            toast.success(`⚡ Loaded ${rawItems.length} items instantly from offline storage!`);
+            setParsing(false);
+            return;
+          }
+        } catch (cacheErr) {
+          console.warn("[PWA Cache] Cache check error:", cacheErr);
+        }
+
         let res;
         // If file <= 15MB, use Base64 JSON for 100% reliable cross-origin parsing (identical to Purchase OCR)
         if (selectedFile.size <= 15 * 1024 * 1024) {
@@ -264,7 +300,7 @@ export default function PriceListImportModal({
               gemini_api_key: effectiveGeminiKey || undefined,
               scan_mode: "printed",
             },
-            { headers }
+            { headers, timeout: 120000 }
           );
         } else {
           // For very large files > 15MB, use FormData without setting Content-Type so browser sets boundary
@@ -282,8 +318,23 @@ export default function PriceListImportModal({
           res = await axios.post(
             `${API_BASE_URL}/api/v1/inventory/parse-price-list-pdf/${companyId}/`,
             formData,
-            { headers }
+            { headers, timeout: 120000 }
           );
+        }
+
+        // Cache successful response in local IndexedDB for zero-load instant reloads!
+        if (res.data && res.data.success && Array.isArray(res.data.items) && res.data.items.length > 0) {
+          try {
+            await offlineDb.ocrCache.put({
+              fileHash,
+              fileName: selectedFile.name,
+              fileSize: selectedFile.size,
+              result: res.data,
+              cachedAt: Date.now(),
+            });
+          } catch (putErr) {
+            console.warn("[PWA Cache] Failed to persist price list cache:", putErr);
+          }
         }
 
         let rawList: any[] = [];

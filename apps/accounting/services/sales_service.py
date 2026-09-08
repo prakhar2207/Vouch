@@ -25,7 +25,9 @@ class SalesInvoiceService:
         buyer_address=None,
         buyer_gstin=None,
         buyer_state_code=None,
-        buyer_phone=None
+        buyer_phone=None,
+        cartage_amount: Decimal = Decimal('0.00'),
+        cartage_ledger: Ledger = None
     ):
         """
         End-to-End orchestration of a Sales Invoice.
@@ -163,9 +165,15 @@ class SalesInvoiceService:
             total_igst += taxes['igst']
             total_invoice_value += total_amount
             
+        # Add Cartage (Freight Outward) if specified
+        try:
+            cartage_amt = Decimal(str(cartage_amount or '0.00')).quantize(Decimal('0.01'))
+        except Exception:
+            cartage_amt = Decimal('0.00')
+
         # Round Off calculation:
         # If decimal value < 0.5 then floor, if >= 0.5 then ceiling
-        unrounded_total = total_invoice_value
+        unrounded_total = total_invoice_value + cartage_amt
         integer_part = Decimal(int(unrounded_total))
         decimal_part = unrounded_total - integer_part
         if decimal_part < Decimal('0.50'):
@@ -219,9 +227,9 @@ class SalesInvoiceService:
             )
 
         # Round Off balancing entry:
-        # If round_off < 0: Debits (party = rounded) < Credits (sales + taxes = unrounded).
+        # If round_off < 0: Debits (party = rounded) < Credits (sales + taxes + cartage = unrounded).
         # Need DEBIT of abs(round_off) to Round Off ledger (Expense).
-        # If round_off > 0: Debits (party = rounded) > Credits (sales + taxes = unrounded).
+        # If round_off > 0: Debits (party = rounded) > Credits (sales + taxes + cartage = unrounded).
         # Need CREDIT of round_off to Round Off ledger (Income).
         if round_off != Decimal('0.00'):
             round_off_ledger = SalesInvoiceService._get_or_create_round_off_ledger(company)
@@ -240,6 +248,17 @@ class SalesInvoiceService:
                     credit_amount=round_off
                 )
 
+        # Cartage / Freight Outward entry (Credit Cartage Outward on Sales Invoice)
+        if cartage_amt > Decimal('0.00'):
+            if not cartage_ledger:
+                cartage_ledger = SalesInvoiceService._get_or_create_cartage_ledger(company, 'OUTWARD')
+            LedgerEntry.objects.create(
+                voucher=voucher,
+                ledger=cartage_ledger,
+                debit_amount=Decimal('0.00'),
+                credit_amount=cartage_amt
+            )
+
         # Trigger B2B Network EDI Handshake if buyer is a registered Company
         try:
             from apps.accounting.services.edi_service import EDIService
@@ -249,6 +268,37 @@ class SalesInvoiceService:
             print(f"[EDI Error] Failed to create inward voucher request: {e}")
             
         return voucher
+
+    @staticmethod
+    def _get_or_create_cartage_ledger(company: Company, direction: str = 'OUTWARD') -> Ledger:
+        from apps.ledgers.models import LedgerGroup
+        if direction.upper() == 'INWARD':
+            group_name = "Direct Expenses"
+            ledger_name = "Cartage Inward"
+        else:
+            group_name = "Indirect Expenses"
+            ledger_name = "Cartage Outward"
+
+        grp = LedgerGroup.objects.filter(company=company, name__iexact=group_name).first()
+        if not grp:
+            grp, _ = LedgerGroup.objects.get_or_create(
+                company=company,
+                name=group_name,
+                defaults={"nature": "EXPENSE"}
+            )
+
+        cartage = Ledger.objects.filter(company=company, name__iexact=ledger_name).first()
+        if not cartage:
+            cartage = Ledger.objects.filter(company=company, name__icontains="cartage").first() or \
+                      Ledger.objects.filter(company=company, name__icontains="freight").first()
+        if not cartage:
+            cartage = Ledger.objects.create(
+                company=company,
+                group=grp,
+                name=ledger_name,
+                ledger_type="EXPENSE"
+            )
+        return cartage
 
     @staticmethod
     def _get_or_create_round_off_ledger(company: Company) -> Ledger:

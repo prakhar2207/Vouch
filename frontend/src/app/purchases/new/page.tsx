@@ -9,6 +9,8 @@ import DashboardLayout from '@/components/DashboardLayout';
 import PurchaseOcrSplitView from '@/components/PurchaseOcrSplitView';
 import { useShortcuts } from '@/context/ShortcutContext';
 import { useToast } from '@/context/ToastContext';
+import { queueOfflineVoucher } from '@/lib/sync/sync-worker';
+import { offlineDb } from '@/lib/db/offlineDb';
 
 export default function PurchasePage() {
   const router = useRouter();
@@ -30,6 +32,7 @@ export default function PurchasePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [companyStateCode, setCompanyStateCode] = useState('');
+  const [cartageAmount, setCartageAmount] = useState<number | string>('');
   
   const [categories, setCategories] = useState<any[]>([]);
   const [groupedItems, setGroupedItems] = useState([
@@ -61,6 +64,26 @@ export default function PurchasePage() {
 
   const fetchBaseData = async () => {
     try {
+      // First, attempt to load cached masters from offline IndexedDB
+      try {
+        const cachedComp = await offlineDb.masters.get('company');
+        const cachedLedgers = await offlineDb.masters.get('ledgers');
+        const cachedCats = await offlineDb.masters.get('categories');
+
+        if (cachedComp?.data) {
+          setCompanyId(cachedComp.data.id);
+          setCompanyStateCode(cachedComp.data.state_code || '');
+          setEnableLedgerMapping(cachedComp.data.settings?.enable_ledger_mapping || false);
+        }
+        if (cachedLedgers?.data?.length) {
+          setLedgers(cachedLedgers.data);
+          applyDefaultPurchaseLedgers(cachedLedgers.data, cachedComp?.data?.settings?.enable_ledger_mapping || false);
+        }
+        if (cachedCats?.data?.length) setCategories(cachedCats.data);
+      } catch (cacheErr) {
+        console.warn('Could not read from local offline cache', cacheErr);
+      }
+
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
@@ -73,35 +96,45 @@ export default function PurchasePage() {
       const isMappingEnabled = comp.settings?.enable_ledger_mapping || false;
       setEnableLedgerMapping(isMappingEnabled);
 
+      // Cache company
+      offlineDb.masters.put({ key: 'company', data: comp, updatedAt: Date.now() }).catch(() => {});
+
       const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cId}/`, { headers });
       const ledgerList = ledgersRes.data.data || [];
       setLedgers(ledgerList);
       
       const catsRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cId}/`, { headers });
-      setCategories(catsRes.data.data || []);
-      
-      const party = ledgerList.find((l:any) => l.name.includes('Supplier') || l.group.includes('Creditor'));
-      
-      const genericPurchase = ledgerList.find((l:any) => l.name === 'Purchase Account' || l.name === 'Local Purchases') || ledgerList.find((l:any) => l.name.toLowerCase().includes('purchase'));
-      const purchase = isMappingEnabled 
-          ? ledgerList.find((l:any) => l.name.toLowerCase().includes('purchase')) 
-          : genericPurchase;
-          
-      const cgst = ledgerList.find((l:any) => l.name === 'CGST' || l.name === 'Input CGST' || l.name.toLowerCase().includes('cgst'));
-      const sgst = ledgerList.find((l:any) => l.name === 'SGST' || l.name === 'Input SGST' || l.name.toLowerCase().includes('sgst'));
-      const igst = ledgerList.find((l:any) => l.name === 'IGST' || l.name === 'Input IGST' || l.name.toLowerCase().includes('igst'));
-      
-      if (party) setPartyLedgerId(party.id);
-      if (purchase) setPurchaseLedgerId(purchase.id);
-      else if (genericPurchase) setPurchaseLedgerId(genericPurchase.id);
-      if (cgst) setCgstLedgerId(cgst.id);
-      if (sgst) setSgstLedgerId(sgst.id);
-      if (igst) setIgstLedgerId(igst.id);
+      const catList = catsRes.data.data || [];
+      setCategories(catList);
+
+      offlineDb.masters.put({ key: 'ledgers', data: ledgerList, updatedAt: Date.now() }).catch(() => {});
+      offlineDb.masters.put({ key: 'categories', data: catList, updatedAt: Date.now() }).catch(() => {});
+
+      applyDefaultPurchaseLedgers(ledgerList, isMappingEnabled);
     } catch (err) {
-      console.error(err);
+      console.error('Network fetch failed, continuing with offline cache if available:', err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const applyDefaultPurchaseLedgers = (ledgerList: any[], isMappingEnabled: boolean) => {
+    const party = ledgerList.find((l:any) => l.name.includes('Supplier') || l.group.includes('Creditor'));
+    const genericPurchase = ledgerList.find((l:any) => l.name === 'Purchase Account' || l.name === 'Local Purchases') || ledgerList.find((l:any) => l.name.toLowerCase().includes('purchase'));
+    const purchase = isMappingEnabled 
+        ? ledgerList.find((l:any) => l.name.toLowerCase().includes('purchase')) 
+        : genericPurchase;
+        
+    const cgst = ledgerList.find((l:any) => l.name === 'CGST' || l.name === 'Input CGST' || l.name.toLowerCase().includes('cgst'));
+    const sgst = ledgerList.find((l:any) => l.name === 'SGST' || l.name === 'Input SGST' || l.name.toLowerCase().includes('sgst'));
+    const igst = ledgerList.find((l:any) => l.name === 'IGST' || l.name === 'Input IGST' || l.name.toLowerCase().includes('igst'));
+    
+    if (party) setPartyLedgerId(party.id);
+    if (purchase) setPurchaseLedgerId(purchase.id);
+    else if (genericPurchase) setPurchaseLedgerId(genericPurchase.id);
+    if (cgst) setCgstLedgerId(cgst.id);
+    if (sgst) setSgstLedgerId(sgst.id);
+    if (igst) setIgstLedgerId(igst.id);
   };
 
   const handleSave = async () => {
@@ -158,11 +191,29 @@ export default function PurchasePage() {
       if (cgstLedgerId) payload.input_cgst_ledger_id = cgstLedgerId;
       if (sgstLedgerId) payload.input_sgst_ledger_id = sgstLedgerId;
       if (igstLedgerId) payload.input_igst_ledger_id = igstLedgerId;
+      if (cartageAmount && Number(cartageAmount) > 0) {
+        payload.cartage_amount = Number(cartageAmount);
+      }
       
-      const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/purchase-invoice/`, payload, { headers });
-      toast.success(`Purchase Invoice recorded!`, `Voucher: ${res.data.voucher_number}`);
-      router.push('/purchases');
-      router.refresh();
+      try {
+        const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/purchase-invoice/`, payload, { headers, timeout: 8000 });
+        toast.success(`Purchase Invoice recorded!`, `Voucher: ${res.data.voucher_number}`);
+        router.push('/purchases');
+        router.refresh();
+      } catch (postErr: any) {
+        const isNetworkErr = !navigator.onLine || postErr.code === 'ERR_NETWORK' || !postErr.response;
+        if (isNetworkErr) {
+          const offlineRes = await queueOfflineVoucher('PURCHASE', payload, invoiceDate);
+          toast.success(
+            "⚡ Saved Offline to Local Database!",
+            `Stored securely on device (${offlineRes.localId}). Will sync to Neon cloud automatically.`
+          );
+          router.push('/purchases');
+          router.refresh();
+        } else {
+          throw postErr;
+        }
+      }
     } catch (err: any) {
       console.error(err);
       toast.error("Failed to save purchase bill", err.response?.data?.error || err.message);
@@ -226,12 +277,13 @@ export default function PurchasePage() {
       const taxable = gross - discount;
       return sum + (taxable * (Number(item.gst_rate)/100));
   }, 0);
+  const cartageVal = Number(cartageAmount) || 0;
   const unroundedGrandTotal = allItems.reduce((sum, item) => {
     const gross = Number(item.quantity) * Number(item.rate);
     const discount = gross * (Number(item.discount_percent)/100);
     const taxable = gross - discount;
     return sum + taxable + (taxable * (Number(item.gst_rate)/100));
-  }, 0);
+  }, 0) + cartageVal;
 
   let grandTotal = 0;
   let roundOff = 0;
@@ -480,6 +532,21 @@ export default function PurchasePage() {
                         </div>
                     </>
                 )}
+                <div className="flex justify-between items-center text-gray-400">
+                    <span>Cartage / Freight Inward</span>
+                    <div className="flex items-center gap-1">
+                        <span className="text-gray-400 font-mono text-sm">₹</span>
+                        <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={cartageAmount}
+                            onChange={(e) => setCartageAmount(e.target.value)}
+                            placeholder="0.00"
+                            className="w-28 bg-zinc-900 border border-zinc-700 text-white text-right px-2 py-1 rounded font-mono text-sm focus:ring-1 focus:ring-blue-500 outline-none"
+                        />
+                    </div>
+                </div>
                 <div className="flex justify-between text-gray-400">
                     <span>Round Off</span>
                     <span className={roundOff < 0 ? "text-emerald-400 font-mono font-medium" : roundOff > 0 ? "text-amber-400 font-mono font-medium" : "text-gray-400 font-mono"}>

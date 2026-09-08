@@ -9,7 +9,8 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useToast } from '@/context/ToastContext';
 import EditSalesInvoiceModal from '@/components/modals/EditSalesInvoiceModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
-import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight, CloudOff } from 'lucide-react';
+import { offlineDb } from '@/lib/db/offlineDb';
 
 export default function SalesInvoiceList() {
   const router = useRouter();
@@ -37,23 +38,69 @@ export default function SalesInvoiceList() {
   const fetchInvoices = async (targetPage: number = page) => {
     setLoading(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const companyId = compRes.data.data[0]?.id;
-      if (!companyId) return;
+      // 1. Fetch pending offline vouchers from Dexie
+      let offlineList: any[] = [];
+      try {
+        const pendingOffline = await offlineDb.vouchers
+          .where('voucherType')
+          .equals('SALES')
+          .filter(v => v.status === 'PENDING' || v.status === 'SYNCING')
+          .toArray();
 
-      const offset = (targetPage - 1) * pageSize;
-      const res = await axios.get(
-        `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?type=SALES&limit=${pageSize}&offset=${offset}`,
-        { headers }
-      );
-      
-      const salesVouchers = (res.data.data || []).filter((v: any) => v.type === 'SALES');
-      setInvoices(salesVouchers);
-      if (res.data.pagination) {
-        setPagination(res.data.pagination);
+        offlineList = pendingOffline.map(v => {
+          const payload = v.payload || {};
+          const lineItems = payload.items || [];
+          const total = lineItems.reduce((sum: number, it: any) => {
+            const gross = Number(it.quantity || 0) * Number(it.rate || 0);
+            const disc = gross * (Number(it.discount_percent || 0) / 100);
+            const taxable = gross - disc;
+            return sum + taxable + (taxable * (Number(it.gst_rate || 18) / 100));
+          }, 0);
+
+          return {
+            id: v.localId,
+            isOffline: true,
+            voucher_number: payload.voucher_number || v.localId.substring(0, 15).toUpperCase(),
+            date: v.voucherDate || payload.voucher_date,
+            party_name: payload.buyer_name || 'Offline Customer',
+            total_amount: Math.round(total),
+            status: 'PENDING_SYNC'
+          };
+        });
+      } catch (offlineErr) {
+        console.warn('Could not read offline vouchers', offlineErr);
       }
+
+      // 2. Fetch remote invoices if online
+      let remoteVouchers: any[] = [];
+      try {
+        const token = getAccessToken();
+        const headers = { Authorization: `Bearer ${token}` };
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+        const companyId = compRes.data.data[0]?.id;
+        if (companyId) {
+          const offset = (targetPage - 1) * pageSize;
+          const res = await axios.get(
+            `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?type=SALES&limit=${pageSize}&offset=${offset}`,
+            { headers, timeout: 6000 }
+          );
+          remoteVouchers = (res.data.data || []).filter((v: any) => v.type === 'SALES');
+          if (res.data.pagination) {
+            setPagination(res.data.pagination);
+          }
+          // Cache remote invoices for offline viewing
+          offlineDb.masters.put({ key: 'cached_sales_invoices', data: remoteVouchers, updatedAt: Date.now() }).catch(() => {});
+        }
+      } catch (remoteErr) {
+        console.warn('Backend unavailable, falling back to cached invoices', remoteErr);
+        const cached = await offlineDb.masters.get('cached_sales_invoices');
+        if (cached?.data?.length) {
+          remoteVouchers = cached.data;
+        }
+      }
+
+      // Merge: offline pending vouchers appear at the top!
+      setInvoices([...offlineList, ...remoteVouchers]);
       setPage(targetPage);
     } catch (err) {
       console.error(err);
@@ -217,9 +264,16 @@ export default function SalesInvoiceList() {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-bold text-foreground text-sm">{inv.voucher_number}</span>
-                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${inv.status === 'POSTED' ? 'bg-green-500/10 text-green-500 border-green-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>
-                          {inv.status}
-                        </span>
+                        {inv.isOffline || inv.status === 'PENDING_SYNC' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                            <CloudOff className="w-2.5 h-2.5" />
+                            Pending Sync
+                          </span>
+                        ) : (
+                          <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${inv.status === 'POSTED' ? 'bg-green-500/10 text-green-500 border-green-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>
+                            {inv.status}
+                          </span>
+                        )}
                       </div>
                       <span className="text-xs text-muted-foreground font-mono">{inv.date}</span>
                     </div>
@@ -291,9 +345,16 @@ export default function SalesInvoiceList() {
                         <td className="p-4 text-gray-300 font-semibold">{inv.party_name}</td>
                         <td className="p-4 font-bold text-white text-right font-mono">₹ {parseFloat(inv.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                         <td className="p-4 text-center">
-                          <span className={`px-2.5 py-1 text-xs font-bold rounded-full border ${inv.status === 'POSTED' ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
-                            {inv.status}
-                          </span>
+                          {inv.isOffline || inv.status === 'PENDING_SYNC' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                              <CloudOff className="w-3 h-3" />
+                              Pending Sync
+                            </span>
+                          ) : (
+                            <span className={`px-2.5 py-1 text-xs font-bold rounded-full border ${inv.status === 'POSTED' ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
+                              {inv.status}
+                            </span>
+                          )}
                         </td>
                         <td className="p-4 text-right">
                           <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>

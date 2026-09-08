@@ -33,6 +33,7 @@ from apps.accounting.b2b_views import (
 from apps.accounting.tally_views import TallyExportAPIView
 import apps.accounting.fy_views
 import apps.accounting.period_views
+import apps.accounting.sync_views
 
 def root_health_view(request):
     return JsonResponse({
@@ -79,6 +80,10 @@ urlpatterns = [
     path('api/v1/inventory/', include('apps.inventory.urls')),
     path('api/inventory/', include('apps.inventory.urls')),
     path('api/v1/ledgers/', include('apps.ledgers.urls')),
+
+    # Offline-First Batch Sync Endpoints
+    path('api/v1/sync/pull/', apps.accounting.sync_views.SyncPullAPIView.as_view(), name='api_sync_pull'),
+    path('api/v1/sync/push/', apps.accounting.sync_views.SyncPushAPIView.as_view(), name='api_sync_push'),
 
     # Direct Financial Years & Ledger Statement Routes
     path('api/v1/financial-years/', include([

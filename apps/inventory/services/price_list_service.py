@@ -123,46 +123,55 @@ class PriceListService:
     @staticmethod
     def infer_belt_or_bearing_section(item_name: str, active_section: str = "") -> str:
         n = item_name.upper().strip()
-        if n.startswith("A ") or n.startswith("A-"):
-            return 'A SECTION (13 x 8 mm)'
-        elif n.startswith("B ") or n.startswith("B-"):
-            return 'B SECTION (17 x 11 mm)'
-        elif n.startswith("C ") or n.startswith("C-"):
-            return 'C SECTION (22 x 14 mm)'
-        elif n.startswith("D ") or n.startswith("D-"):
-            return 'D SECTION (32 x 19 mm)'
-        elif n.startswith("BB ") or n.startswith("BB-") or n.startswith("BB"):
-            return 'BB SECTION (17 x 14 mm)'
-        elif n.startswith("FHP"):
-            return 'FHP SECTION'
-        elif n.startswith("SPZ"):
-            return 'SPZ SECTION (10 x 8 mm)'
-        elif n.startswith("SPA"):
-            return 'SPA SECTION (13 x 10 mm)'
-        elif n.startswith("SPB"):
-            return 'SPB SECTION (17 x 14 mm)'
-        elif n.startswith("SPC"):
-            return 'SPC SECTION (22 x 18 mm)'
-        elif n.startswith("AX"):
-            return 'AX COGGED (13 x 8 mm)'
-        elif n.startswith("BX"):
-            return 'BX COGGED (17 x 11 mm)'
-        elif n.startswith("CX"):
-            return 'CX COGGED (22 x 14 mm)'
-        elif n.startswith("XPZ"):
-            return 'XPZ WEDGE COGGED (10 x 8 mm)'
-        elif n.startswith("XPA"):
-            return 'XPA WEDGE COGGED (13 x 10 mm)'
-        elif n.startswith("XPB"):
-            return 'XPB WEDGE COGGED (17 x 14 mm)'
-        elif n.startswith("XPC"):
-            return 'XPC WEDGE COGGED (22 x 18 mm)'
-        elif "PK" in n:
-            return 'POLY-V PK SECTION'
-        elif "PJ" in n:
-            return 'POLY-V PJ SECTION'
-        elif "PL" in n:
-            return 'POLY-V PL SECTION'
+        
+        # Raw edge cogged & wedge cogged
+        if n.startswith("SPZX"): return 'SPZX COGGED (10 x 8 mm)'
+        if n.startswith("SPAX"): return 'SPAX COGGED (13 x 10 mm)'
+        if n.startswith("SPBX"): return 'SPBX COGGED (17 x 14 mm)'
+        if n.startswith("SPCX"): return 'SPCX COGGED (22 x 18 mm)'
+        if n.startswith("3VX"): return '3VX COGGED'
+        if n.startswith("5VX"): return '5VX COGGED'
+        if n.startswith("AX"): return 'AX COGGED (13 x 8 mm)'
+        if n.startswith("BX"): return 'BX COGGED (17 x 11 mm)'
+        if n.startswith("CX"): return 'CX COGGED (22 x 14 mm)'
+        if n.startswith("XPZ"): return 'XPZ WEDGE COGGED (10 x 8 mm)'
+        if n.startswith("XPA"): return 'XPA WEDGE COGGED (13 x 10 mm)'
+        if n.startswith("XPB"): return 'XPB WEDGE COGGED (17 x 14 mm)'
+        if n.startswith("XPC"): return 'XPC WEDGE COGGED (22 x 18 mm)'
+
+        # Metric Wedge Belts
+        if n.startswith("SPZ"): return 'SPZ WEDGE (10 x 8 mm)'
+        if n.startswith("SPA"): return 'SPA WEDGE (13 x 10 mm)'
+        if n.startswith("SPB"): return 'SPB WEDGE (17 x 14 mm)'
+        if n.startswith("SPC"): return 'SPC WEDGE (22 x 18 mm)'
+        if n.startswith("3V"): return '3V WEDGE (9.5 x 8 mm)'
+        if n.startswith("5V"): return '5V WEDGE (15 x 13 mm)'
+        if n.startswith("8V"): return '8V / DELTA / 25N (25 x 23 mm)'
+
+        # Hexagonal Double V-Belts
+        if n.startswith("AA"): return 'AA HEXAGONAL (13 x 10 mm)'
+        if n.startswith("BB"): return 'BB HEXAGONAL (17 x 14 mm)'
+        if n.startswith("CC"): return 'CC HEXAGONAL (22 x 18 mm)'
+
+        # Multi-Rib Poly-V Belts
+        if n.startswith("PJ"): return 'POLY-V PJ SECTION'
+        if n.startswith("PK"): return 'POLY-V PK SECTION'
+        if n.startswith("PL"): return 'POLY-V PL SECTION'
+        if n.startswith("PM"): return 'POLY-V PM SECTION'
+
+        # Speciality & Engines
+        if n.startswith("FHP"): return 'FHP SECTION'
+        if n.startswith("TX") or n.startswith("MX"): return 'HEMM KOMATSU ENGINES'
+        if re.match(r'^(11A|13A|15A|17A|20A)\d+', n): return 'HEMM CUMMINS ENGINES'
+        if re.match(r'^\d+X\d+X\d+', n) or n.startswith("QX") or n.startswith("R"): return 'HARVESTOR COMBINE BELTS'
+
+        # Classical Wrapped Belts (A, B, C, D, E)
+        if re.match(r'^A[\s\-]?\d+(\.\d+)?$', n): return 'A SECTION (13 x 8 mm)'
+        if re.match(r'^B[\s\-]?\d+(\.\d+)?$', n): return 'B SECTION (17 x 11 mm)'
+        if re.match(r'^C[\s\-]?\d+(\.\d+)?$', n): return 'C SECTION (22 x 14 mm)'
+        if re.match(r'^D[\s\-]?\d+(\.\d+)?$', n): return 'D SECTION (32 x 19 mm)'
+        if re.match(r'^E[\s\-]?\d+(\.\d+)?$', n): return 'E SECTION (38 x 23 mm)'
+
         return active_section or "Standard"
 
     @staticmethod
@@ -241,7 +250,49 @@ class PriceListService:
                             current_section = line_clean
                             continue
 
-                    # Strategy 1: [Item] [Price] [CaseQty] multi-column (e.g. NBC Bearings)
+                    # Strategy 1: Multi-column token extractor (handles Fenner, PIX, Gates, Optibelt multi-column catalogs)
+                    tokens = line_clean.split()
+                    if len(tokens) >= 2:
+                        last_tok = tokens[-1].replace(',', '')
+                        if re.match(r'^\d+(\.\d{1,2})?$', last_tok):
+                            price_val = float(last_tok)
+                            if price_val > 0:
+                                prefix_tokens = tokens[:-1]
+                                raw_name = ""
+                                if len(prefix_tokens) == 1:
+                                    raw_name = prefix_tokens[0]
+                                elif len(prefix_tokens) == 2:
+                                    p0 = prefix_tokens[0].upper()
+                                    p1 = prefix_tokens[1]
+                                    if p1.isdigit() and (p0 in ['SPA', 'SPB', 'SPC', 'SPZ', 'PL', 'PJ', 'PK', 'PM', '3V', '5V', '8V', 'AX', 'BX', 'CX', 'TX', 'MX', 'SPAX', 'SPBX', 'SPCX', 'SPZX', '3VX', '5VX', 'FHP']):
+                                        raw_name = f"{prefix_tokens[0]} {prefix_tokens[1]}"
+                                    elif prefix_tokens[0][0].isalpha() and p1.isdigit():
+                                        raw_name = prefix_tokens[0]
+                                    else:
+                                        raw_name = " ".join(prefix_tokens)
+                                else:
+                                    raw_name = prefix_tokens[0]
+
+                                if raw_name and raw_name.upper() not in ['SIZE', 'PRICE', 'RS.', 'EACH', 'PITCH', 'LENGTH', 'EFFECTIVE', 'PAGE']:
+                                    if raw_name.isdigit() and len(raw_name) == 4 and raw_name.startswith('2'):
+                                        raw_name = f"FHP {raw_name}"
+
+                                    inferred_sec = PriceListService.infer_belt_or_bearing_section(raw_name, current_section)
+                                    unique_key = (raw_name.upper(), round(price_val, 2), inferred_sec)
+                                    if unique_key not in seen_names:
+                                        seen_names.add(unique_key)
+                                        extracted_items.append({
+                                            "name": raw_name,
+                                            "mrp": price_val,
+                                            "purchase_price": round(price_val * 0.70, 2),
+                                            "case_qty": 1,
+                                            "section": inferred_sec,
+                                            "unit": "PCS",
+                                            "opening_qty": 0
+                                        })
+                                        continue
+
+                    # Strategy 2: [Item] [Price] [CaseQty] multi-column (e.g. NBC Bearings)
                     three_col = re.findall(
                         r'([A-Za-z0-9<>\-\/\.\s]{2,30}?)\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)\s+([0-9]{1,4})(?=\s+[A-Za-z0-9<>]|\s*$)',
                         line_clean
@@ -254,20 +305,22 @@ class PriceListService:
                                 case_qty = int(m[2])
                             except:
                                 continue
-                            if len(name) >= 2 and price > 0 and name not in seen_names:
-                                seen_names.add(name)
+                            inferred_sec = PriceListService.infer_belt_or_bearing_section(name, current_section)
+                            unique_key = (name.upper(), round(price, 2), inferred_sec)
+                            if len(name) >= 2 and price > 0 and unique_key not in seen_names:
+                                seen_names.add(unique_key)
                                 extracted_items.append({
                                     "name": name,
                                     "mrp": price,
                                     "purchase_price": round(price * 0.70, 2),
                                     "case_qty": case_qty,
-                                    "section": PriceListService.infer_belt_or_bearing_section(name, current_section),
+                                    "section": inferred_sec,
                                     "unit": "PCS",
                                     "opening_qty": 0
                                 })
                         continue
 
-                    # Strategy 2: [Item] [Price] multi-column (e.g. PIX V-Belts)
+                    # Strategy 3: [Item] [Price] multi-column
                     two_col = re.findall(
                         r'([A-Za-z0-9\-\/\.]{1,15}(?:\s+[A-Za-z0-9\-\/\.]{1,10})?)\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)(?=\s+[A-Za-z]|\s*$)',
                         line_clean
@@ -279,40 +332,16 @@ class PriceListService:
                                 price = float(m[1].replace(',', ''))
                             except:
                                 continue
-                            if len(name) >= 2 and price > 0 and name not in seen_names:
-                                seen_names.add(name)
+                            inferred_sec = PriceListService.infer_belt_or_bearing_section(name, current_section)
+                            unique_key = (name.upper(), round(price, 2), inferred_sec)
+                            if len(name) >= 2 and price > 0 and unique_key not in seen_names:
+                                seen_names.add(unique_key)
                                 extracted_items.append({
                                     "name": name,
                                     "mrp": price,
                                     "purchase_price": round(price * 0.70, 2),
                                     "case_qty": 1,
-                                    "section": PriceListService.infer_belt_or_bearing_section(name, current_section),
-                                    "unit": "PCS",
-                                    "opening_qty": 0
-                                })
-                        continue
-
-                    # Strategy 3: Dedicated Belt & Industrial Catalog Matcher (e.g. Fenner Poly-F, Classical, Wedge)
-                    belt_matches = re.findall(
-                        r'\b((?:[A-D]|BB|SPZ|SPA|SPB|SPC|AX|BX|CX|XPZ|XPA|XPB|XPC|FHP|PJ|PK|PL)\s*[-]?\s*[0-9]{1,5}(?:\.[0-9]{1,2})?)\b[^\d\n\r]*?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]{2,5}\.[0-9]{2})',
-                        line_clean,
-                        re.IGNORECASE
-                    )
-                    if belt_matches:
-                        for b_name, b_price in belt_matches:
-                            clean_n = re.sub(r'\s+', ' ', b_name).strip().upper()
-                            try:
-                                p_val = float(b_price.replace(',', ''))
-                            except:
-                                continue
-                            if p_val > 0 and clean_n not in seen_names:
-                                seen_names.add(clean_n)
-                                extracted_items.append({
-                                    "name": clean_n,
-                                    "mrp": p_val,
-                                    "purchase_price": round(p_val * 0.70, 2),
-                                    "case_qty": 1,
-                                    "section": PriceListService.infer_belt_or_bearing_section(clean_n, current_section),
+                                    "section": inferred_sec,
                                     "unit": "PCS",
                                     "opening_qty": 0
                                 })

@@ -113,7 +113,9 @@ class CreateSalesInvoiceAPIView(APIView):
                     buyer_address=data.get('buyer_address'),
                     buyer_gstin=data.get('buyer_gstin'),
                     buyer_state_code=data.get('buyer_state_code'),
-                    buyer_phone=data.get('buyer_phone')
+                    buyer_phone=data.get('buyer_phone'),
+                    cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
+                    cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None
                 )
                 
                 # 2. Automatically post it if requested
@@ -205,7 +207,9 @@ class CreatePurchaseInvoiceAPIView(APIView):
                     input_sgst_ledger=input_sgst,
                     input_igst_ledger=input_igst,
                     supplier_invoice_number=data.get('voucher_number') or data.get('supplier_invoice_number'),
-                    voucher_date=data.get('voucher_date')
+                    voucher_date=data.get('voucher_date'),
+                    cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
+                    cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None
                 )
                 
                 if data.get('post_immediately', True):
@@ -338,8 +342,22 @@ class VoucherDetailAPIView(APIView):
                             voucher.company.save(update_fields=['signature_data'])
                 except Exception:
                     pass
-                if not sig_data:
-                    sig_data = voucher.company.proprietor_signature.url
+            # Extract cartage and round off from ledger entries if present
+            cartage_amount = Decimal('0.00')
+            round_off_amount = Decimal('0.00')
+            for entry in voucher.ledger_entries.select_related('ledger').all():
+                lname = entry.ledger.name.lower()
+                if 'cartage' in lname or 'freight' in lname:
+                    amt = entry.credit_amount if voucher.voucher_type == 'SALES' else entry.debit_amount
+                    if amt > 0:
+                        cartage_amount += amt
+                elif 'round off' in lname or entry.ledger.ledger_type == 'ROUND_OFF':
+                    # For sales: credit is +round_off (increase total), debit is -round_off (decrease total)
+                    # For purchase: debit is +round_off, credit is -round_off
+                    if voucher.voucher_type == 'SALES':
+                        round_off_amount += (entry.credit_amount - entry.debit_amount)
+                    else:
+                        round_off_amount += (entry.debit_amount - entry.credit_amount)
 
             data = {
                 "id": str(voucher.id),
@@ -348,6 +366,8 @@ class VoucherDetailAPIView(APIView):
                 "date": voucher.voucher_date.strftime('%Y-%m-%d'),
                 "status": voucher.status,
                 "total_amount": voucher.total_amount,
+                "cartage_amount": float(cartage_amount),
+                "round_off_amount": float(round_off_amount),
                 "narration": voucher.narration,
                 "company": {
                     "name": voucher.company.name,
@@ -671,8 +691,14 @@ class VoucherDetailAPIView(APIView):
                         total_igst += taxes['igst']
                         total_invoice_value += total_line_amount
 
+                    # Cartage amount
+                    try:
+                        cartage_amt = Decimal(str(data.get('cartage_amount') or '0.00')).quantize(Decimal('0.01'))
+                    except Exception:
+                        cartage_amt = Decimal('0.00')
+
                     # Apply Round Off calculation
-                    unrounded_total = total_invoice_value
+                    unrounded_total = total_invoice_value + cartage_amt
                     integer_part = Decimal(int(unrounded_total))
                     decimal_part = unrounded_total - integer_part
                     if decimal_part < Decimal('0.50'):
@@ -722,6 +748,17 @@ class VoucherDetailAPIView(APIView):
                             output_igst, _ = Ledger.objects.get_or_create(company=company, name='Output IGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
                             LedgerEntry.objects.create(voucher=voucher, ledger=output_igst, debit_amount=Decimal('0.00'), credit_amount=total_igst)
 
+                        # Credit Cartage Outward
+                        if cartage_amt > Decimal('0.00'):
+                            from apps.accounting.services.sales_service import SalesInvoiceService
+                            cartage_ledger = SalesInvoiceService._get_or_create_cartage_ledger(company, 'OUTWARD')
+                            LedgerEntry.objects.create(
+                                voucher=voucher,
+                                ledger=cartage_ledger,
+                                debit_amount=Decimal('0.00'),
+                                credit_amount=cartage_amt
+                            )
+
                         if round_off != Decimal('0.00'):
                             from apps.accounting.services.sales_service import SalesInvoiceService
                             round_off_ledger = SalesInvoiceService._get_or_create_round_off_ledger(company)
@@ -763,6 +800,17 @@ class VoucherDetailAPIView(APIView):
                         if total_igst > 0:
                             input_igst, _ = Ledger.objects.get_or_create(company=company, name='Input IGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
                             LedgerEntry.objects.create(voucher=voucher, ledger=input_igst, debit_amount=total_igst, credit_amount=Decimal('0.00'))
+
+                        # Debit Cartage Inward
+                        if cartage_amt > Decimal('0.00'):
+                            from apps.accounting.services.purchase_service import PurchaseInvoiceService
+                            cartage_ledger = PurchaseInvoiceService._get_or_create_cartage_ledger(company, 'INWARD')
+                            LedgerEntry.objects.create(
+                                voucher=voucher,
+                                ledger=cartage_ledger,
+                                debit_amount=cartage_amt,
+                                credit_amount=Decimal('0.00')
+                            )
 
                         if round_off != Decimal('0.00'):
                             from apps.accounting.services.purchase_service import PurchaseInvoiceService

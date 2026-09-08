@@ -51,6 +51,7 @@ export default function EditSalesInvoiceModal({
   const [invoiceDate, setInvoiceDate] = useState("");
   const [partyName, setPartyName] = useState("");
   const [narration, setNarration] = useState("");
+  const [cartageAmount, setCartageAmount] = useState<number | string>("");
   const [items, setItems] = useState<EditableSalesItem[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -73,6 +74,7 @@ export default function EditSalesInvoiceModal({
         setInvoiceDate(v.date || "");
         setPartyName(v.party?.name || "");
         setNarration(v.narration || "");
+        setCartageAmount(v.cartage_amount ? Number(v.cartage_amount) : "");
 
         const loadedItems: EditableSalesItem[] = (v.items || []).map((item: any) => ({
           id: item.id,
@@ -161,7 +163,8 @@ export default function EditSalesInvoiceModal({
     return acc + taxable * (item.gst_rate / 100);
   }, 0);
 
-  const unroundedGrandTotal = taxableTotal + totalTax;
+  const cartageVal = Number(cartageAmount) || 0;
+  const unroundedGrandTotal = taxableTotal + totalTax + cartageVal;
   let grandTotal = 0;
   let roundOff = 0;
   if (unroundedGrandTotal > 0) {
@@ -196,11 +199,12 @@ export default function EditSalesInvoiceModal({
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
 
-      const payload = {
+      const payload: any = {
         voucher_number: invoiceNumber.trim(),
         voucher_date: invoiceDate,
         party_name: partyName.trim(),
         narration: narration.trim(),
+        cartage_amount: cartageVal,
         items: items.map((it) => ({
           product_id: it.product_id,
           product_name: it.product_name.trim(),
@@ -562,6 +566,21 @@ export default function EditSalesInvoiceModal({
                   <span className="font-mono text-foreground">
                     ₹{totalTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </span>
+                </div>
+                <div className="flex justify-between items-center text-muted-foreground">
+                  <span>Cartage / Freight Outward:</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-muted-foreground font-mono">₹</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={cartageAmount}
+                      onChange={(e) => setCartageAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-24 bg-card border border-border/80 text-foreground text-right px-2 py-0.5 rounded font-mono text-xs focus:ring-1 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
                 </div>
                 <div className="flex justify-between text-muted-foreground">
                   <span>Round Off:</span>

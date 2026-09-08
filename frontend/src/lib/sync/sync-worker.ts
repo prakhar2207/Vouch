@@ -35,7 +35,14 @@ export async function executeClientOutboxSync() {
     try {
       await offlineDb.vouchers.update(item.id!, { status: "SYNCING" });
 
-      const response = await fetch(`${API_BASE_URL}/api/vouchers/`, {
+      let endpoint = `${API_BASE_URL}/api/vouchers/`;
+      if (item.voucherType === "SALES") {
+        endpoint = `${API_BASE_URL}/api/v1/accounting/sales-invoice/`;
+      } else if (item.voucherType === "PURCHASE") {
+        endpoint = `${API_BASE_URL}/api/v1/accounting/purchase-invoice/`;
+      }
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

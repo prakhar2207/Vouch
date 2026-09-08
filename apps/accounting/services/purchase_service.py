@@ -10,7 +10,20 @@ from apps.gst.services.gst_calculator import GSTCalculator
 class PurchaseInvoiceService:
     @staticmethod
     @transaction.atomic
-    def generate_purchase_invoice(company: Company, user, party_ledger: Ledger, items_data: list, purchase_ledger: Ledger, input_cgst_ledger: Ledger, input_sgst_ledger: Ledger, input_igst_ledger: Ledger, supplier_invoice_number: str = None, voucher_date=None):
+    def generate_purchase_invoice(
+        company: Company, 
+        user, 
+        party_ledger: Ledger, 
+        items_data: list, 
+        purchase_ledger: Ledger, 
+        input_cgst_ledger: Ledger, 
+        input_sgst_ledger: Ledger, 
+        input_igst_ledger: Ledger, 
+        supplier_invoice_number: str = None, 
+        voucher_date=None,
+        cartage_amount: Decimal = Decimal('0.00'),
+        cartage_ledger: Ledger = None
+    ):
         """
         End-to-End orchestration of a Purchase Invoice.
         """
@@ -215,9 +228,15 @@ class PurchaseInvoiceService:
             total_igst += taxes['igst']
             total_invoice_value += total_amount
             
+        # Add Cartage (Freight Inward) if specified
+        try:
+            cartage_amt = Decimal(str(cartage_amount or '0.00')).quantize(Decimal('0.01'))
+        except Exception:
+            cartage_amt = Decimal('0.00')
+
         # Round Off calculation:
         # If decimal value < 0.5 then floor, if >= 0.5 then ceiling
-        unrounded_total = total_invoice_value
+        unrounded_total = total_invoice_value + cartage_amt
         integer_part = Decimal(int(unrounded_total))
         decimal_part = unrounded_total - integer_part
         if decimal_part < Decimal('0.50'):
@@ -270,10 +289,21 @@ class PurchaseInvoiceService:
                 credit_amount=Decimal('0.00')
             )
 
+        # Debit Cartage / Freight Inward entry (Direct Expenses)
+        if cartage_amt > Decimal('0.00'):
+            if not cartage_ledger:
+                cartage_ledger = PurchaseInvoiceService._get_or_create_cartage_ledger(company, 'INWARD')
+            LedgerEntry.objects.create(
+                voucher=voucher,
+                ledger=cartage_ledger,
+                debit_amount=cartage_amt,
+                credit_amount=Decimal('0.00')
+            )
+
         # Round Off balancing entry for Purchase:
-        # If round_off < 0: Debits (purchase + taxes = unrounded) > Credits (party = rounded).
+        # If round_off < 0: Debits (purchase + taxes + cartage = unrounded) > Credits (party = rounded).
         # Need CREDIT of abs(round_off) to Round Off ledger (Income/Discount received).
-        # If round_off > 0: Debits (purchase + taxes = unrounded) < Credits (party = rounded).
+        # If round_off > 0: Debits (purchase + taxes + cartage = unrounded) < Credits (party = rounded).
         # Need DEBIT of round_off to Round Off ledger (Expense).
         if round_off != Decimal('0.00'):
             round_off_ledger = PurchaseInvoiceService._get_or_create_round_off_ledger(company)
@@ -293,6 +323,37 @@ class PurchaseInvoiceService:
                 )
             
         return voucher
+
+    @staticmethod
+    def _get_or_create_cartage_ledger(company: Company, direction: str = 'INWARD') -> Ledger:
+        from apps.ledgers.models import LedgerGroup
+        if direction.upper() == 'INWARD':
+            group_name = "Direct Expenses"
+            ledger_name = "Cartage Inward"
+        else:
+            group_name = "Indirect Expenses"
+            ledger_name = "Cartage Outward"
+
+        grp = LedgerGroup.objects.filter(company=company, name__iexact=group_name).first()
+        if not grp:
+            grp, _ = LedgerGroup.objects.get_or_create(
+                company=company,
+                name=group_name,
+                defaults={"nature": "EXPENSE"}
+            )
+
+        cartage = Ledger.objects.filter(company=company, name__iexact=ledger_name).first()
+        if not cartage:
+            cartage = Ledger.objects.filter(company=company, name__icontains="cartage inward").first() or \
+                      Ledger.objects.filter(company=company, name__icontains="freight inward").first()
+        if not cartage:
+            cartage = Ledger.objects.create(
+                company=company,
+                group=grp,
+                name=ledger_name,
+                ledger_type="EXPENSE"
+            )
+        return cartage
 
     @staticmethod
     def _get_or_create_round_off_ledger(company: Company) -> Ledger:

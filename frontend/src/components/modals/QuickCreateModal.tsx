@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
@@ -192,12 +192,15 @@ export default function QuickCreateModal() {
                     setLedgerGroup(e.target.value);
                     if (e.target.value === "Sundry Debtors") setLedgerType("CUSTOMER");
                     else if (e.target.value === "Sundry Creditors") setLedgerType("SUPPLIER");
+                    else if (e.target.value === "Direct Expenses" || e.target.value === "Indirect Expenses") setLedgerType("EXPENSE");
                     else setLedgerType("GENERAL");
                   }}
                   className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                 >
                   <option value="Sundry Debtors">Sundry Debtors (Customer)</option>
                   <option value="Sundry Creditors">Sundry Creditors (Supplier)</option>
+                  <option value="Direct Expenses">Direct Expenses (Cartage Inward / Freight In)</option>
+                  <option value="Indirect Expenses">Indirect Expenses (Cartage Outward / Freight Out)</option>
                   <option value="Bank Accounts">Bank Accounts</option>
                   <option value="Cash-in-Hand">Cash-in-Hand</option>
                   <option value="Sales Accounts">Sales Accounts</option>

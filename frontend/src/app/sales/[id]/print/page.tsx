@@ -116,7 +116,8 @@ export default function PrintInvoicePage() {
     }
   });
 
-  const subtotalWithTaxes = totalTaxable + (isInterState ? totalIgst : (totalCgst + totalSgst));
+  const cartageAmount = Number(invoice.cartage_amount || 0);
+  const subtotalWithTaxes = totalTaxable + (isInterState ? totalIgst : (totalCgst + totalSgst)) + cartageAmount;
   
   let finalGrandTotal = Number(invoice.total_amount);
   let roundOff = Math.round((finalGrandTotal - subtotalWithTaxes) * 100) / 100;
@@ -289,6 +290,15 @@ export default function PrintInvoicePage() {
                         </>
                     )}
 
+                    {cartageAmount > 0 && (
+                        <div className="h-5 flex items-center justify-end pr-12 text-[11px] italic">
+                            <div className="flex justify-between items-center w-48">
+                                <span>Add : Cartage</span>
+                                <span></span>
+                            </div>
+                        </div>
+                    )}
+
                     {hasRoundOff && (
                         <div className="h-5 flex items-center justify-end pr-12 text-[11px] italic">
                             <div className="flex justify-between items-center w-48">
@@ -318,6 +328,12 @@ export default function PrintInvoicePage() {
                                 {totalSgst.toLocaleString('en-IN', {minimumFractionDigits: 2})}
                             </div>
                         </>
+                    )}
+
+                    {cartageAmount > 0 && (
+                        <div className="h-5 flex items-center justify-end pr-2 text-xs font-medium">
+                            {cartageAmount.toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                        </div>
                     )}
 
                     {hasRoundOff && (

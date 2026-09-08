@@ -171,7 +171,16 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'x-gemini-key',
     'x-csrftoken',
     'x-requested-with',
+    'authorization',
+    'content-type',
+    'accept',
+    'origin',
+    'user-agent',
+    'dnt',
+    'cache-control',
+    'x-requested-with',
 ]
+CORS_EXPOSE_HEADERS = ['*']
 
 CSRF_TRUSTED_ORIGINS = [
     'https://*.vercel.app',

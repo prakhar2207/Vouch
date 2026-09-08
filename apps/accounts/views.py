@@ -104,11 +104,17 @@ class RegisterView(APIView):
                     company=company, name="Indirect Expenses", defaults={"nature": "EXPENSE"}
                 )
 
-                # 6. Auto-provision Standard Sales, Purchase & Tax Ledgers
+                direct_grp, _ = LedgerGroup.objects.get_or_create(
+                    company=company, name="Direct Expenses", defaults={"nature": "EXPENSE"}
+                )
+
+                # 6. Auto-provision Standard Sales, Purchase, Tax & Freight Ledgers
                 Ledger.objects.create(company=company, group=sales_grp, name="Sales Account", ledger_type="SALES")
                 Ledger.objects.create(company=company, group=purchase_grp, name="Purchase Account", ledger_type="PURCHASE")
                 Ledger.objects.create(company=company, group=cash_grp, name="Cash", ledger_type="CASH")
                 Ledger.objects.create(company=company, group=indirect_grp, name="Round Off", ledger_type="ROUND_OFF")
+                Ledger.objects.create(company=company, group=indirect_grp, name="Cartage Outward", ledger_type="EXPENSE")
+                Ledger.objects.create(company=company, group=direct_grp, name="Cartage Inward", ledger_type="EXPENSE")
                 Ledger.objects.create(company=company, group=duties_grp, name="Output CGST", ledger_type="TAX")
                 Ledger.objects.create(company=company, group=duties_grp, name="Output SGST", ledger_type="TAX")
                 Ledger.objects.create(company=company, group=duties_grp, name="Output IGST", ledger_type="TAX")

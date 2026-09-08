@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { getAccessToken } from "@/utils/auth";
 import StateSelect from "./StateSelect";
 import { useToast } from "@/context/ToastContext";
+import { offlineDb } from "@/lib/db/offlineDb";
 
 interface LineItem {
   description: string;
@@ -212,6 +213,27 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         : "⚡ Gemini 3.1 Flash-Lite ultra-fast analyzing printed invoice..."
     );
 
+    // Compute hash for local caching
+    let cacheKey = "";
+    try {
+      const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(base64.slice(0, 10000) + base64.length));
+      cacheKey = `ocr_${activeMode}_` + Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+      
+      const cached = await offlineDb.ocrCache.get(cacheKey);
+      if (cached && cached.result) {
+        console.log("[PWA Cache] Loaded purchase OCR result from local IndexedDB cache!");
+        const data: ExtractedInvoice = cached.result;
+        setInvoice(data);
+        setAutoFilled(true);
+        setScanStatusToast("⚡ Loaded instantly from local cache (0ms)!");
+        setTimeout(() => setScanStatusToast(null), 3000);
+        setLoading(false);
+        return;
+      }
+    } catch (cacheErr) {
+      console.warn("[PWA Cache] OCR cache error:", cacheErr);
+    }
+
     const maxRetries = 3;
     let attempt = 0;
     let success = false;
@@ -242,7 +264,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
             gemini_api_key: effectiveKey || undefined,
             scan_mode: activeMode,
           },
-          { headers }
+          { headers, timeout: 120000 }
         );
 
         if (res.data.success) {
@@ -267,6 +289,17 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           setAutoFilled(true);
           success = true;
           setScanStatusToast(null);
+
+          // Save to local IndexedDB cache
+          if (cacheKey) {
+            offlineDb.ocrCache.put({
+              fileHash: cacheKey,
+              fileName: fileName || "bill",
+              fileSize: base64.length,
+              result: data,
+              cachedAt: Date.now(),
+            }).catch((e) => console.warn("[PWA Cache] Failed to persist OCR cache:", e));
+          }
 
           // Smart Category Differentiation & Pre-Selection
           if (catDetected) {
