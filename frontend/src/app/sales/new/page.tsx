@@ -48,6 +48,8 @@ export default function SalesPage() {
   const [products, setProducts] = useState<any[]>([]);
   const [activeSearch, setActiveSearch] = useState<string | null>(null);
   const [openBrandDropdown, setOpenBrandDropdown] = useState<string | null>(null);
+  const [partyRates, setPartyRates] = useState<Record<string, any>>({});
+  const [loadingPartyRates, setLoadingPartyRates] = useState(false);
   const [groupedItems, setGroupedItems] = useState<any[]>([
     { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: 0 } ] }
   ]);
@@ -161,6 +163,7 @@ export default function SalesPage() {
       
       if (party) {
         setPartyLedgerId(party.id);
+        fetchPartyRates(party.id, cId);
         const partyDisc = Number(party.discount_percent || 0);
         if (partyDisc > 0) {
           setGroupedItems(prev => prev.map((group: any) => ({
@@ -184,8 +187,59 @@ export default function SalesPage() {
     }
   };
 
+  const fetchPartyRates = async (pId: string, currentCompanyId?: string) => {
+    const targetCompanyId = currentCompanyId || companyId;
+    if (!pId || !targetCompanyId) return;
+    try {
+      setLoadingPartyRates(true);
+      const token = getAccessToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.get(
+        `${API_BASE_URL}/api/v1/accounting/party-rates/?party_id=${pId}&company_id=${targetCompanyId}`,
+        { headers }
+      );
+      if (res.data?.success) {
+        const rates = res.data.data || {};
+        setPartyRates(rates);
+
+        // Auto-populate past party rates onto any already-selected line items
+        setGroupedItems(prev => prev.map((group: any) => ({
+          ...group,
+          items: group.items.map((item: any) => {
+            if (!item.product_name) return item;
+            const cleanName = String(item.product_name).trim().toLowerCase();
+            const cleanBrand = String(item.brand || '').trim().toLowerCase();
+            const keyId = item.product_id;
+            const keyBrand = `${cleanName}|${cleanBrand}`;
+            const pastRateInfo = (keyId && rates[keyId]) || rates[keyBrand] || rates[cleanName];
+            if (pastRateInfo && Number(pastRateInfo.rate) > 0) {
+              return {
+                ...item,
+                rate: Number(pastRateInfo.rate),
+                last_party_rate: Number(pastRateInfo.rate),
+                last_party_date: pastRateInfo.voucher_date,
+                last_party_vnum: pastRateInfo.voucher_number
+              };
+            }
+            return {
+              ...item,
+              last_party_rate: null,
+              last_party_date: null,
+              last_party_vnum: null
+            };
+          })
+        })));
+      }
+    } catch (err) {
+      console.error('Failed to fetch party rates', err);
+    } finally {
+      setLoadingPartyRates(false);
+    }
+  };
+
   const handlePartyChange = (selectedId: string) => {
     setPartyLedgerId(selectedId);
+    fetchPartyRates(selectedId);
     const party = ledgers.find(l => l.id === selectedId);
     const disc = Number(party?.discount_percent || 0);
 
@@ -350,9 +404,31 @@ export default function SalesPage() {
     item.unit = prod.unit || 'PCS';
     item.stock_quantity = prod.stock_quantity ?? 0;
     
-    const mrp = parseFloat(prod.selling_price) || 0;
-    if (mrp > 0) {
-      item.rate = mrp;
+    const catalogMrp = parseFloat(prod.selling_price) || 0;
+    item.mrp = catalogMrp;
+    
+    // Look up remembered sales rate for this party
+    const keyId = prod.id;
+    const cleanName = String(prod.name || '').trim().toLowerCase();
+    const cleanBrand = String(prod.brand || '').trim().toLowerCase();
+    const keyBrand = `${cleanName}|${cleanBrand}`;
+    const pastRateInfo = (keyId && partyRates[keyId]) || partyRates[keyBrand] || partyRates[cleanName];
+
+    if (pastRateInfo && Number(pastRateInfo.rate) > 0) {
+      item.rate = Number(pastRateInfo.rate);
+      item.last_party_rate = Number(pastRateInfo.rate);
+      item.last_party_date = pastRateInfo.voucher_date;
+      item.last_party_vnum = pastRateInfo.voucher_number;
+    } else if (catalogMrp > 0) {
+      item.rate = catalogMrp;
+      item.last_party_rate = null;
+      item.last_party_date = null;
+      item.last_party_vnum = null;
+    } else {
+      item.rate = 0;
+      item.last_party_rate = null;
+      item.last_party_date = null;
+      item.last_party_vnum = null;
     }
     
     if ((!item.discount_percent || Number(item.discount_percent) === 0) && currentPartyDiscount > 0) {
@@ -398,9 +474,26 @@ export default function SalesPage() {
         item.brand = match.brand || brandName;
         item.unit = match.unit || 'PCS';
         item.stock_quantity = match.stock_quantity ?? 0;
-        const mrp = parseFloat(match.selling_price) || 0;
-        if (mrp > 0) {
-          item.rate = mrp;
+        const catalogMrp = parseFloat(match.selling_price) || 0;
+        item.mrp = catalogMrp;
+
+        // Look up remembered sales rate for this brand
+        const keyId = match.id;
+        const cleanName = String(match.name || '').trim().toLowerCase();
+        const cleanBrand = String(match.brand || brandName).trim().toLowerCase();
+        const keyBrand = `${cleanName}|${cleanBrand}`;
+        const pastRateInfo = (keyId && partyRates[keyId]) || partyRates[keyBrand];
+
+        if (pastRateInfo && Number(pastRateInfo.rate) > 0) {
+          item.rate = Number(pastRateInfo.rate);
+          item.last_party_rate = Number(pastRateInfo.rate);
+          item.last_party_date = pastRateInfo.voucher_date;
+          item.last_party_vnum = pastRateInfo.voucher_number;
+        } else if (catalogMrp > 0) {
+          item.rate = catalogMrp;
+          item.last_party_rate = null;
+          item.last_party_date = null;
+          item.last_party_vnum = null;
         }
       }
     }
@@ -475,10 +568,32 @@ export default function SalesPage() {
         }
 
         if (match) {
-          const mrp = parseFloat(match.selling_price) || 0;
-          if (mrp > 0) {
-            item.rate = mrp;
+          const catalogMrp = parseFloat(match.selling_price) || 0;
+          item.mrp = catalogMrp;
+
+          const keyId = match.id;
+          const cleanName = String(match.name || '').trim().toLowerCase();
+          const cleanBrand = String(match.brand || item.brand || '').trim().toLowerCase();
+          const keyBrand = `${cleanName}|${cleanBrand}`;
+          const pastRateInfo = (keyId && partyRates[keyId]) || partyRates[keyBrand] || partyRates[cleanName];
+
+          if (pastRateInfo && Number(pastRateInfo.rate) > 0) {
+            item.rate = Number(pastRateInfo.rate);
+            item.last_party_rate = Number(pastRateInfo.rate);
+            item.last_party_date = pastRateInfo.voucher_date;
+            item.last_party_vnum = pastRateInfo.voucher_number;
+          } else if (catalogMrp > 0) {
+            item.rate = catalogMrp;
+            item.last_party_rate = null;
+            item.last_party_date = null;
+            item.last_party_vnum = null;
+          } else {
+            item.rate = 0;
+            item.last_party_rate = null;
+            item.last_party_date = null;
+            item.last_party_vnum = null;
           }
+
           item.product_id = match.id;
           item.brand = match.brand || item.brand || '';
           item.unit = match.unit || 'PCS';
@@ -840,7 +955,12 @@ export default function SalesPage() {
                                     <tr>
                                         <th className="p-3 font-medium">Product Name</th>
                                         <th className="p-3 font-medium w-24 text-center">Qty</th>
-                                        <th className="p-3 font-medium w-36 text-right">Rate / MRP (₹)</th>
+                                        <th className="p-3 font-medium w-36 text-right">
+                                            <span>Sales Rate (₹)</span>
+                                            <span className="block text-[10px] text-zinc-500 lowercase font-normal">
+                                                {loadingPartyRates ? 'fetching rates...' : 'party rate or MRP'}
+                                            </span>
+                                        </th>
                                         <th className="p-3 font-medium w-28 text-center">
                                             <span>Disc %</span>
                                             {currentPartyDiscount > 0 && (
@@ -918,6 +1038,8 @@ export default function SalesPage() {
                                                                             const mrp = parseFloat(p.selling_price) || 0;
                                                                             const stock = Number(p.stock_quantity ?? 0);
                                                                             const isSelected = item.product_id === p.id;
+                                                                            const keyBrand = `${(p.name || '').trim().toLowerCase()}|${(p.brand || '').trim().toLowerCase()}`;
+                                                                            const pPast = (p.id && partyRates[p.id]) || partyRates[keyBrand] || partyRates[(p.name || '').trim().toLowerCase()];
                                                                             return (
                                                                                 <button
                                                                                     key={p.id}
@@ -942,15 +1064,25 @@ export default function SalesPage() {
                                                                                                     Unbranded
                                                                                                 </span>
                                                                                             )}
+                                                                                            {pPast && (
+                                                                                                <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" title={`Last invoiced to this party at ₹${Number(pPast.rate).toFixed(2)} on ${pPast.voucher_date || 'past bill'}`}>
+                                                                                                    Party Rate: ₹{Number(pPast.rate).toFixed(2)}
+                                                                                                </span>
+                                                                                            )}
                                                                                         </div>
                                                                                         <div className="text-[11px] text-zinc-400 truncate mt-0.5">
                                                                                             {p.category} {p.sku ? `• SKU: ${p.sku}` : ''}
                                                                                         </div>
                                                                                     </div>
                                                                                     <div className="text-right whitespace-nowrap pl-2">
-                                                                                        <div className="text-xs font-mono font-bold text-white">
-                                                                                            {mrp > 0 ? `₹${mrp.toFixed(2)}` : 'No MRP'}
+                                                                                        <div className="text-xs font-mono font-bold text-zinc-300">
+                                                                                            {mrp > 0 ? `MRP: ₹${mrp.toFixed(2)}` : 'No MRP'}
                                                                                         </div>
+                                                                                        {pPast && (
+                                                                                            <div className="text-[11px] font-mono font-bold text-emerald-400">
+                                                                                                Party: ₹{Number(pPast.rate).toFixed(2)}
+                                                                                            </div>
+                                                                                        )}
                                                                                         <div className={`text-[10px] font-mono font-medium ${stock > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                                                                             Avail: {stock} {p.unit || 'PCS'}
                                                                                         </div>
@@ -967,14 +1099,76 @@ export default function SalesPage() {
 
                                                 {item.product_name && (
                                                     <div className="flex items-center gap-2 mt-0.5 px-1.5 flex-wrap">
-                                                        {Number(item.rate) > 0 ? (
-                                                            <span className="text-[11px] text-blue-400 font-mono flex items-center gap-1">
-                                                                <span>MRP:</span>
-                                                                <strong className="text-white">₹{Number(item.rate).toFixed(2)}</strong>
-                                                            </span>
-                                                        ) : (
-                                                            <span className="text-[11px] text-zinc-500 italic">No MRP stored</span>
-                                                        )}
+                                                        {/* Master MRP (Catalog price - protected from invoice overrides) */}
+                                                        {(() => {
+                                                            const matched = products.find((p: any) => 
+                                                                (item.product_id && p.id === item.product_id) || 
+                                                                (p.name.toLowerCase() === String(item.product_name || '').trim().toLowerCase() && 
+                                                                 (!item.brand || (p.brand || '').toLowerCase() === item.brand.toLowerCase()))
+                                                            );
+                                                            const catalogMrp = parseFloat(matched?.selling_price || item.mrp || 0);
+                                                            
+                                                            if (catalogMrp > 0) {
+                                                                return (
+                                                                    <span className="text-[11px] font-mono flex items-center gap-1 bg-zinc-900/90 text-zinc-400 border border-zinc-800 px-2 py-0.5 rounded">
+                                                                        <span className="text-zinc-500 font-sans">MRP:</span>
+                                                                        <strong className="text-zinc-200">₹{catalogMrp.toFixed(2)}</strong>
+                                                                        {Number(item.rate) !== catalogMrp && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => updateItem(gIndex, iIndex, 'rate', catalogMrp)}
+                                                                                className="text-[10px] text-blue-400 hover:text-blue-300 ml-1 underline cursor-pointer"
+                                                                                title="Click to apply master catalog MRP to this line"
+                                                                            >
+                                                                                Use MRP
+                                                                            </button>
+                                                                        )}
+                                                                    </span>
+                                                                );
+                                                            }
+                                                            return <span className="text-[11px] text-zinc-500 italic">No MRP stored</span>;
+                                                        })()}
+
+                                                        {/* Party's Remembered Past Sales Rate */}
+                                                        {(() => {
+                                                            const matched = products.find((p: any) => 
+                                                                (item.product_id && p.id === item.product_id) || 
+                                                                (p.name.toLowerCase() === String(item.product_name || '').trim().toLowerCase() && 
+                                                                 (!item.brand || (p.brand || '').toLowerCase() === item.brand.toLowerCase()))
+                                                            );
+                                                            const cleanName = String(item.product_name || '').trim().toLowerCase();
+                                                            const cleanBrand = String(item.brand || '').trim().toLowerCase();
+                                                            const keyId = item.product_id || matched?.id;
+                                                            const keyBrand = `${cleanName}|${cleanBrand}`;
+                                                            const pastInfo = (keyId && partyRates[keyId]) || partyRates[keyBrand] || partyRates[cleanName];
+                                                            const pastRate = item.last_party_rate ?? (pastInfo ? Number(pastInfo.rate) : null);
+
+                                                            if (pastRate && pastRate > 0) {
+                                                                const partyName = ledgers.find(l => l.id === partyLedgerId)?.name || 'this customer';
+                                                                const vNum = item.last_party_vnum || pastInfo?.voucher_number;
+                                                                const vDate = item.last_party_date || pastInfo?.voucher_date;
+                                                                return (
+                                                                    <span 
+                                                                        className="text-[11px] font-mono flex items-center gap-1 bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded shadow-sm"
+                                                                        title={`Last sold to ${partyName} at ₹${pastRate.toFixed(2)} on ${vDate || 'past invoice'}${vNum ? ` (#${vNum})` : ''}`}
+                                                                    >
+                                                                        <span className="text-emerald-500 font-sans text-[10px]">Party Rate:</span>
+                                                                        <strong className="text-emerald-300">₹{pastRate.toFixed(2)}</strong>
+                                                                        {Number(item.rate) !== pastRate && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => updateItem(gIndex, iIndex, 'rate', pastRate)}
+                                                                                className="text-[10px] text-emerald-400 hover:text-emerald-300 ml-1 underline cursor-pointer"
+                                                                                title="Click to reset to party's past sales rate"
+                                                                            >
+                                                                                Use Past
+                                                                            </button>
+                                                                        )}
+                                                                    </span>
+                                                                );
+                                                            }
+                                                            return null;
+                                                        })()}
 
                                                         {/* Interactive Brand Switcher Dropdown */}
                                                         {(() => {
@@ -1053,6 +1247,14 @@ export default function SalesPage() {
                                                                                                 </div>
                                                                                                 <div className="text-[10px] text-right text-zinc-400">
                                                                                                     <div>MRP: ₹{snpMrp.toFixed(2)}</div>
+                                                                                                    {(() => {
+                                                                                                        const snpKeyBrand = `${(snp.name || '').trim().toLowerCase()}|${(snp.brand || '').trim().toLowerCase()}`;
+                                                                                                        const snpPast = (snp.id && partyRates[snp.id]) || partyRates[snpKeyBrand];
+                                                                                                        if (snpPast) {
+                                                                                                            return <div className="text-emerald-400 font-bold">Party: ₹{Number(snpPast.rate).toFixed(2)}</div>;
+                                                                                                        }
+                                                                                                        return null;
+                                                                                                    })()}
                                                                                                     <div className={snpStock > 0 ? 'text-emerald-400 font-mono' : 'text-rose-400 font-mono'}>
                                                                                                         {snpStock} {snp.unit || 'PCS'}
                                                                                                     </div>

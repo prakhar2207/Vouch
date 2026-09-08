@@ -597,8 +597,7 @@ class VoucherDetailAPIView(APIView):
                             if voucher.voucher_type == 'PURCHASE' and net_rate > Decimal('0.00'):
                                 product.purchase_price = net_rate
                                 product.purchase_price_from_invoice = True
-                            elif voucher.voucher_type == 'SALES' and rate > Decimal('0.00'):
-                                product.selling_price = rate
+                            # Sales vouchers must NEVER mutate product master selling_price (MRP)
                             if hsn:
                                 product.hsn_code = hsn
                             if gst_pct > Decimal('0.00'):
@@ -1338,5 +1337,80 @@ class SyncTaxLedgersAPIView(APIView):
 
     def get(self, request, company_id=None):
         return self.post(request, company_id)
+
+
+class PartyRatesAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, company_id=None):
+        """
+        Returns the most recent invoiced rates for products sold to (or bought from) a specific party ledger.
+        Query params:
+          - party_id: UUID of party ledger (required)
+          - company_id: UUID of company (optional if in path or user has active company)
+          - type: 'SALES' (default) or 'PURCHASE'
+        """
+        party_id = request.query_params.get('party_id')
+        cid = company_id or request.query_params.get('company_id')
+        v_type = request.query_params.get('type', 'SALES').upper()
+
+        if not party_id:
+            return Response({"success": False, "error": "party_id query parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from apps.accounting.models import VoucherItem, Voucher
+            from apps.ledgers.models import Ledger
+            from apps.companies.models import Company
+
+            if cid:
+                company = Company.objects.get(id=cid, users__user=request.user)
+            else:
+                company = Company.objects.filter(users__user=request.user).first()
+
+            if not company:
+                return Response({"success": False, "error": "Company not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+            party_ledger = Ledger.objects.filter(id=party_id, company=company).first()
+            if not party_ledger:
+                return Response({"success": False, "error": "Party ledger not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            # Query historical voucher items for this party ordered by date desc
+            items = VoucherItem.objects.filter(
+                voucher__company=company,
+                voucher__party_ledger=party_ledger,
+                voucher__voucher_type=v_type,
+                voucher__status__in=['POSTED', 'VALIDATING', 'DRAFT']
+            ).select_related('product', 'voucher').order_by('-voucher__voucher_date', '-voucher__created_at')
+
+            rates_map = {}
+            for vi in items:
+                if not vi.product:
+                    continue
+                pid = str(vi.product_id)
+                pname = vi.product.name.strip().lower()
+                pbrand = (vi.product.brand or '').strip().lower()
+                key_brand = f"{pname}|{pbrand}"
+
+                # First seen is the latest due to descending ordering
+                if pid not in rates_map:
+                    entry = {
+                        "product_id": pid,
+                        "product_name": vi.product.name,
+                        "brand": vi.product.brand or "",
+                        "rate": float(vi.rate),
+                        "discount_percent": float(vi.discount_percent),
+                        "voucher_number": vi.voucher.voucher_number,
+                        "voucher_date": vi.voucher.voucher_date.strftime('%Y-%m-%d') if vi.voucher.voucher_date else "",
+                        "mrp": float(vi.product.selling_price or 0)
+                    }
+                    rates_map[pid] = entry
+                    if key_brand not in rates_map:
+                        rates_map[key_brand] = entry
+                    if pname not in rates_map:
+                        rates_map[pname] = entry
+
+            return Response({"success": True, "data": rates_map})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
