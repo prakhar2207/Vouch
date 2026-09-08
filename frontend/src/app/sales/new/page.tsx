@@ -9,6 +9,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useShortcuts } from '@/context/ShortcutContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
 import { useToast } from '@/context/ToastContext';
+import { ChevronDown } from 'lucide-react';
 
 export default function SalesPage() {
   const router = useRouter();
@@ -45,6 +46,8 @@ export default function SalesPage() {
   
   const [categories, setCategories] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
+  const [activeSearch, setActiveSearch] = useState<string | null>(null);
+  const [openBrandDropdown, setOpenBrandDropdown] = useState<string | null>(null);
   const [groupedItems, setGroupedItems] = useState<any[]>([
     { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: 0 } ] }
   ]);
@@ -82,6 +85,14 @@ export default function SalesPage() {
       fetchSeq();
     }
   }, [invoiceDate, companyId]);
+
+  useEffect(() => {
+    const handleGlobalClick = () => {
+      setOpenBrandDropdown(null);
+    };
+    window.addEventListener('click', handleGlobalClick);
+    return () => window.removeEventListener('click', handleGlobalClick);
+  }, []);
 
   useEffect(() => {
     registerAltCCallback((newEntity: any) => {
@@ -297,12 +308,17 @@ export default function SalesPage() {
         const cleanVal = String(item.product_name || '').trim().toLowerCase();
         const alphaVal = cleanVal.replace(/[\s\-_/.]/g, '');
         const catProds = products.filter(p => p.category_id === value);
-        const match = catProds.find((p: any) => 
-          p.name.toLowerCase() === cleanVal ||
-          p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal ||
-          (p.alias && (p.alias.toLowerCase() === cleanVal || p.alias.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)) ||
-          p.sku.toLowerCase() === cleanVal
-        );
+        const match = 
+          catProds.find((p: any) => 
+            (item.brand && (p.brand || '').toLowerCase() === item.brand.toLowerCase()) &&
+            (p.name.toLowerCase() === cleanVal || p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)
+          ) ||
+          catProds.find((p: any) => 
+            p.name.toLowerCase() === cleanVal ||
+            p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal ||
+            (p.alias && (p.alias.toLowerCase() === cleanVal || p.alias.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)) ||
+            p.sku.toLowerCase() === cleanVal
+          );
         if (match) {
           const mrp = parseFloat(match.selling_price) || 0;
           return {
@@ -323,11 +339,85 @@ export default function SalesPage() {
     setGroupedItems(newGroups);
   };
 
+  const selectProduct = (gIndex: number, iIndex: number, prod: any) => {
+    const newGroups = [...groupedItems];
+    const group = newGroups[gIndex];
+    const item = group.items[iIndex];
+    
+    item.product_name = prod.name;
+    item.product_id = prod.id;
+    item.brand = prod.brand || '';
+    item.unit = prod.unit || 'PCS';
+    item.stock_quantity = prod.stock_quantity ?? 0;
+    
+    const mrp = parseFloat(prod.selling_price) || 0;
+    if (mrp > 0) {
+      item.rate = mrp;
+    }
+    
+    if ((!item.discount_percent || Number(item.discount_percent) === 0) && currentPartyDiscount > 0) {
+      item.discount_percent = currentPartyDiscount;
+    }
+    
+    if (!group.category_id && prod.category_id) {
+      group.category_id = prod.category_id;
+      const cat = categories.find(c => c.id === prod.category_id);
+      if (cat) {
+        group.hsn_code = cat.hsn_code || '';
+        group.gst_rate = Number(cat.gst_rate) || 18;
+      }
+    }
+    
+    setGroupedItems(newGroups);
+  };
+
+  const selectBrand = (gIndex: number, iIndex: number, brandName: string) => {
+    const newGroups = [...groupedItems];
+    const group = newGroups[gIndex];
+    const item = group.items[iIndex];
+    
+    item.brand = brandName;
+    
+    const cleanVal = String(item.product_name || '').trim().toLowerCase();
+    const alphaVal = cleanVal.replace(/[\s\-_/.]/g, '');
+    
+    if (cleanVal) {
+      const catProds = products.filter((p: any) => !group.category_id || p.category_id === group.category_id);
+      const match = 
+        catProds.find((p: any) => 
+          (p.brand || '').trim().toLowerCase() === brandName.trim().toLowerCase() &&
+          (p.name.toLowerCase() === cleanVal || p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)
+        ) ||
+        products.find((p: any) => 
+          (p.brand || '').trim().toLowerCase() === brandName.trim().toLowerCase() &&
+          (p.name.toLowerCase() === cleanVal || p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)
+        );
+        
+      if (match) {
+        item.product_id = match.id;
+        item.brand = match.brand || brandName;
+        item.unit = match.unit || 'PCS';
+        item.stock_quantity = match.stock_quantity ?? 0;
+        const mrp = parseFloat(match.selling_price) || 0;
+        if (mrp > 0) {
+          item.rate = mrp;
+        }
+      }
+    }
+    
+    setGroupedItems(newGroups);
+  };
+
   const updateItem = (gIndex: number, iIndex: number, field: string, value: any) => {
     const newGroups = [...groupedItems];
     const group = newGroups[gIndex];
     const item = group.items[iIndex];
     (item as any)[field] = value;
+
+    if (field === 'brand') {
+      selectBrand(gIndex, iIndex, value);
+      return;
+    }
 
     if (field === 'product_name') {
       const cleanVal = String(value || '').trim().toLowerCase();
@@ -335,20 +425,54 @@ export default function SalesPage() {
       
       if (cleanVal) {
         // Prioritize products in this group's category
-        const catProds = products.filter((p: any) => p.category_id === group.category_id);
-        const match = 
-          catProds.find((p: any) => 
-            p.name.toLowerCase() === cleanVal ||
-            p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal ||
-            (p.alias && (p.alias.toLowerCase() === cleanVal || p.alias.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)) ||
-            p.sku.toLowerCase() === cleanVal
-          ) ||
-          products.find((p: any) => 
+        const catProds = products.filter((p: any) => !group.category_id || p.category_id === group.category_id);
+        
+        // 1. If item already has a brand, match product with BOTH name and brand!
+        let match = catProds.find((p: any) => 
+          item.brand && (p.brand || '').trim().toLowerCase() === item.brand.trim().toLowerCase() &&
+          (p.name.toLowerCase() === cleanVal || p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)
+        );
+
+        // 2. Check if user typed query containing brand like "PIX B 55"
+        if (!match) {
+          match = catProds.find((p: any) => 
+            p.brand && (
+              cleanVal.includes(p.brand.toLowerCase()) && 
+              (cleanVal.includes(p.name.toLowerCase()) || alphaVal.includes(p.name.toLowerCase().replace(/[\s\-_/.]/g, '')))
+            )
+          );
+        }
+
+        // 3. Match by name: if multiple exist, prioritize product with stock > 0, then rate > 0
+        if (!match) {
+          const matches = catProds.filter((p: any) => 
             p.name.toLowerCase() === cleanVal ||
             p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal ||
             (p.alias && (p.alias.toLowerCase() === cleanVal || p.alias.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)) ||
             p.sku.toLowerCase() === cleanVal
           );
+          if (matches.length > 0) {
+            match = matches.find((p: any) => Number(p.stock_quantity ?? 0) > 0) ||
+                    matches.find((p: any) => parseFloat(p.selling_price || 0) > 0) ||
+                    matches[0];
+          }
+        }
+
+        // 4. Global fallback across categories
+        if (!match) {
+          const globalMatches = products.filter((p: any) => 
+            p.name.toLowerCase() === cleanVal ||
+            p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal ||
+            (p.alias && (p.alias.toLowerCase() === cleanVal || p.alias.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)) ||
+            p.sku.toLowerCase() === cleanVal
+          );
+          if (globalMatches.length > 0) {
+            match = (item.brand ? globalMatches.find((p: any) => (p.brand || '').toLowerCase() === item.brand.toLowerCase()) : null) ||
+                    globalMatches.find((p: any) => Number(p.stock_quantity ?? 0) > 0) ||
+                    globalMatches.find((p: any) => parseFloat(p.selling_price || 0) > 0) ||
+                    globalMatches[0];
+          }
+        }
 
         if (match) {
           const mrp = parseFloat(match.selling_price) || 0;
@@ -356,7 +480,7 @@ export default function SalesPage() {
             item.rate = mrp;
           }
           item.product_id = match.id;
-          item.brand = match.brand || '';
+          item.brand = match.brand || item.brand || '';
           item.unit = match.unit || 'PCS';
           item.stock_quantity = match.stock_quantity ?? 0;
           
@@ -711,28 +835,6 @@ export default function SalesPage() {
                         </div>
                         
                         <div className="overflow-x-auto">
-                            {/* Datalist of items for this category block */}
-                            <datalist id={`products-list-${gIndex}`}>
-                                {products
-                                    .filter((p: any) => !group.category_id || p.category_id === group.category_id)
-                                    .map((p: any) => {
-                                        const mrp = parseFloat(p.selling_price) || 0;
-                                        const brandStr = p.brand ? `[${p.brand}] ` : '';
-                                        const stock = Number(p.stock_quantity ?? 0);
-                                        const unit = p.unit || 'PCS';
-                                        const labelText = `${brandStr}${p.name} — MRP: ₹${mrp.toFixed(2)} • Avail: ${stock} ${unit}`;
-                                        return (
-                                            <option 
-                                                key={p.id} 
-                                                value={p.name}
-                                                label={labelText}
-                                            >
-                                                {labelText}
-                                            </option>
-                                        );
-                                    })}
-                            </datalist>
-
                             <table className="w-full min-w-[550px] text-left border-collapse">
                                 <thead className="bg-zinc-900/40 text-gray-400 text-xs uppercase tracking-wider">
                                     <tr>
@@ -757,15 +859,112 @@ export default function SalesPage() {
                                         
                                         return (
                                         <tr key={iIndex} className="hover:bg-zinc-800/40 transition-colors">
-                                            <td className="p-2">
-                                                <input 
-                                                    type="text" 
-                                                    list={`products-list-${gIndex}`}
-                                                    placeholder="e.g. Item Name or Size" 
-                                                    value={item.product_name} 
-                                                    onChange={e => updateItem(gIndex, iIndex, 'product_name', e.target.value)} 
-                                                    className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-sm font-medium" 
-                                                />
+                                            <td className="p-2 relative">
+                                                <div className="relative">
+                                                    <input 
+                                                        type="text" 
+                                                        placeholder="e.g. Item Name or Size" 
+                                                        value={item.product_name} 
+                                                        onChange={e => {
+                                                            updateItem(gIndex, iIndex, 'product_name', e.target.value);
+                                                            setActiveSearch(`${gIndex}-${iIndex}`);
+                                                        }} 
+                                                        onFocus={() => setActiveSearch(`${gIndex}-${iIndex}`)}
+                                                        onBlur={() => setTimeout(() => setActiveSearch(null), 250)}
+                                                        className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-sm font-medium" 
+                                                    />
+
+                                                    {/* Autocomplete Dropdown Popover */}
+                                                    {activeSearch === `${gIndex}-${iIndex}` && (
+                                                        <div 
+                                                            className="absolute left-0 top-full mt-1 z-50 w-full min-w-[340px] max-w-[480px] bg-zinc-950 border border-zinc-700 rounded-xl shadow-2xl overflow-hidden max-h-64 overflow-y-auto"
+                                                            onMouseDown={(e) => e.preventDefault()}
+                                                        >
+                                                            {(() => {
+                                                                const query = String(item.product_name || '').trim().toLowerCase();
+                                                                const queryAlpha = query.replace(/[\s\-_/.]/g, '');
+                                                                const filteredProds = products.filter((p: any) => {
+                                                                    if (group.category_id && p.category_id !== group.category_id) return false;
+                                                                    if (!query) return true;
+                                                                    const pName = (p.name || '').toLowerCase();
+                                                                    const pAlpha = pName.replace(/[\s\-_/.]/g, '');
+                                                                    const pBrand = (p.brand || '').toLowerCase();
+                                                                    const pAlias = (p.alias || '').toLowerCase();
+                                                                    const pSku = (p.sku || '').toLowerCase();
+                                                                    return (
+                                                                        pName.includes(query) ||
+                                                                        pAlpha.includes(queryAlpha) ||
+                                                                        pBrand.includes(query) ||
+                                                                        pAlias.includes(query) ||
+                                                                        pSku.includes(query)
+                                                                    );
+                                                                });
+
+                                                                if (filteredProds.length === 0) {
+                                                                    return (
+                                                                        <div className="p-3 text-xs text-zinc-500 italic">
+                                                                            No catalog product found. Enter details manually.
+                                                                        </div>
+                                                                    );
+                                                                }
+
+                                                                return (
+                                                                    <div className="divide-y divide-zinc-800/70">
+                                                                        <div className="bg-zinc-900/90 px-3 py-1.5 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider flex justify-between">
+                                                                            <span>Catalog SKUs</span>
+                                                                            <span>{filteredProds.length} match{filteredProds.length > 1 ? 'es' : ''}</span>
+                                                                        </div>
+                                                                        {filteredProds.map((p: any) => {
+                                                                            const mrp = parseFloat(p.selling_price) || 0;
+                                                                            const stock = Number(p.stock_quantity ?? 0);
+                                                                            const isSelected = item.product_id === p.id;
+                                                                            return (
+                                                                                <button
+                                                                                    key={p.id}
+                                                                                    type="button"
+                                                                                    onClick={() => {
+                                                                                        selectProduct(gIndex, iIndex, p);
+                                                                                        setActiveSearch(null);
+                                                                                    }}
+                                                                                    className={`w-full text-left p-2.5 hover:bg-zinc-800/90 flex items-center justify-between gap-3 cursor-pointer transition-colors ${
+                                                                                        isSelected ? 'bg-blue-600/15 border-l-2 border-blue-500' : ''
+                                                                                    }`}
+                                                                                >
+                                                                                    <div className="flex-1 min-w-0">
+                                                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                                                            <span className="font-semibold text-white text-sm truncate">{p.name}</span>
+                                                                                            {p.brand ? (
+                                                                                                <span className="text-[10px] px-1.5 py-0.2 rounded font-bold uppercase bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                                                                                    {p.brand}
+                                                                                                </span>
+                                                                                            ) : (
+                                                                                                <span className="text-[10px] px-1.5 py-0.2 rounded font-medium text-zinc-500 bg-zinc-900 border border-zinc-800">
+                                                                                                    Unbranded
+                                                                                                </span>
+                                                                                            )}
+                                                                                        </div>
+                                                                                        <div className="text-[11px] text-zinc-400 truncate mt-0.5">
+                                                                                            {p.category} {p.sku ? `• SKU: ${p.sku}` : ''}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                    <div className="text-right whitespace-nowrap pl-2">
+                                                                                        <div className="text-xs font-mono font-bold text-white">
+                                                                                            {mrp > 0 ? `₹${mrp.toFixed(2)}` : 'No MRP'}
+                                                                                        </div>
+                                                                                        <div className={`text-[10px] font-mono font-medium ${stock > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                                                            Avail: {stock} {p.unit || 'PCS'}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </button>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                );
+                                                            })()}
+                                                        </div>
+                                                    )}
+                                                </div>
+
                                                 {item.product_name && (
                                                     <div className="flex items-center gap-2 mt-0.5 px-1.5 flex-wrap">
                                                         {Number(item.rate) > 0 ? (
@@ -776,16 +975,163 @@ export default function SalesPage() {
                                                         ) : (
                                                             <span className="text-[11px] text-zinc-500 italic">No MRP stored</span>
                                                         )}
-                                                        {item.brand && (
-                                                            <span className="text-[10px] bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded border border-zinc-700 font-medium">
-                                                                {item.brand}
-                                                            </span>
-                                                        )}
+
+                                                        {/* Interactive Brand Switcher Dropdown */}
                                                         {(() => {
                                                             const cleanName = String(item.product_name || '').trim().toLowerCase();
+                                                            const alphaVal = cleanName.replace(/[\s\-_/.]/g, '');
+                                                            const sameNameProducts = products.filter((p: any) => 
+                                                                (!group.category_id || p.category_id === group.category_id) &&
+                                                                (p.name.toLowerCase() === cleanName || p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)
+                                                            );
+                                                            const allCategoryBrands = Array.from(new Set(products
+                                                                .filter((p: any) => !group.category_id || p.category_id === group.category_id)
+                                                                .map((p: any) => p.brand)
+                                                                .filter(Boolean)
+                                                            ));
+                                                            const isBrandOpen = openBrandDropdown === `${gIndex}-${iIndex}`;
+
+                                                            return (
+                                                                <div className="relative inline-block">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            setOpenBrandDropdown(isBrandOpen ? null : `${gIndex}-${iIndex}`);
+                                                                        }}
+                                                                        className={`text-[10px] px-2 py-0.5 rounded border font-medium flex items-center gap-1 cursor-pointer transition-all ${
+                                                                            sameNameProducts.length > 1
+                                                                                ? 'bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border-blue-500/50 shadow-sm shadow-blue-500/10'
+                                                                                : item.brand
+                                                                                ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700'
+                                                                                : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                                                        }`}
+                                                                        title="Click to select or change brand"
+                                                                    >
+                                                                        <span>Brand: <strong className="text-white">{item.brand || 'Select Brand'}</strong></span>
+                                                                        {sameNameProducts.length > 1 && (
+                                                                            <span className="text-[9px] bg-blue-500 text-white rounded-full px-1 font-mono">
+                                                                                {sameNameProducts.length}
+                                                                            </span>
+                                                                        )}
+                                                                        <ChevronDown className="w-3 h-3 text-blue-400" />
+                                                                    </button>
+
+                                                                    {isBrandOpen && (
+                                                                        <div 
+                                                                            className="absolute left-0 top-full mt-1 z-50 bg-zinc-950 border border-zinc-700 rounded-xl shadow-2xl p-2 min-w-[240px] max-h-64 overflow-y-auto"
+                                                                            onClick={(e) => e.stopPropagation()}
+                                                                        >
+                                                                            <div className="text-[10px] uppercase font-bold text-zinc-400 px-2 py-1 border-b border-zinc-800 mb-1 flex items-center justify-between">
+                                                                                <span>Brand for "{item.product_name}"</span>
+                                                                                <span className="text-[9px] text-zinc-500">Auto-links Rate & Stock</span>
+                                                                            </div>
+
+                                                                            {sameNameProducts.length > 0 && (
+                                                                                <div className="space-y-1 mb-2">
+                                                                                    <div className="text-[9px] font-semibold text-blue-400 px-2 uppercase">Brand SKUs:</div>
+                                                                                    {sameNameProducts.map((snp: any) => {
+                                                                                        const snpMrp = parseFloat(snp.selling_price || 0);
+                                                                                        const snpStock = Number(snp.stock_quantity ?? 0);
+                                                                                        const isCurrent = (item.product_id && item.product_id === snp.id) || 
+                                                                                                          (!item.product_id && item.brand?.toLowerCase() === snp.brand?.toLowerCase());
+                                                                                        return (
+                                                                                            <button
+                                                                                                key={snp.id}
+                                                                                                type="button"
+                                                                                                onClick={() => {
+                                                                                                    selectProduct(gIndex, iIndex, snp);
+                                                                                                    setOpenBrandDropdown(null);
+                                                                                                }}
+                                                                                                className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between gap-2 hover:bg-zinc-800/90 cursor-pointer transition-colors ${
+                                                                                                    isCurrent ? 'bg-blue-600/20 text-blue-300 font-bold border border-blue-500/40' : 'text-zinc-200'
+                                                                                                }`}
+                                                                                            >
+                                                                                                <div className="flex items-center gap-1.5">
+                                                                                                    <span className="font-semibold">{snp.brand || 'Unbranded'}</span>
+                                                                                                    {isCurrent && <span className="text-[9px] bg-blue-500 text-white px-1 rounded">Active</span>}
+                                                                                                </div>
+                                                                                                <div className="text-[10px] text-right text-zinc-400">
+                                                                                                    <div>MRP: ₹{snpMrp.toFixed(2)}</div>
+                                                                                                    <div className={snpStock > 0 ? 'text-emerald-400 font-mono' : 'text-rose-400 font-mono'}>
+                                                                                                        {snpStock} {snp.unit || 'PCS'}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            </button>
+                                                                                        );
+                                                                                    })}
+                                                                                </div>
+                                                                            )}
+
+                                                                            {/* All other catalog brands */}
+                                                                            {allCategoryBrands.filter(b => !sameNameProducts.some((snp: any) => snp.brand?.toLowerCase() === b.toLowerCase())).length > 0 && (
+                                                                                <div className="pt-1 border-t border-zinc-800/80 mb-2">
+                                                                                    <div className="text-[9px] font-semibold text-zinc-500 px-2 mb-1 uppercase">Other Brands:</div>
+                                                                                    <div className="flex flex-wrap gap-1 px-1">
+                                                                                        {allCategoryBrands
+                                                                                            .filter(b => !sameNameProducts.some((snp: any) => snp.brand?.toLowerCase() === b.toLowerCase()))
+                                                                                            .map(b => (
+                                                                                                <button
+                                                                                                    key={b}
+                                                                                                    type="button"
+                                                                                                    onClick={() => {
+                                                                                                        selectBrand(gIndex, iIndex, b);
+                                                                                                        setOpenBrandDropdown(null);
+                                                                                                    }}
+                                                                                                    className="text-[10px] px-2 py-0.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded border border-zinc-800 hover:border-zinc-700 cursor-pointer"
+                                                                                                >
+                                                                                                    {b}
+                                                                                                </button>
+                                                                                            ))}
+                                                                                    </div>
+                                                                                </div>
+                                                                            )}
+
+                                                                            {/* Custom Brand input */}
+                                                                            <div className="pt-1.5 border-t border-zinc-800">
+                                                                                <div className="text-[9px] font-semibold text-zinc-500 px-1 mb-1 uppercase">Custom Brand:</div>
+                                                                                <div className="flex gap-1">
+                                                                                    <input
+                                                                                        type="text"
+                                                                                        placeholder="Type brand name..."
+                                                                                        defaultValue={item.brand}
+                                                                                        onKeyDown={(e) => {
+                                                                                            if (e.key === 'Enter') {
+                                                                                                e.preventDefault();
+                                                                                                selectBrand(gIndex, iIndex, (e.target as HTMLInputElement).value.trim());
+                                                                                                setOpenBrandDropdown(null);
+                                                                                            }
+                                                                                        }}
+                                                                                        className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-blue-500"
+                                                                                        id={`custom-brand-input-${gIndex}-${iIndex}`}
+                                                                                    />
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => {
+                                                                                            const el = document.getElementById(`custom-brand-input-${gIndex}-${iIndex}`) as HTMLInputElement;
+                                                                                            if (el) {
+                                                                                                selectBrand(gIndex, iIndex, el.value.trim());
+                                                                                                setOpenBrandDropdown(null);
+                                                                                            }
+                                                                                        }}
+                                                                                        className="bg-blue-600 hover:bg-blue-500 text-white text-[10px] px-2 py-1 rounded font-medium cursor-pointer"
+                                                                                    >
+                                                                                        Apply
+                                                                                    </button>
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })()}
+
+                                                        {/* Available Stock Badge */}
+                                                        {(() => {
                                                             const matched = products.find((p: any) => 
                                                                 (item.product_id && p.id === item.product_id) || 
-                                                                p.name.toLowerCase() === cleanName
+                                                                (p.name.toLowerCase() === String(item.product_name || '').trim().toLowerCase() && 
+                                                                 (!item.brand || (p.brand || '').toLowerCase() === item.brand.toLowerCase()))
                                                             );
                                                             if (!matched) return null;
                                                             const availStock = Number(matched.stock_quantity ?? 0);
