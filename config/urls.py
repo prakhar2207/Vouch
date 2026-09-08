@@ -39,7 +39,8 @@ def root_health_view(request):
     return JsonResponse({
         "status": "healthy",
         "service": "Vouch ERP Backend API",
-        "version": "1.0.0",
+        "version": "1.0.1",
+        "commit": "dfec534",
         "endpoints": {
             "auth": "/api/v1/auth/",
             "companies": "/api/v1/companies/",
