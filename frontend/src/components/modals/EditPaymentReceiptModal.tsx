@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
@@ -6,6 +6,7 @@ import { getAccessToken } from "@/utils/auth";
 import { useToast } from "@/context/ToastContext";
 import SearchableSelect, { SearchableOption } from "@/components/SearchableSelect";
 import AddBankModal from "@/components/modals/AddBankModal";
+import AddExpenseModal from "@/components/modals/AddExpenseModal";
 import { 
   X, 
   Check, 
@@ -53,6 +54,7 @@ export default function EditPaymentReceiptModal({
 
   const [paymentMode, setPaymentMode] = useState<PaymentMode>("CASH");
   const [isAddBankModalOpen, setIsAddBankModalOpen] = useState(false);
+  const [isAddExpenseModalOpen, setIsAddExpenseModalOpen] = useState(false);
 
   const voucherType: "RECEIPT" | "PAYMENT" = voucher?.type || "RECEIPT";
   const voucherNumber = voucher?.voucher_number || "";
@@ -120,29 +122,38 @@ export default function EditPaymentReceiptModal({
     }
   };
 
-  // Parties
+  // Parties & Expenses
   const partyLedgers = ledgers.filter((l: any) => {
     const grp = (l.group || "").toLowerCase();
     const ltype = (l.ledger_type || "").toUpperCase();
+    const nature = (l.nature || "").toUpperCase();
     if (voucherType === "RECEIPT") {
-      return grp.includes("debtor") || ltype === "CUSTOMER" || grp.includes("customer");
+      return grp.includes("debtor") || ltype === "CUSTOMER" || grp.includes("customer") || grp.includes("income") || nature === "INCOME";
     } else {
-      return grp.includes("creditor") || ltype === "SUPPLIER" || grp.includes("supplier");
+      return grp.includes("creditor") || ltype === "SUPPLIER" || grp.includes("supplier") || grp.includes("expense") || nature === "EXPENSE" || ltype === "EXPENSE";
     }
   });
 
   const effectivePartyLedgers = partyLedgers.length > 0
     ? partyLedgers
-    : ledgers.filter((l: any) => (l.group || "").includes("Debtor") || (l.group || "").includes("Creditor"));
+    : ledgers.filter((l: any) => (l.group || "").includes("Debtor") || (l.group || "").includes("Creditor") || (l.group || "").includes("Expense"));
 
-  const partyOptions: SearchableOption[] = effectivePartyLedgers.map((l: any) => ({
-    id: l.id,
-    name: l.name,
-    group: l.group,
-    balance: l.current_balance,
-    balanceType: l.opening_balance_type === "DEBIT" ? "Dr" : "Cr",
-    subtitle: l.gstin ? `GSTIN: ${l.gstin}` : undefined,
-  }));
+  const partyOptions: SearchableOption[] = effectivePartyLedgers.map((l: any) => {
+    const isExp = (l.group || "").toLowerCase().includes("expense") || (l.nature || "").toUpperCase() === "EXPENSE";
+    return {
+      id: l.id,
+      name: l.name,
+      group: l.group,
+      balance: l.current_balance,
+      balanceType: l.opening_balance_type === "DEBIT" ? "Dr" : "Cr",
+      subtitle: isExp ? (l.group || "Expense Account") : (l.gstin ? `GSTIN: ${l.gstin}` : undefined),
+    };
+  });
+
+  const handleExpenseCreated = (newExpense: any) => {
+    setLedgers((prev) => [...prev, newExpense]);
+    setPartyLedgerId(newExpense.id);
+  };
 
   // Cash vs Bank Ledgers
   const cashLedgers = ledgers.filter((l: any) =>
@@ -280,16 +291,30 @@ export default function EditPaymentReceiptModal({
           <form onSubmit={handleSave} className="p-5 space-y-4 overflow-y-auto">
             {/* Party Selection */}
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
-                {voucherType === "RECEIPT" ? "Customer (Received From) *" : "Supplier (Paid To) *"}
-              </label>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  {voucherType === "RECEIPT" ? "Customer / Income (Received From) *" : "Paid To / Account (Supplier or Expense) *"}
+                </label>
+                {voucherType === "PAYMENT" && (
+                  <button
+                    type="button"
+                    onClick={() => setIsAddExpenseModalOpen(true)}
+                    className="text-amber-500 hover:text-amber-400 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Expense</span>
+                  </button>
+                )}
+              </div>
               <SearchableSelect
                 value={partyLedgerId}
                 onChange={(val) => setPartyLedgerId(val)}
                 options={partyOptions}
-                placeholder={voucherType === "RECEIPT" ? "-- Select Customer --" : "-- Select Supplier --"}
-                searchPlaceholder="Search party name or group..."
+                placeholder={voucherType === "RECEIPT" ? "-- Select Customer or Income --" : "-- Select Supplier or Expense Account --"}
+                searchPlaceholder="Search supplier or expense (e.g. Rent, Freight)..."
                 required
+                onAddNew={voucherType === "PAYMENT" ? () => setIsAddExpenseModalOpen(true) : undefined}
+                addNewText="+ Add Expense Account"
               />
             </div>
 
@@ -516,6 +541,14 @@ export default function EditPaymentReceiptModal({
           onClose={() => setIsAddBankModalOpen(false)}
           companyId={companyId}
           onSuccess={handleBankCreated}
+        />
+
+        {/* Add Expense Modal */}
+        <AddExpenseModal
+          isOpen={isAddExpenseModalOpen}
+          onClose={() => setIsAddExpenseModalOpen(false)}
+          companyId={companyId}
+          onSuccess={handleExpenseCreated}
         />
       </div>
     </div>

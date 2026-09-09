@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
@@ -9,6 +9,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useToast } from '@/context/ToastContext';
 import SearchableSelect, { SearchableOption } from '@/components/SearchableSelect';
 import AddBankModal from '@/components/modals/AddBankModal';
+import AddExpenseModal from '@/components/modals/AddExpenseModal';
 import { 
   Banknote, 
   Landmark, 
@@ -21,10 +22,12 @@ import {
   Calendar,
   Hash,
   ArrowDownLeft,
-  ArrowUpRight
+  ArrowUpRight,
+  Receipt
 } from 'lucide-react';
 
 type PaymentMode = 'CASH' | 'CHEQUE' | 'NEFT' | 'RTGS' | 'IMPS' | 'UPI' | 'BANK_TRANSFER';
+type PartyCategory = 'ALL' | 'SUPPLIER' | 'EXPENSE';
 
 export default function NewVoucherPage() {
   const router = useRouter();
@@ -34,6 +37,7 @@ export default function NewVoucherPage() {
   const [ledgers, setLedgers] = useState<any[]>([]);
 
   const [voucherType, setVoucherType] = useState<'RECEIPT' | 'PAYMENT'>('RECEIPT');
+  const [partyCategory, setPartyCategory] = useState<PartyCategory>('ALL');
   const [partyLedgerId, setPartyLedgerId] = useState('');
   const [paymentLedgerId, setPaymentLedgerId] = useState('');
   const [amount, setAmount] = useState('');
@@ -49,8 +53,9 @@ export default function NewVoucherPage() {
   const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
   const [upiId, setUpiId] = useState('');
 
-  // Add Bank Modal state
+  // Modals state
   const [isAddBankModalOpen, setIsAddBankModalOpen] = useState(false);
+  const [isAddExpenseModalOpen, setIsAddExpenseModalOpen] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
@@ -82,30 +87,58 @@ export default function NewVoucherPage() {
     }
   };
 
-  // Filter parties based on voucher type
+  // Filter accounts based on voucher type and category
   const partyLedgers = ledgers.filter((l: any) => {
     const grp = (l.group || '').toLowerCase();
     const ltype = (l.ledger_type || '').toUpperCase();
+    const nature = (l.nature || '').toUpperCase();
+
     if (voucherType === 'RECEIPT') {
-      return grp.includes('debtor') || ltype === 'CUSTOMER' || grp.includes('customer');
+      // Customer or Direct/Indirect Income
+      return grp.includes('debtor') || ltype === 'CUSTOMER' || grp.includes('customer') || grp.includes('income') || nature === 'INCOME';
     } else {
-      return grp.includes('creditor') || ltype === 'SUPPLIER' || grp.includes('supplier');
+      // Supplier or Direct/Indirect Expense (Freight, Rent, Utilities, etc.)
+      const isSupplier = grp.includes('creditor') || ltype === 'SUPPLIER' || grp.includes('supplier');
+      const isExpense = grp.includes('expense') || nature === 'EXPENSE' || ltype === 'EXPENSE';
+
+      if (partyCategory === 'SUPPLIER') return isSupplier;
+      if (partyCategory === 'EXPENSE') return isExpense;
+      return isSupplier || isExpense;
     }
   });
 
-  // Fallback to all debtors & creditors if strict filter has none
+  // Fallback to all applicable accounts if strict filter has none
   const effectivePartyLedgers = partyLedgers.length > 0 
     ? partyLedgers 
-    : ledgers.filter((l: any) => (l.group || '').includes('Debtor') || (l.group || '').includes('Creditor'));
+    : ledgers.filter((l: any) => 
+        (l.group || '').includes('Debtor') || 
+        (l.group || '').includes('Creditor') || 
+        (l.group || '').includes('Expense')
+      );
 
-  const partyOptions: SearchableOption[] = effectivePartyLedgers.map((l: any) => ({
-    id: l.id,
-    name: l.name,
-    group: l.group,
-    balance: l.current_balance,
-    balanceType: l.opening_balance_type === 'DEBIT' ? 'Dr' : 'Cr',
-    subtitle: l.gstin ? `GSTIN: ${l.gstin}` : (l.phone ? `Ph: ${l.phone}` : undefined),
-  }));
+  const partyOptions: SearchableOption[] = effectivePartyLedgers.map((l: any) => {
+    const isExp = (l.group || '').toLowerCase().includes('expense') || (l.nature || '').toUpperCase() === 'EXPENSE';
+    return {
+      id: l.id,
+      name: l.name,
+      group: l.group,
+      balance: l.current_balance,
+      balanceType: l.opening_balance_type === 'DEBIT' ? 'Dr' : 'Cr',
+      subtitle: isExp 
+        ? (l.group || 'Expense Account')
+        : (l.gstin ? `GSTIN: ${l.gstin}` : (l.phone ? `Ph: ${l.phone}` : undefined)),
+    };
+  });
+
+  const selectedPartyLedger = ledgers.find((l: any) => l.id === partyLedgerId);
+  const isSelectedAnExpense = selectedPartyLedger 
+    ? (selectedPartyLedger.group || '').toLowerCase().includes('expense') || (selectedPartyLedger.nature || '').toUpperCase() === 'EXPENSE'
+    : false;
+
+  const handleExpenseCreated = (newExpense: any) => {
+    setLedgers((prev) => [...prev, newExpense]);
+    setPartyLedgerId(newExpense.id);
+  };
 
   // Cash vs Bank Ledgers
   const cashLedgers = ledgers.filter((l: any) =>
@@ -310,25 +343,75 @@ export default function NewVoucherPage() {
           
           {/* Party Searchable Selection */}
           <div>
-            <div className="flex justify-between items-center mb-1.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-1.5">
               <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                {voucherType === 'RECEIPT' ? 'Customer (Receiving From) *' : 'Supplier (Paying To) *'}
+                {voucherType === 'RECEIPT' 
+                  ? 'Customer / Income (Receiving From) *' 
+                  : 'Paid To / Account (Supplier or Expense) *'}
               </label>
-              <Link 
-                href={voucherType === 'RECEIPT' ? '/sales/customers/new' : '/purchases/suppliers/new'} 
-                className="text-blue-500 hover:text-blue-400 text-xs font-medium flex items-center gap-1"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add New {voucherType === 'RECEIPT' ? 'Customer' : 'Supplier'}</span>
-              </Link>
+
+              <div className="flex items-center gap-3">
+                {voucherType === 'PAYMENT' && (
+                  <button
+                    type="button"
+                    onClick={() => setIsAddExpenseModalOpen(true)}
+                    className="text-amber-500 hover:text-amber-400 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Expense (Rent/Freight)</span>
+                  </button>
+                )}
+                <Link 
+                  href={voucherType === 'RECEIPT' ? '/sales/customers/new' : '/purchases/suppliers/new'} 
+                  className="text-blue-500 hover:text-blue-400 text-xs font-semibold flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add New {voucherType === 'RECEIPT' ? 'Customer' : 'Supplier'}</span>
+                </Link>
+              </div>
             </div>
+
+            {/* Category Filter Pills for Payment mode */}
+            {voucherType === 'PAYMENT' && (
+              <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
+                {[
+                  { id: 'ALL' as PartyCategory, label: 'All Accounts' },
+                  { id: 'EXPENSE' as PartyCategory, label: '⚡ Expenses (Freight, Rent, etc.)' },
+                  { id: 'SUPPLIER' as PartyCategory, label: '🏢 Suppliers' },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setPartyCategory(tab.id)}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                      partyCategory === tab.id
+                        ? 'bg-blue-600 text-foreground shadow-xs'
+                        : 'bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <SearchableSelect
               value={partyLedgerId}
               onChange={(val) => setPartyLedgerId(val)}
               options={partyOptions}
-              placeholder={voucherType === 'RECEIPT' ? '-- Select Customer --' : '-- Select Supplier --'}
-              searchPlaceholder={`Type to search ${voucherType === 'RECEIPT' ? 'customer' : 'supplier'}...`}
+              placeholder={
+                voucherType === 'RECEIPT' 
+                  ? '-- Select Customer or Income --' 
+                  : (partyCategory === 'EXPENSE' ? '-- Select Expense (Rent, Freight, etc.) --' : '-- Select Supplier or Expense Account --')
+              }
+              searchPlaceholder={
+                voucherType === 'RECEIPT'
+                  ? 'Type to search customer or income...'
+                  : 'Search by name (e.g. Rent, Freight, Cartage, Supplier name)...'
+              }
               required
+              onAddNew={voucherType === 'PAYMENT' ? () => setIsAddExpenseModalOpen(true) : undefined}
+              addNewText="+ Add Expense Account"
             />
           </div>
 
@@ -616,12 +699,14 @@ export default function NewVoucherPage() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">
-                    {voucherType === 'RECEIPT' ? 'Money to Receive' : 'Money to Pay'}
+                    {voucherType === 'RECEIPT' ? 'Money to Receive' : (isSelectedAnExpense ? 'Expense Payment' : 'Supplier Payment')}
                   </p>
                   <p className="text-foreground text-xs font-mono mt-1">
                     {voucherType === 'RECEIPT'
-                      ? `Debit: ${paymentMode === 'CASH' ? 'Cash' : 'Bank Account'} → Credit: Customer Ledger`
-                      : `Debit: Supplier Ledger → Credit: ${paymentMode === 'CASH' ? 'Cash' : 'Bank Account'}`}
+                      ? `Debit: ${paymentMode === 'CASH' ? 'Cash' : 'Bank Account'} → Credit: Customer / Income Ledger`
+                      : isSelectedAnExpense
+                      ? `Debit: Expense Ledger (${selectedPartyLedger?.name || 'Expense'}) → Credit: ${paymentMode === 'CASH' ? 'Cash' : 'Bank Account'}`
+                      : `Debit: Supplier Ledger (${selectedPartyLedger?.name || 'Supplier'}) → Credit: ${paymentMode === 'CASH' ? 'Cash' : 'Bank Account'}`}
                   </p>
                 </div>
                 <p className={`text-2xl sm:text-3xl font-bold font-mono tabular-nums ${voucherType === 'RECEIPT' ? 'text-green-500' : 'text-red-500'}`}>
@@ -652,6 +737,14 @@ export default function NewVoucherPage() {
           onClose={() => setIsAddBankModalOpen(false)}
           companyId={companyId}
           onSuccess={handleBankCreated}
+        />
+
+        {/* Add Expense Account Modal */}
+        <AddExpenseModal
+          isOpen={isAddExpenseModalOpen}
+          onClose={() => setIsAddExpenseModalOpen(false)}
+          companyId={companyId}
+          onSuccess={handleExpenseCreated}
         />
       </div>
     </DashboardLayout>
