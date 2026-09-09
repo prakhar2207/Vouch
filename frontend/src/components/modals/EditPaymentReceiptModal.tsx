@@ -1,10 +1,28 @@
-"use client";
+﻿"use client";
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
 import { useToast } from "@/context/ToastContext";
-import { X, Check, Calendar, ArrowDownLeft, ArrowUpRight, FileText } from "lucide-react";
+import SearchableSelect, { SearchableOption } from "@/components/SearchableSelect";
+import AddBankModal from "@/components/modals/AddBankModal";
+import { 
+  X, 
+  Check, 
+  ArrowDownLeft, 
+  ArrowUpRight, 
+  Banknote, 
+  Landmark, 
+  FileText, 
+  QrCode, 
+  CreditCard, 
+  Zap, 
+  Send,
+  Plus,
+  Hash
+} from "lucide-react";
+
+type PaymentMode = 'CASH' | 'CHEQUE' | 'NEFT' | 'RTGS' | 'IMPS' | 'UPI' | 'BANK_TRANSFER';
 
 interface EditPaymentReceiptModalProps {
   isOpen: boolean;
@@ -23,6 +41,7 @@ export default function EditPaymentReceiptModal({
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [companyId, setCompanyId] = useState("");
   const [ledgers, setLedgers] = useState<any[]>([]);
 
   const [partyLedgerId, setPartyLedgerId] = useState("");
@@ -30,6 +49,10 @@ export default function EditPaymentReceiptModal({
   const [amount, setAmount] = useState("");
   const [voucherDate, setVoucherDate] = useState("");
   const [narration, setNarration] = useState("");
+  const [referenceNumber, setReferenceNumber] = useState("");
+
+  const [paymentMode, setPaymentMode] = useState<PaymentMode>("CASH");
+  const [isAddBankModalOpen, setIsAddBankModalOpen] = useState(false);
 
   const voucherType: "RECEIPT" | "PAYMENT" = voucher?.type || "RECEIPT";
   const voucherNumber = voucher?.voucher_number || "";
@@ -50,23 +73,44 @@ export default function EditPaymentReceiptModal({
       const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
       const cid = compRes.data.data[0]?.id;
       if (cid) {
+        setCompanyId(cid);
         const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers });
         setLedgers(ledgersRes.data.data || []);
       }
 
-      // 2. Fetch specific voucher details to get payment_ledger_id
+      // 2. Fetch specific voucher details
       const vRes = await axios.get(`${API_BASE_URL}/api/vouchers/${voucher.id}/`, { headers });
       if (vRes.data.success && vRes.data.data) {
         const d = vRes.data.data;
         setVoucherDate(d.date || voucher.date || "");
         setAmount(String(d.total_amount || voucher.total_amount || ""));
         setNarration(d.narration || voucher.narration || "");
+        setReferenceNumber(d.reference_number || voucher.reference_number || "");
         setPartyLedgerId(d.party_ledger_id || "");
         setPaymentLedgerId(d.payment_ledger_id || "");
+
+        // Determine initial payment mode based on reference or payment ledger
+        const ref = (d.reference_number || voucher.reference_number || "").toUpperCase();
+        if (ref.startsWith("CHQ") || ref.startsWith("CHEQUE")) {
+          setPaymentMode("CHEQUE");
+        } else if (ref.startsWith("NEFT")) {
+          setPaymentMode("NEFT");
+        } else if (ref.startsWith("RTGS")) {
+          setPaymentMode("RTGS");
+        } else if (ref.startsWith("IMPS")) {
+          setPaymentMode("IMPS");
+        } else if (ref.startsWith("UPI")) {
+          setPaymentMode("UPI");
+        } else if (d.payment_ledger_name?.toLowerCase().includes("bank")) {
+          setPaymentMode("BANK_TRANSFER");
+        } else {
+          setPaymentMode("CASH");
+        }
       } else {
         setVoucherDate(voucher.date || "");
         setAmount(String(voucher.total_amount || ""));
         setNarration(voucher.narration || "");
+        setReferenceNumber(voucher.reference_number || "");
       }
     } catch (err: any) {
       console.error(err);
@@ -76,15 +120,70 @@ export default function EditPaymentReceiptModal({
     }
   };
 
-  const partyLedgers = ledgers.filter((l) => {
-    const grp = l.group_name || l.group || "";
-    return grp.includes("Debtor") || grp.includes("Creditor");
+  // Parties
+  const partyLedgers = ledgers.filter((l: any) => {
+    const grp = (l.group || "").toLowerCase();
+    const ltype = (l.ledger_type || "").toUpperCase();
+    if (voucherType === "RECEIPT") {
+      return grp.includes("debtor") || ltype === "CUSTOMER" || grp.includes("customer");
+    } else {
+      return grp.includes("creditor") || ltype === "SUPPLIER" || grp.includes("supplier");
+    }
   });
 
-  const cashBankLedgers = ledgers.filter((l) => {
-    const grp = l.group_name || l.group || "";
-    return grp.includes("Cash") || grp.includes("Bank");
-  });
+  const effectivePartyLedgers = partyLedgers.length > 0
+    ? partyLedgers
+    : ledgers.filter((l: any) => (l.group || "").includes("Debtor") || (l.group || "").includes("Creditor"));
+
+  const partyOptions: SearchableOption[] = effectivePartyLedgers.map((l: any) => ({
+    id: l.id,
+    name: l.name,
+    group: l.group,
+    balance: l.current_balance,
+    balanceType: l.opening_balance_type === "DEBIT" ? "Dr" : "Cr",
+    subtitle: l.gstin ? `GSTIN: ${l.gstin}` : undefined,
+  }));
+
+  // Cash vs Bank Ledgers
+  const cashLedgers = ledgers.filter((l: any) =>
+    l.group === "Cash-in-Hand" || l.ledger_type === "CASH" || l.name.toLowerCase().includes("cash")
+  );
+
+  const bankLedgers = ledgers.filter((l: any) =>
+    (l.group || "").toLowerCase().includes("bank") || l.ledger_type === "BANK"
+  );
+
+  const currentAccounts = paymentMode === "CASH" ? cashLedgers : bankLedgers;
+
+  const accountOptions: SearchableOption[] = currentAccounts.map((l: any) => ({
+    id: l.id,
+    name: l.name,
+    group: l.group,
+    balance: l.current_balance,
+    balanceType: l.opening_balance_type === "DEBIT" ? "Dr" : "Cr",
+  }));
+
+  const handlePaymentModeChange = (mode: PaymentMode) => {
+    setPaymentMode(mode);
+    if (mode === "CASH") {
+      const defaultCash = cashLedgers[0];
+      if (defaultCash) setPaymentLedgerId(defaultCash.id);
+    } else {
+      const isCurrentCash = cashLedgers.some((l: any) => l.id === paymentLedgerId);
+      if (isCurrentCash || !paymentLedgerId) {
+        if (bankLedgers.length > 0) {
+          setPaymentLedgerId(bankLedgers[0].id);
+        } else {
+          setPaymentLedgerId("");
+        }
+      }
+    }
+  };
+
+  const handleBankCreated = (newBank: any) => {
+    setLedgers((prev) => [...prev, newBank]);
+    setPaymentLedgerId(newBank.id);
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,6 +202,7 @@ export default function EditPaymentReceiptModal({
         amount: parseFloat(amount),
         party_ledger_id: partyLedgerId,
         payment_ledger_id: paymentLedgerId,
+        reference_number: referenceNumber.trim(),
         narration: narration.trim(),
       };
 
@@ -130,7 +230,7 @@ export default function EditPaymentReceiptModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div
-        className="bg-card text-card-foreground border border-border rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col"
+        className="bg-card text-card-foreground border border-border rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -177,46 +277,128 @@ export default function EditPaymentReceiptModal({
             Loading voucher details...
           </div>
         ) : (
-          <form onSubmit={handleSave} className="p-5 space-y-4">
+          <form onSubmit={handleSave} className="p-5 space-y-4 overflow-y-auto">
             {/* Party Selection */}
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
                 {voucherType === "RECEIPT" ? "Customer (Received From) *" : "Supplier (Paid To) *"}
               </label>
-              <select
-                required
+              <SearchableSelect
                 value={partyLedgerId}
-                onChange={(e) => setPartyLedgerId(e.target.value)}
-                className="w-full bg-background border border-border text-foreground text-sm p-2.5 rounded-xl focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all font-medium"
-              >
-                <option value="">-- Select Party --</option>
-                {partyLedgers.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name} {l.group ? `(${l.group})` : ""}
-                  </option>
-                ))}
-              </select>
+                onChange={(val) => setPartyLedgerId(val)}
+                options={partyOptions}
+                placeholder={voucherType === "RECEIPT" ? "-- Select Customer --" : "-- Select Supplier --"}
+                searchPlaceholder="Search party name or group..."
+                required
+              />
             </div>
 
-            {/* Cash / Bank Selection */}
+            {/* Payment Mode Selector */}
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
-                {voucherType === "RECEIPT" ? "Received Into (Cash / Bank) *" : "Paid From (Cash / Bank) *"}
+                Mode of Payment *
               </label>
-              <select
-                required
-                value={paymentLedgerId}
-                onChange={(e) => setPaymentLedgerId(e.target.value)}
-                className="w-full bg-background border border-border text-foreground text-sm p-2.5 rounded-xl focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all font-medium"
-              >
-                <option value="">-- Select Cash / Bank Account --</option>
-                {cashBankLedgers.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                {[
+                  { mode: "CASH" as PaymentMode, label: "Cash", icon: Banknote },
+                  { mode: "CHEQUE" as PaymentMode, label: "Cheque / DD", icon: FileText },
+                  { mode: "NEFT" as PaymentMode, label: "NEFT", icon: Landmark },
+                  { mode: "RTGS" as PaymentMode, label: "RTGS", icon: Zap },
+                  { mode: "IMPS" as PaymentMode, label: "IMPS", icon: Send },
+                  { mode: "UPI" as PaymentMode, label: "UPI / QR", icon: QrCode },
+                  { mode: "BANK_TRANSFER" as PaymentMode, label: "NetBanking", icon: CreditCard },
+                ].map(({ mode, label, icon: Icon }) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => handlePaymentModeChange(mode)}
+                    className={`px-2.5 py-2 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      paymentMode === mode
+                        ? "bg-blue-600 text-foreground border-blue-500 shadow-sm ring-1 ring-blue-500"
+                        : "bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground border-input"
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">{label}</span>
+                  </button>
                 ))}
-              </select>
+              </div>
             </div>
+
+            {/* Cash / Bank Account Selection */}
+            <div>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  {paymentMode === "CASH"
+                    ? (voucherType === "RECEIPT" ? "Received Into (Cash Account) *" : "Paid From (Cash Account) *")
+                    : (voucherType === "RECEIPT" ? "Received Into (Bank Account) *" : "Paid From (Bank Account) *")}
+                </label>
+                {paymentMode !== "CASH" && (
+                  <button
+                    type="button"
+                    onClick={() => setIsAddBankModalOpen(true)}
+                    className="text-blue-500 hover:text-blue-400 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Bank</span>
+                  </button>
+                )}
+              </div>
+
+              {paymentMode !== "CASH" && bankLedgers.length === 0 ? (
+                <div className="p-3 rounded-lg border border-dashed border-border bg-muted/20 text-center space-y-1.5">
+                  <p className="text-xs font-medium text-foreground">No Bank Account ledger found</p>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddBankModalOpen(true)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded bg-blue-600 text-foreground hover:bg-blue-700 transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Create Bank Account</span>
+                  </button>
+                </div>
+              ) : (
+                <SearchableSelect
+                  value={paymentLedgerId}
+                  onChange={(val) => setPaymentLedgerId(val)}
+                  options={accountOptions}
+                  placeholder={paymentMode === "CASH" ? "-- Select Cash Account --" : "-- Select Bank Account --"}
+                  searchPlaceholder="Search cash or bank ledger..."
+                  required
+                  onAddNew={paymentMode !== "CASH" ? () => setIsAddBankModalOpen(true) : undefined}
+                  addNewText="+ Add Bank Account"
+                />
+              )}
+            </div>
+
+            {/* Reference / Transaction Number */}
+            {paymentMode !== "CASH" && (
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1">
+                  <Hash className="w-3.5 h-3.5 text-blue-400" />
+                  <span>
+                    {paymentMode === "CHEQUE"
+                      ? "Cheque / DD Number *"
+                      : paymentMode === "UPI"
+                      ? "UPI Ref / UTR No. *"
+                      : `${paymentMode} UTR / Transaction No. *`}
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  value={referenceNumber}
+                  onChange={(e) => setReferenceNumber(e.target.value)}
+                  placeholder={
+                    paymentMode === "CHEQUE"
+                      ? "e.g. Chq# 004521"
+                      : paymentMode === "UPI"
+                      ? "e.g. UPI: 425189201928"
+                      : "e.g. UTRB260909123456"
+                  }
+                  className="w-full bg-background border border-border text-foreground px-3 py-2 rounded-xl focus:border-primary focus:ring-1 focus:ring-primary outline-none font-mono text-sm"
+                />
+              </div>
+            )}
 
             {/* Amount & Date Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -237,75 +419,104 @@ export default function EditPaymentReceiptModal({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>Voucher Date *</span>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                  Voucher Date *
                 </label>
                 <input
                   required
                   type="date"
                   value={voucherDate}
                   onChange={(e) => setVoucherDate(e.target.value)}
-                  className="w-full bg-background border border-border text-foreground p-2.5 rounded-xl focus:border-primary focus:ring-1 focus:ring-primary outline-none font-mono text-sm font-semibold"
+                  className="w-full bg-background border border-border text-foreground p-2.5 rounded-xl focus:border-primary focus:ring-1 focus:ring-primary outline-none font-mono text-sm min-h-[44px]"
                 />
               </div>
             </div>
 
             {/* Narration */}
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1">
-                <FileText className="w-3.5 h-3.5" />
-                <span>Narration / Notes</span>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                Narration / Reference Notes
               </label>
               <textarea
                 rows={2}
-                placeholder="Remarks, check/ref number, payment notes..."
                 value={narration}
                 onChange={(e) => setNarration(e.target.value)}
-                className="w-full bg-background border border-border text-foreground text-xs p-2.5 rounded-xl focus:border-primary focus:ring-1 focus:ring-primary outline-none resize-none"
+                placeholder="Optional notes or reference..."
+                className="w-full bg-background border border-border text-foreground p-2.5 rounded-xl focus:border-primary focus:ring-1 focus:ring-primary outline-none text-sm resize-none"
               />
             </div>
 
-            {/* Realtime Impact Preview Card */}
-            {amount && parseFloat(amount) > 0 && (
-              <div
-                className={`rounded-xl p-3.5 border ${
-                  voucherType === "RECEIPT"
-                    ? "bg-green-500/10 border-green-500/20 text-green-400"
-                    : "bg-red-500/10 border-red-500/20 text-red-400"
-                }`}
-              >
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold uppercase tracking-wider">
-                    {voucherType === "RECEIPT" ? "Debit Cash/Bank → Credit Party" : "Debit Party → Credit Cash/Bank"}
-                  </span>
-                  <span className="font-mono tabular-nums font-bold text-sm">
-                    ₹{parseFloat(amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                  </span>
-                </div>
+            {/* Impact Preview */}
+            <div
+              className={`p-3.5 rounded-xl border ${
+                voucherType === "RECEIPT"
+                  ? "bg-green-500/5 border-green-500/20"
+                  : "bg-red-500/5 border-red-500/20"
+              }`}
+            >
+              <p className="text-xs font-medium text-foreground">Accounting Impact Preview:</p>
+              <div className="mt-1 text-xs font-mono flex flex-col gap-0.5 text-muted-foreground">
+                {voucherType === "RECEIPT" ? (
+                  <>
+                    <p>
+                      <span className="text-green-500 font-bold">Dr</span> {paymentMode === "CASH" ? "Cash" : "Bank Account"} (+₹{amount || "0.00"})
+                    </p>
+                    <p>
+                      <span className="text-blue-400 font-bold">Cr</span> Customer Ledger (-₹{amount || "0.00"})
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p>
+                      <span className="text-blue-400 font-bold">Dr</span> Supplier Ledger (-₹{amount || "0.00"})
+                    </p>
+                    <p>
+                      <span className="text-red-500 font-bold">Cr</span> {paymentMode === "CASH" ? "Cash" : "Bank Account"} (-₹{amount || "0.00"})
+                    </p>
+                  </>
+                )}
               </div>
-            )}
+            </div>
 
-            {/* Modal Footer */}
-            <div className="pt-3 border-t border-border flex items-center justify-end gap-2.5">
+            {/* Footer Buttons */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted rounded-xl transition-colors cursor-pointer"
+                disabled={saving}
+                className="px-4 py-2 text-sm rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer min-h-[38px]"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="px-5 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 rounded-xl text-xs font-bold shadow-md shadow-primary/20 transition-all flex items-center gap-1.5 cursor-pointer"
+                className={`px-5 py-2 text-sm font-semibold rounded-xl text-foreground flex items-center gap-2 shadow-md transition-all cursor-pointer min-h-[38px] ${
+                  voucherType === "RECEIPT"
+                    ? "bg-green-600 hover:bg-green-700"
+                    : "bg-red-600 hover:bg-red-700"
+                } disabled:opacity-50`}
               >
-                <Check className="w-4 h-4" />
-                <span>{saving ? "Updating..." : "Save Changes"}</span>
+                {saving ? (
+                  "Updating..."
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Update & Recalculate</span>
+                  </>
+                )}
               </button>
             </div>
           </form>
         )}
+
+        {/* Add Bank Modal */}
+        <AddBankModal
+          isOpen={isAddBankModalOpen}
+          onClose={() => setIsAddBankModalOpen(false)}
+          companyId={companyId}
+          onSuccess={handleBankCreated}
+        />
       </div>
     </div>
   );

@@ -374,6 +374,7 @@ class VoucherDetailAPIView(APIView):
                 "cartage_amount": float(cartage_amount),
                 "round_off_amount": float(round_off_amount),
                 "narration": voucher.narration,
+                "reference_number": voucher.reference_number or "",
                 "party_ledger_id": str(voucher.party_ledger.id) if voucher.party_ledger else None,
                 "payment_ledger_id": str(payment_ledger_obj.id) if payment_ledger_obj else None,
                 "payment_ledger_name": payment_ledger_obj.name if payment_ledger_obj else None,
@@ -877,6 +878,13 @@ class VoucherDetailAPIView(APIView):
 
                     voucher.total_amount = amount
 
+                    if 'reference_number' in data:
+                        voucher.reference_number = str(data.get('reference_number') or '').strip()
+                    if 'narration' in data:
+                        voucher.narration = str(data.get('narration') or '').strip()
+                    if 'voucher_date' in data and data['voucher_date']:
+                        voucher.voucher_date = date.fromisoformat(str(data['voucher_date']))
+
                     # 4. Create new ledger entries
                     if voucher.voucher_type == 'RECEIPT':
                         # Receipt: Debit Cash/Bank, Credit Customer
@@ -1220,6 +1228,7 @@ class CreatePaymentReceiptAPIView(APIView):
                     voucher_number=voucher_number,
                     voucher_date=voucher_date,
                     party_ledger=party_ledger,
+                    reference_number=str(data.get('reference_number') or '').strip(),
                     narration=data.get('narration', ''),
                     status='DRAFT',
                     total_amount=amount,
