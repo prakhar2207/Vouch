@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
@@ -225,33 +225,33 @@ export default function SalesInvoiceList() {
     <DashboardLayout>
       <div className="space-y-6 flex flex-col h-full">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-5">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold">Sales Invoices</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">Outward tax invoices and billing records</p>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Sales Invoices</h1>
+            <p className="text-xs text-muted-foreground mt-1">Outward tax invoices and billing records</p>
           </div>
-          <Link href="/sales/new" className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow hover:bg-blue-700 transition-all flex items-center justify-center gap-1.5">
+          <Link href="/sales/new" className="bg-primary text-primary-foreground px-4 py-2.5 rounded-xl text-xs font-bold shadow-md shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-1.5">
             <Plus className="w-3.5 h-3.5" />
             <span>Create Invoice</span>
-            <kbd className="bg-white/20 px-1.5 py-0.5 rounded text-[10px]">F8</kbd>
+            <kbd className="bg-primary-foreground/20 px-1.5 py-0.5 rounded text-[10px]">F8</kbd>
           </Link>
         </div>
         
-        <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border flex-1 overflow-hidden flex flex-col">
-          <div className="px-5 py-3.5 border-b border-border bg-gray-50 dark:bg-zinc-800/50 flex items-center justify-between">
+        <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/40 flex-1 overflow-hidden flex flex-col">
+          <div className="px-5 py-3.5 border-b border-border/40 bg-muted/30 flex items-center justify-between">
             <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Previous Invoices</span>
             <span className="text-xs text-muted-foreground hidden sm:inline">Use ↑ / ↓ arrow keys to navigate, Ctrl+Enter to edit, Enter to print</span>
           </div>
           {loading ? (
-            <div className="flex items-center justify-center h-full text-gray-500">Loading invoices...</div>
+            <div className="flex items-center justify-center h-full text-muted-foreground">Loading invoices...</div>
           ) : invoices.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-12 bg-card">
-              <svg className="w-20 h-20 text-gray-400 dark:text-gray-600 mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-20 h-20 text-muted-foreground dark:text-gray-600 mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
               </svg>
               <h3 className="text-2xl font-bold mb-2">No Sales Invoices Yet</h3>
-              <p className="text-gray-500 max-w-md mx-auto mb-8">It looks like you haven't created any sales invoices. Create your first invoice to start tracking your revenue and updating your inventory automatically.</p>
-              <Link href="/sales/new" className="bg-blue-600 text-white px-6 py-2.5 rounded-lg shadow hover:bg-blue-700 transition-colors font-medium">
+              <p className="text-muted-foreground max-w-md mx-auto mb-8">It looks like you haven't created any sales invoices. Create your first invoice to start tracking your revenue and updating your inventory automatically.</p>
+              <Link href="/sales/new" className="bg-blue-600 text-foreground px-6 py-2.5 rounded-lg shadow hover:bg-blue-700 transition-colors font-medium">
                 + Create First Invoice
               </Link>
             </div>
@@ -316,7 +316,7 @@ export default function SalesInvoiceList() {
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-zinc-800 bg-zinc-900/40 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  <tr className="border-b border-border bg-zinc-900/40 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     <th className="p-4">Invoice No.</th>
                     <th className="p-4">Date</th>
                     <th className="p-4">Party Name</th>
@@ -340,10 +340,10 @@ export default function SalesInvoiceList() {
                             : 'hover:bg-zinc-800/20'
                         }`}
                       >
-                        <td className="p-4 font-mono font-medium text-white">{inv.voucher_number}</td>
-                        <td className="p-4 text-gray-400 font-mono">{inv.date}</td>
-                        <td className="p-4 text-gray-300 font-semibold">{inv.party_name}</td>
-                        <td className="p-4 font-bold text-white text-right font-mono">₹ {parseFloat(inv.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td className="p-4 font-mono font-medium text-foreground">{inv.voucher_number}</td>
+                        <td className="p-4 text-muted-foreground font-mono">{inv.date}</td>
+                        <td className="p-4 text-foreground/80 font-semibold">{inv.party_name}</td>
+                        <td className="p-4 font-bold text-foreground text-right font-mono">₹ {parseFloat(inv.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                         <td className="p-4 text-center">
                           {inv.isOffline || inv.status === 'PENDING_SYNC' ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
@@ -395,13 +395,13 @@ export default function SalesInvoiceList() {
 
               {/* Pagination Controls */}
               {pagination && pagination.total_count > 0 && (
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-zinc-800 bg-zinc-900/20 text-xs text-muted-foreground">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-border bg-zinc-900/20 text-xs text-muted-foreground">
                   <div className="font-mono">
-                    Showing <span className="font-semibold text-white">{pagination.offset + 1}</span> to{' '}
-                    <span className="font-semibold text-white">
+                    Showing <span className="font-semibold text-foreground">{pagination.offset + 1}</span> to{' '}
+                    <span className="font-semibold text-foreground">
                       {Math.min(pagination.offset + pagination.limit, pagination.total_count)}
                     </span>{' '}
-                    of <span className="font-semibold text-white">{pagination.total_count}</span> invoices
+                    of <span className="font-semibold text-foreground">{pagination.total_count}</span> invoices
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -409,13 +409,13 @@ export default function SalesInvoiceList() {
                       type="button"
                       onClick={() => fetchInvoices(page - 1)}
                       disabled={page <= 1 || loading}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-white hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-input bg-muted/50 text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
                     >
                       <ChevronLeft className="w-3.5 h-3.5" />
                       <span>Previous</span>
                     </button>
 
-                    <div className="px-2.5 py-1 text-xs font-mono font-semibold text-white bg-zinc-800 rounded border border-zinc-700">
+                    <div className="px-2.5 py-1 text-xs font-mono font-semibold text-foreground bg-muted rounded border border-input">
                       Page {page} of {pagination.total_pages || 1}
                     </div>
 
@@ -423,7 +423,7 @@ export default function SalesInvoiceList() {
                       type="button"
                       onClick={() => fetchInvoices(page + 1)}
                       disabled={!pagination.has_more || page >= pagination.total_pages || loading}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-white hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-input bg-muted/50 text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
                     >
                       <span>Next</span>
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -433,35 +433,35 @@ export default function SalesInvoiceList() {
               )}
 
               {/* Keyboard Shortcuts Hint Bar */}
-              <div className="p-3 border-t border-zinc-800 bg-zinc-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-muted-foreground">
+              <div className="p-3 border-t border-border bg-zinc-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-muted-foreground">
                 <div className="hidden sm:flex items-center gap-2 flex-wrap">
                   <span className="flex items-center gap-1">
-                    <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">↑</kbd>
-                    <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">↓</kbd>
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">↑</kbd>
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">↓</kbd>
                     <span className="text-[11px]">Navigate</span>
                   </span>
                   <span>•</span>
                   <span className="flex items-center gap-1">
-                    <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Ctrl</kbd>
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">Ctrl</kbd>
                     <span>+</span>
-                    <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Enter</kbd>
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">Enter</kbd>
                     <span className="text-[11px]">Edit Invoice</span>
                   </span>
                   <span>•</span>
                   <span className="flex items-center gap-1">
-                    <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Enter</kbd>
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">Enter</kbd>
                     <span className="text-[11px]">Print / View</span>
                   </span>
                   <span>•</span>
                   <span className="flex items-center gap-1">
-                    <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Alt</kbd>
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">Alt</kbd>
                     <span>+</span>
-                    <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">D</kbd>
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">D</kbd>
                     <span className="text-[11px]">Delete</span>
                   </span>
                   <span>•</span>
                   <span className="flex items-center gap-1">
-                    <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Esc</kbd>
+                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">Esc</kbd>
                     <span className="text-[11px]">Deselect</span>
                   </span>
                 </div>
@@ -499,7 +499,7 @@ export default function SalesInvoiceList() {
           description={
             <span>
               Are you sure you want to permanently delete Sales Invoice{" "}
-              <strong className="text-white">#{deleteConfirmParams?.number}</strong>?
+              <strong className="text-foreground">#{deleteConfirmParams?.number}</strong>?
               This will cancel the voucher, reverse the customer ledger entry, restore deducted inventory stock, and reverse GST liability.
             </span>
           }

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
 import Link from 'next/link';
@@ -381,13 +381,13 @@ export default function LedgersPage() {
     <DashboardLayout>
       <div className="max-w-[1600px] mx-auto p-4 sm:p-6 space-y-6">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card border border-border p-6 rounded-2xl shadow-sm">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card border border-border/40 p-6 rounded-2xl shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+            <div className="w-12 h-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
               <BookOpen className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-foreground tracking-tight">Chart of Accounts</h1>
+              <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Chart of Accounts</h1>
               <p className="text-sm text-muted-foreground">
                 Manage financial ledgers, primary group hierarchies, and double-entry safeguards
               </p>
@@ -396,14 +396,14 @@ export default function LedgersPage() {
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <button
               onClick={fetchLedgers}
-              className="p-2.5 rounded-xl border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+              className="p-2.5 rounded-xl border border-border/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-all cursor-pointer"
               title="Refresh Accounts"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
             <button
               onClick={handleOpenAddModal}
-              className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-all shadow-md shadow-blue-500/10 cursor-pointer"
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-md shadow-primary/20 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>New Account Head</span>
@@ -413,29 +413,29 @@ export default function LedgersPage() {
 
         {/* KPI Metrics */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <div className="bg-card border border-border p-4 rounded-xl shadow-2xs">
+          <div className="bg-card border border-border/40 p-4 rounded-xl shadow-sm">
             <div className="text-xs text-muted-foreground font-medium">Total Ledgers</div>
             <div className="text-2xl font-bold text-foreground mt-1">{metrics.total}</div>
           </div>
-          <div className="bg-card border border-border p-4 rounded-xl shadow-2xs">
+          <div className="bg-card border border-border/40 p-4 rounded-xl shadow-sm">
             <div className="text-xs text-blue-400 font-medium flex items-center gap-1">
               <Wallet className="w-3.5 h-3.5" /> Assets
             </div>
             <div className="text-2xl font-bold text-blue-400 mt-1">{metrics.assets}</div>
           </div>
-          <div className="bg-card border border-border p-4 rounded-xl shadow-2xs">
+          <div className="bg-card border border-border/40 p-4 rounded-xl shadow-sm">
             <div className="text-xs text-amber-400 font-medium flex items-center gap-1">
               <Building2 className="w-3.5 h-3.5" /> Liabilities
             </div>
             <div className="text-2xl font-bold text-amber-400 mt-1">{metrics.liabilities}</div>
           </div>
-          <div className="bg-card border border-border p-4 rounded-xl shadow-2xs">
+          <div className="bg-card border border-border/40 p-4 rounded-xl shadow-sm">
             <div className="text-xs text-emerald-400 font-medium flex items-center gap-1">
               <ArrowDownLeft className="w-3.5 h-3.5" /> Incomes
             </div>
             <div className="text-2xl font-bold text-emerald-400 mt-1">{metrics.income}</div>
           </div>
-          <div className="bg-card border border-border p-4 rounded-xl shadow-2xs">
+          <div className="bg-card border border-border/40 p-4 rounded-xl shadow-sm">
             <div className="text-xs text-rose-400 font-medium flex items-center gap-1">
               <ArrowUpRight className="w-3.5 h-3.5" /> Expenses
             </div>
@@ -444,8 +444,8 @@ export default function LedgersPage() {
         </div>
 
         {/* GST Tax Position (Input vs. Output Summary) */}
-        <div className="bg-card border border-border rounded-2xl p-5 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-border/60 pb-3">
+        <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-border/40 pb-3">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
                 <Receipt className="w-5 h-5" />
@@ -471,7 +471,7 @@ export default function LedgersPage() {
                 }}
                 className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer w-full sm:w-auto ${
                   activeTab === 'TAX'
-                    ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
+                    ? 'bg-purple-600 text-foreground border-purple-600 shadow-sm'
                     : 'border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300'
                 }`}
               >
@@ -480,7 +480,7 @@ export default function LedgersPage() {
               </button>
               <button
                 onClick={() => setIsGstWidgetExpanded(!isGstWidgetExpanded)}
-                className="p-1.5 rounded-lg border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                className="p-1.5 rounded-lg border border-border/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 title={isGstWidgetExpanded ? 'Collapse GST Summary' : 'Expand GST Summary'}
               >
                 {isGstWidgetExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -491,7 +491,7 @@ export default function LedgersPage() {
           {isGstWidgetExpanded && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
               {/* Total Input Tax Credit (ITC) */}
-              <div className="bg-muted/30 border border-border/80 rounded-xl p-4 flex flex-col justify-between">
+              <div className="bg-muted/30 border border-border/40 rounded-xl p-4 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wide flex items-center gap-1">
@@ -508,7 +508,7 @@ export default function LedgersPage() {
                     Total tax paid on purchases eligible for input credit
                   </p>
                 </div>
-                <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-border/50 text-center font-mono">
+                <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-border/40 text-center font-mono">
                   <div className="bg-background/50 rounded p-1.5 border border-border/40">
                     <div className="text-[10px] text-muted-foreground font-sans">Input CGST</div>
                     <div className="text-xs font-semibold text-foreground mt-0.5">
@@ -531,7 +531,7 @@ export default function LedgersPage() {
               </div>
 
               {/* Total Output Tax Liability */}
-              <div className="bg-muted/30 border border-border/80 rounded-xl p-4 flex flex-col justify-between">
+              <div className="bg-muted/30 border border-border/40 rounded-xl p-4 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold text-amber-400 uppercase tracking-wide flex items-center gap-1">
@@ -548,7 +548,7 @@ export default function LedgersPage() {
                     Total tax collected on sales invoices payable to gov
                   </p>
                 </div>
-                <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-border/50 text-center font-mono">
+                <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-border/40 text-center font-mono">
                   <div className="bg-background/50 rounded p-1.5 border border-border/40">
                     <div className="text-[10px] text-muted-foreground font-sans">Output CGST</div>
                     <div className="text-xs font-semibold text-foreground mt-0.5">
@@ -577,7 +577,7 @@ export default function LedgersPage() {
                     ? 'bg-rose-500/5 border-rose-500/20'
                     : taxSummary.netItcCarryForward > 0
                     ? 'bg-emerald-500/5 border-emerald-500/20'
-                    : 'bg-muted/30 border-border/80'
+                    : 'bg-muted/30 border-border/40'
                 }`}
               >
                 <div>
@@ -624,7 +624,7 @@ export default function LedgersPage() {
                   </p>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-border/50 flex items-center justify-between text-xs">
+                <div className="mt-4 pt-3 border-t border-border/40 flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">Filing Action:</span>
                   <span
                     className={`font-semibold ${
@@ -648,10 +648,10 @@ export default function LedgersPage() {
         </div>
 
         {/* Search & Tabs Toolbar */}
-        <div className="bg-card border border-border p-4 rounded-2xl shadow-sm space-y-3">
+        <div className="bg-card border border-border/40 p-4 rounded-2xl shadow-sm space-y-3">
           <div className="flex flex-col md:flex-row items-center justify-between gap-3">
             {/* Tabs */}
-            <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border/60 w-full md:w-auto overflow-x-auto">
+            <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border/40 w-full md:w-auto overflow-x-auto">
               {(['ALL', 'ASSET', 'LIABILITY', 'INCOME', 'EXPENSE', 'TAX'] as const).map(tab => {
                 const isTaxTab = tab === 'TAX';
                 return (
@@ -661,7 +661,7 @@ export default function LedgersPage() {
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                       activeTab === tab
                         ? isTaxTab
-                          ? 'bg-purple-600 text-white shadow-2xs font-semibold'
+                          ? 'bg-purple-600 text-foreground shadow-2xs font-semibold'
                           : 'bg-card text-foreground shadow-2xs font-semibold'
                         : 'text-muted-foreground hover:text-foreground'
                     }`}
@@ -671,7 +671,7 @@ export default function LedgersPage() {
                         <Receipt className="w-3.5 h-3.5" />
                         <span>Duties & Taxes (GST)</span>
                         <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                          activeTab === 'TAX' ? 'bg-purple-700 text-white' : 'bg-purple-500/15 text-purple-300'
+                          activeTab === 'TAX' ? 'bg-purple-700 text-foreground' : 'bg-purple-500/15 text-purple-300'
                         }`}>
                           {taxSummary.taxLedgersCount}
                         </span>
@@ -694,7 +694,7 @@ export default function LedgersPage() {
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
                 placeholder="Search ledger, group, GSTIN..."
-                className="w-full pl-9 pr-3 py-2 bg-muted/40 border border-border rounded-xl text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                className="w-full pl-9 pr-3 py-2 bg-muted/40 border border-border/40 rounded-xl text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
               />
               {searchTerm && (
                 <button
@@ -709,10 +709,10 @@ export default function LedgersPage() {
         </div>
 
         {/* Table View */}
-        <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
+        <div className="bg-card border border-border/40 rounded-2xl shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-muted/40 text-muted-foreground border-b border-border uppercase tracking-wider font-semibold">
+              <thead className="bg-muted/30 text-muted-foreground border-b border-border/40 uppercase tracking-wider font-semibold">
                 <tr>
                   <th className="py-3 px-4">Account Head (Ledger)</th>
                   <th className="py-3 px-4">Parent Group</th>
@@ -724,7 +724,7 @@ export default function LedgersPage() {
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border/60 text-foreground">
+              <tbody className="divide-y divide-border/40 text-foreground">
                 {loading ? (
                   <tr>
                     <td colSpan={8} className="text-center py-12 text-muted-foreground">
@@ -876,10 +876,10 @@ export default function LedgersPage() {
         {/* ───── ADD ACCOUNT HEAD MODAL ───── */}
         {isAddModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-            <div className="bg-card border border-border rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-border">
+            <div className="bg-card border border-border/40 rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-border/40">
                 <div className="flex items-center gap-2">
-                  <BookOpen className="w-5 h-5 text-blue-400" />
+                  <BookOpen className="w-5 h-5 text-primary" />
                   <h3 className="text-lg font-bold text-foreground">Create Account Head</h3>
                 </div>
                 <button
@@ -900,7 +900,7 @@ export default function LedgersPage() {
                       value={formData.name}
                       onChange={e => setFormData({ ...formData, name: e.target.value })}
                       placeholder="e.g. HDFC Bank Ltd, Freight Inward, Ramesh & Co"
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     />
                   </div>
 
@@ -916,7 +916,7 @@ export default function LedgersPage() {
                           nature: (sel?.nature as any) || 'ASSET',
                         });
                       }}
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     >
                       {groups.map(g => (
                         <option key={g.id} value={g.id}>
@@ -931,7 +931,7 @@ export default function LedgersPage() {
                     <select
                       value={formData.ledger_type}
                       onChange={e => setFormData({ ...formData, ledger_type: e.target.value })}
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     >
                       <option value="GENERAL">GENERAL</option>
                       <option value="BANK">BANK</option>
@@ -950,7 +950,7 @@ export default function LedgersPage() {
                       value={formData.opening_balance}
                       onChange={e => setFormData({ ...formData, opening_balance: e.target.value })}
                       placeholder="0.00"
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     />
                   </div>
 
@@ -959,7 +959,7 @@ export default function LedgersPage() {
                     <select
                       value={formData.opening_balance_type}
                       onChange={e => setFormData({ ...formData, opening_balance_type: e.target.value as any })}
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     >
                       <option value="DEBIT">Debit (Asset / Expense)</option>
                       <option value="CREDIT">Credit (Liability / Income)</option>
@@ -973,7 +973,7 @@ export default function LedgersPage() {
                       value={formData.gstin}
                       onChange={e => setFormData({ ...formData, gstin: e.target.value.toUpperCase() })}
                       placeholder="27AAAAA0000A1Z5"
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs font-mono uppercase focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs font-mono uppercase focus:ring-2 focus:ring-primary/40 outline-none"
                     />
                   </div>
 
@@ -985,7 +985,7 @@ export default function LedgersPage() {
                       value={formData.discount_percent}
                       onChange={e => setFormData({ ...formData, discount_percent: e.target.value })}
                       placeholder="0.00"
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     />
                   </div>
 
@@ -996,7 +996,7 @@ export default function LedgersPage() {
                       value={formData.phone}
                       onChange={e => setFormData({ ...formData, phone: e.target.value })}
                       placeholder="e.g. 9876543210"
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     />
                   </div>
 
@@ -1007,7 +1007,7 @@ export default function LedgersPage() {
                       value={formData.email}
                       onChange={e => setFormData({ ...formData, email: e.target.value })}
                       placeholder="account@company.com"
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     />
                   </div>
 
@@ -1018,12 +1018,12 @@ export default function LedgersPage() {
                       value={formData.address}
                       onChange={e => setFormData({ ...formData, address: e.target.value })}
                       placeholder="Street, City, State, PIN"
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     />
                   </div>
                 </div>
 
-                <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
+                <div className="flex items-center justify-end gap-2 pt-3 border-t border-border/40">
                   <button
                     type="button"
                     onClick={() => setIsAddModalOpen(false)}
@@ -1034,7 +1034,7 @@ export default function LedgersPage() {
                   <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-all cursor-pointer"
+                    className="px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-medium transition-all shadow-md shadow-primary/20 cursor-pointer"
                   >
                     {isSubmitting ? 'Creating...' : 'Create Account'}
                   </button>
@@ -1047,10 +1047,10 @@ export default function LedgersPage() {
         {/* ───── EDIT ACCOUNT HEAD MODAL ───── */}
         {editingLedger && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-            <div className="bg-card border border-border rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-border">
+            <div className="bg-card border border-border/40 rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-border/40">
                 <div className="flex items-center gap-2">
-                  <Edit2 className="w-5 h-5 text-blue-400" />
+                  <Edit2 className="w-5 h-5 text-primary" />
                   <h3 className="text-lg font-bold text-foreground">Edit Account Head</h3>
                 </div>
                 <button
@@ -1070,7 +1070,7 @@ export default function LedgersPage() {
                       type="text"
                       value={formData.name}
                       onChange={e => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     />
                   </div>
 
@@ -1079,7 +1079,7 @@ export default function LedgersPage() {
                     <select
                       value={formData.group_id}
                       onChange={e => setFormData({ ...formData, group_id: e.target.value })}
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     >
                       {groups.map(g => (
                         <option key={g.id} value={g.id}>
@@ -1094,7 +1094,7 @@ export default function LedgersPage() {
                     <select
                       value={formData.ledger_type}
                       onChange={e => setFormData({ ...formData, ledger_type: e.target.value })}
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     >
                       <option value="GENERAL">GENERAL</option>
                       <option value="BANK">BANK</option>
@@ -1112,7 +1112,7 @@ export default function LedgersPage() {
                       step="0.01"
                       value={formData.opening_balance}
                       onChange={e => setFormData({ ...formData, opening_balance: e.target.value })}
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     />
                   </div>
 
@@ -1123,7 +1123,7 @@ export default function LedgersPage() {
                       step="0.01"
                       value={formData.discount_percent}
                       onChange={e => setFormData({ ...formData, discount_percent: e.target.value })}
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     />
                   </div>
 
@@ -1133,7 +1133,7 @@ export default function LedgersPage() {
                       type="text"
                       value={formData.gstin}
                       onChange={e => setFormData({ ...formData, gstin: e.target.value.toUpperCase() })}
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs font-mono uppercase focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs font-mono uppercase focus:ring-2 focus:ring-primary/40 outline-none"
                     />
                   </div>
 
@@ -1143,7 +1143,7 @@ export default function LedgersPage() {
                       type="text"
                       value={formData.phone}
                       onChange={e => setFormData({ ...formData, phone: e.target.value })}
-                      className="w-full bg-muted/30 border border-border text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full bg-muted/30 border border-border/60 text-foreground p-2.5 rounded-lg text-xs focus:ring-2 focus:ring-primary/40 outline-none"
                     />
                   </div>
 
@@ -1153,7 +1153,7 @@ export default function LedgersPage() {
                       id="is_active_chk"
                       checked={formData.is_active}
                       onChange={e => setFormData({ ...formData, is_active: e.target.checked })}
-                      className="rounded border-border text-blue-600 focus:ring-blue-500"
+                      className="rounded border-border text-primary focus:ring-primary"
                     />
                     <label htmlFor="is_active_chk" className="text-foreground font-medium cursor-pointer">
                       Active (uncheck to archive this ledger from invoice pickers)
@@ -1161,7 +1161,7 @@ export default function LedgersPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
+                <div className="flex items-center justify-end gap-2 pt-3 border-t border-border/40">
                   <button
                     type="button"
                     onClick={() => setEditingLedger(null)}
@@ -1172,7 +1172,7 @@ export default function LedgersPage() {
                   <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-all cursor-pointer"
+                    className="px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-medium transition-all shadow-md shadow-primary/20 cursor-pointer"
                   >
                     {isSubmitting ? 'Saving...' : 'Save Changes'}
                   </button>
@@ -1185,7 +1185,7 @@ export default function LedgersPage() {
         {/* ───── DELETE SAFETY CONFIRMATION MODAL ───── */}
         {deletingLedger && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-            <div className="bg-card border border-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="bg-card border border-border/40 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
               <div className="flex items-center gap-3 text-rose-400">
                 <ShieldAlert className="w-6 h-6 shrink-0" />
                 <h3 className="text-lg font-bold text-foreground">Delete Account Head?</h3>
@@ -1201,12 +1201,12 @@ export default function LedgersPage() {
                     <Lock className="w-3.5 h-3.5" /> Double-Entry Integrity Protection
                   </div>
                   <div>{deleteError}</div>
-                  <div className="text-[11px] text-zinc-400 mt-1">
+                  <div className="text-[11px] text-muted-foreground mt-1">
                     Tip: Instead of deleting, edit this ledger and uncheck "Active" to safely archive it.
                   </div>
                 </div>
               ) : (
-                <div className="text-[11px] text-zinc-500 bg-muted/40 p-3 rounded-lg border border-border/60">
+                <div className="text-[11px] text-muted-foreground bg-muted/40 p-3 rounded-lg border border-border/40">
                   ⚠️ Double-entry constraint: Ledgers with posted transactions cannot be deleted to preserve financial history and audit trails.
                 </div>
               )}
@@ -1224,7 +1224,7 @@ export default function LedgersPage() {
                     type="button"
                     onClick={handleDeleteLedger}
                     disabled={isSubmitting}
-                    className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium transition-all cursor-pointer"
+                    className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-foreground text-xs font-medium transition-all shadow-md shadow-rose-600/20 cursor-pointer"
                   >
                     {isSubmitting ? 'Verifying & Deleting...' : 'Confirm Delete'}
                   </button>

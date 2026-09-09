@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
@@ -125,27 +125,27 @@ export default function QuickCreateModal() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-in fade-in duration-150 p-4">
-      <div className="w-full max-w-lg bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden text-white space-y-5 p-6">
+      <div className="w-full max-w-lg bg-muted/50 border border-input rounded-2xl shadow-2xl overflow-hidden text-foreground space-y-5 p-6">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+        <div className="flex items-center justify-between border-b border-border pb-3">
           <div className="flex items-center gap-2.5">
             <span className="px-2 py-0.5 bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded text-xs font-mono font-bold">
               Alt + C
             </span>
-            <h3 className="text-lg font-bold text-white">Create Master on the Fly</h3>
+            <h3 className="text-lg font-bold text-foreground">Create Master on the Fly</h3>
           </div>
-          <button onClick={() => setIsAltCOpen(false)} className="text-gray-400 hover:text-white font-bold text-sm">
+          <button onClick={() => setIsAltCOpen(false)} className="text-muted-foreground hover:text-foreground font-bold text-sm">
             ✕
           </button>
         </div>
 
         {/* Tab Switcher */}
-        <div className="flex bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+        <div className="flex bg-zinc-950 p-1 rounded-xl border border-border">
           <button
             onClick={() => setActiveTab("LEDGER")}
             type="button"
             className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              activeTab === "LEDGER" ? "bg-blue-600 text-white shadow" : "text-gray-400 hover:text-white"
+              activeTab === "LEDGER" ? "bg-blue-600 text-foreground shadow" : "text-muted-foreground hover:text-foreground"
             }`}
           >
             Party / Ledger Master
@@ -154,7 +154,7 @@ export default function QuickCreateModal() {
             onClick={() => setActiveTab("PRODUCT")}
             type="button"
             className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              activeTab === "PRODUCT" ? "bg-blue-600 text-white shadow" : "text-gray-400 hover:text-white"
+              activeTab === "PRODUCT" ? "bg-blue-600 text-foreground shadow" : "text-muted-foreground hover:text-foreground"
             }`}
           >
             Product / Item Master
@@ -171,7 +171,7 @@ export default function QuickCreateModal() {
         {activeTab === "LEDGER" && (
           <form onSubmit={handleSaveLedger} className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Ledger / Party Name</label>
+              <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">Ledger / Party Name</label>
               <input
                 ref={firstInputRef}
                 type="text"
@@ -179,13 +179,13 @@ export default function QuickCreateModal() {
                 onChange={(e) => setLedgerName(e.target.value)}
                 placeholder="e.g. Shyam Traders"
                 required
-                className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-lg text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-zinc-950 border border-input text-foreground p-2.5 rounded-lg text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Account Group</label>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">Account Group</label>
                 <select
                   value={ledgerGroup}
                   onChange={(e) => {
@@ -195,7 +195,7 @@ export default function QuickCreateModal() {
                     else if (e.target.value === "Direct Expenses" || e.target.value === "Indirect Expenses") setLedgerType("EXPENSE");
                     else setLedgerType("GENERAL");
                   }}
-                  className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                  className="w-full bg-zinc-950 border border-input text-foreground p-2.5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                 >
                   <option value="Sundry Debtors">Sundry Debtors (Customer)</option>
                   <option value="Sundry Creditors">Sundry Creditors (Supplier)</option>
@@ -210,13 +210,13 @@ export default function QuickCreateModal() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">GSTIN (Optional)</label>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">GSTIN (Optional)</label>
                 <input
                   type="text"
                   value={gstin}
                   onChange={(e) => setGstin(e.target.value.toUpperCase())}
                   placeholder="2-Digit State + PAN..."
-                  className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-lg text-sm font-mono uppercase outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-zinc-950 border border-input text-foreground p-2.5 rounded-lg text-sm font-mono uppercase outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             </div>
@@ -229,14 +229,14 @@ export default function QuickCreateModal() {
               <button
                 type="button"
                 onClick={() => setIsAltCOpen(false)}
-                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-gray-300 rounded-lg text-xs font-medium transition-colors"
+                className="px-4 py-2 bg-muted hover:bg-zinc-700 text-foreground/80 rounded-lg text-xs font-medium transition-colors"
               >
                 Cancel (Esc)
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-md transition-colors"
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-foreground rounded-lg text-xs font-bold shadow-md transition-colors"
               >
                 {saving ? "Creating..." : "Save & Auto-Select (Ctrl+A)"}
               </button>
@@ -248,7 +248,7 @@ export default function QuickCreateModal() {
         {activeTab === "PRODUCT" && (
           <form onSubmit={handleSaveProduct} className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Product / Item Name</label>
+              <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">Product / Item Name</label>
               <input
                 ref={firstInputRef}
                 type="text"
@@ -256,28 +256,28 @@ export default function QuickCreateModal() {
                 onChange={(e) => setProductName(e.target.value)}
                 placeholder="e.g. Precision Industrial Bearing"
                 required
-                className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-lg text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-zinc-950 border border-input text-foreground p-2.5 rounded-lg text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">HSN / SAC Code</label>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">HSN / SAC Code</label>
                 <input
                   type="text"
                   value={hsnCode}
                   onChange={(e) => setHsnCode(e.target.value)}
                   placeholder="e.g. 84821010"
-                  className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-lg text-sm font-mono outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-zinc-950 border border-input text-foreground p-2.5 rounded-lg text-sm font-mono outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">GST Rate (%)</label>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">GST Rate (%)</label>
                 <select
                   value={gstRate}
                   onChange={(e) => setGstRate(Number(e.target.value))}
-                  className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                  className="w-full bg-zinc-950 border border-input text-foreground p-2.5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                 >
                   <option value={0}>0%</option>
                   <option value={5}>5%</option>
@@ -290,24 +290,24 @@ export default function QuickCreateModal() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Unit of Measurement</label>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">Unit of Measurement</label>
                 <input
                   type="text"
                   value={unit}
                   onChange={(e) => setUnit(e.target.value.toUpperCase())}
                   placeholder="PCS, KG, NOS"
-                  className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-lg text-sm font-mono outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-zinc-950 border border-input text-foreground p-2.5 rounded-lg text-sm font-mono outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Standard Rate (₹)</label>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">Standard Rate (₹)</label>
                 <input
                   type="number"
                   value={price}
                   onChange={(e) => setPrice(Number(e.target.value))}
                   placeholder="0.00"
-                  className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-lg text-sm font-mono outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-zinc-950 border border-input text-foreground p-2.5 rounded-lg text-sm font-mono outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             </div>
@@ -316,14 +316,14 @@ export default function QuickCreateModal() {
               <button
                 type="button"
                 onClick={() => setIsAltCOpen(false)}
-                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-gray-300 rounded-lg text-xs font-medium transition-colors"
+                className="px-4 py-2 bg-muted hover:bg-zinc-700 text-foreground/80 rounded-lg text-xs font-medium transition-colors"
               >
                 Cancel (Esc)
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-md transition-colors"
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-foreground rounded-lg text-xs font-bold shadow-md transition-colors"
               >
                 {saving ? "Creating..." : "Save & Auto-Select (Ctrl+A)"}
               </button>

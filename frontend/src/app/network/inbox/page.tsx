@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useEffect } from "react";
 import axios from "axios";
@@ -190,7 +190,7 @@ export default function B2BInboxPage() {
                 AUTO-HANDSHAKE
               </span>
             </div>
-            <p className="text-xs text-gray-400 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               Cross-tenant verified invoice stream. When registered suppliers issue a sales invoice to your GSTIN, bills arrive here for 1-click cryptographic receipt.
             </p>
           </div>
@@ -199,7 +199,7 @@ export default function B2BInboxPage() {
             <button
               onClick={fetchInbox}
               disabled={loading}
-              className="px-3.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-gray-200 text-xs font-semibold rounded-lg border border-zinc-700 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              className="px-3.5 py-2 bg-muted hover:bg-zinc-700 text-foreground text-xs font-semibold rounded-lg border border-input transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
               <span>Refresh Inbox</span>
@@ -220,11 +220,11 @@ export default function B2BInboxPage() {
             onClick={() => setStatusFilter("ALL")}
             className={`p-3 rounded-xl border text-left transition-all ${
               statusFilter === "ALL"
-                ? "bg-blue-600/10 border-blue-500/50 text-white"
-                : "bg-card border-border hover:bg-zinc-900/60 text-gray-300"
+                ? "bg-blue-600/10 border-blue-500/50 text-foreground"
+                : "bg-card border-border hover:bg-zinc-900/60 text-foreground/80"
             }`}
           >
-            <div className="text-[10px] uppercase font-bold text-gray-400">All Inward Bills</div>
+            <div className="text-[10px] uppercase font-bold text-muted-foreground">All Inward Bills</div>
             <div className="text-xl font-extrabold mt-0.5">{counts.all}</div>
           </button>
 
@@ -233,7 +233,7 @@ export default function B2BInboxPage() {
             className={`p-3 rounded-xl border text-left transition-all ${
               statusFilter === "PENDING"
                 ? "bg-amber-500/10 border-amber-500/50 text-amber-300"
-                : "bg-card border-border hover:bg-zinc-900/60 text-gray-300"
+                : "bg-card border-border hover:bg-zinc-900/60 text-foreground/80"
             }`}
           >
             <div className="flex items-center justify-between text-[10px] uppercase font-bold text-amber-400">
@@ -248,7 +248,7 @@ export default function B2BInboxPage() {
             className={`p-3 rounded-xl border text-left transition-all ${
               statusFilter === "ACCEPTED"
                 ? "bg-green-500/10 border-green-500/50 text-green-300"
-                : "bg-card border-border hover:bg-zinc-900/60 text-gray-300"
+                : "bg-card border-border hover:bg-zinc-900/60 text-foreground/80"
             }`}
           >
             <div className="flex items-center justify-between text-[10px] uppercase font-bold text-green-400">
@@ -263,7 +263,7 @@ export default function B2BInboxPage() {
             className={`p-3 rounded-xl border text-left transition-all ${
               statusFilter === "REJECTED"
                 ? "bg-red-500/10 border-red-500/50 text-red-300"
-                : "bg-card border-border hover:bg-zinc-900/60 text-gray-300"
+                : "bg-card border-border hover:bg-zinc-900/60 text-foreground/80"
             }`}
           >
             <div className="flex items-center justify-between text-[10px] uppercase font-bold text-red-400">
@@ -276,20 +276,20 @@ export default function B2BInboxPage() {
 
         {/* Search Input */}
         <div className="relative">
-          <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <Search className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             placeholder="Search by supplier name, GSTIN, or invoice number..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-card border border-border rounded-xl pl-10 pr-4 py-2.5 text-xs text-foreground placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full bg-card border border-border rounded-xl pl-10 pr-4 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
         {/* Inward Invoices Table */}
         <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm">
           {loading ? (
-            <div className="p-12 text-center text-gray-400 text-xs flex flex-col items-center justify-center gap-2">
+            <div className="p-12 text-center text-muted-foreground text-xs flex flex-col items-center justify-center gap-2">
               <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
               <span>Scanning network ledger handshake...</span>
             </div>
@@ -299,10 +299,10 @@ export default function B2BInboxPage() {
               <span>{error}</span>
             </div>
           ) : filteredRequests.length === 0 ? (
-            <div className="p-12 text-center text-gray-500 space-y-2">
+            <div className="p-12 text-center text-muted-foreground space-y-2">
               <Network className="w-8 h-8 mx-auto text-zinc-600 stroke-[1.5]" />
-              <div className="text-sm font-semibold text-gray-300">No B2B Inward Invoices Found</div>
-              <p className="text-xs text-gray-500 max-w-md mx-auto">
+              <div className="text-sm font-semibold text-foreground/80">No B2B Inward Invoices Found</div>
+              <p className="text-xs text-muted-foreground max-w-md mx-auto">
                 When registered suppliers on Vouch generate a Sales Invoice for your company GSTIN, the invoice automatically appears here for 1-click inspection and digital signing.
               </p>
             </div>
@@ -312,7 +312,7 @@ export default function B2BInboxPage() {
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-border bg-zinc-950/40 text-gray-400 uppercase text-[10px] font-bold tracking-wider">
+                    <tr className="border-b border-border bg-zinc-950/40 text-muted-foreground uppercase text-[10px] font-bold tracking-wider">
                       <th className="py-3 px-4">Status</th>
                       <th className="py-3 px-4">Supplier Firm</th>
                       <th className="py-3 px-4 font-mono">Supplier GSTIN</th>
@@ -351,26 +351,26 @@ export default function B2BInboxPage() {
                           </td>
                           <td className="py-3.5 px-4 font-semibold text-foreground whitespace-nowrap">
                             <div>{req.source_company.name}</div>
-                            <div className="text-[10px] text-gray-500">{req.source_company.city || "India"}</div>
+                            <div className="text-[10px] text-muted-foreground">{req.source_company.city || "India"}</div>
                           </td>
                           <td className="py-3.5 px-4 font-mono text-blue-400 whitespace-nowrap">
                             {req.source_company.gstin}
                           </td>
-                          <td className="py-3.5 px-4 font-mono font-bold text-gray-200 whitespace-nowrap">
+                          <td className="py-3.5 px-4 font-mono font-bold text-foreground whitespace-nowrap">
                             {req.payload.voucher_number}
                           </td>
                           <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                            <span className="px-2 py-0.5 bg-zinc-800 rounded font-mono text-gray-300 text-[11px]">
+                            <span className="px-2 py-0.5 bg-muted rounded font-mono text-foreground/80 text-[11px]">
                               {req.payload.items?.length || 0}
                             </span>
                           </td>
-                          <td className="py-3.5 px-4 text-right font-mono text-gray-300 whitespace-nowrap">
+                          <td className="py-3.5 px-4 text-right font-mono text-foreground/80 whitespace-nowrap">
                             ₹{taxable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                           </td>
                           <td className="py-3.5 px-4 text-right font-mono font-bold text-green-400 whitespace-nowrap">
                             ₹{(req.payload.total_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                           </td>
-                          <td className="py-3.5 px-4 text-gray-400 whitespace-nowrap">
+                          <td className="py-3.5 px-4 text-muted-foreground whitespace-nowrap">
                             {req.payload.voucher_date}
                           </td>
                           <td className="py-3.5 px-4 text-center whitespace-nowrap">
@@ -379,7 +379,7 @@ export default function B2BInboxPage() {
                                 setSelectedReq(req);
                                 setIsSignModalOpen(true);
                               }}
-                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-xs transition-colors shadow-sm inline-flex items-center gap-1 cursor-pointer"
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-foreground rounded-lg font-bold text-xs transition-colors shadow-sm inline-flex items-center gap-1 cursor-pointer"
                             >
                               <span>Inspect & Sign</span>
                               <ChevronRight className="w-3.5 h-3.5" />
@@ -419,21 +419,21 @@ export default function B2BInboxPage() {
                             </span>
                           )}
                         </div>
-                        <span className="text-[11px] text-gray-400 font-medium">{req.payload.voucher_date}</span>
+                        <span className="text-[11px] text-muted-foreground font-medium">{req.payload.voucher_date}</span>
                       </div>
 
                       <div className="space-y-1">
                         <div className="font-bold text-sm text-foreground">{req.source_company.name}</div>
                         <div className="flex items-center gap-2 text-xs font-mono">
-                          <span className="text-gray-300 font-semibold">#{req.payload.voucher_number}</span>
-                          <span className="text-gray-500">•</span>
+                          <span className="text-foreground/80 font-semibold">#{req.payload.voucher_number}</span>
+                          <span className="text-muted-foreground">•</span>
                           <span className="text-blue-400">{req.source_company.gstin}</span>
                         </div>
                       </div>
 
                       <div className="flex items-center justify-between pt-2 border-t border-border/40">
                         <div>
-                          <div className="text-[10px] uppercase text-gray-500 font-bold">{req.payload.items?.length || 0} Items</div>
+                          <div className="text-[10px] uppercase text-muted-foreground font-bold">{req.payload.items?.length || 0} Items</div>
                           <div className="text-base font-extrabold font-mono text-green-400">
                             ₹{(req.payload.total_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                           </div>
@@ -443,7 +443,7 @@ export default function B2BInboxPage() {
                             setSelectedReq(req);
                             setIsSignModalOpen(true);
                           }}
-                          className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-xs transition-colors shadow-sm inline-flex items-center gap-1.5 cursor-pointer"
+                          className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-foreground rounded-lg font-bold text-xs transition-colors shadow-sm inline-flex items-center gap-1.5 cursor-pointer"
                         >
                           <span>Inspect & Sign</span>
                           <ChevronRight className="w-3.5 h-3.5" />
@@ -469,8 +469,8 @@ export default function B2BInboxPage() {
                     <ShieldCheck className="w-4 h-4" />
                   </div>
                   <div>
-                    <h2 className="text-sm font-bold text-white">Inspect B2B Inward Invoice</h2>
-                    <div className="text-[11px] text-gray-400 font-mono">
+                    <h2 className="text-sm font-bold text-foreground">Inspect B2B Inward Invoice</h2>
+                    <div className="text-[11px] text-muted-foreground font-mono">
                       Invoice #{selectedReq.payload.voucher_number} • Dated {selectedReq.payload.voucher_date}
                     </div>
                   </div>
@@ -480,7 +480,7 @@ export default function B2BInboxPage() {
                     setIsSignModalOpen(false);
                     setSelectedReq(null);
                   }}
-                  className="p-1 text-gray-400 hover:text-white rounded-lg hover:bg-zinc-800"
+                  className="p-1 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted"
                 >
                   ✕
                 </button>
@@ -490,23 +490,23 @@ export default function B2BInboxPage() {
               <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
                 
                 {/* Header Information Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 bg-zinc-950/60 rounded-xl border border-zinc-800">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 bg-zinc-950/60 rounded-xl border border-border">
                   <div>
-                    <span className="text-[10px] text-gray-400 uppercase font-bold">Seller Firm</span>
-                    <div className="font-bold text-white text-sm truncate">{selectedReq.source_company.name}</div>
-                    <div className="text-gray-400 text-[11px] font-mono">{selectedReq.source_company.gstin}</div>
+                    <span className="text-[10px] text-muted-foreground uppercase font-bold">Seller Firm</span>
+                    <div className="font-bold text-foreground text-sm truncate">{selectedReq.source_company.name}</div>
+                    <div className="text-muted-foreground text-[11px] font-mono">{selectedReq.source_company.gstin}</div>
                   </div>
                   <div>
-                    <span className="text-[10px] text-gray-400 uppercase font-bold">Seller Location</span>
-                    <div className="text-gray-200">{selectedReq.source_company.address || "Main Street"}</div>
-                    <div className="text-gray-400">State Code: {selectedReq.source_company.state_code}</div>
+                    <span className="text-[10px] text-muted-foreground uppercase font-bold">Seller Location</span>
+                    <div className="text-foreground">{selectedReq.source_company.address || "Main Street"}</div>
+                    <div className="text-muted-foreground">State Code: {selectedReq.source_company.state_code}</div>
                   </div>
                   <div>
-                    <span className="text-[10px] text-gray-400 uppercase font-bold">Total Inward Value</span>
+                    <span className="text-[10px] text-muted-foreground uppercase font-bold">Total Inward Value</span>
                     <div className="text-green-400 font-mono text-base font-extrabold">
                       ₹{(selectedReq.payload.total_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                     </div>
-                    <div className="text-[10px] text-gray-400 font-mono">
+                    <div className="text-[10px] text-muted-foreground font-mono">
                       {selectedReq.payload.items?.length} Line Items
                     </div>
                   </div>
@@ -514,7 +514,7 @@ export default function B2BInboxPage() {
 
                 {/* Line Items Breakdown */}
                 <div className="space-y-2">
-                  <h3 className="font-bold text-gray-300 text-xs flex items-center gap-1.5">
+                  <h3 className="font-bold text-foreground/80 text-xs flex items-center gap-1.5">
                     <PackageCheck className="w-4 h-4 text-blue-400" />
                     <span>Inward Line Items & Tax Breakdown</span>
                   </h3>
@@ -522,7 +522,7 @@ export default function B2BInboxPage() {
                   <div className="border border-border rounded-xl overflow-x-auto">
                     <table className="w-full text-left text-xs min-w-[550px]">
                       <thead>
-                        <tr className="bg-zinc-950/80 text-gray-400 uppercase text-[10px] font-bold border-b border-border">
+                        <tr className="bg-zinc-950/80 text-muted-foreground uppercase text-[10px] font-bold border-b border-border">
                           <th className="py-2.5 px-3">Item Name</th>
                           <th className="py-2.5 px-3 font-mono">HSN</th>
                           <th className="py-2.5 px-3 text-right">Qty</th>
@@ -535,21 +535,21 @@ export default function B2BInboxPage() {
                       <tbody className="divide-y divide-border/60">
                         {selectedReq.payload.items?.map((item, idx) => (
                           <tr key={idx} className="hover:bg-zinc-900/30">
-                            <td className="py-2.5 px-3 font-medium text-white">
+                            <td className="py-2.5 px-3 font-medium text-foreground">
                               <div>{item.product_name}</div>
-                              <div className="text-[10px] font-mono text-gray-500">SKU: {item.sku}</div>
+                              <div className="text-[10px] font-mono text-muted-foreground">SKU: {item.sku}</div>
                             </td>
-                            <td className="py-2.5 px-3 font-mono text-gray-400">{item.hsn_code || "—"}</td>
-                            <td className="py-2.5 px-3 text-right font-mono text-gray-200">
+                            <td className="py-2.5 px-3 font-mono text-muted-foreground">{item.hsn_code || "—"}</td>
+                            <td className="py-2.5 px-3 text-right font-mono text-foreground">
                               {item.quantity} {item.unit}
                             </td>
-                            <td className="py-2.5 px-3 text-right font-mono text-gray-300">
+                            <td className="py-2.5 px-3 text-right font-mono text-foreground/80">
                               ₹{item.rate.toFixed(2)}
                             </td>
-                            <td className="py-2.5 px-3 text-right font-mono text-gray-300">
+                            <td className="py-2.5 px-3 text-right font-mono text-foreground/80">
                               {item.gst_rate}%
                             </td>
-                            <td className="py-2.5 px-3 text-right font-mono text-gray-300">
+                            <td className="py-2.5 px-3 text-right font-mono text-foreground/80">
                               ₹{item.taxable_amount.toFixed(2)}
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono font-bold text-green-400">
@@ -578,12 +578,12 @@ export default function B2BInboxPage() {
                       <div className="text-[11px] font-mono text-green-400 break-all bg-zinc-950 p-2 rounded border border-green-500/30">
                         {selectedReq.digital_signature_hash}
                       </div>
-                      <div className="text-[10px] text-gray-400">
+                      <div className="text-[10px] text-muted-foreground">
                         Signed at: {selectedReq.signed_at} • Linked Purchase Voucher: #{selectedReq.created_purchase_voucher?.voucher_number}
                       </div>
                     </div>
                   ) : (
-                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
                       Accepting this voucher computes a permanent SHA-256 cryptographic seal over the supplier payload, creates an official <strong>PURCHASE Voucher</strong> in your books, debits Input GST credit, and increments your inventory stock automatically.
                     </p>
                   )}
@@ -600,7 +600,7 @@ export default function B2BInboxPage() {
               <div className="px-4 sm:px-6 py-4 border-t border-border bg-zinc-950 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3">
                 <button
                   onClick={() => setIsSignModalOpen(false)}
-                  className="w-full sm:w-auto px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-gray-300 rounded-lg text-xs font-semibold transition-colors text-center"
+                  className="w-full sm:w-auto px-4 py-2.5 bg-muted hover:bg-zinc-700 text-foreground/80 rounded-lg text-xs font-semibold transition-colors text-center"
                 >
                   Close
                 </button>
@@ -617,7 +617,7 @@ export default function B2BInboxPage() {
                     <button
                       onClick={handleAccept}
                       disabled={actionLoading}
-                      className="w-full sm:w-auto px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold transition-colors shadow-lg flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      className="w-full sm:w-auto px-5 py-2.5 bg-green-600 hover:bg-green-700 text-foreground rounded-lg text-xs font-bold transition-colors shadow-lg flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                     >
                       {actionLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                       <span>Accept & Digitally Sign Receipt</span>
@@ -633,11 +633,11 @@ export default function B2BInboxPage() {
         {isRejectModalOpen && selectedReq && (
           <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/85 animate-in fade-in duration-200">
             <div className="bg-card border border-border w-full max-w-md rounded-2xl p-6 space-y-4 shadow-2xl">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
                 <XCircle className="w-5 h-5 text-red-500" />
                 <span>Reject Inward EDI Invoice</span>
               </h3>
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-muted-foreground">
                 Please specify a reason for rejecting invoice #{selectedReq.payload.voucher_number} from {selectedReq.source_company.name}.
               </p>
               <textarea
@@ -645,19 +645,19 @@ export default function B2BInboxPage() {
                 onChange={(e) => setRejectionReason(e.target.value)}
                 placeholder="e.g. Rate discrepancy, wrong quantity, or unexpected bill..."
                 rows={3}
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500"
+                className="w-full bg-muted/50 border border-input rounded-xl p-3 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-red-500"
               />
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   onClick={() => setIsRejectModalOpen(false)}
-                  className="px-3.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-gray-300 rounded-lg text-xs font-semibold"
+                  className="px-3.5 py-2 bg-muted hover:bg-zinc-700 text-foreground/80 rounded-lg text-xs font-semibold"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleReject}
                   disabled={actionLoading}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold shadow-lg"
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-foreground rounded-lg text-xs font-bold shadow-lg"
                 >
                   Confirm Rejection
                 </button>

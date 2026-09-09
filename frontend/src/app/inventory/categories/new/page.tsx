@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
@@ -79,12 +79,12 @@ export default function NewCategoryPage() {
         
         {/* Header */}
         <div className="flex items-center gap-4 border-b border-border pb-4">
-          <Link href="/inventory" className="text-gray-400 hover:text-white transition-colors">
+          <Link href="/inventory" className="text-muted-foreground hover:text-foreground transition-colors">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
           </Link>
           <div>
             <h1 className="text-3xl font-bold">New Category</h1>
-            <p className="text-gray-400 mt-1 text-sm">Create a product category like V-Belt, Bearings, Phones, etc.</p>
+            <p className="text-muted-foreground mt-1 text-sm">Create a product category like V-Belt, Bearings, Phones, etc.</p>
           </div>
         </div>
 
@@ -92,36 +92,36 @@ export default function NewCategoryPage() {
           
           {/* Category Name */}
           <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1.5">Category Name *</label>
+            <label className="block text-sm font-medium text-muted-foreground mb-1.5">Category Name *</label>
             <input
               required
               type="text"
               placeholder="e.g. V-Belt, Bearings, Mobile Phones"
               value={formData.name}
               onChange={e => setFormData({ ...formData, name: e.target.value })}
-              className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all text-lg"
+              className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all text-lg"
             />
           </div>
 
           {/* Row 2: HSN and unified GST Rate (with explicit breakdown) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">HSN Code</label>
+              <label className="block text-sm font-medium text-muted-foreground mb-1.5">HSN Code</label>
               <input
                 type="text"
                 placeholder="e.g. 8471"
                 value={formData.hsn_code}
                 onChange={e => setFormData({ ...formData, hsn_code: e.target.value })}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
               />
-              <p className="text-xs text-gray-500 mt-1">Harmonized System of Nomenclature code</p>
+              <p className="text-xs text-muted-foreground mt-1">Harmonized System of Nomenclature code</p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">Total GST Rate (%)</label>
+              <label className="block text-sm font-medium text-muted-foreground mb-1.5">Total GST Rate (%)</label>
               <select
                 value={formData.gst_rate}
                 onChange={e => setFormData({ ...formData, gst_rate: Number(e.target.value) })}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
               >
                 <option value={0}>0% (Exempt)</option>
                 <option value={5}>5%</option>
@@ -131,16 +131,16 @@ export default function NewCategoryPage() {
               </select>
               
               {/* GST Visual Breakdown */}
-              <div className="mt-3 bg-zinc-900/50 border border-zinc-800 rounded-lg p-3">
-                <p className="text-xs text-gray-500 mb-2">System automatically applies tax based on customer state:</p>
-                <div className="grid grid-cols-2 gap-2 text-sm text-gray-300">
-                    <div className="bg-zinc-800/80 px-2 py-1.5 rounded flex justify-between border border-zinc-700/50">
-                        <span className="text-gray-400">CGST (Local)</span>
-                        <span className="font-medium text-white">{(formData.gst_rate / 2).toFixed(1)}%</span>
+              <div className="mt-3 bg-zinc-900/50 border border-border rounded-lg p-3">
+                <p className="text-xs text-muted-foreground mb-2">System automatically applies tax based on customer state:</p>
+                <div className="grid grid-cols-2 gap-2 text-sm text-foreground/80">
+                    <div className="bg-zinc-800/80 px-2 py-1.5 rounded flex justify-between border border-input/50">
+                        <span className="text-muted-foreground">CGST (Local)</span>
+                        <span className="font-medium text-foreground">{(formData.gst_rate / 2).toFixed(1)}%</span>
                     </div>
-                    <div className="bg-zinc-800/80 px-2 py-1.5 rounded flex justify-between border border-zinc-700/50">
-                        <span className="text-gray-400">SGST (Local)</span>
-                        <span className="font-medium text-white">{(formData.gst_rate / 2).toFixed(1)}%</span>
+                    <div className="bg-zinc-800/80 px-2 py-1.5 rounded flex justify-between border border-input/50">
+                        <span className="text-muted-foreground">SGST (Local)</span>
+                        <span className="font-medium text-foreground">{(formData.gst_rate / 2).toFixed(1)}%</span>
                     </div>
                     <div className="col-span-2 bg-blue-900/10 px-2 py-1.5 rounded flex justify-between border border-blue-800/30">
                         <span className="text-blue-400">IGST (Inter-state)</span>
@@ -151,11 +151,11 @@ export default function NewCategoryPage() {
             </div>
           </div>
 
-          <div className="border-t border-zinc-800 pt-6">
+          <div className="border-t border-border pt-6">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="text-lg font-medium text-white">Ledger Mapping (Auto-Accounting)</h3>
-                <p className="text-xs text-gray-500 mt-1">Advanced users can map specific income/expense accounts.</p>
+                <h3 className="text-lg font-medium text-foreground">Ledger Mapping (Auto-Accounting)</h3>
+                <p className="text-xs text-muted-foreground mt-1">Advanced users can map specific income/expense accounts.</p>
               </div>
               <button 
                 type="button" 
@@ -167,34 +167,34 @@ export default function NewCategoryPage() {
             </div>
             
             {enableLedgerMapping && (
-              <div className="grid grid-cols-2 gap-6 mt-6 bg-zinc-900/30 p-4 rounded-xl border border-zinc-800/50">
+              <div className="grid grid-cols-2 gap-6 mt-6 bg-zinc-900/30 p-4 rounded-xl border border-border/50">
                 <div>
-                  <label className="block text-sm font-medium text-gray-400 mb-1.5">Sales Ledger</label>
+                  <label className="block text-sm font-medium text-muted-foreground mb-1.5">Sales Ledger</label>
                   <select
                     value={formData.sales_ledger_id || ''}
                     onChange={e => setFormData({ ...formData, sales_ledger_id: e.target.value })}
-                    className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                    className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                   >
                     <option value="">-- Default Sales Account --</option>
                     {ledgers.filter(l => l.group_name && l.group_name.includes('Sales')).map(l => (
                       <option key={l.id} value={l.id}>{l.name}</option>
                     ))}
                   </select>
-                  <p className="text-xs text-gray-500 mt-1">Income account for selling items in this category</p>
+                  <p className="text-xs text-muted-foreground mt-1">Income account for selling items in this category</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-400 mb-1.5">Purchase Ledger</label>
+                  <label className="block text-sm font-medium text-muted-foreground mb-1.5">Purchase Ledger</label>
                   <select
                     value={formData.purchase_ledger_id || ''}
                     onChange={e => setFormData({ ...formData, purchase_ledger_id: e.target.value })}
-                    className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                    className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                   >
                     <option value="">-- Default Purchase Account --</option>
                     {ledgers.filter(l => l.group_name && l.group_name.includes('Purchase')).map(l => (
                       <option key={l.id} value={l.id}>{l.name}</option>
                     ))}
                   </select>
-                  <p className="text-xs text-gray-500 mt-1">Expense account for buying items in this category</p>
+                  <p className="text-xs text-muted-foreground mt-1">Expense account for buying items in this category</p>
                 </div>
               </div>
             )}
@@ -202,15 +202,15 @@ export default function NewCategoryPage() {
 
           {/* Preview */}
           {formData.name && (
-            <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-5">
-              <p className="text-xs text-gray-500 uppercase tracking-wider font-medium mb-3">Preview</p>
+            <div className="bg-zinc-900/50 border border-border rounded-xl p-5">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium mb-3">Preview</p>
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 bg-blue-500/10 text-blue-400 rounded-full flex items-center justify-center">
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
                 </div>
                 <div>
-                  <p className="text-white font-bold text-lg">{formData.name}</p>
-                  <p className="text-gray-500 text-sm">HSN: {formData.hsn_code || '—'} &middot; GST: {formData.gst_rate}%</p>
+                  <p className="text-foreground font-bold text-lg">{formData.name}</p>
+                  <p className="text-muted-foreground text-sm">HSN: {formData.hsn_code || '—'} &middot; GST: {formData.gst_rate}%</p>
                 </div>
               </div>
             </div>
@@ -221,7 +221,7 @@ export default function NewCategoryPage() {
             <button
               type="submit"
               disabled={saving}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-semibold shadow-lg transition-all disabled:opacity-50"
+              className="bg-blue-600 hover:bg-blue-700 text-foreground px-8 py-3 rounded-lg font-semibold shadow-lg transition-all disabled:opacity-50"
             >
               {saving ? 'Creating...' : 'Create Category'}
             </button>

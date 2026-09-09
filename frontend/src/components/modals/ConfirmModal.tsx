@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { AlertTriangle, Trash2, Info } from 'lucide-react';
 
 interface ConfirmModalProps {
@@ -30,19 +30,19 @@ export default function ConfirmModal({
         return {
           icon: <Trash2 className="w-6 h-6 text-rose-500" />,
           iconBg: 'bg-rose-500/10',
-          btnClass: 'bg-rose-600 hover:bg-rose-700 text-white'
+          btnClass: 'bg-rose-600 hover:bg-rose-700 text-foreground'
         };
       case 'warning':
         return {
           icon: <AlertTriangle className="w-6 h-6 text-amber-500" />,
           iconBg: 'bg-amber-500/10',
-          btnClass: 'bg-amber-600 hover:bg-amber-700 text-white'
+          btnClass: 'bg-amber-600 hover:bg-amber-700 text-foreground'
         };
       case 'info':
         return {
           icon: <Info className="w-6 h-6 text-blue-500" />,
           iconBg: 'bg-blue-500/10',
-          btnClass: 'bg-blue-600 hover:bg-blue-700 text-white'
+          btnClass: 'bg-blue-600 hover:bg-blue-700 text-foreground'
         };
     }
   };
@@ -52,22 +52,22 @@ export default function ConfirmModal({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div 
-        className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200"
+        className="bg-muted/50 border border-border rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-6">
           <div className={`w-12 h-12 rounded-full ${styles.iconBg} flex items-center justify-center mb-4`}>
             {styles.icon}
           </div>
-          <h3 className="text-xl font-bold text-white mb-2">{title}</h3>
+          <h3 className="text-xl font-bold text-foreground mb-2">{title}</h3>
           <p className="text-zinc-400 text-sm leading-relaxed">
             {description}
           </p>
         </div>
-        <div className="flex items-center gap-3 p-4 bg-zinc-950 border-t border-zinc-800">
+        <div className="flex items-center gap-3 p-4 bg-zinc-950 border-t border-border">
           <button 
             onClick={onClose}
-            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold text-zinc-300 bg-zinc-800 hover:bg-zinc-700 transition-colors"
+            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold text-zinc-300 bg-muted hover:bg-zinc-700 transition-colors"
           >
             {cancelText}
           </button>

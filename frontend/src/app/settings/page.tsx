@@ -163,31 +163,31 @@ export default function SettingsPage() {
     <DashboardLayout>
       <div className="max-w-3xl mx-auto space-y-8">
         <div>
-          <h1 className="text-3xl font-bold">Profile & Settings</h1>
-          <p className="text-gray-400 mt-1">Manage your company preferences</p>
+          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Profile & Settings</h1>
+          <p className="text-muted-foreground mt-1">Manage your company preferences</p>
         </div>
 
         {company ? (
           <div className="bg-card border border-border rounded-xl shadow-sm p-6 space-y-8">
             {/* Company Profile Edit */}
             <div>
-              <h2 className="text-lg font-semibold text-white mb-4 border-b border-zinc-800 pb-2">Firm Details</h2>
+              <h2 className="text-lg font-semibold text-foreground mb-4 border-b border-border pb-2">Firm Details</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Firm Name</label>
-                  <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
+                  <label className="block text-sm text-muted-foreground mb-1">Firm Name</label>
+                  <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-2.5 rounded outline-none" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">GSTIN</label>
-                  <input type="text" value={gstin} onChange={e => setGstin(e.target.value.toUpperCase())} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none uppercase" />
+                  <label className="block text-sm text-muted-foreground mb-1">GSTIN</label>
+                  <input type="text" value={gstin} onChange={e => setGstin(e.target.value.toUpperCase())} className="w-full bg-muted/50 border border-input text-foreground p-2.5 rounded outline-none uppercase" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Email</label>
-                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
+                  <label className="block text-sm text-muted-foreground mb-1">Email</label>
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-2.5 rounded outline-none" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Phone</label>
-                  <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
+                  <label className="block text-sm text-muted-foreground mb-1">Phone</label>
+                  <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-2.5 rounded outline-none" />
                 </div>
                 <div>
                   <StateSelect
@@ -198,51 +198,51 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-sm text-gray-400 mb-1">Billing Address</label>
-                  <textarea value={address} onChange={e => setAddress(e.target.value)} rows={3} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none resize-none" />
+                  <label className="block text-sm text-muted-foreground mb-1">Billing Address</label>
+                  <textarea value={address} onChange={e => setAddress(e.target.value)} rows={3} className="w-full bg-muted/50 border border-input text-foreground p-2.5 rounded outline-none resize-none" />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-sm text-gray-400 mb-1">Tagline / Subheading (Printed below firm name)</label>
-                  <input type="text" value={tagline} onChange={e => setTagline(e.target.value)} placeholder="e.g. HARDWARE, MILL STORES, PNEUMATICS" className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
+                  <label className="block text-sm text-muted-foreground mb-1">Tagline / Subheading (Printed below firm name)</label>
+                  <input type="text" value={tagline} onChange={e => setTagline(e.target.value)} placeholder="e.g. HARDWARE, MILL STORES, PNEUMATICS" className="w-full bg-muted/50 border border-input text-foreground p-2.5 rounded outline-none" />
                 </div>
               </div>
             </div>
 
             <div>
-              <h2 className="text-lg font-semibold text-white mb-4 border-b border-zinc-800 pb-2">Bank Details</h2>
+              <h2 className="text-lg font-semibold text-foreground mb-4 border-b border-border pb-2">Bank Details</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="sm:col-span-2">
-                  <label className="block text-sm text-gray-400 mb-1">Bank Name</label>
-                  <input type="text" value={bankName} onChange={e => setBankName(e.target.value)} placeholder="e.g. State Bank of India" className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
+                  <label className="block text-sm text-muted-foreground mb-1">Bank Name</label>
+                  <input type="text" value={bankName} onChange={e => setBankName(e.target.value)} placeholder="e.g. State Bank of India" className="w-full bg-muted/50 border border-input text-foreground p-2.5 rounded outline-none" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Account Number</label>
-                  <input type="text" value={bankAccountNumber} onChange={e => setBankAccountNumber(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
+                  <label className="block text-sm text-muted-foreground mb-1">Account Number</label>
+                  <input type="text" value={bankAccountNumber} onChange={e => setBankAccountNumber(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-2.5 rounded outline-none" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">IFSC Code</label>
-                  <input type="text" value={bankIfsc} onChange={e => setBankIfsc(e.target.value.toUpperCase())} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none uppercase" />
+                  <label className="block text-sm text-muted-foreground mb-1">IFSC Code</label>
+                  <input type="text" value={bankIfsc} onChange={e => setBankIfsc(e.target.value.toUpperCase())} className="w-full bg-muted/50 border border-input text-foreground p-2.5 rounded outline-none uppercase" />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-sm text-gray-400 mb-1">Branch</label>
-                  <input type="text" value={bankBranch} onChange={e => setBankBranch(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
+                  <label className="block text-sm text-muted-foreground mb-1">Branch</label>
+                  <input type="text" value={bankBranch} onChange={e => setBankBranch(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-2.5 rounded outline-none" />
                 </div>
               </div>
             </div>
 
             <div>
-              <h2 className="text-lg font-semibold text-white mb-4 border-b border-zinc-800 pb-2">Proprietor Details</h2>
+              <h2 className="text-lg font-semibold text-foreground mb-4 border-b border-border pb-2">Proprietor Details</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Proprietor Name</label>
-                  <input type="text" value={proprietorName} onChange={e => setProprietorName(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
+                  <label className="block text-sm text-muted-foreground mb-1">Proprietor Name</label>
+                  <input type="text" value={proprietorName} onChange={e => setProprietorName(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-2.5 rounded outline-none" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Proprietor Phone</label>
-                  <input type="tel" value={proprietorPhone} onChange={e => setProprietorPhone(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded outline-none" />
+                  <label className="block text-sm text-muted-foreground mb-1">Proprietor Phone</label>
+                  <input type="tel" value={proprietorPhone} onChange={e => setProprietorPhone(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-2.5 rounded outline-none" />
                 </div>
                 <div className="sm:col-span-2 mt-2">
-                  <label className="block text-sm text-gray-400 mb-2">Digital Signature</label>
+                  <label className="block text-sm text-muted-foreground mb-2">Digital Signature</label>
                   {(signaturePreview || company.signature_data || company.proprietor_signature) && (
                     <div className="mb-3 p-2 bg-white rounded w-fit">
                       <img 
@@ -259,23 +259,23 @@ export default function SettingsPage() {
                       />
                     </div>
                   )}
-                  <input type="file" accept="image/*" onChange={handleSignatureChange} className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-500/10 file:text-blue-400 hover:file:bg-blue-500/20" />
+                  <input type="file" accept="image/*" onChange={handleSignatureChange} className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-500/10 file:text-blue-400 hover:file:bg-blue-500/20" />
                 </div>
               </div>
             </div>
 
             <div>
-              <h2 className="text-lg font-semibold text-white mb-4 border-b border-zinc-800 pb-2">Business Type & Complexity</h2>
-              <div className="bg-zinc-900/50 p-4 rounded-lg border border-zinc-800 space-y-3">
-                <label className="block text-white font-medium">Retailer Scale (Complexity Level)</label>
-                <p className="text-gray-500 text-sm">
+              <h2 className="text-lg font-semibold text-foreground mb-4 border-b border-border pb-2">Business Type & Complexity</h2>
+              <div className="bg-muted/50/50 p-4 rounded-lg border border-border space-y-3">
+                <label className="block text-foreground font-medium">Retailer Scale (Complexity Level)</label>
+                <p className="text-muted-foreground text-sm">
                   This controls how many advanced ERP features (like Godowns, Batches, Serials) are visible by default. 
                   The system auto-scales this as you create more categories, but you can manually override it here.
                 </p>
                 <select 
                   value={complexityLevel}
                   onChange={(e) => setComplexityLevel(Number(e.target.value))}
-                  className="w-full max-w-md bg-zinc-800 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  className="w-full max-w-md bg-muted border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                 >
                   <option value={1}>Level 1: Basic Retailer (1-5 Categories) - Simplest UI</option>
                   <option value={2}>Level 2: Growing Business (6-10 Categories) - Intermediate</option>
@@ -285,12 +285,12 @@ export default function SettingsPage() {
             </div>
 
             <div>
-              <h2 className="text-lg font-semibold text-white mb-4 border-b border-zinc-800 pb-2">Accounting Preferences</h2>
+              <h2 className="text-lg font-semibold text-foreground mb-4 border-b border-border pb-2">Accounting Preferences</h2>
               
-              <div className="flex items-center justify-between bg-zinc-900/50 p-4 rounded-lg border border-zinc-800">
+              <div className="flex items-center justify-between bg-muted/50/50 p-4 rounded-lg border border-border">
                 <div>
-                  <h3 className="text-white font-medium">Advanced Ledger Mapping</h3>
-                  <p className="text-gray-500 text-sm mt-1">
+                  <h3 className="text-foreground font-medium">Advanced Ledger Mapping</h3>
+                  <p className="text-muted-foreground text-sm mt-1">
                     Allow selecting specific Sales & Purchase ledgers for inter-state trading, exports, etc. 
                     If disabled, the system will default to a general "Sales Account" or "Purchase Account".
                   </p>
@@ -303,10 +303,10 @@ export default function SettingsPage() {
                 </button>
               </div>
               
-              <div className="flex items-center justify-between bg-zinc-900/50 p-4 rounded-lg border border-zinc-800 mt-4">
+              <div className="flex items-center justify-between bg-muted/50/50 p-4 rounded-lg border border-border mt-4">
                 <div>
-                  <h3 className="text-white font-medium">Manual Invoice Number & Date</h3>
-                  <p className="text-gray-500 text-sm mt-1">
+                  <h3 className="text-foreground font-medium">Manual Invoice Number & Date</h3>
+                  <p className="text-muted-foreground text-sm mt-1">
                     Allow manually entering custom invoice numbers and backdating invoices. 
                     If disabled, the system strictly auto-generates them upon saving.
                   </p>
@@ -318,10 +318,10 @@ export default function SettingsPage() {
                   <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all ${enableManualInvoice ? 'left-6' : 'left-1'}`}></div>
                 </button>
               </div>
-              <div className="flex items-center justify-between bg-zinc-900/50 p-4 rounded-lg border border-zinc-800 mt-4">
+              <div className="flex items-center justify-between bg-muted/50/50 p-4 rounded-lg border border-border mt-4">
                 <div>
-                  <h3 className="text-white font-medium">Advanced Item Creation</h3>
-                  <p className="text-gray-500 text-sm mt-1">
+                  <h3 className="text-foreground font-medium">Advanced Item Creation</h3>
+                  <p className="text-muted-foreground text-sm mt-1">
                     Show advanced options (Pricing Matrix, Multiple Packaging, Tax Override, Batch/Serial tracking) when creating a new item. 
                     If disabled, keeps item creation simple.
                   </p>
@@ -337,16 +337,16 @@ export default function SettingsPage() {
 
             {/* Integrations & Export Engines */}
             <div className="bg-card border border-border rounded-xl p-6 space-y-4">
-              <h2 className="text-lg font-semibold text-white">Network Integrations & Audit Exports</h2>
+              <h2 className="text-lg font-semibold text-foreground">Network Integrations & Audit Exports</h2>
               
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl flex flex-col justify-between space-y-3">
+                <div className="p-4 bg-muted/50/60 border border-border rounded-xl flex flex-col justify-between space-y-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-white">B2B Network Interchange (EDI)</span>
+                      <span className="text-sm font-bold text-foreground">B2B Network Interchange (EDI)</span>
                       <span className="px-1.5 py-0.2 bg-blue-500/10 text-blue-400 text-[10px] font-mono rounded border border-blue-500/20">LIVE</span>
                     </div>
-                    <p className="text-xs text-gray-400 mt-1">
+                    <p className="text-xs text-muted-foreground mt-1">
                       Manage incoming e-invoices from registered suppliers. Review, digitally sign, and auto-post stock in 1 click.
                     </p>
                   </div>
@@ -358,13 +358,13 @@ export default function SettingsPage() {
                   </button>
                 </div>
 
-                <div className="p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl flex flex-col justify-between space-y-3">
+                <div className="p-4 bg-muted/50/60 border border-border rounded-xl flex flex-col justify-between space-y-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-white">Tally XML Bridge</span>
+                      <span className="text-sm font-bold text-foreground">Tally XML Bridge</span>
                       <span className="px-1.5 py-0.2 bg-purple-500/10 text-purple-400 text-[10px] font-mono rounded border border-purple-500/20">TallyPrime</span>
                     </div>
-                    <p className="text-xs text-gray-400 mt-1">
+                    <p className="text-xs text-muted-foreground mt-1">
                       Export your entire double-entry ledger, stock catalog, and vouchers into standard Tally XML format for external audit.
                     </p>
                   </div>
@@ -376,13 +376,13 @@ export default function SettingsPage() {
                   </button>
                 </div>
 
-                <div className="p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl flex flex-col justify-between space-y-3">
+                <div className="p-4 bg-muted/50/60 border border-border rounded-xl flex flex-col justify-between space-y-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-white">Split Company Data</span>
+                      <span className="text-sm font-bold text-foreground">Split Company Data</span>
                       <span className="px-1.5 py-0.2 bg-purple-500/10 text-purple-400 text-[10px] font-mono rounded border border-purple-500/20">Tally ERP</span>
                     </div>
-                    <p className="text-xs text-gray-400 mt-1">
+                    <p className="text-xs text-muted-foreground mt-1">
                       Archive historical accounting years and spawn a standalone new company entity with settled P&L and static opening balances.
                     </p>
                   </div>
@@ -402,13 +402,13 @@ export default function SettingsPage() {
             <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2 flex-wrap">
+                  <h2 className="text-base sm:text-lg font-bold text-foreground flex items-center gap-2 flex-wrap">
                     <span>Financial Years & Period Closing</span>
                     <span className="text-[10px] font-mono px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded font-bold">
                       GST Rule 46(b)
                     </span>
                   </h2>
-                  <p className="text-xs text-gray-400 mt-0.5">
+                  <p className="text-xs text-muted-foreground mt-0.5">
                     Year-wise sequential invoice boundaries (April 1 – March 31) and balance carry-forward engine.
                   </p>
                 </div>
@@ -422,9 +422,9 @@ export default function SettingsPage() {
                 </button>
               </div>
 
-              <div className="overflow-x-auto rounded-xl border border-zinc-800">
+              <div className="overflow-x-auto rounded-xl border border-border">
                 <table className="w-full text-left text-xs min-w-[500px]">
-                  <thead className="bg-zinc-900/90 text-zinc-400 font-semibold border-b border-zinc-800">
+                  <thead className="bg-muted/50/90 text-zinc-400 font-semibold border-b border-border">
                     <tr>
                       <th className="px-4 py-2.5">Financial Year</th>
                       <th className="px-4 py-2.5">Code</th>
@@ -437,7 +437,7 @@ export default function SettingsPage() {
                   <tbody className="divide-y divide-zinc-800/60 font-mono">
                     {availableFYs.map((fy) => (
                       <tr key={fy.id} className={fy.id === activeFY?.id ? "bg-blue-600/5" : ""}>
-                        <td className="px-4 py-3 font-sans font-bold text-white flex items-center gap-2">
+                        <td className="px-4 py-3 font-sans font-bold text-foreground flex items-center gap-2">
                           <span>{fy.name}</span>
                           {fy.is_current && (
                             <span className="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.2 rounded font-mono font-normal">Current</span>
@@ -447,7 +447,7 @@ export default function SettingsPage() {
                         <td className="px-4 py-3 text-zinc-400">{fy.start_date} → {fy.end_date}</td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            fy.is_closed ? "bg-zinc-800 text-amber-400 border border-amber-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                            fy.is_closed ? "bg-muted text-amber-400 border border-amber-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
                           }`}>
                             {fy.is_closed ? "CLOSED (READ-ONLY)" : "OPEN & ACTIVE"}
                           </span>
@@ -460,7 +460,7 @@ export default function SettingsPage() {
                             <button
                               type="button"
                               onClick={() => setActiveFY(fy)}
-                              className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-sans rounded text-[11px] transition-colors cursor-pointer"
+                              className="px-2.5 py-1 bg-muted hover:bg-zinc-700 text-zinc-300 font-sans rounded text-[11px] transition-colors cursor-pointer"
                             >
                               Switch
                             </button>
@@ -473,18 +473,18 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <div className="flex justify-end pt-4 border-t border-zinc-800">
+            <div className="flex justify-end pt-4 border-t border-border">
               <button 
                 onClick={saveSettings} 
                 disabled={saving}
-                className="w-full sm:w-auto justify-center bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium shadow transition-colors disabled:opacity-50 cursor-pointer"
+                className="w-full sm:w-auto justify-center bg-blue-600 hover:bg-blue-700 text-foreground px-6 py-2.5 rounded-lg font-medium shadow transition-colors disabled:opacity-50 cursor-pointer"
               >
                 {saving ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </div>
         ) : (
-          <div className="text-gray-500">Loading settings...</div>
+          <div className="text-muted-foreground">Loading settings...</div>
         )}
       </div>
     </DashboardLayout>

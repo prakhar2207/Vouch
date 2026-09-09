@@ -2,57 +2,148 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ─── Design System: Light Theme ─── */
 :root {
-  --background: #f3f4f6; /* light gray bg */
-  --foreground: #111827; /* dark text */
+  --background: #f8f9fb;
+  --foreground: #0f172a;
   --card: #ffffff;
-  --card-foreground: #111827;
-  --border: #e5e7eb;
+  --card-foreground: #0f172a;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #3b82f6;
+
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+
+  --secondary: #f1f5f9;
+  --secondary-foreground: #1e293b;
+
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+
+  --accent: #eff6ff;
+  --accent-foreground: #1e40af;
+
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+
+  --success: #10b981;
+  --success-foreground: #ffffff;
+
+  --warning: #f59e0b;
+  --warning-foreground: #ffffff;
 }
 
+/* ─── Design System: Dark Theme ─── */
 .dark {
-  --background: #09090b; /* very dark background */
-  --foreground: #f9fafb; /* light text */
-  --card: #18181b; /* slightly lighter dark card */
-  --card-foreground: #f9fafb;
-  --border: #27272a;
+  --background: #0a0a0f;
+  --foreground: #f1f5f9;
+  --card: #111118;
+  --card-foreground: #f1f5f9;
+  --border: #1e1e2a;
+  --input: #1e1e2a;
+  --ring: #3b82f6;
+
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+
+  --secondary: #1a1a24;
+  --secondary-foreground: #e2e8f0;
+
+  --muted: #151520;
+  --muted-foreground: #94a3b8;
+
+  --accent: #172554;
+  --accent-foreground: #93c5fd;
+
+  --destructive: #dc2626;
+  --destructive-foreground: #fef2f2;
+
+  --success: #10b981;
+  --success-foreground: #ffffff;
+
+  --warning: #f59e0b;
+  --warning-foreground: #ffffff;
 }
 
+/* ─── Tailwind v4 Theme Registration ─── */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
+/* ─── Base Styles ─── */
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
 }
 
-/* AG Grid Dark & Modern Theme Overrides */
+/* Smooth theme transitions */
+*,
+*::before,
+*::after {
+  transition-property: background-color, border-color;
+  transition-duration: 0.15s;
+  transition-timing-function: ease-out;
+}
+
+/* Disable transitions on page load to prevent flash */
+.no-transition,
+.no-transition *,
+.no-transition *::before,
+.no-transition *::after {
+  transition: none !important;
+}
+
+/* ─── AG Grid Dark & Modern Theme Overrides ─── */
 .dark .ag-theme-quartz,
 .dark .ag-theme-quartz-dark,
 .ag-theme-quartz-dark {
-  --ag-background-color: #121215 !important;
-  --ag-header-background-color: #18181b !important;
-  --ag-odd-row-background-color: #141418 !important;
-  --ag-border-color: #27272a !important;
-  --ag-header-foreground-color: #a1a1aa !important;
-  --ag-foreground-color: #f4f4f5 !important;
-  --ag-row-hover-color: #1e1e24 !important;
-  --ag-selected-row-background-color: #272733 !important;
+  --ag-background-color: #0d0d14 !important;
+  --ag-header-background-color: #111118 !important;
+  --ag-odd-row-background-color: #0f0f16 !important;
+  --ag-border-color: #1e1e2a !important;
+  --ag-header-foreground-color: #94a3b8 !important;
+  --ag-foreground-color: #f1f5f9 !important;
+  --ag-row-hover-color: #161622 !important;
+  --ag-selected-row-background-color: #1e2740 !important;
   --ag-input-focus-border-color: #3b82f6 !important;
   --ag-font-family: inherit !important;
   --ag-font-size: 13px !important;
 }
 
 .dark .ag-header-cell-text {
-  color: #a1a1aa !important;
+  color: #94a3b8 !important;
   font-weight: 700 !important;
   text-transform: uppercase !important;
   font-size: 11px !important;
@@ -60,27 +151,61 @@ body {
 }
 
 .dark .ag-cell {
-  color: #f4f4f5 !important;
-  border-bottom: 1px solid #27272a !important;
+  color: #f1f5f9 !important;
+  border-bottom: 1px solid #1e1e2a !important;
 }
 
 .dark .ag-row {
-  background-color: #121215 !important;
+  background-color: #0d0d14 !important;
 }
 
 .dark .ag-row-odd {
-  background-color: #141418 !important;
+  background-color: #0f0f16 !important;
 }
 
 .dark .ag-row-hover {
-  background-color: #1f1f26 !important;
+  background-color: #161622 !important;
 }
 
-/* Hide scrollbar utility */
+/* ─── Light Mode AG Grid ─── */
+.ag-theme-quartz {
+  --ag-background-color: #ffffff !important;
+  --ag-header-background-color: #f8fafc !important;
+  --ag-odd-row-background-color: #f8f9fb !important;
+  --ag-border-color: #e2e8f0 !important;
+  --ag-header-foreground-color: #64748b !important;
+  --ag-foreground-color: #0f172a !important;
+  --ag-row-hover-color: #f1f5f9 !important;
+  --ag-selected-row-background-color: #eff6ff !important;
+  --ag-input-focus-border-color: #3b82f6 !important;
+}
+
+/* ─── Utilities ─── */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* Custom focus ring for inputs */
+.focus-ring {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+/* Subtle gradient border accent (for KPI cards) */
+.gradient-border-l {
+  position: relative;
+}
+.gradient-border-l::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--accent-start, #3b82f6), var(--accent-end, #8b5cf6));
 }

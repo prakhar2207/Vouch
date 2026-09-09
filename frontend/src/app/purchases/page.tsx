@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from "react";
 import axios from "axios";
@@ -201,14 +201,14 @@ export default function PurchaseInvoiceList() {
       <div className="space-y-6 flex flex-col h-full pb-12">
         
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-black text-foreground tracking-tight">Purchase Invoices</h1>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Purchase Invoices</h1>
             <p className="text-xs text-muted-foreground mt-1">Inward supplier bills and attached documents</p>
           </div>
           <Link
             href="/purchases/new"
-            className="w-full sm:w-auto justify-center bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2.5 rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-1.5"
+            className="w-full sm:w-auto justify-center bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2.5 rounded-xl text-xs font-bold shadow-md shadow-primary/20 transition-all flex items-center gap-1.5"
           >
             <Plus className="w-4 h-4" />
             <span>Create / Scan Invoice</span>
@@ -217,7 +217,7 @@ export default function PurchaseInvoiceList() {
         </div>
 
         {/* Invoices Table Card */}
-        <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/80 flex-1 overflow-hidden flex flex-col">
+        <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/40 flex-1 overflow-hidden flex flex-col">
           <div className="px-4 sm:px-5 py-3.5 border-b border-border/70 bg-muted/20 flex items-center justify-between">
             <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Previous Invoices</span>
             <span className="text-xs text-muted-foreground hidden sm:inline">Click any row to inspect original bill & line items</span>
@@ -238,7 +238,7 @@ export default function PurchaseInvoiceList() {
               </p>
               <Link
                 href="/purchases/new"
-                className="bg-primary hover:bg-primary/90 text-primary-foreground px-5 py-2.5 rounded-xl shadow font-bold text-xs flex items-center gap-1.5"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground px-5 py-2.5 rounded-xl shadow-md shadow-primary/20 font-bold text-xs flex items-center gap-1.5"
               >
                 <Plus className="w-4 h-4" />
                 <span>Scan First Invoice</span>
@@ -492,7 +492,7 @@ export default function PurchaseInvoiceList() {
         {/* Voucher Detail & Document Viewer Modal */}
         {(selectedVoucher || loadingDetail) && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 animate-in fade-in">
-            <div className="w-full max-w-5xl bg-card border border-border rounded-2xl shadow-2xl overflow-hidden flex flex-col text-foreground max-h-[90vh]">
+            <div className="w-full max-w-5xl bg-card border border-border/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-foreground max-h-[90vh]">
               
               {/* Modal Header */}
               <div className="flex items-center justify-between px-6 py-4 border-b border-border/70 bg-muted/20">
@@ -696,7 +696,7 @@ export default function PurchaseInvoiceList() {
           title="Delete Invoice"
           description={
             <>
-              Are you sure you want to delete purchase invoice <span className="text-white font-semibold">#{deleteConfirmParams?.number}</span>? 
+              Are you sure you want to delete purchase invoice <span className="text-foreground font-semibold">#{deleteConfirmParams?.number}</span>? 
               This will reverse the stock impact and accounting balances.
             </>
           }

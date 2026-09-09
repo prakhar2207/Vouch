@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense } from "react";
 import axios from "axios";
@@ -522,7 +522,7 @@ function AgGridVoucherEntryContent() {
         {/* Compact Header Bar */}
         <div className="bg-card border border-border/80 p-3 sm:px-4 sm:py-2.5 rounded-xl shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2.5 sm:gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-sm shrink-0">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-foreground flex items-center justify-center shadow-sm shrink-0">
               <Layers className="w-4 h-4" />
             </div>
             <div>
@@ -538,7 +538,7 @@ function AgGridVoucherEntryContent() {
                 )}
               </div>
               <p className="text-[11px] text-muted-foreground hidden sm:block">
-                Double-entry spreadsheet engine. Navigate with <kbd className="px-1 py-0.2 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[9px]">Tab</kbd> / <kbd className="px-1 py-0.2 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[9px]">Enter</kbd>.
+                Double-entry spreadsheet engine. Navigate with <kbd className="px-1 py-0.2 bg-muted text-zinc-300 rounded border border-input font-mono text-[9px]">Tab</kbd> / <kbd className="px-1 py-0.2 bg-muted text-zinc-300 rounded border border-input font-mono text-[9px]">Enter</kbd>.
               </p>
             </div>
           </div>
@@ -574,8 +574,8 @@ function AgGridVoucherEntryContent() {
                 isReadOnly
                   ? "bg-amber-500/15 text-amber-400 border border-amber-500/30 cursor-not-allowed opacity-80"
                   : isBalanced
-                  ? "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-blue-600/25"
-                  : "bg-zinc-800 text-zinc-500 border border-zinc-700 cursor-not-allowed opacity-60"
+                  ? "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-foreground shadow-blue-600/25"
+                  : "bg-muted text-zinc-500 border border-input cursor-not-allowed opacity-60"
               }`}
             >
               {saving ? (
@@ -624,7 +624,7 @@ function AgGridVoucherEntryContent() {
             <select
               value={voucherType}
               onChange={(e) => setVoucherType(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-700 text-white px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+              className="w-full bg-muted/50 border border-input text-foreground px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
             >
               <option value="JOURNAL">Journal (F7)</option>
               <option value="PAYMENT">Payment (F5)</option>
@@ -645,7 +645,7 @@ function AgGridVoucherEntryContent() {
               min={activeFY?.start_date}
               max={activeFY?.end_date}
               onChange={(e) => setVoucherDate(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-700 text-white px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+              className="w-full bg-muted/50 border border-input text-foreground px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 font-mono"
             />
           </div>
 
@@ -656,7 +656,7 @@ function AgGridVoucherEntryContent() {
               value={voucherNumber}
               onChange={(e) => setVoucherNumber(e.target.value)}
               placeholder={seqPreview ? `Auto: ${seqPreview}` : "Auto if blank"}
-              className="w-full bg-zinc-900 border border-zinc-700 text-white px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 font-mono placeholder:text-zinc-500"
+              className="w-full bg-muted/50 border border-input text-foreground px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 font-mono placeholder:text-zinc-500"
             />
           </div>
 
@@ -667,7 +667,7 @@ function AgGridVoucherEntryContent() {
               value={mainNarration}
               onChange={(e) => setMainNarration(e.target.value)}
               placeholder="Overall voucher description..."
-              className="w-full bg-zinc-900 border border-zinc-700 text-white px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-zinc-500"
+              className="w-full bg-muted/50 border border-input text-foreground px-2 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-zinc-500"
             />
           </div>
 
@@ -701,7 +701,7 @@ function AgGridVoucherEntryContent() {
               <span className="text-[11px] text-zinc-500">({rowData.length} rows staged)</span>
             </div>
             <div className="flex items-center gap-2 text-[11px] text-zinc-400">
-              <span>Press <kbd className="px-1 py-0.2 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-mono text-[9px]">Alt+C</kbd> to quick-create ledger</span>
+              <span>Press <kbd className="px-1 py-0.2 bg-muted text-zinc-300 rounded border border-input font-mono text-[9px]">Alt+C</kbd> to quick-create ledger</span>
             </div>
           </div>
 
@@ -725,13 +725,13 @@ function AgGridVoucherEntryContent() {
           {/* Docked Totals & Real-Time Balance Status Bar - Always Visible */}
           <div className="bg-zinc-950 px-4 py-2.5 border-t border-border flex flex-wrap items-center justify-between gap-3 font-mono text-xs shrink-0">
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-1.5 bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800">
+              <div className="flex items-center gap-1.5 bg-muted/50 px-3 py-1.5 rounded-lg border border-border">
                 <span className="text-[11px] text-zinc-400 font-sans font-semibold">Total Debit:</span>
                 <span className="text-blue-400 font-black text-sm">
                   ₹{totalDebit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800">
+              <div className="flex items-center gap-1.5 bg-muted/50 px-3 py-1.5 rounded-lg border border-border">
                 <span className="text-[11px] text-zinc-400 font-sans font-semibold">Total Credit:</span>
                 <span className="text-emerald-400 font-black text-sm">
                   ₹{totalCredit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
@@ -775,7 +775,7 @@ function AgGridVoucherEntryContent() {
 
 export default function AgGridVoucherEntryPage() {
   return (
-    <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading High-Density Grid...</div>}>
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground">Loading High-Density Grid...</div>}>
       <AgGridVoucherEntryContent />
     </Suspense>
   );

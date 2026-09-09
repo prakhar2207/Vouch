@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
@@ -297,7 +297,7 @@ export default function PurchasePage() {
   const selectedParty = ledgers.find(l => l.id === partyLedgerId);
   const isInterState = Boolean(selectedParty?.state_code && companyStateCode && selectedParty.state_code !== companyStateCode);
 
-  if (loading) return <DashboardLayout><div className="flex items-center justify-center h-full text-gray-500">Loading purchase form...</div></DashboardLayout>;
+  if (loading) return <DashboardLayout><div className="flex items-center justify-center h-full text-muted-foreground">Loading purchase form...</div></DashboardLayout>;
 
   return (
     <DashboardLayout>
@@ -306,24 +306,24 @@ export default function PurchasePage() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-border pb-4 gap-4">
           <div className="flex items-center gap-3 sm:gap-4">
-            <Link href="/purchases" className="text-gray-400 hover:text-white transition-colors p-1">
+            <Link href="/purchases" className="text-muted-foreground hover:text-foreground transition-colors p-1">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
             </Link>
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold">New Purchase Invoice</h1>
-              <p className="text-xs sm:text-sm text-gray-400 mt-0.5">Automated Accounts Payable & Inward Bills</p>
+              <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">Automated Accounts Payable & Inward Bills</p>
             </div>
           </div>
           
           {/* Mode Switcher */}
-          <div className="w-full sm:w-auto grid grid-cols-2 sm:flex items-center bg-zinc-900 border border-zinc-700 p-1 rounded-xl shadow-inner gap-1">
+          <div className="w-full sm:w-auto grid grid-cols-2 sm:flex items-center bg-muted/50 border border-input p-1 rounded-xl shadow-inner gap-1">
             <button
               onClick={() => setActiveTab('OCR')}
               type="button"
               className={`px-3 sm:px-4 py-2 sm:py-1.5 rounded-lg text-xs font-bold transition-all text-center justify-center flex items-center gap-1.5 ${
                 activeTab === 'OCR'
-                  ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-md'
-                  : 'text-gray-400 hover:text-white'
+                  ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-foreground shadow-md'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               <span>✨ AI OCR</span>
@@ -333,8 +333,8 @@ export default function PurchasePage() {
               type="button"
               className={`px-3 sm:px-4 py-2 sm:py-1.5 rounded-lg text-xs font-bold transition-all text-center justify-center flex items-center gap-1.5 ${
                 activeTab === 'MANUAL'
-                  ? 'bg-zinc-800 text-white shadow-md'
-                  : 'text-gray-400 hover:text-white'
+                  ? 'bg-muted text-foreground shadow-md'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               <span>📝 Manual Entry</span>
@@ -351,7 +351,7 @@ export default function PurchasePage() {
         {activeTab === 'MANUAL' && (
           <div className="space-y-6">
             <div className="flex justify-end">
-              <button onClick={handleSave} disabled={saving} className="w-full sm:w-auto justify-center bg-red-600 hover:bg-red-700 text-white px-6 py-2.5 rounded-lg shadow-lg font-medium transition-colors disabled:opacity-50 flex items-center gap-2 cursor-pointer">
+              <button onClick={handleSave} disabled={saving} className="w-full sm:w-auto justify-center bg-red-600 hover:bg-red-700 text-foreground px-6 py-2.5 rounded-lg shadow-lg font-medium transition-colors disabled:opacity-50 flex items-center gap-2 cursor-pointer">
                 {saving ? 'Posting...' : 'Post Purchase Invoice'}
               </button>
             </div>
@@ -359,27 +359,27 @@ export default function PurchasePage() {
         {/* Billing Details Card */}
         <div className="bg-card border border-border rounded-xl shadow-sm p-6">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold text-gray-200">Billing Details</h2>
+            <h2 className="text-lg font-semibold text-foreground">Billing Details</h2>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 pb-6 border-b border-zinc-800">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 pb-6 border-b border-border">
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">Supplier Invoice No.</label>
-              <input type="text" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} placeholder="e.g. SUP-998" className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
+              <label className="block text-sm font-medium text-muted-foreground mb-1.5">Supplier Invoice No.</label>
+              <input type="text" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} placeholder="e.g. SUP-998" className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">Invoice Date</label>
-              <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
+              <label className="block text-sm font-medium text-muted-foreground mb-1.5">Invoice Date</label>
+              <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
             </div>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <div className="flex justify-between items-center mb-1.5">
-                <label className="block text-sm font-medium text-gray-400">Party (Supplier)</label>
+                <label className="block text-sm font-medium text-muted-foreground">Party (Supplier)</label>
                 <Link href="/purchases/suppliers/new" className="text-xs text-red-500 hover:text-red-400">+ Add New Supplier</Link>
               </div>
-              <select value={partyLedgerId} onChange={e => setPartyLedgerId(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+              <select value={partyLedgerId} onChange={e => setPartyLedgerId(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all">
                 <option value="">-- Select Supplier --</option>
                 {ledgers.filter(l => l.group.includes('Debtor') || l.group.includes('Creditor')).map(l => (
                   <option key={l.id} value={l.id}>{l.name}</option>
@@ -388,8 +388,8 @@ export default function PurchasePage() {
             </div>
             {enableLedgerMapping && (
               <div>
-                <label className="block text-sm font-medium text-gray-400 mb-1.5">Purchase Ledger</label>
-                <select value={purchaseLedgerId} onChange={e => setPurchaseLedgerId(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+                <label className="block text-sm font-medium text-muted-foreground mb-1.5">Purchase Ledger</label>
+                <select value={purchaseLedgerId} onChange={e => setPurchaseLedgerId(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all">
                   <option value="">-- Select Purchase Ledger --</option>
                   {ledgers.filter(l => l.group.includes('Expense') || l.name.includes('Purchase')).map(l => (
                     <option key={l.id} value={l.id}>{l.name}</option>
@@ -403,20 +403,20 @@ export default function PurchasePage() {
         {/* Line Items Card */}
         <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
             <div className="p-6 border-b border-border flex justify-between items-center">
-                <h2 className="text-lg font-semibold text-gray-200">Line Items by Category</h2>
+                <h2 className="text-lg font-semibold text-foreground">Line Items by Category</h2>
                 <span className="text-xs text-red-400 bg-red-400/10 px-2 py-1 rounded border border-red-400/20">Auto-Creates & Inherits Tax</span>
             </div>
             
             <div className="p-2 space-y-6">
                 {groupedItems.map((group, gIndex) => (
-                    <div key={gIndex} className="border border-zinc-800 rounded-lg overflow-hidden bg-zinc-900/30">
-                        <div className="p-3 sm:p-4 bg-zinc-900/80 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div key={gIndex} className="border border-border rounded-lg overflow-hidden bg-zinc-900/30">
+                        <div className="p-3 sm:p-4 bg-zinc-900/80 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div className="flex-1 max-w-md flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                                <label className="text-sm font-medium text-gray-400 whitespace-nowrap">Category:</label>
+                                <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Category:</label>
                                 <select 
                                     value={group.category_id} 
                                     onChange={(e) => updateGroup(gIndex, 'category_id', e.target.value)}
-                                    className="w-full bg-zinc-800 border border-zinc-700 text-white p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                                    className="w-full bg-muted border border-input text-foreground p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                                 >
                                     <option value="">-- Select Category --</option>
                                     {categories.map(c => (
@@ -424,16 +424,16 @@ export default function PurchasePage() {
                                     ))}
                                 </select>
                             </div>
-                            <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-4 text-sm text-gray-500">
-                                <span className="text-xs sm:text-sm">Default HSN: <strong className="text-gray-300">{group.hsn_code || 'N/A'}</strong></span>
+                            <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-4 text-sm text-muted-foreground">
+                                <span className="text-xs sm:text-sm">Default HSN: <strong className="text-foreground/80">{group.hsn_code || 'N/A'}</strong></span>
                                 {isInterState ? (
                                     <span className="bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20 text-xs font-medium">
                                         IGST: {group.gst_rate}%
                                     </span>
                                 ) : (
                                     <div className="flex gap-2">
-                                        <span className="bg-zinc-800 text-gray-300 px-2 py-0.5 rounded border border-zinc-700 text-xs font-medium">CGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
-                                        <span className="bg-zinc-800 text-gray-300 px-2 py-0.5 rounded border border-zinc-700 text-xs font-medium">SGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
+                                        <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">CGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
+                                        <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">SGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
                                     </div>
                                 )}
                                 <button onClick={() => removeCategoryGroup(gIndex)} className="text-red-500 hover:text-red-400 ml-auto sm:ml-4 p-1" title="Delete category group">
@@ -444,7 +444,7 @@ export default function PurchasePage() {
                         
                         <div className="overflow-x-auto">
                             <table className="w-full min-w-[550px] text-left border-collapse">
-                                <thead className="bg-zinc-900/40 text-gray-400 text-xs uppercase tracking-wider">
+                                <thead className="bg-zinc-900/40 text-muted-foreground text-xs uppercase tracking-wider">
                                     <tr>
                                         <th className="p-3 font-medium">Product Name</th>
                                         <th className="p-3 font-medium w-36">Brand</th>
@@ -464,21 +464,21 @@ export default function PurchasePage() {
                                         return (
                                         <tr key={iIndex} className="hover:bg-zinc-800/40 transition-colors">
                                             <td className="p-2">
-                                                <input type="text" placeholder="e.g. Item Name" value={item.product_name} onChange={e => updateItem(gIndex, iIndex, 'product_name', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-sm" />
+                                                <input type="text" placeholder="e.g. Item Name" value={item.product_name} onChange={e => updateItem(gIndex, iIndex, 'product_name', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-sm" />
                                             </td>
                                             <td className="p-2">
-                                                <input type="text" placeholder="e.g. Fenner" value={item.brand || ''} onChange={e => updateItem(gIndex, iIndex, 'brand', e.target.value)} className="w-full bg-transparent border border-zinc-800 hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-sm" />
+                                                <input type="text" placeholder="e.g. Fenner" value={item.brand || ''} onChange={e => updateItem(gIndex, iIndex, 'brand', e.target.value)} className="w-full bg-transparent border border-border hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-sm" />
                                             </td>
                                             <td className="p-2">
-                                                <input type="number" min="1" value={item.quantity} onChange={e => updateItem(gIndex, iIndex, 'quantity', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-center text-sm" />
+                                                <input type="number" min="1" value={item.quantity} onChange={e => updateItem(gIndex, iIndex, 'quantity', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-center text-sm" />
                                             </td>
                                             <td className="p-2">
-                                                <input type="number" min="0" value={item.rate} onChange={e => updateItem(gIndex, iIndex, 'rate', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-right text-sm" />
+                                                <input type="number" min="0" value={item.rate} onChange={e => updateItem(gIndex, iIndex, 'rate', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-right text-sm" />
                                             </td>
                                             <td className="p-2">
-                                                <input type="number" min="0" max="100" value={item.discount_percent} onChange={e => updateItem(gIndex, iIndex, 'discount_percent', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-center text-sm" />
+                                                <input type="number" min="0" max="100" value={item.discount_percent} onChange={e => updateItem(gIndex, iIndex, 'discount_percent', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-center text-sm" />
                                             </td>
-                                            <td className="p-2 text-right font-medium text-gray-200">
+                                            <td className="p-2 text-right font-medium text-foreground">
                                                 ₹{taxable.toFixed(2)}
                                             </td>
                                             <td className="p-2 text-center">
@@ -492,7 +492,7 @@ export default function PurchasePage() {
                                 </tbody>
                             </table>
                         </div>
-                        <div className="p-3 bg-zinc-900/30 border-t border-zinc-800">
+                        <div className="p-3 bg-zinc-900/30 border-t border-border">
                             <button onClick={() => addRow(gIndex)} className="text-sm text-red-500 hover:text-red-400 font-medium flex items-center gap-1">
                                 + Add item in {categories.find(c=>c.id===group.category_id)?.name || 'this category'}
                             </button>
@@ -502,7 +502,7 @@ export default function PurchasePage() {
             </div>
             
             <div className="p-4 border-t border-border bg-zinc-900/20">
-                <button onClick={addCategoryGroup} className="text-sm text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-4 py-2 rounded shadow transition-colors font-medium">
+                <button onClick={addCategoryGroup} className="text-sm text-foreground bg-muted hover:bg-zinc-700 border border-input px-4 py-2 rounded shadow transition-colors font-medium">
                     + Add Another Category Block
                 </button>
             </div>
@@ -511,7 +511,7 @@ export default function PurchasePage() {
         {/* Totals Section */}
         <div className="flex justify-end">
             <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-sm p-6 space-y-3">
-                <div className="flex justify-between text-gray-400">
+                <div className="flex justify-between text-muted-foreground">
                     <span>Gross Total</span>
                     <span>₹{grossTotal.toFixed(2)}</span>
                 </div>
@@ -522,20 +522,20 @@ export default function PurchasePage() {
                     </div>
                 ) : (
                     <>
-                        <div className="flex justify-between text-gray-400">
+                        <div className="flex justify-between text-muted-foreground">
                             <span>CGST</span>
                             <span>₹{(totalTax / 2).toFixed(2)}</span>
                         </div>
-                        <div className="flex justify-between text-gray-400">
+                        <div className="flex justify-between text-muted-foreground">
                             <span>SGST</span>
                             <span>₹{(totalTax / 2).toFixed(2)}</span>
                         </div>
                     </>
                 )}
-                <div className="flex justify-between items-center text-gray-400">
+                <div className="flex justify-between items-center text-muted-foreground">
                     <span>Cartage / Freight Inward</span>
                     <div className="flex items-center gap-1">
-                        <span className="text-gray-400 font-mono text-sm">₹</span>
+                        <span className="text-muted-foreground font-mono text-sm">₹</span>
                         <input
                             type="number"
                             min="0"
@@ -543,17 +543,17 @@ export default function PurchasePage() {
                             value={cartageAmount}
                             onChange={(e) => setCartageAmount(e.target.value)}
                             placeholder="0.00"
-                            className="w-28 bg-zinc-900 border border-zinc-700 text-white text-right px-2 py-1 rounded font-mono text-sm focus:ring-1 focus:ring-blue-500 outline-none"
+                            className="w-28 bg-muted/50 border border-input text-foreground text-right px-2 py-1 rounded font-mono text-sm focus:ring-1 focus:ring-blue-500 outline-none"
                         />
                     </div>
                 </div>
-                <div className="flex justify-between text-gray-400">
+                <div className="flex justify-between text-muted-foreground">
                     <span>Round Off</span>
-                    <span className={roundOff < 0 ? "text-emerald-400 font-mono font-medium" : roundOff > 0 ? "text-amber-400 font-mono font-medium" : "text-gray-400 font-mono"}>
+                    <span className={roundOff < 0 ? "text-emerald-400 font-mono font-medium" : roundOff > 0 ? "text-amber-400 font-mono font-medium" : "text-muted-foreground font-mono"}>
                         {roundOff > 0 ? `+₹${roundOff.toFixed(2)}` : roundOff < 0 ? `-₹${Math.abs(roundOff).toFixed(2)}` : `₹0.00`}
                     </span>
                 </div>
-                <div className="border-t border-zinc-700 pt-3 flex justify-between text-xl font-bold text-white">
+                <div className="border-t border-input pt-3 flex justify-between text-xl font-bold text-foreground">
                     <span>Grand Total</span>
                     <span className="font-mono">₹{grandTotal.toFixed(2)}</span>
                 </div>

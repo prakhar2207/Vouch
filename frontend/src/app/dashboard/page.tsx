@@ -128,10 +128,10 @@ export default function Dashboard() {
       <div className="space-y-6 pb-12">
         
         {/* Task 2: Clean Dashboard Header & Action Cluster */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border/60 pb-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border/40 pb-5">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">Business Overview</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">
+            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Business Overview</h1>
+            <p className="text-xs text-muted-foreground mt-1">
               Real-time summary of sales, outstandings, and operational activity.
             </p>
           </div>
@@ -170,10 +170,11 @@ export default function Dashboard() {
         {/* 5-Column Metric Grid with Real-Time Stock Valuation */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           {/* Card 1: Total Sales */}
-          <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1">
-            <div className="flex items-center justify-between text-muted-foreground">
+          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
+            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-blue-500 to-indigo-500" />
+            <div className="flex items-center justify-between text-muted-foreground pl-2">
               <span className="text-xs font-medium">Total Sales</span>
-              <Receipt className="w-4 h-4 text-muted-foreground/70" />
+              <Receipt className="w-4 h-4 text-blue-500/70" />
             </div>
             <div className={`text-2xl font-bold font-mono tracking-tight ${hasSales ? "text-foreground" : "text-foreground/90"}`}>
               ₹{kpis.total_sales.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
@@ -184,10 +185,11 @@ export default function Dashboard() {
           </div>
 
           {/* Card 2: Total Purchases */}
-          <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1">
-            <div className="flex items-center justify-between text-muted-foreground">
+          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
+            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-orange-500 to-rose-500" />
+            <div className="flex items-center justify-between text-muted-foreground pl-2">
               <span className="text-xs font-medium">Total Purchases</span>
-              <ShoppingCart className="w-4 h-4 text-muted-foreground/70" />
+              <ShoppingCart className="w-4 h-4 text-orange-500/70" />
             </div>
             <div className={`text-2xl font-bold font-mono tracking-tight ${hasPurchases ? "text-foreground" : "text-foreground/90"}`}>
               ₹{kpis.total_purchases.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
@@ -200,10 +202,11 @@ export default function Dashboard() {
           {/* Card 3: Total Stock Value */}
           <Link 
             href="/inventory"
-            className="bg-card border border-border/50 hover:border-blue-500/50 rounded-xl p-4 shadow-2xs space-y-1 transition-all group cursor-pointer block"
+            className="bg-card border border-border/40 hover:border-blue-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
             title="View Inventory Breakdown"
           >
-            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground">
+            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-cyan-500 to-blue-500" />
+            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
               <span className="text-xs font-medium">Total Stock Value</span>
               <Boxes className="w-4 h-4 text-blue-400 group-hover:scale-110 transition-transform" />
             </div>
@@ -219,10 +222,11 @@ export default function Dashboard() {
           </Link>
 
           {/* Card 4: Net Cash / Receivables */}
-          <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1">
-            <div className="flex items-center justify-between text-muted-foreground">
+          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
+            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-emerald-500 to-teal-500" />
+            <div className="flex items-center justify-between text-muted-foreground pl-2">
               <span className="text-xs font-medium">Net Position</span>
-              <DollarSign className="w-4 h-4 text-muted-foreground/70" />
+              <DollarSign className="w-4 h-4 text-emerald-500/70" />
             </div>
             <div className={`text-2xl font-bold font-mono tracking-tight ${
               kpis.net_position > 0 ? "text-emerald-500" : kpis.net_position < 0 ? "text-rose-500" : "text-foreground/90"
@@ -246,10 +250,11 @@ export default function Dashboard() {
           </div>
 
           {/* Card 4: Active Parties */}
-          <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1">
-            <div className="flex items-center justify-between text-muted-foreground">
+          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
+            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-violet-500 to-purple-500" />
+            <div className="flex items-center justify-between text-muted-foreground pl-2">
               <span className="text-xs font-medium">Active Parties</span>
-              <Users className="w-4 h-4 text-muted-foreground/70" />
+              <Users className="w-4 h-4 text-violet-500/70" />
             </div>
             <div className="text-2xl font-bold font-mono tracking-tight text-foreground/90">
               {rfmList.length}

@@ -90,7 +90,7 @@ export default function StateSelect({
   return (
     <div className={`relative ${className}`} ref={dropdownRef}>
       {label && (
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+        <label className="block text-sm font-medium text-gray-700 dark:text-foreground/80 mb-1">
           {label} {required && <span className="text-red-500">*</span>}
         </label>
       )}
@@ -104,7 +104,7 @@ export default function StateSelect({
           placeholder={placeholder}
           disabled={disabled}
           required={required}
-          className="w-full px-3 py-2 border rounded-lg shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white disabled:bg-gray-100 dark:disabled:bg-gray-900 disabled:cursor-not-allowed pr-8"
+          className="w-full px-3 py-2 border rounded-lg shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-foreground disabled:bg-gray-100 dark:disabled:bg-gray-900 disabled:cursor-not-allowed pr-8"
         />
 
         {value && !disabled && (
@@ -114,7 +114,7 @@ export default function StateSelect({
               onChange("", "");
               setSearch("");
             }}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xs font-bold"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-gray-600 dark:hover:text-foreground text-xs font-bold"
             title="Clear"
           >
             ✕
@@ -125,7 +125,7 @@ export default function StateSelect({
       {isOpen && !disabled && (
         <ul className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white dark:bg-gray-800 py-1 text-sm shadow-lg ring-1 ring-black ring-opacity-5 border border-gray-200 dark:border-gray-700 focus:outline-none">
           {filteredStates.length === 0 ? (
-            <li className="relative cursor-default select-none py-2 px-3 text-gray-500 dark:text-gray-400">
+            <li className="relative cursor-default select-none py-2 px-3 text-muted-foreground dark:text-muted-foreground">
               No matching states or codes found.
             </li>
           ) : (
@@ -140,7 +140,7 @@ export default function StateSelect({
                   }`}
                 >
                   <span>{s.name}</span>
-                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 font-mono text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600">
+                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 font-mono text-gray-600 dark:text-foreground/80 border border-gray-200 dark:border-gray-600">
                     Code: {s.code}
                   </span>
                 </li>

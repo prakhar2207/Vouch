@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
@@ -97,12 +97,12 @@ export default function NewVoucherPage() {
 
         {/* Header */}
         <div className="flex items-center gap-3 sm:gap-4 border-b border-border pb-4">
-          <Link href="/vouchers" className="text-gray-400 hover:text-white transition-colors p-1">
+          <Link href="/vouchers" className="text-muted-foreground hover:text-foreground transition-colors p-1">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
           </Link>
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold">New Payment / Receipt</h1>
-            <p className="text-gray-400 mt-1 text-xs sm:text-sm">Record a cash inflow or outflow against a party</p>
+            <p className="text-muted-foreground mt-1 text-xs sm:text-sm">Record a cash inflow or outflow against a party</p>
           </div>
         </div>
 
@@ -114,16 +114,16 @@ export default function NewVoucherPage() {
             className={`p-3.5 sm:p-6 rounded-xl border-2 text-center transition-all cursor-pointer ${
               voucherType === 'RECEIPT'
                 ? 'border-green-500 bg-green-500/5'
-                : 'border-zinc-700 bg-card hover:border-zinc-500'
+                : 'border-input bg-card hover:border-zinc-500'
             }`}
           >
             <div className={`w-10 h-10 sm:w-12 sm:h-12 mx-auto rounded-full flex items-center justify-center mb-2 sm:mb-3 ${
-              voucherType === 'RECEIPT' ? 'bg-green-500/20 text-green-400' : 'bg-zinc-800 text-gray-400'
+              voucherType === 'RECEIPT' ? 'bg-green-500/20 text-green-400' : 'bg-muted text-muted-foreground'
             }`}>
               <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg>
             </div>
-            <p className={`text-base sm:text-lg font-bold ${voucherType === 'RECEIPT' ? 'text-green-400' : 'text-white'}`}>Receipt</p>
-            <p className="text-gray-500 text-xs sm:text-sm mt-0.5 sm:mt-1 hidden sm:block">Money received from customer</p>
+            <p className={`text-base sm:text-lg font-bold ${voucherType === 'RECEIPT' ? 'text-green-400' : 'text-foreground'}`}>Receipt</p>
+            <p className="text-muted-foreground text-xs sm:text-sm mt-0.5 sm:mt-1 hidden sm:block">Money received from customer</p>
           </button>
           <button
             type="button"
@@ -131,16 +131,16 @@ export default function NewVoucherPage() {
             className={`p-3.5 sm:p-6 rounded-xl border-2 text-center transition-all cursor-pointer ${
               voucherType === 'PAYMENT'
                 ? 'border-red-500 bg-red-500/5'
-                : 'border-zinc-700 bg-card hover:border-zinc-500'
+                : 'border-input bg-card hover:border-zinc-500'
             }`}
           >
             <div className={`w-10 h-10 sm:w-12 sm:h-12 mx-auto rounded-full flex items-center justify-center mb-2 sm:mb-3 ${
-              voucherType === 'PAYMENT' ? 'bg-red-500/20 text-red-400' : 'bg-zinc-800 text-gray-400'
+              voucherType === 'PAYMENT' ? 'bg-red-500/20 text-red-400' : 'bg-muted text-muted-foreground'
             }`}>
               <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 10l7-7m0 0l7 7m-7-7v18"></path></svg>
             </div>
-            <p className={`text-base sm:text-lg font-bold ${voucherType === 'PAYMENT' ? 'text-red-400' : 'text-white'}`}>Payment</p>
-            <p className="text-gray-500 text-xs sm:text-sm mt-0.5 sm:mt-1 hidden sm:block">Money paid to supplier</p>
+            <p className={`text-base sm:text-lg font-bold ${voucherType === 'PAYMENT' ? 'text-red-400' : 'text-foreground'}`}>Payment</p>
+            <p className="text-muted-foreground text-xs sm:text-sm mt-0.5 sm:mt-1 hidden sm:block">Money paid to supplier</p>
           </button>
         </div>
 
@@ -150,14 +150,14 @@ export default function NewVoucherPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
             {/* Party */}
             <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">
+              <label className="block text-sm font-medium text-muted-foreground mb-1.5">
                 {voucherType === 'RECEIPT' ? 'Customer (Receiving From) *' : 'Supplier (Paying To) *'}
               </label>
               <select
                 required
                 value={partyLedgerId}
                 onChange={e => setPartyLedgerId(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
               >
                 <option value="">-- Select Party --</option>
                 {partyLedgers.map(l => (
@@ -173,14 +173,14 @@ export default function NewVoucherPage() {
 
             {/* Cash / Bank */}
             <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">
+              <label className="block text-sm font-medium text-muted-foreground mb-1.5">
                 {voucherType === 'RECEIPT' ? 'Received Into (Cash / Bank) *' : 'Paid From (Cash / Bank) *'}
               </label>
               <select
                 required
                 value={paymentLedgerId}
                 onChange={e => setPaymentLedgerId(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
               >
                 <option value="">-- Select Cash / Bank Account --</option>
                 {cashBankLedgers.map(l => (
@@ -191,7 +191,7 @@ export default function NewVoucherPage() {
             
             {/* Amount */}
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">Amount (₹) *</label>
+              <label className="block text-sm font-medium text-muted-foreground mb-1.5">Amount (₹) *</label>
               <input
                 required
                 type="number"
@@ -200,31 +200,31 @@ export default function NewVoucherPage() {
                 placeholder="0.00"
                 value={amount}
                 onChange={e => setAmount(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all text-xl sm:text-2xl font-bold font-mono"
+                className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all text-xl sm:text-2xl font-bold font-mono"
               />
             </div>
             
             {/* Date */}
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">Voucher Date *</label>
+              <label className="block text-sm font-medium text-muted-foreground mb-1.5">Voucher Date *</label>
               <input
                 required
                 type="date"
                 value={voucherDate}
                 onChange={e => setVoucherDate(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono"
+                className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono"
               />
             </div>
             
             {/* Narration */}
             <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">Narration / Reference</label>
+              <label className="block text-sm font-medium text-muted-foreground mb-1.5">Narration / Reference</label>
               <textarea
                 rows={3}
                 placeholder="e.g. Payment against invoice PUR-0001 via NEFT"
                 value={narration}
                 onChange={e => setNarration(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none"
+                className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none"
               />
             </div>
           </div>
@@ -236,10 +236,10 @@ export default function NewVoucherPage() {
             }`}>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
-                  <p className="text-gray-400 text-xs sm:text-sm font-medium uppercase tracking-wider">
+                  <p className="text-muted-foreground text-xs sm:text-sm font-medium uppercase tracking-wider">
                     {voucherType === 'RECEIPT' ? 'Amount to Receive' : 'Amount to Pay'}
                   </p>
-                  <p className="text-gray-500 text-xs mt-0.5 sm:mt-1">
+                  <p className="text-muted-foreground text-xs mt-0.5 sm:mt-1">
                     {voucherType === 'RECEIPT' ? 'Debit: Cash/Bank → Credit: Customer' : 'Debit: Supplier → Credit: Cash/Bank'}
                   </p>
                 </div>
@@ -254,7 +254,7 @@ export default function NewVoucherPage() {
             <button
               type="submit"
               disabled={saving}
-              className={`w-full sm:w-auto justify-center px-8 py-3 rounded-lg font-semibold text-white shadow-lg transition-all cursor-pointer ${
+              className={`w-full sm:w-auto justify-center px-8 py-3 rounded-lg font-semibold text-foreground shadow-lg transition-all cursor-pointer ${
                 voucherType === 'RECEIPT'
                   ? 'bg-green-600 hover:bg-green-700'
                   : 'bg-red-600 hover:bg-red-700'

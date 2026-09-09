@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
@@ -753,7 +753,7 @@ export default function SalesPage() {
 
   const isInterState = Boolean(selectedParty?.state_code && companyStateCode && selectedParty.state_code !== companyStateCode);
 
-  if (loading) return <DashboardLayout><div className="flex items-center justify-center h-full text-gray-500">Loading invoice form...</div></DashboardLayout>;
+  if (loading) return <DashboardLayout><div className="flex items-center justify-center h-full text-muted-foreground">Loading invoice form...</div></DashboardLayout>;
 
   let missingFields = [];
   if (company) {
@@ -769,14 +769,14 @@ export default function SalesPage() {
           <div className="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
           </div>
-          <h2 className="text-2xl font-bold text-white mb-2">Proprietor Details Required</h2>
-          <p className="text-gray-400 mb-4">
+          <h2 className="text-2xl font-bold text-foreground mb-2">Proprietor Details Required</h2>
+          <p className="text-muted-foreground mb-4">
             You must complete your firm's profile before you can generate invoices. The following details are missing:
           </p>
           <ul className="text-amber-500 font-medium mb-8 flex flex-col items-center gap-1">
             {missingFields.map(f => <li key={f}>• {f}</li>)}
           </ul>
-          <Link href="/settings" className="inline-block bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-bold shadow-lg transition-colors">
+          <Link href="/settings" className="inline-block bg-blue-600 hover:bg-blue-700 text-foreground px-8 py-3 rounded-lg font-bold shadow-lg transition-colors">
             Go to Profile Settings
           </Link>
         </div>
@@ -791,14 +791,14 @@ export default function SalesPage() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-4">
           <div className="flex items-center gap-3 sm:gap-4">
-            <Link href="/sales" className="text-gray-400 hover:text-white transition-colors p-1">
+            <Link href="/sales" className="text-muted-foreground hover:text-foreground transition-colors p-1">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
             </Link>
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold">New Sales Invoice</h1>
               {activeFY && (
-                <div className="text-xs text-gray-400 mt-0.5">
-                  Financial Year: <span className="font-semibold text-white">{activeFY.name}</span> ({activeFY.start_date} ~ {activeFY.end_date})
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  Financial Year: <span className="font-semibold text-foreground">{activeFY.name}</span> ({activeFY.start_date} ~ {activeFY.end_date})
                 </div>
               )}
             </div>
@@ -809,7 +809,7 @@ export default function SalesPage() {
             className={`w-full sm:w-auto justify-center px-6 py-2.5 rounded-lg shadow-lg font-medium transition-colors flex items-center gap-2 cursor-pointer ${
               isReadOnly
                 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 cursor-not-allowed opacity-80'
-                : 'bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50'
+                : 'bg-blue-600 hover:bg-blue-700 text-foreground disabled:opacity-50'
             }`}
           >
             {saving ? 'Posting...' : isReadOnly ? 'Period Closed (Read-Only)' : 'Post Invoice'}
@@ -819,7 +819,7 @@ export default function SalesPage() {
         {/* Billing Details Card */}
         <div className="bg-card border border-border rounded-xl shadow-sm p-6">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold text-gray-200">Billing Details</h2>
+            <h2 className="text-lg font-semibold text-foreground">Billing Details</h2>
             {seqPreview && (
               <span className="text-xs font-mono font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30 px-2.5 py-1 rounded-lg">
                 Next Serial: {seqPreview} (GST Rule 46b)
@@ -827,21 +827,21 @@ export default function SalesPage() {
             )}
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 pb-6 border-b border-zinc-800">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 pb-6 border-b border-border">
             {enableManualInvoice && (
               <div>
-                <label className="block text-sm font-medium text-gray-400 mb-1.5">Invoice Number</label>
+                <label className="block text-sm font-medium text-muted-foreground mb-1.5">Invoice Number</label>
                 <input
                   type="text"
                   value={invoiceNumber}
                   onChange={e => setInvoiceNumber(e.target.value)}
                   placeholder={seqPreview ? `Auto: ${seqPreview}` : "e.g. INV-001"}
-                  className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono"
+                  className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono"
                 />
               </div>
             )}
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">
+              <label className="block text-sm font-medium text-muted-foreground mb-1.5">
                 Invoice Date {activeFY && <span className="text-zinc-500 font-normal font-mono">({activeFY.code})</span>}
               </label>
               <input
@@ -850,7 +850,7 @@ export default function SalesPage() {
                 min={activeFY?.start_date}
                 max={activeFY?.end_date}
                 onChange={e => setInvoiceDate(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono"
+                className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono"
               />
             </div>
           </div>
@@ -858,13 +858,13 @@ export default function SalesPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <div className="flex justify-between items-center mb-1.5">
-                <label className="block text-sm font-medium text-gray-400">Party (Customer)</label>
+                <label className="block text-sm font-medium text-muted-foreground">Party (Customer)</label>
                 <Link href="/sales/customers/new" className="text-xs text-blue-500 hover:text-blue-400">+ Add New Customer</Link>
               </div>
               <select
                 value={partyLedgerId}
                 onChange={e => handlePartyChange(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
               >
                 <option value="">-- Select Customer / Cash / Bank --</option>
                 {ledgers.filter(l => 
@@ -885,7 +885,7 @@ export default function SalesPage() {
                 <div className="mt-2 text-xs flex items-center justify-between text-blue-300 bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 rounded-lg">
                   <div className="flex items-center gap-1.5 font-medium">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
-                    <span>Customer Discount: <strong className="text-white font-mono">{Number(selectedParty.discount_percent)}%</strong></span>
+                    <span>Customer Discount: <strong className="text-foreground font-mono">{Number(selectedParty.discount_percent)}%</strong></span>
                   </div>
                   <span className="text-[11px] text-zinc-400">Applied automatically • Editable below</span>
                 </div>
@@ -893,8 +893,8 @@ export default function SalesPage() {
             </div>
             {enableLedgerMapping && (
               <div>
-                <label className="block text-sm font-medium text-gray-400 mb-1.5">Sales Ledger</label>
-                <select value={salesLedgerId} onChange={e => setSalesLedgerId(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+                <label className="block text-sm font-medium text-muted-foreground mb-1.5">Sales Ledger</label>
+                <select value={salesLedgerId} onChange={e => setSalesLedgerId(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all">
                   <option value="">-- Select Sales Ledger --</option>
                   {ledgers.filter(l => l.group.includes('Income') || l.name.includes('Sales')).map(l => (
                     <option key={l.id} value={l.id}>{l.name}</option>
@@ -905,9 +905,9 @@ export default function SalesPage() {
           </div>
 
           {/* Ad-hoc Buyer Details Subform for Cash / Walk-in Customers */}
-          <div className="mt-5 pt-4 border-t border-zinc-800">
+          <div className="mt-5 pt-4 border-t border-border">
             <div 
-              className="flex items-center justify-between cursor-pointer select-none bg-zinc-900/40 hover:bg-zinc-900/80 p-3 rounded-lg border border-zinc-800/80 transition-all"
+              className="flex items-center justify-between cursor-pointer select-none bg-zinc-900/40 hover:bg-zinc-900/80 p-3 rounded-lg border border-border/80 transition-all"
               onClick={() => setShowBuyerDetails(!showBuyerDetails)}
             >
               <div className="flex items-center gap-2.5">
@@ -917,13 +917,13 @@ export default function SalesPage() {
                   Prints on bill without creating a Debtor
                 </span>
               </div>
-              <span className="text-xs text-zinc-400 hover:text-white font-medium">
+              <span className="text-xs text-zinc-400 hover:text-foreground font-medium">
                 {showBuyerDetails ? '▲ Hide Details' : '▼ Enter Walk-in Details'}
               </span>
             </div>
 
             {showBuyerDetails && (
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-zinc-900/40 border border-zinc-800/60 rounded-xl">
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-zinc-900/40 border border-border/60 rounded-xl">
                 <div>
                   <label className="block text-xs font-medium text-zinc-400 mb-1.5">Walk-in Buyer Name</label>
                   <input
@@ -931,7 +931,7 @@ export default function SalesPage() {
                     value={buyerName}
                     onChange={e => setBuyerName(e.target.value)}
                     placeholder="e.g. Ramesh Kumar"
-                    className="w-full bg-zinc-900 border border-zinc-700 text-white text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-zinc-600"
+                    className="w-full bg-muted/50 border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-zinc-600"
                   />
                 </div>
                 <div>
@@ -941,7 +941,7 @@ export default function SalesPage() {
                     value={buyerPhone}
                     onChange={e => setBuyerPhone(e.target.value)}
                     placeholder="e.g. 9876543210"
-                    className="w-full bg-zinc-900 border border-zinc-700 text-white text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-zinc-600"
+                    className="w-full bg-muted/50 border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-zinc-600"
                   />
                 </div>
                 <div>
@@ -951,7 +951,7 @@ export default function SalesPage() {
                     value={buyerGstin}
                     onChange={e => setBuyerGstin(e.target.value.toUpperCase())}
                     placeholder="Unregistered or 15-digit GSTIN"
-                    className="w-full bg-zinc-900 border border-zinc-700 text-white text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none uppercase font-mono placeholder:text-zinc-600"
+                    className="w-full bg-muted/50 border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none uppercase font-mono placeholder:text-zinc-600"
                   />
                 </div>
                 <div>
@@ -961,7 +961,7 @@ export default function SalesPage() {
                     value={buyerAddress}
                     onChange={e => setBuyerAddress(e.target.value)}
                     placeholder="City, State"
-                    className="w-full bg-zinc-900 border border-zinc-700 text-white text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-zinc-600"
+                    className="w-full bg-muted/50 border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-zinc-600"
                   />
                 </div>
               </div>
@@ -972,20 +972,20 @@ export default function SalesPage() {
         {/* Line Items Card */}
         <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
             <div className="p-6 border-b border-border flex justify-between items-center">
-                <h2 className="text-lg font-semibold text-gray-200">Line Items by Category</h2>
+                <h2 className="text-lg font-semibold text-foreground">Line Items by Category</h2>
                 <span className="text-xs text-blue-400 bg-blue-400/10 px-2 py-1 rounded border border-blue-400/20">Auto-Creates & Inherits Tax</span>
             </div>
             
             <div className="p-2 space-y-6">
                 {groupedItems.map((group, gIndex) => (
-                    <div key={gIndex} className="border border-zinc-800 rounded-lg overflow-hidden bg-zinc-900/30">
-                        <div className="p-3 sm:p-4 bg-zinc-900/80 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div key={gIndex} className="border border-border rounded-lg overflow-hidden bg-zinc-900/30">
+                        <div className="p-3 sm:p-4 bg-zinc-900/80 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div className="flex-1 max-w-md flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                                <label className="text-sm font-medium text-gray-400 whitespace-nowrap">Category:</label>
+                                <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Category:</label>
                                 <select 
                                     value={group.category_id} 
                                     onChange={(e) => updateGroup(gIndex, 'category_id', e.target.value)}
-                                    className="w-full bg-zinc-800 border border-zinc-700 text-white p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                                    className="w-full bg-muted border border-input text-foreground p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                                 >
                                     <option value="">-- Select Category --</option>
                                     {categories.map(c => (
@@ -993,16 +993,16 @@ export default function SalesPage() {
                                     ))}
                                 </select>
                             </div>
-                            <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-4 text-sm text-gray-500">
-                                <span className="text-xs sm:text-sm">Default HSN: <strong className="text-gray-300">{group.hsn_code || 'N/A'}</strong></span>
+                            <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-4 text-sm text-muted-foreground">
+                                <span className="text-xs sm:text-sm">Default HSN: <strong className="text-foreground/80">{group.hsn_code || 'N/A'}</strong></span>
                                 {isInterState ? (
                                     <span className="bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20 text-xs font-medium">
                                         IGST: {group.gst_rate}%
                                     </span>
                                 ) : (
                                     <div className="flex gap-2">
-                                        <span className="bg-zinc-800 text-gray-300 px-2 py-0.5 rounded border border-zinc-700 text-xs font-medium">CGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
-                                        <span className="bg-zinc-800 text-gray-300 px-2 py-0.5 rounded border border-zinc-700 text-xs font-medium">SGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
+                                        <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">CGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
+                                        <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">SGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
                                     </div>
                                 )}
                                 <button onClick={() => removeCategoryGroup(gIndex)} className="text-red-500 hover:text-red-400 ml-auto sm:ml-4 p-1" title="Delete category group">
@@ -1013,7 +1013,7 @@ export default function SalesPage() {
                         
                         <div className="overflow-x-auto">
                             <table className="w-full min-w-[550px] text-left border-collapse">
-                                <thead className="bg-zinc-900/40 text-gray-400 text-xs uppercase tracking-wider">
+                                <thead className="bg-zinc-900/40 text-muted-foreground text-xs uppercase tracking-wider">
                                     <tr>
                                         <th className="p-3 font-medium">Product Name</th>
                                         <th className="p-3 font-medium w-24 text-center">Qty</th>
@@ -1053,13 +1053,13 @@ export default function SalesPage() {
                                                         }} 
                                                         onFocus={() => setActiveSearch(`${gIndex}-${iIndex}`)}
                                                         onBlur={() => setTimeout(() => setActiveSearch(null), 250)}
-                                                        className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-sm font-medium" 
+                                                        className="w-full bg-transparent border border-transparent hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-sm font-medium" 
                                                     />
 
                                                     {/* Autocomplete Dropdown Popover */}
                                                     {activeSearch === `${gIndex}-${iIndex}` && (
                                                         <div 
-                                                            className="absolute left-0 top-full mt-1 z-50 w-full min-w-[340px] max-w-[480px] bg-zinc-950 border border-zinc-700 rounded-xl shadow-2xl overflow-hidden max-h-64 overflow-y-auto"
+                                                            className="absolute left-0 top-full mt-1 z-50 w-full min-w-[340px] max-w-[480px] bg-zinc-950 border border-input rounded-xl shadow-2xl overflow-hidden max-h-64 overflow-y-auto"
                                                             onMouseDown={(e) => e.preventDefault()}
                                                         >
                                                             {(() => {
@@ -1116,13 +1116,13 @@ export default function SalesPage() {
                                                                                 >
                                                                                     <div className="flex-1 min-w-0">
                                                                                         <div className="flex items-center gap-2 flex-wrap">
-                                                                                            <span className="font-semibold text-white text-sm truncate">{p.name}</span>
+                                                                                            <span className="font-semibold text-foreground text-sm truncate">{p.name}</span>
                                                                                             {p.brand ? (
                                                                                                 <span className="text-[10px] px-1.5 py-0.2 rounded font-bold uppercase bg-blue-500/20 text-blue-300 border border-blue-500/30">
                                                                                                     {p.brand}
                                                                                                 </span>
                                                                                             ) : (
-                                                                                                <span className="text-[10px] px-1.5 py-0.2 rounded font-medium text-zinc-500 bg-zinc-900 border border-zinc-800">
+                                                                                                <span className="text-[10px] px-1.5 py-0.2 rounded font-medium text-zinc-500 bg-muted/50 border border-border">
                                                                                                     Unbranded
                                                                                                 </span>
                                                                                             )}
@@ -1172,7 +1172,7 @@ export default function SalesPage() {
                                                             
                                                             if (catalogMrp > 0) {
                                                                 return (
-                                                                    <span className="text-[11px] font-mono flex items-center gap-1 bg-zinc-900/90 text-zinc-400 border border-zinc-800 px-2 py-0.5 rounded">
+                                                                    <span className="text-[11px] font-mono flex items-center gap-1 bg-zinc-900/90 text-zinc-400 border border-border px-2 py-0.5 rounded">
                                                                         <span className="text-zinc-500 font-sans">MRP:</span>
                                                                         <strong className="text-zinc-200">₹{catalogMrp.toFixed(2)}</strong>
                                                                         {Number(item.rate) !== catalogMrp && (
@@ -1259,14 +1259,14 @@ export default function SalesPage() {
                                                                             sameNameProducts.length > 1
                                                                                 ? 'bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border-blue-500/50 shadow-sm shadow-blue-500/10'
                                                                                 : item.brand
-                                                                                ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700'
+                                                                                ? 'bg-muted hover:bg-zinc-700 text-zinc-200 border-input'
                                                                                 : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/30'
                                                                         }`}
                                                                         title="Click to select or change brand"
                                                                     >
-                                                                        <span>Brand: <strong className="text-white">{item.brand || 'Select Brand'}</strong></span>
+                                                                        <span>Brand: <strong className="text-foreground">{item.brand || 'Select Brand'}</strong></span>
                                                                         {sameNameProducts.length > 1 && (
-                                                                            <span className="text-[9px] bg-blue-500 text-white rounded-full px-1 font-mono">
+                                                                            <span className="text-[9px] bg-blue-500 text-foreground rounded-full px-1 font-mono">
                                                                                 {sameNameProducts.length}
                                                                             </span>
                                                                         )}
@@ -1275,10 +1275,10 @@ export default function SalesPage() {
 
                                                                     {isBrandOpen && (
                                                                         <div 
-                                                                            className="absolute left-0 top-full mt-1 z-50 bg-zinc-950 border border-zinc-700 rounded-xl shadow-2xl p-2 min-w-[240px] max-h-64 overflow-y-auto"
+                                                                            className="absolute left-0 top-full mt-1 z-50 bg-zinc-950 border border-input rounded-xl shadow-2xl p-2 min-w-[240px] max-h-64 overflow-y-auto"
                                                                             onClick={(e) => e.stopPropagation()}
                                                                         >
-                                                                            <div className="text-[10px] uppercase font-bold text-zinc-400 px-2 py-1 border-b border-zinc-800 mb-1 flex items-center justify-between">
+                                                                            <div className="text-[10px] uppercase font-bold text-zinc-400 px-2 py-1 border-b border-border mb-1 flex items-center justify-between">
                                                                                 <span>Brand for "{item.product_name}"</span>
                                                                                 <span className="text-[9px] text-zinc-500">Auto-links Rate & Stock</span>
                                                                             </div>
@@ -1305,7 +1305,7 @@ export default function SalesPage() {
                                                                                             >
                                                                                                 <div className="flex items-center gap-1.5">
                                                                                                     <span className="font-semibold">{snp.brand || 'Unbranded'}</span>
-                                                                                                    {isCurrent && <span className="text-[9px] bg-blue-500 text-white px-1 rounded">Active</span>}
+                                                                                                    {isCurrent && <span className="text-[9px] bg-blue-500 text-foreground px-1 rounded">Active</span>}
                                                                                                 </div>
                                                                                                 <div className="text-[10px] text-right text-zinc-400">
                                                                                                     <div>MRP: ₹{snpMrp.toFixed(2)}</div>
@@ -1329,7 +1329,7 @@ export default function SalesPage() {
 
                                                                             {/* All other catalog brands */}
                                                                             {allCategoryBrands.filter(b => !sameNameProducts.some((snp: any) => snp.brand?.toLowerCase() === b.toLowerCase())).length > 0 && (
-                                                                                <div className="pt-1 border-t border-zinc-800/80 mb-2">
+                                                                                <div className="pt-1 border-t border-border/80 mb-2">
                                                                                     <div className="text-[9px] font-semibold text-zinc-500 px-2 mb-1 uppercase">Other Brands:</div>
                                                                                     <div className="flex flex-wrap gap-1 px-1">
                                                                                         {allCategoryBrands
@@ -1342,7 +1342,7 @@ export default function SalesPage() {
                                                                                                         selectBrand(gIndex, iIndex, b);
                                                                                                         setOpenBrandDropdown(null);
                                                                                                     }}
-                                                                                                    className="text-[10px] px-2 py-0.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded border border-zinc-800 hover:border-zinc-700 cursor-pointer"
+                                                                                                    className="text-[10px] px-2 py-0.5 bg-muted/50 hover:bg-muted text-zinc-300 rounded border border-border hover:border-input cursor-pointer"
                                                                                                 >
                                                                                                     {b}
                                                                                                 </button>
@@ -1352,7 +1352,7 @@ export default function SalesPage() {
                                                                             )}
 
                                                                             {/* Custom Brand input */}
-                                                                            <div className="pt-1.5 border-t border-zinc-800">
+                                                                            <div className="pt-1.5 border-t border-border">
                                                                                 <div className="text-[9px] font-semibold text-zinc-500 px-1 mb-1 uppercase">Custom Brand:</div>
                                                                                 <div className="flex gap-1">
                                                                                     <input
@@ -1366,7 +1366,7 @@ export default function SalesPage() {
                                                                                                 setOpenBrandDropdown(null);
                                                                                             }
                                                                                         }}
-                                                                                        className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-blue-500"
+                                                                                        className="w-full bg-muted/50 border border-input rounded px-2 py-1 text-xs text-foreground outline-none focus:border-blue-500"
                                                                                         id={`custom-brand-input-${gIndex}-${iIndex}`}
                                                                                     />
                                                                                     <button
@@ -1378,7 +1378,7 @@ export default function SalesPage() {
                                                                                                 setOpenBrandDropdown(null);
                                                                                             }
                                                                                         }}
-                                                                                        className="bg-blue-600 hover:bg-blue-500 text-white text-[10px] px-2 py-1 rounded font-medium cursor-pointer"
+                                                                                        className="bg-blue-600 hover:bg-blue-500 text-foreground text-[10px] px-2 py-1 rounded font-medium cursor-pointer"
                                                                                     >
                                                                                         Apply
                                                                                     </button>
@@ -1421,7 +1421,7 @@ export default function SalesPage() {
                                                     min="1" 
                                                     value={item.quantity} 
                                                     onChange={e => updateItem(gIndex, iIndex, 'quantity', e.target.value)} 
-                                                    className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-center text-sm font-medium" 
+                                                    className="w-full bg-transparent border border-transparent hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-center text-sm font-medium" 
                                                 />
                                                 {(() => {
                                                     const cleanName = String(item.product_name || '').trim().toLowerCase();
@@ -1447,7 +1447,7 @@ export default function SalesPage() {
                                                     placeholder="0.00"
                                                     value={item.rate === 0 && !item.product_name ? '' : item.rate} 
                                                     onChange={e => updateItem(gIndex, iIndex, 'rate', e.target.value)} 
-                                                    className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-right text-sm font-mono" 
+                                                    className="w-full bg-transparent border border-transparent hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-right text-sm font-mono" 
                                                 />
                                             </td>
                                             <td className="p-2">
@@ -1458,10 +1458,10 @@ export default function SalesPage() {
                                                     max="100" 
                                                     value={item.discount_percent} 
                                                     onChange={e => updateItem(gIndex, iIndex, 'discount_percent', e.target.value)} 
-                                                    className="w-full bg-transparent border border-transparent hover:border-zinc-700 focus:border-blue-500 rounded p-1.5 outline-none text-white transition-all text-center text-sm font-mono" 
+                                                    className="w-full bg-transparent border border-transparent hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-center text-sm font-mono" 
                                                 />
                                             </td>
-                                            <td className="p-2 text-right font-medium text-gray-200 font-mono">
+                                            <td className="p-2 text-right font-medium text-foreground font-mono">
                                                 ₹{taxable.toFixed(2)}
                                             </td>
                                             <td className="p-2 text-center">
@@ -1475,7 +1475,7 @@ export default function SalesPage() {
                                 </tbody>
                             </table>
                         </div>
-                        <div className="p-3 bg-zinc-900/30 border-t border-zinc-800">
+                        <div className="p-3 bg-zinc-900/30 border-t border-border">
                             <button onClick={() => addRow(gIndex)} className="text-sm text-blue-500 hover:text-blue-400 font-medium flex items-center gap-1">
                                 + Add item in {categories.find(c=>c.id===group.category_id)?.name || 'this category'}
                             </button>
@@ -1485,7 +1485,7 @@ export default function SalesPage() {
             </div>
             
             <div className="p-4 border-t border-border bg-zinc-900/20">
-                <button onClick={addCategoryGroup} className="text-sm text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-4 py-2 rounded shadow transition-colors font-medium">
+                <button onClick={addCategoryGroup} className="text-sm text-foreground bg-muted hover:bg-zinc-700 border border-input px-4 py-2 rounded shadow transition-colors font-medium">
                     + Add Another Category Block
                 </button>
             </div>
@@ -1494,7 +1494,7 @@ export default function SalesPage() {
         {/* Totals Section */}
         <div className="flex justify-end">
             <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-sm p-6 space-y-3">
-                <div className="flex justify-between text-gray-400">
+                <div className="flex justify-between text-muted-foreground">
                     <span>Gross Total</span>
                     <span>₹{grossTotal.toFixed(2)}</span>
                 </div>
@@ -1505,20 +1505,20 @@ export default function SalesPage() {
                     </div>
                 ) : (
                     <>
-                        <div className="flex justify-between text-gray-400">
+                        <div className="flex justify-between text-muted-foreground">
                             <span>CGST</span>
                             <span>₹{(totalTax / 2).toFixed(2)}</span>
                         </div>
-                        <div className="flex justify-between text-gray-400">
+                        <div className="flex justify-between text-muted-foreground">
                             <span>SGST</span>
                             <span>₹{(totalTax / 2).toFixed(2)}</span>
                         </div>
                     </>
                 )}
-                <div className="flex justify-between items-center text-gray-400">
+                <div className="flex justify-between items-center text-muted-foreground">
                     <span>Cartage / Freight Outward</span>
                     <div className="flex items-center gap-1">
-                        <span className="text-gray-400 font-mono text-sm">₹</span>
+                        <span className="text-muted-foreground font-mono text-sm">₹</span>
                         <input
                             type="number"
                             min="0"
@@ -1526,17 +1526,17 @@ export default function SalesPage() {
                             value={cartageAmount}
                             onChange={(e) => setCartageAmount(e.target.value)}
                             placeholder="0.00"
-                            className="w-28 bg-zinc-900 border border-zinc-700 text-white text-right px-2 py-1 rounded font-mono text-sm focus:ring-1 focus:ring-blue-500 outline-none"
+                            className="w-28 bg-muted/50 border border-input text-foreground text-right px-2 py-1 rounded font-mono text-sm focus:ring-1 focus:ring-blue-500 outline-none"
                         />
                     </div>
                 </div>
-                <div className="flex justify-between text-gray-400">
+                <div className="flex justify-between text-muted-foreground">
                     <span>Round Off</span>
-                    <span className={roundOff < 0 ? "text-emerald-400 font-mono font-medium" : roundOff > 0 ? "text-amber-400 font-mono font-medium" : "text-gray-400 font-mono"}>
+                    <span className={roundOff < 0 ? "text-emerald-400 font-mono font-medium" : roundOff > 0 ? "text-amber-400 font-mono font-medium" : "text-muted-foreground font-mono"}>
                         {roundOff > 0 ? `+₹${roundOff.toFixed(2)}` : roundOff < 0 ? `-₹${Math.abs(roundOff).toFixed(2)}` : `₹0.00`}
                     </span>
                 </div>
-                <div className="border-t border-zinc-700 pt-3 flex justify-between text-xl font-bold text-white">
+                <div className="border-t border-input pt-3 flex justify-between text-xl font-bold text-foreground">
                     <span>Grand Total</span>
                     <span className="font-mono">₹{grandTotal.toFixed(2)}</span>
                 </div>

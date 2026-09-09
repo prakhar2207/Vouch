@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import React, { useState } from "react";
 import { usePathname } from "next/navigation";
 import { useShortcuts } from "@/context/ShortcutContext";
@@ -53,11 +53,11 @@ export default function HelpModal() {
       id: "sales",
       title: "🧾 1. How to Create a Sales Invoice (F8)",
       content: (
-        <div className="space-y-2 text-xs text-gray-300">
-          <p><strong>Step 1:</strong> Press <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded font-mono text-white">F8</kbd> from any screen to open the Sales Invoice page.</p>
-          <p><strong>Step 2:</strong> Select your <strong>Customer (Party)</strong>. If the customer is new, simply press <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded font-mono text-white">Alt + C</kbd> to add them right there.</p>
+        <div className="space-y-2 text-xs text-foreground/80">
+          <p><strong>Step 1:</strong> Press <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-foreground">F8</kbd> from any screen to open the Sales Invoice page.</p>
+          <p><strong>Step 2:</strong> Select your <strong>Customer (Party)</strong>. If the customer is new, simply press <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-foreground">Alt + C</kbd> to add them right there.</p>
           <p><strong>Step 3:</strong> Enter your line items, quantities, and rates. The system automatically detects whether it's local (CGST + SGST) or out-of-state (IGST) and computes taxes.</p>
-          <p><strong>Step 4:</strong> Press <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded font-mono text-white">Ctrl + A</kbd> to immediately save and post the invoice to your accounts and deduct inventory stock!</p>
+          <p><strong>Step 4:</strong> Press <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-foreground">Ctrl + A</kbd> to immediately save and post the invoice to your accounts and deduct inventory stock!</p>
         </div>
       ),
     },
@@ -65,8 +65,8 @@ export default function HelpModal() {
       id: "ocr",
       title: "🤖 2. How the AI Bill Scanner Works (F9)",
       content: (
-        <div className="space-y-2 text-xs text-gray-300">
-          <p><strong>Step 1:</strong> Press <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded font-mono text-white">F9</kbd> to open Purchase Invoices.</p>
+        <div className="space-y-2 text-xs text-foreground/80">
+          <p><strong>Step 1:</strong> Press <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-foreground">F9</kbd> to open Purchase Invoices.</p>
           <p><strong>Step 2:</strong> Click <strong>Browse Document</strong> or drop a PDF/photo of your vendor bill.</p>
           <p><strong>Step 3:</strong> In a few seconds, our AI reads the bill in-memory (zero privacy risks) and opens a <strong>Split-Screen View</strong>: your original document on the left, and pre-filled invoice fields on the right.</p>
           <p><strong>Step 4:</strong> Review the extracted line items, modify anything if needed, and click <strong>Approve & Save</strong> to update accounts and add stock.</p>
@@ -77,9 +77,9 @@ export default function HelpModal() {
       id: "altc",
       title: "✨ 3. Create Masters on the Fly (Alt + C)",
       content: (
-        <div className="space-y-2 text-xs text-gray-300">
+        <div className="space-y-2 text-xs text-foreground/80">
           <p>Whenever you are creating an invoice and realize a customer or product does not exist yet:</p>
-          <p>• Press <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded font-mono text-white">Alt + C</kbd> anywhere on the screen.</p>
+          <p>• Press <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-foreground">Alt + C</kbd> anywhere on the screen.</p>
           <p>• A quick popup lets you enter the Customer Name, GSTIN, State, or Product HSN and Rate.</p>
           <p>• Hit Save, and the new item is <strong>automatically selected in your active invoice</strong> without losing your work.</p>
         </div>
@@ -89,7 +89,7 @@ export default function HelpModal() {
       id: "analytics",
       title: "📈 4. Understanding Growth Status & Customer Groups",
       content: (
-        <div className="space-y-2 text-xs text-gray-300">
+        <div className="space-y-2 text-xs text-foreground/80">
           <p><strong>• Sales Pace (Booming / Constant / Declining):</strong> We monitor your daily revenue trajectory. If sales are growing faster than previous days, your status is <strong>Booming 🚀</strong>. If sales are slowing down, it alerts you as <strong>Declining 📉</strong> so you can follow up with buyers.</p>
           <p><strong>• Customer Value Groups:</strong></p>
           <p className="pl-2">⭐ <strong>High Value (VIP):</strong> Your most active customers with highest total spend. Prioritize fast fulfillment for them!</p>
@@ -102,12 +102,12 @@ export default function HelpModal() {
       id: "grid",
       title: "⌨️ 5. Pure Keyboard Data Entry (AG Grid)",
       content: (
-        <div className="space-y-2 text-xs text-gray-300">
+        <div className="space-y-2 text-xs text-foreground/80">
           <p>Visit <strong>AG Grid Voucher Entry</strong> from the sidebar for fast multi-line journals or payments:</p>
-          <p>• Use <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded font-mono text-white">Tab</kbd> or <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded font-mono text-white">Enter</kbd> to move from cell to cell.</p>
+          <p>• Use <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-foreground">Tab</kbd> or <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-foreground">Enter</kbd> to move from cell to cell.</p>
           <p>• Type <strong>Dr</strong> or <strong>Cr</strong> to switch column focus.</p>
           <p>• Watch the live <strong>Balanced</strong> indicator at the bottom bar.</p>
-          <p>• Press <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded font-mono text-white">Ctrl + A</kbd> to save immediately.</p>
+          <p>• Press <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-foreground">Ctrl + A</kbd> to save immediately.</p>
         </div>
       ),
     },
@@ -115,16 +115,16 @@ export default function HelpModal() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-in fade-in duration-200 p-4">
-      <div className="w-full max-w-3xl bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-white max-h-[85vh]">
+      <div className="w-full max-w-3xl bg-muted/50 border border-input rounded-2xl shadow-2xl overflow-hidden flex flex-col text-foreground max-h-[85vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-zinc-950">
           <div className="flex items-center gap-3">
             <span className="px-2.5 py-1 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-md text-xs font-mono font-bold">
               F1
             </span>
             <div>
-              <h3 className="text-xl font-bold text-white">User Guide & Shortcuts Hub</h3>
-              <p className="text-xs text-gray-400">Everything you need to master your accounting system</p>
+              <h3 className="text-xl font-bold text-foreground">User Guide & Shortcuts Hub</h3>
+              <p className="text-xs text-muted-foreground">Everything you need to master your accounting system</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -133,13 +133,13 @@ export default function HelpModal() {
                 setIsHelpOpen(false);
                 startTour();
               }}
-              className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg text-xs font-bold shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-foreground rounded-lg text-xs font-bold shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <span>🚀 Start Interactive Tour</span>
             </button>
             <button
               onClick={() => setIsHelpOpen(false)}
-              className="text-gray-400 hover:text-white text-sm font-bold px-2 py-1 cursor-pointer"
+              className="text-muted-foreground hover:text-foreground text-sm font-bold px-2 py-1 cursor-pointer"
             >
               ✕
             </button>
@@ -147,13 +147,13 @@ export default function HelpModal() {
         </div>
 
         {/* Tab Switcher */}
-        <div className="flex border-b border-zinc-800 bg-zinc-950/60 px-6 pt-2">
+        <div className="flex border-b border-border bg-zinc-950/60 px-6 pt-2">
           <button
             onClick={() => setTab("SHORTCUTS")}
             className={`px-4 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer ${
               tab === "SHORTCUTS"
                 ? "border-blue-500 text-blue-400"
-                : "border-transparent text-gray-400 hover:text-gray-200"
+                : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
             ⌨️ Keyboard Shortcuts Cheat Sheet
@@ -163,7 +163,7 @@ export default function HelpModal() {
             className={`px-4 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer ${
               tab === "GUIDE"
                 ? "border-blue-500 text-blue-400"
-                : "border-transparent text-gray-400 hover:text-gray-200"
+                : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
             📚 How-To Tutorials & System Guide
@@ -176,7 +176,7 @@ export default function HelpModal() {
             <div className="space-y-6">
               {categories.map((cat, idx) => (
                 <div key={idx} className="space-y-3">
-                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-zinc-800 pb-1">
+                  <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider border-b border-border pb-1">
                     {cat.title}
                   </h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -186,7 +186,7 @@ export default function HelpModal() {
                         className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
                           sc.active
                             ? "bg-blue-950/30 border-blue-500/40 shadow-sm"
-                            : "bg-zinc-950/60 border-zinc-800"
+                            : "bg-zinc-950/60 border-border"
                         }`}
                       >
                         <div className="space-y-0.5">
@@ -198,9 +198,9 @@ export default function HelpModal() {
                               </span>
                             )}
                           </div>
-                          <div className="text-xs text-gray-400">{sc.desc}</div>
+                          <div className="text-xs text-muted-foreground">{sc.desc}</div>
                         </div>
-                        <kbd className="px-2.5 py-1 bg-zinc-800 border border-zinc-700 text-gray-200 font-mono text-xs rounded-md shadow-inner whitespace-nowrap">
+                        <kbd className="px-2.5 py-1 bg-muted border border-input text-foreground font-mono text-xs rounded-md shadow-inner whitespace-nowrap">
                           {sc.key}
                         </kbd>
                       </div>
@@ -220,17 +220,17 @@ export default function HelpModal() {
               {tutorials.map((item) => (
                 <div
                   key={item.id}
-                  className="bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-sm"
+                  className="bg-zinc-950 border border-border rounded-xl overflow-hidden shadow-sm"
                 >
                   <button
                     onClick={() => setExpandedTopic(expandedTopic === item.id ? "" : item.id)}
-                    className="w-full text-left p-4 font-bold text-sm text-gray-200 hover:text-white flex items-center justify-between transition-colors cursor-pointer"
+                    className="w-full text-left p-4 font-bold text-sm text-foreground hover:text-foreground flex items-center justify-between transition-colors cursor-pointer"
                   >
                     <span>{item.title}</span>
-                    <span className="text-gray-400 text-xs">{expandedTopic === item.id ? "▲ Collapse" : "▼ Read"}</span>
+                    <span className="text-muted-foreground text-xs">{expandedTopic === item.id ? "▲ Collapse" : "▼ Read"}</span>
                   </button>
                   {expandedTopic === item.id && (
-                    <div className="p-4 pt-0 border-t border-zinc-800/80 mt-1">
+                    <div className="p-4 pt-0 border-t border-border/80 mt-1">
                       {item.content}
                     </div>
                   )}
@@ -241,8 +241,8 @@ export default function HelpModal() {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 bg-zinc-950 border-t border-zinc-800 text-xs text-gray-400 flex items-center justify-between">
-          <span>Press <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded font-mono text-zinc-300">Esc</kbd> anytime to close</span>
+        <div className="px-6 py-3 bg-zinc-950 border-t border-border text-xs text-muted-foreground flex items-center justify-between">
+          <span>Press <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-zinc-300">Esc</kbd> anytime to close</span>
           <span className="font-mono text-zinc-500">Vouch Keyboard Platform</span>
         </div>
       </div>

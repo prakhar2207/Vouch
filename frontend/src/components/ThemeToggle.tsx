@@ -17,13 +17,13 @@ export function ThemeToggle() {
   }
 
   return (
-    <div className="flex items-center gap-1 bg-gray-100 dark:bg-zinc-800 p-1 rounded-lg border border-border">
+    <div className="flex items-center gap-1 bg-muted p-1 rounded-lg border border-border">
       <button
         onClick={() => setTheme("light")}
         className={`p-1.5 rounded-md transition-colors ${
           theme === "light"
-            ? "bg-white text-black shadow-sm dark:bg-transparent dark:text-gray-400"
-            : "text-gray-500 hover:text-black dark:text-gray-400 dark:hover:text-gray-300"
+            ? "bg-card text-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground"
         }`}
         title="Light"
       >
@@ -33,8 +33,8 @@ export function ThemeToggle() {
         onClick={() => setTheme("dark")}
         className={`p-1.5 rounded-md transition-colors ${
           theme === "dark"
-            ? "bg-zinc-700 text-white shadow-sm"
-            : "text-gray-500 hover:text-black dark:text-gray-400 dark:hover:text-gray-300"
+            ? "bg-card text-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground"
         }`}
         title="Dark"
       >
@@ -44,8 +44,8 @@ export function ThemeToggle() {
         onClick={() => setTheme("system")}
         className={`p-1.5 rounded-md transition-colors ${
           theme === "system"
-            ? "bg-white text-black shadow-sm dark:bg-zinc-700 dark:text-white"
-            : "text-gray-500 hover:text-black dark:text-gray-400 dark:hover:text-gray-300"
+            ? "bg-card text-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground"
         }`}
         title="System"
       >

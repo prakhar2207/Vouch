@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
@@ -233,10 +233,10 @@ export default function PartiesPage() {
     <DashboardLayout>
       <div className="space-y-6 max-w-7xl mx-auto pb-16">
         {/* Header */}
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-border pb-6">
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-border/40 pb-6">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Parties</h1>
-            <p className="text-gray-400 mt-1 text-xs sm:text-sm">Manage your Customers and Suppliers accounts</p>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Parties</h1>
+            <p className="text-muted-foreground mt-1 text-xs sm:text-sm">Manage your Customers and Suppliers accounts</p>
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
@@ -251,12 +251,12 @@ export default function PartiesPage() {
                   setSearchTerm(e.target.value);
                   setFocusedIndex(-1);
                 }}
-                className="bg-zinc-900 border border-zinc-700 text-white pl-10 pr-4 py-2 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none w-full text-sm"
+                className="bg-card border border-border/40 text-foreground pl-10 pr-4 py-2 rounded-xl focus:ring-2 focus:ring-primary/40 outline-none w-full text-sm"
               />
               {searchTerm && (
                 <button 
                   onClick={() => setSearchTerm('')} 
-                  className="absolute right-3 top-2.5 text-xs text-muted-foreground hover:text-white"
+                  className="absolute right-3 top-2.5 text-xs text-muted-foreground hover:text-foreground"
                 >
                   ✕
                 </button>
@@ -267,14 +267,14 @@ export default function PartiesPage() {
             <div className="flex items-center gap-2">
               <Link 
                 href="/purchases/suppliers/new" 
-                className="bg-red-600/90 hover:bg-red-600 text-white px-3.5 py-2 rounded-xl shadow transition-colors text-xs font-bold whitespace-nowrap flex items-center gap-1.5"
+                className="bg-red-600/90 hover:bg-red-600 text-foreground px-3.5 py-2 rounded-xl shadow transition-colors text-xs font-bold whitespace-nowrap flex items-center gap-1.5"
               >
                 <Plus className="w-4 h-4" />
                 <span>Supplier</span>
               </Link>
               <Link 
                 href="/sales/customers/new" 
-                className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-xl shadow transition-colors text-xs font-bold whitespace-nowrap flex items-center gap-1.5"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground px-3.5 py-2 rounded-xl shadow-md shadow-primary/20 transition-colors text-xs font-bold whitespace-nowrap flex items-center gap-1.5"
               >
                 <Plus className="w-4 h-4" />
                 <span>Customer</span>
@@ -284,20 +284,20 @@ export default function PartiesPage() {
         </div>
 
         {/* Filter Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-card/60 border border-border/70 p-2 rounded-2xl backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-card/60 border border-border/40 p-2 rounded-2xl backdrop-blur shadow-sm">
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => { setActiveFilter('ALL'); setFocusedIndex(-1); }}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
                 activeFilter === 'ALL'
-                  ? 'bg-zinc-800 text-white border border-zinc-700 shadow-xs'
+                  ? 'bg-muted text-foreground border border-border/60 shadow-xs'
                   : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
               }`}
             >
               <Users className="w-3.5 h-3.5" />
               <span>All Parties</span>
-              <span className="px-1.5 py-0.2 rounded-md bg-zinc-700/60 text-[10px] font-mono font-bold">
+              <span className="px-1.5 py-0.2 rounded-md bg-muted/80 text-[10px] font-mono font-bold">
                 {counts.all}
               </span>
             </button>
@@ -341,9 +341,9 @@ export default function PartiesPage() {
               onClick={handleCleanDuplicates}
               disabled={isCleaning}
               title="Consolidate duplicate parties and merge purchases"
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 border border-zinc-700/60 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-muted/80 hover:bg-muted text-foreground border border-border/60 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
-              <RefreshCw className={`w-3 h-3 ${isCleaning ? 'animate-spin text-blue-400' : 'text-zinc-400'}`} />
+              <RefreshCw className={`w-3 h-3 ${isCleaning ? 'animate-spin text-primary' : 'text-muted-foreground'}`} />
               <span>{isCleaning ? 'Consolidating...' : 'Consolidate Duplicates'}</span>
             </button>
             <div className="text-xs text-muted-foreground px-1">
@@ -353,23 +353,23 @@ export default function PartiesPage() {
         </div>
         
         {loading ? (
-          <div className="flex items-center justify-center py-20 text-gray-500">Loading parties...</div>
+          <div className="flex items-center justify-center py-20 text-muted-foreground">Loading parties...</div>
         ) : filteredParties.length === 0 ? (
-          <div className="flex flex-col items-center justify-center text-center p-16 bg-card rounded-2xl border border-border mt-4">
+          <div className="flex flex-col items-center justify-center text-center p-16 bg-card rounded-2xl border border-border/40 shadow-sm mt-4">
             <svg className="w-16 h-16 text-muted-foreground mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
             </svg>
             <h3 className="text-xl font-bold mb-1">No Parties Found</h3>
-            <p className="text-gray-500 text-sm max-w-md mx-auto mb-6">
+            <p className="text-muted-foreground text-sm max-w-md mx-auto mb-6">
               {searchTerm 
                 ? `No ${activeFilter !== 'ALL' ? activeFilter.toLowerCase() + 's' : 'parties'} match "${searchTerm}".`
                 : `No ${activeFilter !== 'ALL' ? activeFilter.toLowerCase() + 's' : 'parties'} recorded yet.`}
             </p>
             <div className="flex gap-3">
-              <Link href="/purchases/suppliers/new" className="bg-red-600 text-white px-5 py-2 rounded-xl shadow hover:bg-red-700 transition-colors text-xs font-bold">
+              <Link href="/purchases/suppliers/new" className="bg-red-600 text-foreground px-5 py-2 rounded-xl shadow hover:bg-red-700 transition-colors text-xs font-bold">
                 + Add Supplier
               </Link>
-              <Link href="/sales/customers/new" className="bg-blue-600 text-white px-5 py-2 rounded-xl shadow hover:bg-blue-700 transition-colors text-xs font-bold">
+              <Link href="/sales/customers/new" className="bg-primary hover:bg-primary/90 text-primary-foreground px-5 py-2 rounded-xl shadow-md shadow-primary/20 transition-colors text-xs font-bold">
                 + Add Customer
               </Link>
             </div>
@@ -387,18 +387,18 @@ export default function PartiesPage() {
                   id={`party-card-${party.id}`}
                   key={party.id}
                   onClick={() => setFocusedIndex(idx)}
-                  className={`bg-card border transition-all rounded-2xl p-5 flex flex-col group relative overflow-hidden cursor-pointer ${
+                  className={`bg-card border transition-all rounded-2xl p-5 flex flex-col group relative overflow-hidden cursor-pointer shadow-sm ${
                     isFocused 
-                      ? 'border-blue-500 ring-2 ring-blue-500/60 shadow-lg shadow-blue-500/10 scale-[1.01]' 
-                      : 'border-border hover:border-zinc-500'
+                      ? 'border-primary ring-2 ring-primary/60 shadow-lg shadow-primary/10 scale-[1.01]' 
+                      : 'border-border/40 hover:border-border'
                   }`}
                 >
                   {/* Decorative Top Bar based on Type */}
-                  <div className={`absolute top-0 left-0 right-0 h-1 ${isCustomer ? 'bg-blue-500' : 'bg-red-500'}`}></div>
+                  <div className={`absolute top-0 left-0 right-0 h-1 ${isCustomer ? 'bg-primary' : 'bg-red-500'}`}></div>
 
                   {/* Selected Tag */}
                   {isFocused && (
-                    <div className="absolute top-2.5 left-2.5 z-10 px-2 py-0.5 rounded text-[10px] font-mono bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                    <div className="absolute top-2.5 left-2.5 z-10 px-2 py-0.5 rounded text-[10px] font-mono bg-primary/20 text-primary border border-primary/30">
                       Selected
                     </div>
                   )}
@@ -406,13 +406,13 @@ export default function PartiesPage() {
                   {/* Card Header */}
                   <div className="flex justify-between items-start mb-3 mt-1">
                     <div className="min-w-0 flex-1 pr-2">
-                      <h3 className="text-lg font-bold text-white truncate group-hover:text-blue-400 transition-colors" title={party.name}>
+                      <h3 className="text-lg font-bold text-foreground truncate group-hover:text-primary transition-colors" title={party.name}>
                         {party.name}
                       </h3>
                       <div className="flex items-center gap-2 mt-1">
                         <span className={`text-[11px] px-2.5 py-0.5 rounded-full border font-semibold ${
                           isCustomer 
-                            ? 'text-blue-400 bg-blue-500/10 border-blue-500/20' 
+                            ? 'text-primary bg-primary/10 border-primary/20' 
                             : 'text-red-400 bg-red-500/10 border-red-500/20'
                         }`}>
                           {party.type}
@@ -435,7 +435,7 @@ export default function PartiesPage() {
                       <Link 
                         href={`/parties/${party.id}/edit`} 
                         onClick={e => e.stopPropagation()}
-                        className="p-1.5 rounded-lg bg-zinc-800/80 hover:bg-blue-600 text-gray-400 hover:text-white transition-colors"
+                        className="p-1.5 rounded-lg bg-muted/80 hover:bg-primary text-muted-foreground hover:text-primary-foreground transition-colors"
                         title="Edit Party (Ctrl+Enter / E)"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
@@ -446,7 +446,7 @@ export default function PartiesPage() {
                           e.stopPropagation();
                           setDeletingParty(party);
                         }}
-                        className="p-1.5 rounded-lg bg-zinc-800/80 hover:bg-rose-600 text-gray-400 hover:text-white transition-colors"
+                        className="p-1.5 rounded-lg bg-muted/80 hover:bg-rose-600 text-muted-foreground hover:text-foreground transition-colors"
                         title="Delete Party (Alt+D / Del)"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -458,22 +458,22 @@ export default function PartiesPage() {
                   <div className="space-y-2.5 flex-1 text-xs">
                     <div className="flex justify-between items-center text-muted-foreground">
                       <span>Ledger Group</span>
-                      <span className="text-zinc-300 font-medium font-mono">{party.group}</span>
+                      <span className="text-foreground font-medium font-mono">{party.group}</span>
                     </div>
 
                     {party.phone && (
                       <div className="flex justify-between items-center text-muted-foreground">
                         <span>Phone</span>
-                        <span className="text-zinc-300 font-medium">{party.phone}</span>
+                        <span className="text-foreground font-medium">{party.phone}</span>
                       </div>
                     )}
                     
-                    <div className="flex justify-between items-baseline pt-1 border-t border-zinc-800/80">
+                    <div className="flex justify-between items-baseline pt-1 border-t border-border/40">
                       <span className="text-muted-foreground text-xs">Current Balance</span>
                       <div className="text-right">
                         <span className={`font-bold text-base font-mono ${
                           hasZeroBalance 
-                            ? 'text-zinc-400' 
+                            ? 'text-muted-foreground' 
                             : balanceNum > 0 
                             ? 'text-emerald-400' 
                             : 'text-rose-400'
@@ -488,18 +488,18 @@ export default function PartiesPage() {
                   </div>
 
                   {/* Card Footer */}
-                  <div className="mt-4 pt-3 border-t border-zinc-800 flex justify-between items-center text-xs">
+                  <div className="mt-4 pt-3 border-t border-border/40 flex justify-between items-center text-xs">
                     <div className="flex items-center gap-2">
                       <Link 
                         href={`/parties/${party.id}/edit`} 
                         onClick={e => e.stopPropagation()}
-                        className="text-muted-foreground hover:text-white flex items-center gap-1 transition-colors font-medium"
+                        className="text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors font-medium"
                       >
                         <Edit2 className="w-3 h-3" />
                         <span>Edit</span>
                       </Link>
-                      <span className="text-zinc-700">•</span>
-                      <button
+                      <span className="text-border">•</span>
+                      <button 
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -515,7 +515,7 @@ export default function PartiesPage() {
                     <Link 
                       href={`/parties/${party.id}/statement`} 
                       onClick={e => e.stopPropagation()}
-                      className="text-blue-400 hover:text-blue-300 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform"
+                      className="text-primary hover:text-primary/80 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform"
                     >
                       <span>Statement</span>
                       <ArrowUpRight className="w-3.5 h-3.5" />
@@ -528,37 +528,37 @@ export default function PartiesPage() {
         )}
 
         {/* Keyboard Shortcuts Hint Bar */}
-        <div className="p-3 border border-border bg-card/60 backdrop-blur rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-muted-foreground mt-6">
+        <div className="p-3 border border-border/40 shadow-sm bg-card/60 backdrop-blur rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-muted-foreground mt-6">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="flex items-center gap-1 font-semibold text-foreground">
-              <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+              <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
               Tally Shortcuts:
             </span>
             <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">↑</kbd>
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">↓</kbd>
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">←</kbd>
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">→</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/60 font-mono text-[10px] text-foreground font-bold">↑</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/60 font-mono text-[10px] text-foreground font-bold">↓</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/60 font-mono text-[10px] text-foreground font-bold">←</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/60 font-mono text-[10px] text-foreground font-bold">→</kbd>
               <span className="text-[11px]">Navigate</span>
             </span>
             <span>•</span>
             <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Enter</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/60 font-mono text-[10px] text-foreground font-bold">Enter</kbd>
               <span className="text-[11px]">Statement</span>
             </span>
             <span>•</span>
             <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Ctrl + Enter / E</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/60 font-mono text-[10px] text-foreground font-bold">Ctrl + Enter / E</kbd>
               <span className="text-[11px]">Edit Party</span>
             </span>
             <span>•</span>
             <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Alt + D / Del</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/60 font-mono text-[10px] text-foreground font-bold">Alt + D / Del</kbd>
               <span className="text-[11px]">Delete Party</span>
             </span>
             <span>•</span>
             <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded border border-zinc-700 font-mono text-[10px] text-white font-bold">Esc</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/60 font-mono text-[10px] text-foreground font-bold">Esc</kbd>
               <span className="text-[11px]">Deselect</span>
             </span>
           </div>

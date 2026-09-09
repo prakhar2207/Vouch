@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
@@ -422,13 +422,13 @@ export default function EditPurchaseInvoiceModal({
                             <select
                               value={item.gst_rate}
                               onChange={(e) => updateItemField(idx, "gst_rate", parseFloat(e.target.value) || 0)}
-                              className="w-full bg-zinc-900 border border-zinc-700 text-white font-mono text-[11px] px-1 py-1 rounded outline-none text-right cursor-pointer"
+                              className="w-full bg-muted/50 border border-input text-foreground font-mono text-[11px] px-1 py-1 rounded outline-none text-right cursor-pointer"
                             >
-                              <option value={0} className="bg-zinc-900 text-white">0%</option>
-                              <option value={5} className="bg-zinc-900 text-white">5%</option>
-                              <option value={12} className="bg-zinc-900 text-white">12%</option>
-                              <option value={18} className="bg-zinc-900 text-white">18%</option>
-                              <option value={28} className="bg-zinc-900 text-white">28%</option>
+                              <option value={0} className="bg-muted/50 text-foreground">0%</option>
+                              <option value={5} className="bg-muted/50 text-foreground">5%</option>
+                              <option value={12} className="bg-muted/50 text-foreground">12%</option>
+                              <option value={18} className="bg-muted/50 text-foreground">18%</option>
+                              <option value={28} className="bg-muted/50 text-foreground">28%</option>
                             </select>
                           </td>
 

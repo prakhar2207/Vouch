@@ -110,7 +110,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       />
 
       {/* TOP NAVIGATION BAR */}
-      <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-card/90 backdrop-blur-md">
+      <header className="sticky top-0 z-40 w-full border-b border-border/20 bg-card/80 backdrop-blur-xl shadow-sm">
         <div className="w-full px-3 sm:px-6 h-14 flex items-center justify-between gap-2 sm:gap-4">
           
           {/* Left Section: Brand & Core Nav */}
@@ -149,7 +149,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 href="/dashboard"
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
                   pathname === "/dashboard"
-                    ? "text-foreground bg-muted font-semibold shadow-2xs"
+                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                 }`}
               >
@@ -162,7 +162,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 href="/parties"
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
                   pathname.startsWith("/parties")
-                    ? "text-foreground bg-muted font-semibold shadow-2xs"
+                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                 }`}
               >
@@ -175,7 +175,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 href="/ledgers"
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
                   pathname.startsWith("/ledgers")
-                    ? "text-foreground bg-muted font-semibold shadow-2xs"
+                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                 }`}
               >
@@ -188,7 +188,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 href="/inventory"
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
                   pathname.startsWith("/inventory")
-                    ? "text-foreground bg-muted font-semibold shadow-2xs"
+                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                 }`}
               >
@@ -204,7 +204,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   }}
                   className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                     isVouchersActive
-                      ? "text-foreground bg-muted font-semibold shadow-2xs"
+                      ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                   }`}
                 >
@@ -213,7 +213,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
 
                 {isVouchersDropdownOpen && (
-                  <div className="absolute left-0 mt-1.5 w-56 bg-card border border-border/60 rounded-xl shadow-xl p-1.5 z-50 animate-in fade-in zoom-in-95">
+                  <div className="absolute left-0 mt-1.5 w-56 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-1.5 z-50 animate-in fade-in zoom-in-95">
                     <Link
                       href="/vouchers"
                       className="flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
@@ -278,7 +278,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   }}
                   className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                     isReportsActive
-                      ? "text-foreground bg-muted font-semibold shadow-2xs"
+                      ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                   }`}
                 >
@@ -287,7 +287,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
 
                 {isReportsDropdownOpen && (
-                  <div className="absolute left-0 mt-1.5 w-60 bg-card border border-border/60 rounded-xl shadow-xl p-1.5 z-50 animate-in fade-in zoom-in-95">
+                  <div className="absolute left-0 mt-1.5 w-60 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-1.5 z-50 animate-in fade-in zoom-in-95">
                     <Link
                       id="tour-tally-link"
                       href="/export/tally"
@@ -393,14 +393,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div ref={userMenuRef} className="relative">
               <button
                 onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className="w-7 h-7 rounded-full bg-muted border border-border/60 flex items-center justify-center text-xs font-bold text-foreground hover:ring-2 hover:ring-ring transition-all cursor-pointer"
+                className="w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 border border-border/40 flex items-center justify-center text-xs font-bold text-foreground hover:ring-2 hover:ring-ring transition-all cursor-pointer"
                 title="Account Menu"
               >
                 <User className="w-3.5 h-3.5 text-muted-foreground" />
               </button>
 
               {isUserMenuOpen && (
-                <div className="absolute right-0 mt-1.5 w-48 bg-card border border-border/60 rounded-xl shadow-xl p-1.5 z-50 animate-in fade-in zoom-in-95">
+                <div className="absolute right-0 mt-1.5 w-48 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-1.5 z-50 animate-in fade-in zoom-in-95">
                   <div className="px-2.5 py-1.5 border-b border-border/40 mb-1">
                     <div className="text-xs font-semibold text-foreground truncate">My Store</div>
                     <div className="text-[10px] text-muted-foreground font-mono">Retail ERP User</div>
@@ -457,7 +457,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
             onClick={() => setIsMobileNavOpen(false)}
           />
-          <aside className="relative w-72 max-w-[80vw] bg-card border-r border-border h-full flex flex-col p-5 shadow-2xl z-10 animate-in slide-in-from-left duration-200">
+          <aside className="relative w-72 max-w-[80vw] bg-card/95 backdrop-blur-xl border-r border-border/40 h-full flex flex-col p-5 shadow-2xl z-10 animate-in slide-in-from-left duration-200">
             <div className="flex items-center justify-between pb-4 border-b border-border">
               <div className="flex items-center gap-2">
                 <span className="text-xl font-black bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">

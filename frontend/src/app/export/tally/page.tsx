@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState } from "react";
 import axios from "axios";
@@ -181,7 +181,7 @@ export default function TallyExportPage() {
                 TallyPrime & ERP 9
               </span>
             </div>
-            <p className="text-xs text-gray-400 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               Export ledgers, product inventory items, and balanced double-entry vouchers in standard Tally &lt;ENVELOPE&gt; schema for seamless CA audits.
             </p>
           </div>
@@ -204,7 +204,7 @@ export default function TallyExportPage() {
               <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0" />
               <span>XML file exported successfully! Open TallyPrime and press <kbd className="px-1.5 py-0.5 bg-green-950 rounded font-mono text-green-300">Alt + O</kbd> to import.</span>
             </div>
-            <button onClick={() => setDownloadSuccess(false)} className="text-gray-400 hover:text-white text-xs">✕</button>
+            <button onClick={() => setDownloadSuccess(false)} className="text-muted-foreground hover:text-foreground text-xs">✕</button>
           </div>
         )}
 
@@ -216,7 +216,7 @@ export default function TallyExportPage() {
             
             {/* Scope Selection */}
             <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
-              <h2 className="text-sm font-bold text-white flex items-center gap-2">
+              <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
                 <Database className="w-4 h-4 text-purple-400" />
                 <span>1. Select Export Scope</span>
               </h2>
@@ -227,12 +227,12 @@ export default function TallyExportPage() {
                   onClick={() => setExportType("all")}
                   className={`p-3 rounded-xl border text-left transition-all ${
                     exportType === "all"
-                      ? "bg-purple-600/10 border-purple-500/50 text-white shadow-sm font-bold"
-                      : "bg-zinc-950/60 border-zinc-800 hover:bg-zinc-900 text-gray-400"
+                      ? "bg-purple-600/10 border-purple-500/50 text-foreground shadow-sm font-bold"
+                      : "bg-zinc-950/60 border-border hover:bg-muted/50 text-muted-foreground"
                   }`}
                 >
-                  <div className="text-xs font-bold text-white">Full Package</div>
-                  <div className="text-[10px] text-gray-400 mt-1">Masters + Vouchers</div>
+                  <div className="text-xs font-bold text-foreground">Full Package</div>
+                  <div className="text-[10px] text-muted-foreground mt-1">Masters + Vouchers</div>
                 </button>
 
                 <button
@@ -240,12 +240,12 @@ export default function TallyExportPage() {
                   onClick={() => setExportType("vouchers")}
                   className={`p-3 rounded-xl border text-left transition-all ${
                     exportType === "vouchers"
-                      ? "bg-purple-600/10 border-purple-500/50 text-white shadow-sm font-bold"
-                      : "bg-zinc-950/60 border-zinc-800 hover:bg-zinc-900 text-gray-400"
+                      ? "bg-purple-600/10 border-purple-500/50 text-foreground shadow-sm font-bold"
+                      : "bg-zinc-950/60 border-border hover:bg-muted/50 text-muted-foreground"
                   }`}
                 >
-                  <div className="text-xs font-bold text-white">Vouchers Only</div>
-                  <div className="text-[10px] text-gray-400 mt-1">Transactions & GST</div>
+                  <div className="text-xs font-bold text-foreground">Vouchers Only</div>
+                  <div className="text-[10px] text-muted-foreground mt-1">Transactions & GST</div>
                 </button>
 
                 <button
@@ -253,12 +253,12 @@ export default function TallyExportPage() {
                   onClick={() => setExportType("masters")}
                   className={`p-3 rounded-xl border text-left transition-all ${
                     exportType === "masters"
-                      ? "bg-purple-600/10 border-purple-500/50 text-white shadow-sm font-bold"
-                      : "bg-zinc-950/60 border-zinc-800 hover:bg-zinc-900 text-gray-400"
+                      ? "bg-purple-600/10 border-purple-500/50 text-foreground shadow-sm font-bold"
+                      : "bg-zinc-950/60 border-border hover:bg-muted/50 text-muted-foreground"
                   }`}
                 >
-                  <div className="text-xs font-bold text-white">Masters Only</div>
-                  <div className="text-[10px] text-gray-400 mt-1">Ledgers & Products</div>
+                  <div className="text-xs font-bold text-foreground">Masters Only</div>
+                  <div className="text-[10px] text-muted-foreground mt-1">Ledgers & Products</div>
                 </button>
               </div>
             </div>
@@ -266,32 +266,32 @@ export default function TallyExportPage() {
             {/* Date Range Selection */}
             <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-blue-400" />
                   <span>2. Accounting Date Period</span>
                 </h2>
                 <div className="flex flex-wrap gap-1">
                   <button
                     onClick={() => setPreset("this_month")}
-                    className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-gray-300 rounded text-[10px] font-semibold"
+                    className="px-2 py-1 bg-muted hover:bg-zinc-700 text-foreground/80 rounded text-[10px] font-semibold"
                   >
                     This Month
                   </button>
                   <button
                     onClick={() => setPreset("last_month")}
-                    className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-gray-300 rounded text-[10px] font-semibold"
+                    className="px-2 py-1 bg-muted hover:bg-zinc-700 text-foreground/80 rounded text-[10px] font-semibold"
                   >
                     Last Month
                   </button>
                   <button
                     onClick={() => setPreset("fy")}
-                    className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-gray-300 rounded text-[10px] font-semibold"
+                    className="px-2 py-1 bg-muted hover:bg-zinc-700 text-foreground/80 rounded text-[10px] font-semibold"
                   >
                     Current FY
                   </button>
                   <button
                     onClick={() => setPreset("all")}
-                    className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-gray-300 rounded text-[10px] font-semibold"
+                    className="px-2 py-1 bg-muted hover:bg-zinc-700 text-foreground/80 rounded text-[10px] font-semibold"
                   >
                     All Time
                   </button>
@@ -300,21 +300,21 @@ export default function TallyExportPage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 text-xs">
                 <div>
-                  <label className="block text-gray-400 font-semibold mb-1">From Date</label>
+                  <label className="block text-muted-foreground font-semibold mb-1">From Date</label>
                   <input
                     type="date"
                     value={fromDate}
                     onChange={(e) => setFromDate(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 p-2.5 rounded-xl text-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                    className="w-full bg-muted/50 border border-input p-2.5 rounded-xl text-foreground focus:ring-2 focus:ring-purple-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-gray-400 font-semibold mb-1">To Date</label>
+                  <label className="block text-muted-foreground font-semibold mb-1">To Date</label>
                   <input
                     type="date"
                     value={toDate}
                     onChange={(e) => setToDate(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 p-2.5 rounded-xl text-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                    className="w-full bg-muted/50 border border-input p-2.5 rounded-xl text-foreground focus:ring-2 focus:ring-purple-500 focus:outline-none"
                   />
                 </div>
               </div>
@@ -323,7 +323,7 @@ export default function TallyExportPage() {
             {/* Voucher Types Filter */}
             {exportType !== "masters" && (
               <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
-                <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
                   <Layers className="w-4 h-4 text-green-400" />
                   <span>3. Filter Voucher Types</span>
                 </h2>
@@ -337,21 +337,21 @@ export default function TallyExportPage() {
                         onClick={() => toggleVoucherType(opt.type)}
                         className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
                           isSelected
-                            ? "bg-zinc-900 border-purple-500/40 text-white"
-                            : "bg-zinc-950/40 border-zinc-800/80 text-gray-500 hover:bg-zinc-900/40"
+                            ? "bg-muted/50 border-purple-500/40 text-foreground"
+                            : "bg-zinc-950/40 border-border/80 text-muted-foreground hover:bg-zinc-900/40"
                         }`}
                       >
                         <div>
-                          <div className={`text-xs font-bold ${isSelected ? "text-white" : "text-gray-400"}`}>
+                          <div className={`text-xs font-bold ${isSelected ? "text-foreground" : "text-muted-foreground"}`}>
                             {opt.label}
                           </div>
-                          <div className="text-[10px] text-gray-500">{opt.desc}</div>
+                          <div className="text-[10px] text-muted-foreground">{opt.desc}</div>
                         </div>
                         <input
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => {}}
-                          className="w-4 h-4 rounded text-purple-600 bg-zinc-800 border-zinc-700"
+                          className="w-4 h-4 rounded text-purple-600 bg-muted border-input"
                         />
                       </div>
                     );
@@ -367,28 +367,28 @@ export default function TallyExportPage() {
             {/* Download Execution Card */}
             <div className="bg-card border border-border rounded-2xl p-5 space-y-5 shadow-xl">
               <div className="space-y-1">
-                <h3 className="text-base font-bold text-white">Generate Tally XML</h3>
-                <p className="text-xs text-gray-400">
+                <h3 className="text-base font-bold text-foreground">Generate Tally XML</h3>
+                <p className="text-xs text-muted-foreground">
                   Ready to compile your accounting records into standard &lt;ENVELOPE&gt; Tally schema.
                 </p>
               </div>
 
-              <div className="space-y-2.5 p-3.5 bg-zinc-950/80 rounded-xl border border-zinc-800 text-xs">
-                <div className="flex justify-between text-gray-400">
+              <div className="space-y-2.5 p-3.5 bg-zinc-950/80 rounded-xl border border-border text-xs">
+                <div className="flex justify-between text-muted-foreground">
                   <span>Export Scope:</span>
-                  <span className="font-bold text-white uppercase font-mono">{exportType}</span>
+                  <span className="font-bold text-foreground uppercase font-mono">{exportType}</span>
                 </div>
-                <div className="flex justify-between text-gray-400">
+                <div className="flex justify-between text-muted-foreground">
                   <span>Date Range:</span>
-                  <span className="font-mono text-gray-200">
+                  <span className="font-mono text-foreground">
                     {fromDate || "Start"} → {toDate || "Present"}
                   </span>
                 </div>
-                <div className="flex justify-between text-gray-400">
+                <div className="flex justify-between text-muted-foreground">
                   <span>Selected Vouchers:</span>
                   <span className="font-mono text-purple-400 font-bold">{selectedVchTypes.length} Types</span>
                 </div>
-                <div className="flex justify-between text-gray-400">
+                <div className="flex justify-between text-muted-foreground">
                   <span>Format:</span>
                   <span className="font-mono text-green-400 font-bold">XML (Tally XML 9.0)</span>
                 </div>
@@ -397,7 +397,7 @@ export default function TallyExportPage() {
               <button
                 onClick={handleDownload}
                 disabled={downloading}
-                className="w-full py-3.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-all shadow-xl shadow-purple-600/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                className="w-full py-3.5 bg-purple-600 hover:bg-purple-700 text-foreground rounded-xl text-xs font-bold transition-all shadow-xl shadow-purple-600/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {downloading ? (
                   <>
@@ -412,7 +412,7 @@ export default function TallyExportPage() {
                 )}
               </button>
 
-              <div className="text-[11px] text-gray-500 text-center leading-relaxed">
+              <div className="text-[11px] text-muted-foreground text-center leading-relaxed">
                 Compatible with all versions of <strong>TallyPrime</strong>, <strong>Tally.ERP 9</strong>, and third-party CA audit tools.
               </div>
             </div>
@@ -423,7 +423,7 @@ export default function TallyExportPage() {
                 <Sparkles className="w-4 h-4 text-blue-400" />
                 <span className="text-xs font-bold text-blue-300">Fast 2-Minute CA Import</span>
               </div>
-              <p className="text-[11px] text-gray-300 leading-relaxed">
+              <p className="text-[11px] text-foreground/80 leading-relaxed">
                 Need to hand over books to your Chartered Accountant? Share this XML file alongside our step-by-step Tally import guide.
               </p>
               <button
@@ -447,13 +447,13 @@ export default function TallyExportPage() {
                     <BookOpen className="w-4 h-4" />
                   </div>
                   <div>
-                    <h2 className="text-sm font-bold text-white">How to Import into TallyPrime (CA Guide)</h2>
-                    <div className="text-[11px] text-gray-400">Official Step-by-Step Checklist for Auditors & Accountants</div>
+                    <h2 className="text-sm font-bold text-foreground">How to Import into TallyPrime (CA Guide)</h2>
+                    <div className="text-[11px] text-muted-foreground">Official Step-by-Step Checklist for Auditors & Accountants</div>
                   </div>
                 </div>
                 <button
                   onClick={() => setIsGuideOpen(false)}
-                  className="p-1 text-gray-400 hover:text-white rounded-lg hover:bg-zinc-800"
+                  className="p-1 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted"
                 >
                   ✕
                 </button>
@@ -463,25 +463,25 @@ export default function TallyExportPage() {
                 
                 <div className="space-y-3">
                   {guideSteps.map((s) => (
-                    <div key={s.step} className="p-3.5 bg-zinc-950/60 rounded-xl border border-zinc-800 flex gap-3.5 items-start">
+                    <div key={s.step} className="p-3.5 bg-zinc-950/60 rounded-xl border border-border flex gap-3.5 items-start">
                       <div className="w-6 h-6 rounded-full bg-blue-600/20 text-blue-400 font-bold flex items-center justify-center shrink-0 text-xs border border-blue-500/30">
                         {s.step}
                       </div>
                       <div className="flex-1 space-y-1">
                         <div className="flex items-center justify-between">
-                          <span className="font-bold text-white text-xs">{s.title}</span>
+                          <span className="font-bold text-foreground text-xs">{s.title}</span>
                           {s.shortcut && (
                             <button
                               onClick={() => copyToClipboard(s.shortcut!, s.step)}
-                              className="px-2 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded font-mono text-[10px] flex items-center gap-1 border border-zinc-700 transition-colors"
+                              className="px-2 py-0.5 bg-muted hover:bg-zinc-700 text-blue-400 rounded font-mono text-[10px] flex items-center gap-1 border border-input transition-colors"
                               title="Copy shortcut"
                             >
                               <span>{s.shortcut}</span>
-                              {copiedKey === s.step ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 text-gray-400" />}
+                              {copiedKey === s.step ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
                             </button>
                           )}
                         </div>
-                        <p className="text-[11px] text-gray-400 leading-relaxed">
+                        <p className="text-[11px] text-muted-foreground leading-relaxed">
                           {s.desc}
                         </p>
                       </div>
@@ -500,7 +500,7 @@ export default function TallyExportPage() {
               <div className="px-6 py-4 border-t border-border bg-zinc-950 flex items-center justify-between">
                 <button
                   onClick={() => setIsGuideOpen(false)}
-                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-gray-300 rounded-lg text-xs font-semibold"
+                  className="px-4 py-2 bg-muted hover:bg-zinc-700 text-foreground/80 rounded-lg text-xs font-semibold"
                 >
                   Close Guide
                 </button>
@@ -509,7 +509,7 @@ export default function TallyExportPage() {
                     setIsGuideOpen(false);
                     handleDownload();
                   }}
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold shadow-md flex items-center gap-1.5"
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-foreground rounded-lg text-xs font-bold shadow-md flex items-center gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>Download XML Now</span>

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
@@ -88,12 +88,12 @@ export default function SplitCompanyModal() {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative animate-in fade-in zoom-in-95">
+      <div className="bg-muted/50 border border-border rounded-2xl max-w-xl w-full p-6 shadow-2xl relative animate-in fade-in zoom-in-95">
         
         {/* Close Button */}
         <button
           onClick={() => setIsSplitModalOpen(false)}
-          className="absolute top-4 right-4 text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition-colors"
+          className="absolute top-4 right-4 text-zinc-400 hover:text-foreground p-1 rounded-lg hover:bg-muted transition-colors"
         >
           <X className="w-5 h-5" />
         </button>
@@ -105,7 +105,7 @@ export default function SplitCompanyModal() {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-bold text-white">Split Company Data</h2>
+              <h2 className="text-lg font-bold text-foreground">Split Company Data</h2>
               <span className="text-[10px] font-mono px-2 py-0.5 bg-purple-500/15 text-purple-400 border border-purple-500/30 rounded font-bold">
                 Tally Paradigm
               </span>
@@ -130,13 +130,13 @@ export default function SplitCompanyModal() {
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800">
+              <div className="p-3 bg-zinc-950 rounded-xl border border-border">
                 <div className="text-xs text-zinc-400">Real & Personal Accounts Initialized</div>
-                <div className="text-xl font-mono font-bold text-white mt-1">
+                <div className="text-xl font-mono font-bold text-foreground mt-1">
                   {splitResult.carried_accounts_count} Ledgers
                 </div>
               </div>
-              <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800">
+              <div className="p-3 bg-zinc-950 rounded-xl border border-border">
                 <div className="text-xs text-zinc-400">Prior Net P&L Settled in Capital</div>
                 <div className="text-xl font-mono font-bold text-emerald-400 mt-1">
                   ₹{Number(splitResult.net_profit_loss).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
@@ -149,7 +149,7 @@ export default function SplitCompanyModal() {
                 setIsSplitModalOpen(false);
                 window.location.reload();
               }}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm transition-colors cursor-pointer"
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-foreground rounded-xl font-bold text-sm transition-colors cursor-pointer"
             >
               Done & Reload Companies
             </button>
@@ -165,7 +165,7 @@ export default function SplitCompanyModal() {
             )}
 
             {/* Split Date & Target Name Inputs */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-zinc-950 p-3.5 rounded-xl border border-zinc-800">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-zinc-950 p-3.5 rounded-xl border border-border">
               <div>
                 <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
                   Split Date (Commencement)
@@ -174,7 +174,7 @@ export default function SplitCompanyModal() {
                   type="date"
                   value={splitDate}
                   onChange={(e) => setSplitDate(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-mono outline-none focus:ring-1 focus:ring-purple-500"
+                  className="w-full bg-muted/50 border border-input text-foreground px-2.5 py-1.5 rounded-lg text-xs font-mono outline-none focus:ring-1 focus:ring-purple-500"
                   required
                 />
               </div>
@@ -187,7 +187,7 @@ export default function SplitCompanyModal() {
                   value={customName}
                   onChange={(e) => setCustomName(e.target.value)}
                   placeholder="Target company name..."
-                  className="w-full bg-zinc-900 border border-zinc-700 text-white px-2.5 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-purple-500 font-semibold"
+                  className="w-full bg-muted/50 border border-input text-foreground px-2.5 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-purple-500 font-semibold"
                 />
               </div>
             </div>
@@ -250,11 +250,11 @@ export default function SplitCompanyModal() {
                   </div>
 
                   {/* Net Profit Transfer Preview */}
-                  <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800 flex items-center justify-between text-xs">
+                  <div className="p-3 bg-zinc-950 rounded-xl border border-border flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
                       <div>
-                        <div className="font-bold text-white">Prior Period Net Profit to Retained Earnings</div>
+                        <div className="font-bold text-foreground">Prior Period Net Profit to Retained Earnings</div>
                         <div className="text-[11px] text-zinc-400">
                           Income ₹{Number(auditData.total_income).toLocaleString("en-IN")} − Expense ₹{Number(auditData.total_expense).toLocaleString("en-IN")}
                         </div>
@@ -267,7 +267,7 @@ export default function SplitCompanyModal() {
                 </div>
 
                 {/* Information Callout */}
-                <div className="p-3 bg-zinc-950/80 rounded-xl border border-zinc-800/80 text-[11px] text-zinc-400 space-y-1">
+                <div className="p-3 bg-zinc-950/80 rounded-xl border border-border/80 text-[11px] text-zinc-400 space-y-1">
                   <div className="font-semibold text-zinc-300">Tally Split Behavior:</div>
                   <ul className="list-disc pl-4 space-y-0.5">
                     <li>The source company remains unchanged and its historical periods are archived.</li>
@@ -282,7 +282,7 @@ export default function SplitCompanyModal() {
                   <button
                     type="button"
                     onClick={() => setIsSplitModalOpen(false)}
-                    className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                    className="flex-1 py-2.5 bg-muted hover:bg-zinc-700 text-zinc-300 rounded-xl font-bold text-xs transition-colors cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -292,8 +292,8 @@ export default function SplitCompanyModal() {
                     disabled={!auditData.can_split || splitting}
                     className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer ${
                       auditData.can_split && !splitting
-                        ? "bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/20"
-                        : "bg-zinc-800 text-zinc-500 cursor-not-allowed opacity-60"
+                        ? "bg-purple-600 hover:bg-purple-500 text-foreground shadow-lg shadow-purple-600/20"
+                        : "bg-muted text-zinc-500 cursor-not-allowed opacity-60"
                     }`}
                   >
                     {splitting ? (

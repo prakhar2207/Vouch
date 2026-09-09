@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
@@ -78,12 +78,12 @@ export default function YearEndClosingModal() {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative animate-in fade-in zoom-in-95">
+      <div className="bg-muted/50 border border-border rounded-2xl max-w-xl w-full p-6 shadow-2xl relative animate-in fade-in zoom-in-95">
         
         {/* Close Button */}
         <button
           onClick={() => setIsClosingModalOpen(false)}
-          className="absolute top-4 right-4 text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition-colors"
+          className="absolute top-4 right-4 text-zinc-400 hover:text-foreground p-1 rounded-lg hover:bg-muted transition-colors"
         >
           <X className="w-5 h-5" />
         </button>
@@ -94,11 +94,11 @@ export default function YearEndClosingModal() {
             <Lock className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
               Financial Year-End Close & Roll-Forward
             </h2>
             <p className="text-xs text-zinc-400">
-              Period Closing for <span className="font-semibold text-white">{activeFY?.name}</span> ({activeFY?.start_date} to {activeFY?.end_date})
+              Period Closing for <span className="font-semibold text-foreground">{activeFY?.name}</span> ({activeFY?.start_date} to {activeFY?.end_date})
             </p>
           </div>
         </div>
@@ -117,13 +117,13 @@ export default function YearEndClosingModal() {
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800">
+              <div className="p-3 bg-zinc-950 rounded-xl border border-border">
                 <div className="text-xs text-zinc-400">Real & Personal Accounts Carried</div>
-                <div className="text-xl font-mono font-bold text-white mt-1">
+                <div className="text-xl font-mono font-bold text-foreground mt-1">
                   {closeResult.carried_accounts_count} Accounts
                 </div>
               </div>
-              <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800">
+              <div className="p-3 bg-zinc-950 rounded-xl border border-border">
                 <div className="text-xs text-zinc-400">
                   {closeResult.profit_loss_type === "PROFIT" ? "Net Profit Credited to Equity" : "Net Loss Debited to Equity"}
                 </div>
@@ -138,7 +138,7 @@ export default function YearEndClosingModal() {
 
             <button
               onClick={() => setIsClosingModalOpen(false)}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm transition-colors cursor-pointer"
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-foreground rounded-xl font-bold text-sm transition-colors cursor-pointer"
             >
               Done
             </button>
@@ -213,11 +213,11 @@ export default function YearEndClosingModal() {
                   </div>
 
                   {/* Item 3: Roll-Forward Target Preview */}
-                  <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800 flex items-center justify-between text-xs">
+                  <div className="p-3 bg-zinc-950 rounded-xl border border-border flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2.5">
                       <Sparkles className="w-4 h-4 text-blue-400 shrink-0" />
                       <div>
-                        <div className="font-bold text-white">Target New Financial Year</div>
+                        <div className="font-bold text-foreground">Target New Financial Year</div>
                         <div className="text-[11px] text-zinc-400">
                           Asset, Liability & Party closing balances will become new opening balances
                         </div>
@@ -232,7 +232,7 @@ export default function YearEndClosingModal() {
                 </div>
 
                 {/* Information Callout */}
-                <div className="p-3 bg-zinc-950/80 rounded-xl border border-zinc-800/80 text-[11px] text-zinc-400 space-y-1">
+                <div className="p-3 bg-zinc-950/80 rounded-xl border border-border/80 text-[11px] text-zinc-400 space-y-1">
                   <div className="font-semibold text-zinc-300">Accounting Rules Applied:</div>
                   <ul className="list-disc pl-4 space-y-0.5">
                     <li>Balance sheet accounts (Cash, Bank, Debtors, Creditors) roll forward intact.</li>
@@ -247,7 +247,7 @@ export default function YearEndClosingModal() {
                   <button
                     type="button"
                     onClick={() => setIsClosingModalOpen(false)}
-                    className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                    className="flex-1 py-2.5 bg-muted hover:bg-zinc-700 text-zinc-300 rounded-xl font-bold text-xs transition-colors cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -257,8 +257,8 @@ export default function YearEndClosingModal() {
                     disabled={!auditData.can_close || closing}
                     className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer ${
                       auditData.can_close && !closing
-                        ? "bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-600/20"
-                        : "bg-zinc-800 text-zinc-500 cursor-not-allowed opacity-60"
+                        ? "bg-amber-600 hover:bg-amber-500 text-foreground shadow-lg shadow-amber-600/20"
+                        : "bg-muted text-zinc-500 cursor-not-allowed opacity-60"
                     }`}
                   >
                     {closing ? (

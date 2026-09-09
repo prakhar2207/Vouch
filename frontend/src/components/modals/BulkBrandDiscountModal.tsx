@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useToast } from '@/context/ToastContext';
 import { getAccessToken } from '@/utils/auth';
@@ -75,16 +75,16 @@ export default function BulkBrandDiscountModal({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div 
-        className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200"
+        className="bg-muted/50 border border-border rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}
         onKeyDown={e => e.stopPropagation()}
       >
-        <div className="p-5 border-b border-zinc-800 flex items-center gap-3">
+        <div className="p-5 border-b border-border flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center">
             <Percent className="w-5 h-5 text-blue-500" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-white">Bulk Brand Discount</h3>
+            <h3 className="text-lg font-bold text-foreground">Bulk Brand Discount</h3>
             <p className="text-xs text-zinc-400">Update purchase price for a whole brand</p>
           </div>
         </div>
@@ -95,7 +95,7 @@ export default function BulkBrandDiscountModal({
             <select
               value={selectedBrand}
               onChange={e => setSelectedBrand(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 text-white rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500 transition-colors"
+              className="w-full bg-zinc-950 border border-border text-foreground rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500 transition-colors"
             >
               {existingBrands.map(b => (
                 <option key={b} value={b}>{b}</option>
@@ -111,7 +111,7 @@ export default function BulkBrandDiscountModal({
                 step="0.01"
                 value={discountPercent}
                 onChange={e => setDiscountPercent(parseFloat(e.target.value) || 0)}
-                className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 font-bold font-mono rounded-xl pl-3 pr-8 py-2.5 text-sm outline-none focus:border-blue-500 transition-colors"
+                className="w-full bg-zinc-950 border border-border text-blue-400 font-bold font-mono rounded-xl pl-3 pr-8 py-2.5 text-sm outline-none focus:border-blue-500 transition-colors"
               />
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 font-bold">%</span>
             </div>
@@ -121,18 +121,18 @@ export default function BulkBrandDiscountModal({
           </div>
         </div>
         
-        <div className="p-4 bg-zinc-950 border-t border-zinc-800 flex items-center gap-3">
+        <div className="p-4 bg-zinc-950 border-t border-border flex items-center gap-3">
           <button
             onClick={onClose}
             disabled={isUpdating}
-            className="flex-1 px-4 py-2 rounded-xl text-sm font-semibold text-zinc-300 bg-zinc-800 hover:bg-zinc-700 transition-colors"
+            className="flex-1 px-4 py-2 rounded-xl text-sm font-semibold text-zinc-300 bg-muted hover:bg-zinc-700 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleSubmit}
             disabled={isUpdating}
-            className="flex-1 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            className="flex-1 px-4 py-2 rounded-xl text-sm font-semibold text-foreground bg-blue-600 hover:bg-blue-500 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {isUpdating ? 'Updating...' : 'Apply Update'}
           </button>

@@ -115,13 +115,13 @@ export default function Register() {
         {/* Header */}
         <div className="mb-8 text-center">
           <h1 className="text-2xl font-black mb-2 tracking-tight">Create your Vouch Account</h1>
-          <p className="text-gray-400 text-xs">
+          <p className="text-muted-foreground text-xs">
             Step {step} of 3: {step === 1 ? "Account Credentials" : step === 2 ? "Firm & GSTIN Details" : "Proprietor & Signature"}
           </p>
           <div className="flex gap-2 justify-center mt-4">
-            <div className={`h-1.5 w-12 rounded-full transition-all ${step >= 1 ? "bg-blue-600" : "bg-zinc-800"}`}></div>
-            <div className={`h-1.5 w-12 rounded-full transition-all ${step >= 2 ? "bg-blue-600" : "bg-zinc-800"}`}></div>
-            <div className={`h-1.5 w-12 rounded-full transition-all ${step >= 3 ? "bg-blue-600" : "bg-zinc-800"}`}></div>
+            <div className={`h-1.5 w-12 rounded-full transition-all ${step >= 1 ? "bg-blue-600" : "bg-muted"}`}></div>
+            <div className={`h-1.5 w-12 rounded-full transition-all ${step >= 2 ? "bg-blue-600" : "bg-muted"}`}></div>
+            <div className={`h-1.5 w-12 rounded-full transition-all ${step >= 3 ? "bg-blue-600" : "bg-muted"}`}></div>
           </div>
         </div>
 
@@ -139,25 +139,25 @@ export default function Register() {
           {step === 1 && (
             <div className="space-y-4 animate-in fade-in duration-200">
               <div>
-                <label className="block text-xs font-semibold mb-1.5 text-gray-300">Login Email *</label>
+                <label className="block text-xs font-semibold mb-1.5 text-foreground">Login Email *</label>
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  className="w-full bg-zinc-900 border border-zinc-700 p-3 rounded-xl text-xs text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
                   placeholder="admin@yourbusiness.com"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold mb-1.5 text-gray-300">Password *</label>
+                <label className="block text-xs font-semibold mb-1.5 text-foreground">Password *</label>
                 <input
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   minLength={6}
-                  className="w-full bg-zinc-900 border border-zinc-700 p-3 rounded-xl text-xs text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
                   placeholder="•••••••• (Min 6 chars)"
                 />
               </div>
@@ -168,49 +168,49 @@ export default function Register() {
           {step === 2 && (
             <div className="space-y-4 animate-in fade-in duration-200">
               <div>
-                <label className="block text-xs font-semibold mb-1.5 text-gray-300">Firm Name *</label>
+                <label className="block text-xs font-semibold mb-1.5 text-foreground">Firm Name *</label>
                 <input
                   type="text"
                   value={firmName}
                   onChange={(e) => setFirmName(e.target.value)}
                   required
-                  className="w-full bg-zinc-900 border border-zinc-700 p-3 rounded-xl text-xs text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
                   placeholder="Acme Industrial Supplies Pvt Ltd"
                 />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold mb-1.5 text-gray-300">GSTIN *</label>
+                  <label className="block text-xs font-semibold mb-1.5 text-foreground">GSTIN *</label>
                   <input
                     type="text"
                     value={gstin}
                     onChange={(e) => setGstin(e.target.value.toUpperCase())}
                     required
-                    className="w-full bg-zinc-900 border border-zinc-700 p-3 rounded-xl text-xs text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none font-mono uppercase"
+                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none font-mono uppercase"
                     placeholder="27AAACA1234A1Z5"
                     maxLength={15}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold mb-1.5 text-gray-300">Mobile No. *</label>
+                  <label className="block text-xs font-semibold mb-1.5 text-foreground">Mobile No. *</label>
                   <input
                     type="tel"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     required
-                    className="w-full bg-zinc-900 border border-zinc-700 p-3 rounded-xl text-xs text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none font-mono"
                     placeholder="9876543210"
                   />
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold mb-1.5 text-gray-300">Company Email (Optional)</label>
+                  <label className="block text-xs font-semibold mb-1.5 text-foreground">Company Email (Optional)</label>
                   <input
                     type="email"
                     value={companyEmail}
                     onChange={(e) => setCompanyEmail(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 p-3 rounded-xl text-xs text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
                     placeholder="sales@business.com"
                   />
                 </div>
@@ -225,13 +225,13 @@ export default function Register() {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold mb-1.5 text-gray-300">Billing Address *</label>
+                <label className="block text-xs font-semibold mb-1.5 text-foreground">Billing Address *</label>
                 <textarea
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
                   required
                   rows={2}
-                  className="w-full bg-zinc-900 border border-zinc-700 p-3 rounded-xl text-xs text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                  className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none resize-none"
                   placeholder="Plot 42, Industrial Area, City..."
                 />
               </div>
@@ -242,29 +242,29 @@ export default function Register() {
           {step === 3 && (
             <div className="space-y-4 animate-in fade-in duration-200">
               <div className="bg-blue-500/10 border border-blue-500/20 p-3.5 rounded-xl">
-                <p className="text-xs text-blue-300 leading-relaxed">
-                  <strong className="text-blue-400">Invoice Readiness:</strong> These details appear on your printed GST Tax Invoices and Authorized Signatory stamp.
+                <p className="text-xs text-blue-600 dark:text-blue-300 leading-relaxed">
+                  <strong className="text-blue-600 dark:text-blue-400">Invoice Readiness:</strong> These details appear on your printed GST Tax Invoices and Authorized Signatory stamp.
                 </p>
               </div>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold mb-1.5 text-gray-300">Proprietor / Signatory Name</label>
+                  <label className="block text-xs font-semibold mb-1.5 text-foreground">Proprietor / Signatory Name</label>
                   <input
                     type="text"
                     value={proprietorName}
                     onChange={(e) => setProprietorName(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 p-3 rounded-xl text-xs text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
                     placeholder="e.g. Rahul Sharma"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold mb-1.5 text-gray-300">Proprietor Phone</label>
+                  <label className="block text-xs font-semibold mb-1.5 text-foreground">Proprietor Phone</label>
                   <input
                     type="tel"
                     value={proprietorPhone}
                     onChange={(e) => setProprietorPhone(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 p-3 rounded-xl text-xs text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none font-mono"
                     placeholder="9876543210"
                   />
                 </div>
@@ -272,7 +272,7 @@ export default function Register() {
 
               {/* Digital Signature File Upload */}
               <div>
-                <label className="block text-xs font-semibold mb-1.5 text-gray-300">
+                <label className="block text-xs font-semibold mb-1.5 text-foreground">
                   Digital Signature Image (Optional)
                 </label>
                 
@@ -285,13 +285,13 @@ export default function Register() {
                 />
 
                 {signaturePreview ? (
-                  <div className="p-4 bg-zinc-900 border border-zinc-700 rounded-xl flex items-center justify-between gap-4">
+                  <div className="p-4 bg-muted/50 border border-input rounded-xl flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
                       <div className="w-16 h-12 bg-white rounded-lg p-1 flex items-center justify-center overflow-hidden border border-zinc-600">
                         <img src={signaturePreview} alt="Signature Preview" className="max-h-full object-contain" />
                       </div>
                       <div>
-                        <div className="text-xs font-bold text-white truncate max-w-[180px]">
+                        <div className="text-xs font-bold text-foreground truncate max-w-[180px]">
                           {signatureFile?.name || "signature.png"}
                         </div>
                         <div className="text-[10px] text-green-400 flex items-center gap-1">
@@ -303,7 +303,7 @@ export default function Register() {
                     <button
                       type="button"
                       onClick={removeSignature}
-                      className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer"
+                      className="p-1.5 text-muted-foreground hover:text-red-400 hover:bg-muted rounded-lg transition-colors cursor-pointer"
                       title="Remove signature"
                     >
                       <X className="w-4 h-4" />
@@ -312,15 +312,15 @@ export default function Register() {
                 ) : (
                   <div
                     onClick={() => fileInputRef.current?.click()}
-                    className="border-2 border-dashed border-zinc-700 hover:border-blue-500/60 rounded-xl p-6 text-center bg-zinc-900/40 hover:bg-zinc-900/80 transition-all cursor-pointer space-y-2"
+                    className="border-2 border-dashed border-input hover:border-blue-500/60 rounded-xl p-6 text-center bg-muted/50/40 hover:bg-muted/50/80 transition-all cursor-pointer space-y-2"
                   >
-                    <div className="w-10 h-10 rounded-full bg-zinc-800 text-blue-400 flex items-center justify-center mx-auto">
+                    <div className="w-10 h-10 rounded-full bg-muted text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
                       <UploadCloud className="w-5 h-5" />
                     </div>
-                    <div className="text-xs font-semibold text-gray-200">
+                    <div className="text-xs font-semibold text-foreground">
                       Click to upload Signature image
                     </div>
-                    <p className="text-[10px] text-gray-500">
+                    <p className="text-[10px] text-muted-foreground">
                       PNG, JPG, or WEBP (Transparent background recommended)
                     </p>
                   </div>
@@ -330,12 +330,12 @@ export default function Register() {
           )}
 
           {/* Form Actions */}
-          <div className="flex gap-3 pt-4 border-t border-zinc-800">
+          <div className="flex gap-3 pt-4 border-t border-border">
             {step > 1 && (
               <button
                 type="button"
                 onClick={() => setStep(step - 1)}
-                className="flex-1 bg-zinc-800 text-gray-200 py-3 rounded-xl text-xs font-bold hover:bg-zinc-700 transition-colors cursor-pointer"
+                className="flex-1 bg-muted text-foreground py-3 rounded-xl text-xs font-bold hover:bg-zinc-700 transition-colors cursor-pointer"
               >
                 Back
               </button>
@@ -344,7 +344,7 @@ export default function Register() {
             <button
               type="submit"
               disabled={loading}
-              className="flex-1 bg-blue-600 text-white py-3 rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/25 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
+              className="flex-1 bg-blue-600 text-foreground py-3 rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/25 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
             >
               {loading ? (
                 <>
@@ -361,9 +361,9 @@ export default function Register() {
           
         </form>
 
-        <div className="mt-6 text-center text-xs text-gray-500">
+        <div className="mt-6 text-center text-xs text-muted-foreground">
           Already have an account?{" "}
-          <Link href="/login" className="text-blue-400 hover:underline font-semibold">
+          <Link href="/login" className="text-blue-600 dark:text-blue-400 hover:underline font-semibold">
             Log in
           </Link>
         </div>

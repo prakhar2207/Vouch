@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
@@ -103,7 +103,7 @@ export default function ItemHistoryModal({
                   {product?.name || productName}
                 </h3>
                 {product?.brand && (
-                  <span className="bg-zinc-800 text-blue-400 border border-blue-500/20 text-[11px] px-2 py-0.5 rounded font-bold font-mono">
+                  <span className="bg-muted text-blue-400 border border-blue-500/20 text-[11px] px-2 py-0.5 rounded font-bold font-mono">
                     {product.brand}
                   </span>
                 )}

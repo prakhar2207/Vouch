@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { API_BASE_URL } from '@/utils/api';
 import { useState, useEffect } from 'react';
 import axios from 'axios';
@@ -121,7 +121,7 @@ export default function NewInvoice() {
       <div className="bg-card text-card-foreground p-6 rounded-xl shadow-sm border border-border space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
-            <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">Invoice Type</label>
+            <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-foreground/80">Invoice Type</label>
             <select 
               className="w-full bg-background border border-border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-shadow" 
               value={invoiceType} 
@@ -132,7 +132,7 @@ export default function NewInvoice() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">Company / Party</label>
+            <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-foreground/80">Company / Party</label>
             <div className="flex gap-2">
               <select 
                 className="w-full bg-background border border-border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-shadow" 
@@ -156,14 +156,14 @@ export default function NewInvoice() {
         </div>
 
         {showNewCompany && (
-          <div className="bg-gray-50 dark:bg-zinc-800/50 p-5 border border-border rounded-lg space-y-3 mt-4 animate-in fade-in slide-in-from-top-2">
-            <h3 className="font-bold text-gray-800 dark:text-gray-200">Add New Party</h3>
+          <div className="bg-muted/30 p-5 border border-border rounded-lg space-y-3 mt-4 animate-in fade-in slide-in-from-top-2">
+            <h3 className="font-bold text-gray-800 dark:text-foreground">Add New Party</h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <input placeholder="Name" className="bg-background border border-border p-2 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" value={newCompData.name} onChange={e => setNewCompData({...newCompData, name: e.target.value})} />
               <input placeholder="GSTIN" className="bg-background border border-border p-2 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" value={newCompData.gstin} onChange={e => setNewCompData({...newCompData, gstin: e.target.value})} />
               <input placeholder="State Code (e.g. 09)" className="bg-background border border-border p-2 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" value={newCompData.state_code} onChange={e => setNewCompData({...newCompData, state_code: e.target.value})} />
             </div>
-            <button onClick={handleCreateCompany} className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-md text-sm font-medium transition-colors">Save Party</button>
+            <button onClick={handleCreateCompany} className="bg-blue-600 text-foreground hover:bg-blue-700 px-4 py-2 rounded-md text-sm font-medium transition-colors">Save Party</button>
           </div>
         )}
       </div>
@@ -180,8 +180,8 @@ export default function NewInvoice() {
         </div>
 
         {showNewProduct && (
-          <div className="bg-gray-50 dark:bg-zinc-800/50 p-5 border border-border rounded-lg space-y-3 animate-in fade-in slide-in-from-top-2">
-            <h3 className="font-bold text-gray-800 dark:text-gray-200">Add New Product</h3>
+          <div className="bg-muted/30 p-5 border border-border rounded-lg space-y-3 animate-in fade-in slide-in-from-top-2">
+            <h3 className="font-bold text-gray-800 dark:text-foreground">Add New Product</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
               <input placeholder="Name" className="bg-background border border-border p-2 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" value={newProdData.name} onChange={e => setNewProdData({...newProdData, name: e.target.value})} />
               <input placeholder="SKU" className="bg-background border border-border p-2 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" value={newProdData.sku} onChange={e => setNewProdData({...newProdData, sku: e.target.value})} />
@@ -190,7 +190,7 @@ export default function NewInvoice() {
               <input placeholder="HSN Code" className="bg-background border border-border p-2 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" value={newProdData.hsn_code} onChange={e => setNewProdData({...newProdData, hsn_code: e.target.value})} />
               <input placeholder="Initial Stock" type="number" className="bg-background border border-border p-2 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" value={newProdData.stock_quantity} onChange={e => setNewProdData({...newProdData, stock_quantity: parseInt(e.target.value)})} />
             </div>
-            <button onClick={handleCreateProduct} className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-md text-sm font-medium transition-colors">Save Product</button>
+            <button onClick={handleCreateProduct} className="bg-blue-600 text-foreground hover:bg-blue-700 px-4 py-2 rounded-md text-sm font-medium transition-colors">Save Product</button>
           </div>
         )}
 
@@ -217,14 +217,14 @@ export default function NewInvoice() {
             </div>
           ))}
           {items.length === 0 && (
-            <div className="text-center py-6 text-gray-500 dark:text-gray-400 text-sm">
+            <div className="text-center py-6 text-muted-foreground dark:text-muted-foreground text-sm">
               No items added to the invoice yet.
             </div>
           )}
         </div>
         <button 
           onClick={handleAddItem} 
-          className="w-full bg-gray-50 hover:bg-gray-100 dark:bg-zinc-800 dark:hover:bg-zinc-700 border border-dashed border-border text-gray-600 dark:text-gray-300 px-4 py-3 rounded-lg transition-colors font-medium mt-2"
+          className="w-full bg-gray-50 hover:bg-gray-100 dark:bg-muted dark:hover:bg-zinc-700 border border-dashed border-border text-gray-600 dark:text-foreground/80 px-4 py-3 rounded-lg transition-colors font-medium mt-2"
         >
           + Add Line Item
         </button>
@@ -233,7 +233,7 @@ export default function NewInvoice() {
       <div className="flex justify-end pt-4">
         <button 
           onClick={handleSubmit} 
-          className="w-full sm:w-auto bg-green-600 text-white px-8 py-3 rounded-lg font-bold shadow hover:bg-green-700 transition-colors"
+          className="w-full sm:w-auto bg-green-600 text-foreground px-8 py-3 rounded-lg font-bold shadow hover:bg-green-700 transition-colors"
         >
           Generate Invoice
         </button>

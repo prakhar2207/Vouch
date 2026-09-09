@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
 import axios from "axios";
@@ -569,7 +569,7 @@ export default function PriceListImportModal({
                       onClick={() => setBrand(b)}
                       className={`px-2 py-0.5 rounded-lg text-xs font-mono transition-colors cursor-pointer border ${
                         brand === b
-                          ? "bg-blue-600 text-white border-blue-500 font-bold"
+                          ? "bg-blue-600 text-foreground border-blue-500 font-bold"
                           : "bg-muted/60 text-muted-foreground hover:text-foreground border-border/50"
                       }`}
                     >
@@ -672,7 +672,7 @@ export default function PriceListImportModal({
                       e.stopPropagation();
                       parseFile(file);
                     }}
-                    className="px-3 py-1 bg-blue-600/90 hover:bg-blue-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+                    className="px-3 py-1 bg-blue-600/90 hover:bg-blue-600 text-foreground rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
                     <span>Re-scan File with AI OCR</span>
@@ -731,7 +731,7 @@ export default function PriceListImportModal({
                   <button
                     type="button"
                     onClick={handleApplyTradeDiscount}
-                    className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold transition-colors cursor-pointer"
+                    className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 text-foreground rounded text-xs font-bold transition-colors cursor-pointer"
                   >
                     Apply to All
                   </button>
@@ -775,7 +775,7 @@ export default function PriceListImportModal({
                         onClick={() => { setSelectedSection(sec); setPreviewPage(1); }}
                         className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 border ${
                           isSelected
-                            ? "bg-blue-600 text-white border-blue-500 shadow-xs"
+                            ? "bg-blue-600 text-foreground border-blue-500 shadow-xs"
                             : "bg-muted/40 text-muted-foreground hover:text-foreground border-border/50"
                         }`}
                       >

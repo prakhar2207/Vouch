@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -102,10 +102,10 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-2xl bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-white">
+      <div className="w-full max-w-2xl bg-card/95 backdrop-blur-xl border border-border rounded-2xl shadow-2xl overflow-hidden flex flex-col text-foreground">
         {/* Search Input */}
-        <div className="flex items-center px-4 border-b border-zinc-800">
-          <svg className="w-5 h-5 text-gray-400 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="flex items-center px-4 border-b border-border">
+          <svg className="w-5 h-5 text-muted-foreground mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
           <input
@@ -118,15 +118,15 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
             }}
             onKeyDown={handleKeyDown}
             placeholder="Type a command, ledger, or product name..."
-            className="w-full py-4 bg-transparent text-white placeholder-gray-500 focus:outline-none text-base font-medium"
+            className="w-full py-4 bg-transparent text-foreground placeholder-muted-foreground focus:outline-none text-base font-medium"
           />
-          <kbd className="px-2 py-1 text-xs font-mono text-gray-400 bg-zinc-800 rounded border border-zinc-700">ESC</kbd>
+          <kbd className="px-2 py-1 text-xs font-mono text-muted-foreground bg-muted rounded border border-border">ESC</kbd>
         </div>
 
         {/* Results List */}
         <div className="max-h-96 overflow-y-auto p-2 space-y-1">
           {allItems.length === 0 ? (
-            <div className="p-8 text-center text-gray-500 text-sm">No commands, ledgers, or products matching "{query}"</div>
+            <div className="p-8 text-center text-muted-foreground text-sm">No commands, ledgers, or products matching "{query}"</div>
           ) : (
             allItems.map((item, idx) => {
               const isSelected = idx === selectedIndex;
@@ -139,17 +139,19 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
                   }}
                   onMouseEnter={() => setSelectedIndex(idx)}
                   className={`flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
-                    isSelected ? "bg-blue-600 text-white font-medium" : "hover:bg-zinc-800/80 text-gray-200"
+                    isSelected ? "bg-blue-600 text-foreground font-medium" : "hover:bg-muted text-foreground"
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <span className="text-xs px-2 py-0.5 rounded uppercase font-mono bg-zinc-800 text-gray-300 border border-zinc-700">
+                    <span className={`text-xs px-2 py-0.5 rounded uppercase font-mono ${
+                      isSelected ? "bg-blue-700 text-foreground" : "bg-muted text-muted-foreground border border-border"
+                    }`}>
                       {item.type}
                     </span>
                     <div>
                       <div className="text-sm">{item.label}</div>
                       {(item as any).subtext && (
-                        <div className={`text-xs ${isSelected ? "text-blue-200" : "text-gray-400"}`}>
+                        <div className={`text-xs ${isSelected ? "text-blue-200" : "text-muted-foreground"}`}>
                           {(item as any).subtext}
                         </div>
                       )}
@@ -158,7 +160,7 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
 
                   {(item as any).shortcut && (
                     <kbd className={`px-2 py-0.5 text-xs font-mono rounded ${
-                      isSelected ? "bg-blue-700 text-white" : "bg-zinc-800 text-gray-400 border border-zinc-700"
+                      isSelected ? "bg-blue-700 text-foreground" : "bg-muted text-muted-foreground border border-border"
                     }`}>
                       {(item as any).shortcut}
                     </kbd>
@@ -170,13 +172,13 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
         </div>
 
         {/* Footer shortcuts helper */}
-        <div className="px-4 py-2 bg-zinc-950/80 border-t border-zinc-800 text-xs text-gray-400 flex items-center justify-between">
+        <div className="px-4 py-2 bg-muted/80 border-t border-border text-xs text-muted-foreground flex items-center justify-between">
           <div className="flex items-center gap-4">
             <span>↑↓ Navigate</span>
             <span>↵ Select</span>
             <span>ESC Close</span>
           </div>
-          <div className="font-mono text-zinc-500">Vouch Keyboard Engine</div>
+          <div className="font-mono text-muted-foreground/70">Vouch Keyboard Engine</div>
         </div>
       </div>
     </div>

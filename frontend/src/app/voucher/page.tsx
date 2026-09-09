@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
@@ -120,20 +120,20 @@ export default function VoucherEntry() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
           <div>
             <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight">Voucher Entry</h1>
-            <p className="text-gray-500 dark:text-gray-400 text-xs sm:text-sm mt-1 sm:mt-2">Use <kbd className="bg-gray-200 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono text-xs">F4-F9</kbd> to rapidly switch voucher types.</p>
+            <p className="text-muted-foreground dark:text-muted-foreground text-xs sm:text-sm mt-1 sm:mt-2">Use <kbd className="bg-gray-200 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono text-xs">F4-F9</kbd> to rapidly switch voucher types.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3 sm:gap-5">
-            <span className={`px-4 sm:px-5 py-2 sm:py-2.5 font-bold text-xs sm:text-sm rounded-lg shadow-sm border ${voucherType === 'F8' || voucherType === 'F9' ? 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:border-blue-800' : 'bg-white text-gray-800 border-gray-200 dark:bg-zinc-800 dark:text-gray-200 dark:border-zinc-700'}`}>
+            <span className={`px-4 sm:px-5 py-2 sm:py-2.5 font-bold text-xs sm:text-sm rounded-lg shadow-sm border ${voucherType === 'F8' || voucherType === 'F9' ? 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:border-blue-800' : 'bg-white text-gray-800 border-gray-200 dark:bg-muted dark:text-foreground dark:border-input'}`}>
               <span className="opacity-70 mr-2">{voucherType}</span> {voucherNames[voucherType]}
             </span>
             <ThemeToggle />
-            <button onClick={() => router.push('/')} className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 text-xs sm:text-sm font-medium transition-colors cursor-pointer">
+            <button onClick={() => router.push('/')} className="text-gray-600 dark:text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 text-xs sm:text-sm font-medium transition-colors cursor-pointer">
               &larr; Dashboard
             </button>
           </div>
         </div>
 
-        <div className={`min-h-[350px] flex-1 mb-6 sm:mb-8 shadow-xl rounded-xl overflow-hidden border border-gray-200 dark:border-zinc-800 ${resolvedTheme === 'dark' ? 'ag-theme-quartz-dark' : 'ag-theme-quartz'}`}>
+        <div className={`min-h-[350px] flex-1 mb-6 sm:mb-8 shadow-xl rounded-xl overflow-hidden border border-gray-200 dark:border-border ${resolvedTheme === 'dark' ? 'ag-theme-quartz-dark' : 'ag-theme-quartz'}`}>
           <AgGridReact
             ref={gridRef}
             theme="legacy"
@@ -148,15 +148,15 @@ export default function VoucherEntry() {
           />
         </div>
 
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-zinc-900 p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-800">
-          <div className="text-gray-500 dark:text-gray-400 text-xs sm:text-sm">
-            Total Rows: <span className="font-bold text-gray-800 dark:text-gray-200">{rowData.length}</span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-muted/50 p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200 dark:border-border">
+          <div className="text-muted-foreground dark:text-muted-foreground text-xs sm:text-sm">
+            Total Rows: <span className="font-bold text-gray-800 dark:text-foreground">{rowData.length}</span>
           </div>
           <div className="flex items-center gap-3 w-full sm:w-auto">
-            <button onClick={() => setRowData([{ id: 1, type: 'Dr', ledger: '', amount: 0 }])} className="flex-1 sm:flex-initial text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-zinc-700 px-4 sm:px-6 py-2.5 rounded-lg text-xs sm:text-sm font-semibold transition-colors cursor-pointer">
+            <button onClick={() => setRowData([{ id: 1, type: 'Dr', ledger: '', amount: 0 }])} className="flex-1 sm:flex-initial text-gray-600 dark:text-muted-foreground bg-gray-100 dark:bg-muted hover:bg-gray-200 dark:hover:bg-zinc-700 px-4 sm:px-6 py-2.5 rounded-lg text-xs sm:text-sm font-semibold transition-colors cursor-pointer">
               Reset Grid
             </button>
-            <button onClick={handleSave} className="flex-1 sm:flex-initial bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/30 px-6 sm:px-8 py-2.5 rounded-lg text-xs sm:text-sm font-semibold transition-all hover:scale-[1.02] cursor-pointer">
+            <button onClick={handleSave} className="flex-1 sm:flex-initial bg-blue-600 hover:bg-blue-700 text-foreground shadow-lg shadow-blue-500/30 px-6 sm:px-8 py-2.5 rounded-lg text-xs sm:text-sm font-semibold transition-all hover:scale-[1.02] cursor-pointer">
               Save Voucher
             </button>
           </div>
