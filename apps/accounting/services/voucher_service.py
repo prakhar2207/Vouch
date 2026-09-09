@@ -2,8 +2,47 @@ from django.db import transaction
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 from apps.accounting.models import Voucher, LedgerEntry
+from apps.ledgers.models import Ledger, LedgerGroup
 
 class VoucherService:
+    @staticmethod
+    def _get_or_create_cogs_and_inventory_ledgers(company):
+        """
+        Provisions standard perpetual inventory ledgers:
+        - Cost of Goods Sold (Direct Expense)
+        - Stock-in-Hand (Current Asset)
+        """
+        direct_exp, _ = LedgerGroup.objects.get_or_create(
+            company=company,
+            name="Direct Expenses",
+            defaults={"nature": "EXPENSE"}
+        )
+        asset_grp, _ = LedgerGroup.objects.get_or_create(
+            company=company,
+            name="Current Assets",
+            defaults={"nature": "ASSET"}
+        )
+        
+        cogs_ledger = Ledger.objects.filter(company=company, name__icontains="Cost of Goods Sold").first()
+        if not cogs_ledger:
+            cogs_ledger = Ledger.objects.create(
+                company=company,
+                group=direct_exp,
+                name="Cost of Goods Sold",
+                ledger_type="EXPENSE"
+            )
+            
+        inv_ledger = Ledger.objects.filter(company=company, name__icontains="Stock-in-Hand").first() or \
+                     Ledger.objects.filter(company=company, name__icontains="Inventory").first()
+        if not inv_ledger:
+            inv_ledger = Ledger.objects.create(
+                company=company,
+                group=asset_grp,
+                name="Stock-in-Hand",
+                ledger_type="ASSET"
+            )
+        return cogs_ledger, inv_ledger
+
     @staticmethod
     @transaction.atomic
     def post_voucher(voucher: Voucher):
@@ -15,42 +54,72 @@ class VoucherService:
         voucher.status = 'VALIDATING'
         voucher.save(update_fields=['status'])
         
-        # 1. Process Stock first (if applicable)
+        # 1. Process Stock & calculate COGS
         from apps.inventory.services.stock_service import StockService
-        from apps.inventory.models import Warehouse
         
-        if voucher.voucher_type in ['SALES', 'PURCHASE']:
-            # For simplicity, pick the first active warehouse or auto-create Main Warehouse
-            warehouse = Warehouse.objects.filter(company=voucher.company, is_active=True).first()
-            if not warehouse:
-                warehouse = Warehouse.objects.create(
-                    company=voucher.company,
-                    name="Main Warehouse",
-                    is_active=True
-                )
-            StockService.process_voucher_stock(voucher, warehouse)
+        if voucher.voucher_type == 'SALES':
+            total_cogs = StockService.process_voucher_stock(voucher)
+            # 2. Record perpetual inventory journal (Dr COGS / Cr Inventory)
+            if total_cogs > Decimal('0.00'):
+                cogs_ledger, inv_ledger = VoucherService._get_or_create_cogs_and_inventory_ledgers(voucher.company)
+                # Check if COGS lines already exist
+                if not voucher.ledger_entries.filter(ledger=cogs_ledger).exists():
+                    LedgerEntry.objects.create(
+                        voucher=voucher,
+                        company=voucher.company,
+                        ledger=cogs_ledger,
+                        debit_amount=total_cogs,
+                        credit_amount=Decimal('0.00'),
+                        narration=f"COGS for {voucher.voucher_number}"
+                    )
+                    LedgerEntry.objects.create(
+                        voucher=voucher,
+                        company=voucher.company,
+                        ledger=inv_ledger,
+                        debit_amount=Decimal('0.00'),
+                        credit_amount=total_cogs,
+                        narration=f"Inventory reduction for {voucher.voucher_number}"
+                    )
+        elif voucher.voucher_type == 'PURCHASE':
+            StockService.process_voucher_stock(voucher)
         
-        # 2. Process Accounting Ledger Entries
-        entries = voucher.ledger_entries.all()
-        
+        # 3. Process Accounting Ledger Entries with Concurrency Locks
+        entries = list(voucher.ledger_entries.select_related('ledger').all())
+        if not entries:
+            voucher.status = 'DRAFT'
+            voucher.save(update_fields=['status'])
+            raise ValidationError("Voucher cannot be posted without ledger entries.")
+            
         total_debit = sum(entry.debit_amount for entry in entries)
         total_credit = sum(entry.credit_amount for entry in entries)
         
+        # Enforce Double-Entry Invariant: Sum(Debits) == Sum(Credits)
         if total_debit != total_credit:
             voucher.status = 'DRAFT'
             voucher.save(update_fields=['status'])
-            raise ValidationError(f"Voucher does not balance. Dr: {total_debit}, Cr: {total_credit}")
+            raise ValidationError(
+                f"Double-entry invariant violated for {voucher.voucher_number}. "
+                f"Total Debit ({total_debit}) does not equal Total Credit ({total_credit})."
+            )
             
-        # Update ledger balances
+        # Ensure company is populated on all ledger entries
+        for entry in entries:
+            if not entry.company_id:
+                entry.company_id = voucher.company_id
+                entry.save(update_fields=['company'])
+
+        # 4. Acquire row-level locks on all affected ledgers
+        ledger_ids = [entry.ledger_id for entry in entries]
+        locked_ledgers = {
+            l.id: l for l in Ledger.objects.select_for_update().filter(id__in=ledger_ids)
+        }
+        
         for entry in entries:
             if entry.debit_amount > 0 and entry.credit_amount > 0:
                 raise ValidationError("Ledger entry cannot contain both debit and credit.")
                 
-            ledger = entry.ledger
+            ledger = locked_ledgers[entry.ledger_id]
             
-            # Simplified strict balance logic:
-            # We treat positive current_balance as Debit if opening_balance_type was Debit (standard Asset/Expense)
-            # Or we can just calculate raw math. Let's do raw math:
             if ledger.opening_balance_type == 'DEBIT':
                 ledger.current_balance = ledger.current_balance + entry.debit_amount - entry.credit_amount
             else:
@@ -59,10 +128,11 @@ class VoucherService:
             ledger.save(update_fields=['current_balance'])
             
         voucher.status = 'POSTED'
-        voucher.total_amount = total_debit # Store the total volume of the voucher
+        if voucher.total_amount <= Decimal('0.00'):
+            voucher.total_amount = total_debit
         voucher.save(update_fields=['status', 'total_amount'])
         
-        # 3. Log Audit Trail
+        # 5. Log Audit Trail
         from apps.audit.services.audit_service import AuditService
         AuditService.log_action(
             company=voucher.company,
@@ -70,7 +140,7 @@ class VoucherService:
             action='POST',
             model_name='Voucher',
             record_id=voucher.id,
-            changes={"total_amount": str(total_debit), "status": "POSTED"}
+            changes={"total_amount": str(voucher.total_amount), "status": "POSTED"}
         )
         
         return voucher
@@ -81,15 +151,32 @@ class VoucherService:
         if voucher.status not in ['POSTED', 'VALIDATING']:
             raise ValidationError(f"Only posted or validating vouchers can be cancelled (current status: {voucher.status}).")
             
-        # Revert Stock
+        # 1. Revert Stock
         if voucher.voucher_type in ['SALES', 'PURCHASE']:
             from apps.inventory.services.stock_service import StockService
             StockService.revert_voucher_stock(voucher)
+
+        # 2. Revert Payment Allocations
+        from apps.accounting.models import PaymentAllocation
+        from django.db.models import Q
+        PaymentAllocation.objects.filter(
+            Q(payment_voucher=voucher) | Q(invoice_voucher=voucher)
+        ).delete()
             
-        # Revert Accounting Ledgers
-        entries = voucher.ledger_entries.all()
+        # 3. Revert Accounting Ledgers with row-level locks
+        entries = list(voucher.ledger_entries.select_related('ledger').all())
+        ledger_ids = [entry.ledger_id for entry in entries]
+        if voucher.party_ledger_id:
+            ledger_ids.append(voucher.party_ledger_id)
+
+        locked_ledgers = {
+            l.id: l for l in Ledger.objects.select_for_update().filter(id__in=set(ledger_ids))
+        }
+
         for entry in entries:
-            ledger = entry.ledger
+            ledger = locked_ledgers.get(entry.ledger_id)
+            if not ledger:
+                continue
             current_bal = ledger.current_balance if ledger.current_balance is not None else Decimal('0.00')
             if ledger.opening_balance_type == 'DEBIT':
                 ledger.current_balance = current_bal - entry.debit_amount + entry.credit_amount
@@ -100,7 +187,7 @@ class VoucherService:
         voucher.status = 'CANCELLED'
         voucher.save(update_fields=['status'])
         
-        # Log Audit Trail
+        # 3. Log Audit Trail
         from apps.audit.services.audit_service import AuditService
         AuditService.log_action(
             company=voucher.company,
@@ -112,19 +199,18 @@ class VoucherService:
         )
         
         # Ensure single-source-of-truth accuracy for all affected ledgers
-        for entry in entries:
-            VoucherService.recalculate_ledger_balance(entry.ledger)
-        if voucher.party_ledger:
-            VoucherService.recalculate_ledger_balance(voucher.party_ledger)
+        for ledger in locked_ledgers.values():
+            VoucherService.recalculate_ledger_balance(ledger)
 
         return voucher
 
     @staticmethod
+    @transaction.atomic
     def recalculate_ledger_balance(ledger) -> Decimal:
         """
         Recalculates ledger.current_balance strictly from the single source of truth:
         Opening Balance + Sum of all posted LedgerEntry Debits/Credits.
-        Completely eliminates drift caused by voucher deletion, cancellation, or partial updates.
+        Acquires row-level database lock.
         """
         if not ledger:
             return Decimal('0.00')
@@ -132,11 +218,12 @@ class VoucherService:
         from apps.accounting.models import LedgerEntry
         from django.db.models import Sum
 
-        op_balance = Decimal(str(ledger.opening_balance or '0.00'))
+        locked_ledger = Ledger.objects.select_for_update().get(id=ledger.id)
+        op_balance = Decimal(str(locked_ledger.opening_balance or '0.00'))
         
         # Only POSTED vouchers affect accounting balances
         totals = LedgerEntry.objects.filter(
-            ledger=ledger,
+            ledger=locked_ledger,
             voucher__status='POSTED'
         ).aggregate(
             total_dr=Sum('debit_amount'),
@@ -146,10 +233,10 @@ class VoucherService:
         total_dr = Decimal(str(totals['total_dr'] or '0.00'))
         total_cr = Decimal(str(totals['total_cr'] or '0.00'))
 
-        if ledger.opening_balance_type == 'DEBIT':
-            ledger.current_balance = op_balance + total_dr - total_cr
+        if locked_ledger.opening_balance_type == 'DEBIT':
+            locked_ledger.current_balance = op_balance + total_dr - total_cr
         else:
-            ledger.current_balance = op_balance + total_cr - total_dr
+            locked_ledger.current_balance = op_balance + total_cr - total_dr
 
-        ledger.save(update_fields=['current_balance'])
-        return ledger.current_balance
+        locked_ledger.save(update_fields=['current_balance'])
+        return locked_ledger.current_balance

@@ -3,9 +3,13 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from .models import Ledger
 from apps.companies.models import Company
+from apps.accounts.permissions import IsCompanyMember, CanManageLedgers
 
 class LedgerGroupListView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return [IsAuthenticated(), IsCompanyMember()]
+        return [IsAuthenticated(), CanManageLedgers()]
 
     def get(self, request, company_id):
         try:
@@ -64,7 +68,10 @@ class LedgerGroupListView(APIView):
 
 
 class LedgerListView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return [IsAuthenticated(), IsCompanyMember()]
+        return [IsAuthenticated(), CanManageLedgers()]
     
     def get(self, request, company_id):
         try:
@@ -235,7 +242,10 @@ class LedgerListView(APIView):
 
 
 class LedgerDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return [IsAuthenticated(), IsCompanyMember()]
+        return [IsAuthenticated(), CanManageLedgers()]
 
     def get(self, request, company_id, ledger_id):
         try:
@@ -341,7 +351,7 @@ class LedgerDetailView(APIView):
 
 
 class PartyCleanupView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageLedgers]
 
     def post(self, request, company_id):
         try:

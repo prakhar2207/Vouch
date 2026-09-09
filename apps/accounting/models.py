@@ -90,6 +90,8 @@ class Voucher(models.Model):
         ('JOURNAL', 'Journal'),
         ('SALES', 'Sales'),
         ('PURCHASE', 'Purchase'),
+        ('CREDIT_NOTE', 'Credit Note'),
+        ('DEBIT_NOTE', 'Debit Note'),
     )
     
     STATUS_CHOICES = (
@@ -152,19 +154,49 @@ class VoucherItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='items')
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name='voucher_items')
+    warehouse = models.ForeignKey('inventory.Warehouse', on_delete=models.PROTECT, null=True, blank=True, related_name='voucher_items')
     quantity = models.DecimalField(max_digits=15, decimal_places=2)
     rate = models.DecimalField(max_digits=15, decimal_places=2)
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
     discount_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     taxable_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     gst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+    
+    # Historical Tax Snapshots
+    cgst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+    sgst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+    igst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+    cess_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+    cgst_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    sgst_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    igst_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    cess_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    hsn_code = models.CharField(max_length=50, null=True, blank=True)
+    
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gte=0),
+                name='chk_voucher_item_quantity_positive'
+            ),
+            models.CheckConstraint(
+                condition=models.Q(rate__gte=0),
+                name='chk_voucher_item_rate_positive'
+            ),
+            models.CheckConstraint(
+                condition=models.Q(discount_percent__gte=0) & models.Q(discount_percent__lte=100),
+                name='chk_voucher_item_discount_pct_range'
+            ),
+        ]
     
     def __str__(self):
         return f"{self.product.name} x {self.quantity} on {self.voucher.voucher_number}"
 
 class LedgerEntry(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='ledger_entries', null=True, blank=True)
     voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='ledger_entries')
     ledger = models.ForeignKey(Ledger, on_delete=models.PROTECT, related_name='entries')
     debit_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
@@ -172,8 +204,87 @@ class LedgerEntry(models.Model):
     narration = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(debit_amount__gte=0),
+                name='chk_ledger_entry_debit_positive'
+            ),
+            models.CheckConstraint(
+                condition=models.Q(credit_amount__gte=0),
+                name='chk_ledger_entry_credit_positive'
+            ),
+            models.CheckConstraint(
+                condition=~(models.Q(debit_amount__gt=0) & models.Q(credit_amount__gt=0)),
+                name='chk_ledger_entry_not_both_dr_and_cr'
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['company', 'ledger', 'created_at']),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.company_id and self.voucher_id:
+            self.company_id = self.voucher.company_id
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"VCH: {self.voucher.voucher_number} | LDR: {self.ledger.name} | DR: {self.debit_amount} | CR: {self.credit_amount}"
+
+
+class PaymentAllocation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='payment_allocations')
+    payment_voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='allocations_made')
+    invoice_voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='allocations_received')
+    allocated_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(allocated_amount__gt=0),
+                name='chk_payment_allocation_positive'
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['company', 'payment_voucher']),
+            models.Index(fields=['company', 'invoice_voucher']),
+        ]
+
+    def __str__(self):
+        return f"Allocation: {self.payment_voucher.voucher_number} -> {self.invoice_voucher.voucher_number} (₹{self.allocated_amount})"
+
+
+class OfflineCommand(models.Model):
+    STATUS_CHOICES = (
+        ('RECEIVED', 'Received'),
+        ('PROCESSED', 'Processed'),
+        ('FAILED', 'Failed'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    command_id = models.CharField(max_length=100, unique=True, db_index=True)
+    device_id = models.CharField(max_length=100, null=True, blank=True)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='offline_commands')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='offline_commands')
+    command_type = models.CharField(max_length=50)  # e.g., 'CREATE_SALE', 'CREATE_PURCHASE', 'CREATE_PAYMENT'
+    payload = models.JSONField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='RECEIVED')
+    result_voucher = models.ForeignKey(Voucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='originating_command')
+    error_message = models.TextField(null=True, blank=True)
+    client_created_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['company', 'command_type', 'status']),
+        ]
+
+    def __str__(self):
+        return f"Command {self.command_id} ({self.command_type}) - {self.status}"
 
 
 class InwardVoucherRequest(models.Model):

@@ -4,9 +4,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from .models import Product, ProductCategory
 from apps.companies.models import Company
+from apps.accounts.permissions import IsCompanyMember, CanManageInventory
 
 class ProductCategoryListView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return [IsAuthenticated(), IsCompanyMember()]
+        return [IsAuthenticated(), CanManageInventory()]
     
     def get(self, request, company_id):
         try:
@@ -42,9 +46,9 @@ class ProductCategoryListView(APIView):
                     "hsn_code": c.hsn_code or "",
                     "gst_rate": str(c.gst_rate),
                     "item_count": item_count,
-                    "stock_quantity": float(cat_stock_qty),
-                    "stock_value": float(cat_stock_val),
-                    "retail_value": float(cat_retail_val),
+                    "stock_quantity": str(cat_stock_qty),
+                    "stock_value": str(cat_stock_val),
+                    "retail_value": str(cat_retail_val),
                 })
                 
             # Also account for unassigned products
@@ -62,9 +66,9 @@ class ProductCategoryListView(APIView):
                 "success": True, 
                 "data": data,
                 "summary": {
-                    "total_stock_value": float(overall_stock_value),
-                    "total_retail_value": float(overall_retail_value),
-                    "total_stock_quantity": float(overall_stock_qty),
+                    "total_stock_value": str(overall_stock_value),
+                    "total_retail_value": str(overall_retail_value),
+                    "total_stock_quantity": str(overall_stock_qty),
                     "total_items": overall_items_count,
                     "total_categories": categories.count(),
                 }
@@ -109,7 +113,10 @@ class ProductCategoryListView(APIView):
             return Response({"success": False, "error": str(e)}, status=400)
 
 class ProductCategoryDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return [IsAuthenticated(), IsCompanyMember()]
+        return [IsAuthenticated(), CanManageInventory()]
 
     def patch(self, request, company_id, category_id):
         try:
@@ -143,7 +150,10 @@ def is_integer_unit(unit_str):
     return u not in fractional_units
 
 class ProductListView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return [IsAuthenticated(), IsCompanyMember()]
+        return [IsAuthenticated(), CanManageInventory()]
     
     def get(self, request, company_id):
         try:
@@ -202,17 +212,17 @@ class ProductListView(APIView):
                     "track_batches": p.track_batches,
                     "track_serial_numbers": p.track_serial_numbers
                 })
-            category_stock_val = sum(float(p.stock_quantity) * float(p.purchase_price) for p in qs if p.stock_quantity > 0)
-            category_retail_val = sum(float(p.stock_quantity) * float(p.selling_price) for p in qs if p.stock_quantity > 0)
-            category_stock_qty = sum(float(p.stock_quantity) for p in qs if p.stock_quantity > 0)
+            category_stock_val = sum((p.stock_quantity * p.purchase_price) for p in qs if p.stock_quantity > Decimal('0.00'))
+            category_retail_val = sum((p.stock_quantity * p.selling_price) for p in qs if p.stock_quantity > Decimal('0.00'))
+            category_stock_qty = sum(p.stock_quantity for p in qs if p.stock_quantity > Decimal('0.00'))
             
             return Response({
                 "success": True, 
                 "data": data,
                 "summary": {
-                    "total_stock_value": round(category_stock_val, 2),
-                    "total_retail_value": round(category_retail_val, 2),
-                    "total_stock_quantity": round(category_stock_qty, 2),
+                    "total_stock_value": str(category_stock_val.quantize(Decimal('0.01'))),
+                    "total_retail_value": str(category_retail_val.quantize(Decimal('0.01'))),
+                    "total_stock_quantity": str(category_stock_qty),
                     "total_items": len(data),
                 }
             })
@@ -273,10 +283,11 @@ class ProductListView(APIView):
             )
 
             # Handle Opening Stock (Feature 7)
-            opening_qty = float(data.get('opening_qty', 0))
+            from apps.common.money import to_decimal
+            opening_qty = to_decimal(data.get('opening_qty', '0.00'))
             if is_integer_unit(product.unit):
-                opening_qty = float(round(opening_qty))
-            if opening_qty > 0:
+                opening_qty = Decimal(int(round(opening_qty)))
+            if opening_qty > Decimal('0.00'):
                 from apps.inventory.models import Warehouse, InventoryEntry
                 # Find default warehouse or use provided
                 warehouse_id = data.get('warehouse_id')
@@ -294,7 +305,7 @@ class ProductListView(APIView):
                     movement_type='IN',
                     quantity=opening_qty,
                     rate=product.purchase_price,
-                    total_value=opening_qty * float(product.purchase_price),
+                    total_value=(opening_qty * product.purchase_price).quantize(Decimal('0.01')),
                     batch_number=data.get('opening_batch_number', ''),
                     expiry_date=data.get('opening_expiry_date', None) or None,
                     serial_number=data.get('opening_serial_number', '')
@@ -318,7 +329,10 @@ class ProductListView(APIView):
 
 
 class ProductDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return [IsAuthenticated(), IsCompanyMember()]
+        return [IsAuthenticated(), CanManageInventory()]
 
     def patch(self, request, company_id, product_id):
         try:
@@ -340,23 +354,24 @@ class ProductDetailView(APIView):
             if 'costing_method' in data: product.costing_method = data['costing_method']
             
             if 'stock_quantity' in data:
-                new_stock = float(data['stock_quantity'])
+                from apps.common.money import to_decimal
+                new_stock = to_decimal(data['stock_quantity'])
                 if is_integer_unit(product.unit):
-                    new_stock = float(round(new_stock))
+                    new_stock = Decimal(int(round(new_stock)))
                 product.stock_quantity = new_stock
                 
                 # Also update the Opening Stock InventoryEntry
                 from apps.inventory.models import InventoryEntry, Warehouse
                 opening_entry = InventoryEntry.objects.filter(product=product, voucher_id__isnull=True).first()
                 if opening_entry:
-                    if new_stock == 0:
+                    if new_stock == Decimal('0.00'):
                         opening_entry.delete()
                     else:
                         opening_entry.quantity = new_stock
                         opening_entry.rate = product.purchase_price
-                        opening_entry.total_value = new_stock * float(product.purchase_price)
+                        opening_entry.total_value = (new_stock * product.purchase_price).quantize(Decimal('0.01'))
                         opening_entry.save()
-                elif new_stock > 0:
+                elif new_stock > Decimal('0.00'):
                     warehouse = Warehouse.objects.filter(company=company).first()
                     if not warehouse:
                         warehouse = Warehouse.objects.create(company=company, name="Main Warehouse")
@@ -367,7 +382,7 @@ class ProductDetailView(APIView):
                         movement_type='IN',
                         quantity=new_stock,
                         rate=product.purchase_price,
-                        total_value=new_stock * float(product.purchase_price)
+                        total_value=(new_stock * product.purchase_price).quantize(Decimal('0.01'))
                     )
 
             product.save()
@@ -402,14 +417,17 @@ class ProductDetailView(APIView):
             # Generic fallback for ProtectedError
             if 'ProtectedError' in type(e).__name__ or 'protected foreign keys' in str(e):
                 return Response({
-                    "success": False,
+                    "success": False, 
                     "error": f"Cannot delete {product.name} because it is being used by other records in the system."
                 }, status=400)
             return Response({"success": False, "error": str(e)}, status=400)
 
 
 class WarehouseListView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return [IsAuthenticated(), IsCompanyMember()]
+        return [IsAuthenticated(), CanManageInventory()]
     
     def get(self, request, company_id):
         try:
@@ -428,7 +446,7 @@ class WarehouseListView(APIView):
 
 
 class BulkBrandDiscountUpdateAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageInventory]
 
     def post(self, request, company_id):
         try:
@@ -446,10 +464,6 @@ class BulkBrandDiscountUpdateAPIView(APIView):
             products = Product.objects.filter(company=company, category_id=category_id, brand=brand)
             updated_count = 0
             for p in products:
-                # Update purchase price based on selling_price and discount
-                # Only update if they don't have purchase_price_from_invoice = True ? 
-                # Actually, if the user explicitly triggers this, we can update the purchase price, 
-                # but let's clear the purchase_price_from_invoice flag since it's now manually overridden
                 new_purchase_price = float(p.selling_price) * discount_factor
                 p.purchase_price = new_purchase_price
                 p.purchase_price_from_invoice = False
@@ -464,7 +478,7 @@ class BulkBrandDiscountUpdateAPIView(APIView):
             return Response({"success": False, "error": str(e)}, status=400)
 
 class PriceListBulkImportAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageInventory]
 
     def post(self, request, company_id):
         try:
@@ -492,7 +506,7 @@ class PriceListBulkImportAPIView(APIView):
 
 
 class ParsePriceListPdfAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageInventory]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request, company_id):
@@ -545,7 +559,7 @@ class ParsePriceListPdfAPIView(APIView):
 
 
 class CombineInventoryItemsAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageInventory]
 
     def post(self, request, company_id):
         try:
@@ -561,7 +575,7 @@ class CombineInventoryItemsAPIView(APIView):
 
 
 class ProductHistoryAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, company_id, product_id):
         try:
@@ -576,7 +590,7 @@ class ProductHistoryAPIView(APIView):
 
 
 class InventoryItemAnalyticsAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, company_id):
         try:

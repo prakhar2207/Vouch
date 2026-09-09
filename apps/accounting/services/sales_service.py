@@ -15,10 +15,10 @@ class SalesInvoiceService:
         user, 
         party_ledger: Ledger, 
         items_data: list, 
-        sales_ledger: Ledger, 
-        cgst_ledger: Ledger, 
-        sgst_ledger: Ledger, 
-        igst_ledger: Ledger, 
+        sales_ledger: Ledger = None, 
+        cgst_ledger: Ledger = None, 
+        sgst_ledger: Ledger = None, 
+        igst_ledger: Ledger = None, 
         manual_voucher_number=None, 
         manual_voucher_date=None,
         buyer_name=None,
@@ -37,6 +37,21 @@ class SalesInvoiceService:
         Returns the DRAFT voucher.
         """
         # 0. Safeguard: Ensure tax ledgers are strictly OUTPUT tax ledgers (never Input)
+        if party_ledger and party_ledger.company_id != company.id:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(f"Party ledger '{party_ledger.name}' does not belong to company '{company.name}'.")
+        if sales_ledger and sales_ledger.company_id != company.id:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(f"Sales ledger '{sales_ledger.name}' does not belong to company '{company.name}'.")
+
+        if not sales_ledger:
+            from apps.ledgers.models import LedgerGroup
+            sales_ledger = Ledger.objects.filter(company=company, ledger_type='SALES').first() or \
+                           Ledger.objects.filter(company=company, name__icontains='Sales').first()
+            if not sales_ledger:
+                income_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Sales Accounts', defaults={'nature': 'INCOME'})
+                sales_ledger, _ = Ledger.objects.get_or_create(company=company, name='Sales Account', defaults={'group': income_grp, 'ledger_type': 'SALES'})
+
         if not cgst_ledger or 'input' in cgst_ledger.name.lower():
             cgst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'CGST')
         if not sgst_ledger or 'input' in sgst_ledger.name.lower():
@@ -82,10 +97,8 @@ class SalesInvoiceService:
             product = None
             product_id = item.get('product_id')
             if product_id and str(product_id).strip():
-                try:
-                    product = Product.objects.filter(id=product_id, company=company).first()
-                except Exception:
-                    product = None
+                from apps.common.tenant import get_company_product
+                product = get_company_product(company, product_id)
 
             if not product:
                 # Auto-create product on the fly if it doesn't exist
@@ -137,25 +150,41 @@ class SalesInvoiceService:
             taxable_amount = gross - discount_amt
             
             # 2. Calculate GST
+            target_party_state = party_ledger.state_code or buyer_state_code or company.state_code
             taxes = GSTCalculator.calculate_taxes(
                 company_state_code=company.state_code,
-                party_state_code=party_ledger.state_code,
+                party_state_code=target_party_state,
                 taxable_amount=taxable_amount,
                 gst_rate=product.gst_rate
             )
             
             total_amount = taxable_amount + taxes['total_tax']
             
-            # Create Voucher Item
+            # Create Voucher Item with complete historical tax snapshots
+            from apps.inventory.models import Warehouse
+            line_wh = None
+            if item.get('warehouse_id'):
+                line_wh = Warehouse.objects.filter(id=item['warehouse_id'], company=company).first()
+
             VoucherItem.objects.create(
                 voucher=voucher,
                 product=product,
+                warehouse=line_wh,
                 quantity=qty,
                 rate=rate,
                 discount_percent=discount_pct,
                 discount_amount=discount_amt,
                 taxable_amount=taxable_amount,
                 gst_rate=product.gst_rate,
+                cgst_rate=taxes.get('cgst_rate', Decimal('0.00')),
+                sgst_rate=taxes.get('sgst_rate', Decimal('0.00')),
+                igst_rate=taxes.get('igst_rate', Decimal('0.00')),
+                cess_rate=taxes.get('cess_rate', Decimal('0.00')),
+                cgst_amount=taxes.get('cgst', Decimal('0.00')),
+                sgst_amount=taxes.get('sgst', Decimal('0.00')),
+                igst_amount=taxes.get('igst', Decimal('0.00')),
+                cess_amount=taxes.get('cess', Decimal('0.00')),
+                hsn_code=product.hsn_code or item.get('hsn_code', ''),
                 total_amount=total_amount
             )
             

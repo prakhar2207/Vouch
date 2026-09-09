@@ -30,6 +30,9 @@ class Company(models.Model):
     bank_ifsc = models.CharField(max_length=50, null=True, blank=True)
     bank_branch = models.CharField(max_length=255, null=True, blank=True)
 
+    is_active = models.BooleanField(default=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

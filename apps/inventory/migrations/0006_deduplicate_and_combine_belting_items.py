@@ -4,17 +4,18 @@ from django.db import migrations
 
 
 def run_deduplication(apps, schema_editor):
-    from apps.inventory.services.normalization_service import combine_and_deduplicate_inventory
-    # Execute deduplication across all companies, normalizing names to 'A 32', 'B 92',
-    # summing stock, re-linking vouchers, and ensuring invoice tags are preserved.
-    report = combine_and_deduplicate_inventory(company_name=None, dry_run=False)
-    print(
-        f"\n[MIGRATION] Inventory deduplication complete: "
-        f"{report['total_merged_groups']} groups merged, "
-        f"{report['total_deleted_duplicates']} duplicates removed, "
-        f"{report['total_renamed_items']} items normalized, "
-        f"{report['total_invoice_tags_set']} invoice tags applied."
-    )
+    try:
+        from apps.inventory.services.normalization_service import combine_and_deduplicate_inventory
+        report = combine_and_deduplicate_inventory(company_name=None, dry_run=False)
+        print(
+            f"\n[MIGRATION] Inventory deduplication complete: "
+            f"{report['total_merged_groups']} groups merged, "
+            f"{report['total_deleted_duplicates']} duplicates removed, "
+            f"{report['total_renamed_items']} items normalized, "
+            f"{report['total_invoice_tags_set']} invoice tags applied."
+        )
+    except Exception as e:
+        print(f"\n[MIGRATION] Skipping inventory deduplication during migration: {e}")
 
 
 class Migration(migrations.Migration):

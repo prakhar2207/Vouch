@@ -45,6 +45,23 @@ class RegisterView(APIView):
         proprietor_phone = (request.data.get('proprietor_phone') or '').strip()
         signature_file = request.FILES.get('signature') or request.FILES.get('proprietor_signature')
 
+        # 1. Enforce password complexity via Django's configured AUTH_PASSWORD_VALIDATORS
+        from django.contrib.auth.password_validation import validate_password
+        try:
+            validate_password(password, user=User(email=email))
+        except Exception as e:
+            msg = e.messages[0] if hasattr(e, 'messages') and e.messages else str(e)
+            return Response({"success": False, "error": f"Weak password: {msg}"}, status=400)
+
+        # 2. Enforce GSTIN structural & checksum validation
+        if gstin:
+            from apps.gst.services.gstin_validator import GSTINValidator
+            gst_res = GSTINValidator.validate(gstin)
+            if not gst_res['is_valid']:
+                return Response({"success": False, "error": f"Invalid GSTIN: {gst_res['error']}"}, status=400)
+            if not state_code:
+                state_code = gst_res['state_code']
+
         try:
             with transaction.atomic():
                 # 1. Create User
@@ -134,4 +151,14 @@ class RegisterView(APIView):
 
         except Exception as e:
             return Response({"success": False, "error": f"Registration failed: {str(e)}"}, status=400)
+
+
+from rest_framework.throttling import AnonRateThrottle
+from rest_framework_simplejwt.views import TokenObtainPairView
+
+class LoginRateThrottle(AnonRateThrottle):
+    rate = '15/minute'
+
+class ThrottledTokenObtainPairView(TokenObtainPairView):
+    throttle_classes = [LoginRateThrottle]
 

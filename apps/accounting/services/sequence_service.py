@@ -121,11 +121,14 @@ class InvoiceSequenceService:
                 'last_number': max_num
             }
         )
-        if not created and seq.last_number != max_num:
+        # Monotonicity invariant: sequence numbers are NEVER decremented/reused.
+        # If an invoice is deleted or cancelled, its number is retired.
+        # Only advance last_number forward if an imported or higher-numbered invoice exists.
+        if not created and max_num > seq.last_number:
             seq.last_number = max_num
             seq.save(update_fields=['last_number', 'updated_at'])
 
-        return max_num
+        return seq.last_number
 
     @staticmethod
     def get_next_number(company: Company, voucher_type: str, voucher_date=None, custom_prefix=None):

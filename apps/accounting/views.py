@@ -13,9 +13,22 @@ from .services.sales_service import SalesInvoiceService
 from .services.voucher_service import VoucherService
 from .services.purchase_service import PurchaseInvoiceService
 from .services.report_service import ReportService
+from apps.accounts.permissions import (
+    IsCompanyMember,
+    IsCompanyAdmin,
+    IsCompanyOwner,
+    CanCreateSales,
+    CanCreatePurchases,
+    CanPostVoucher,
+    CanCancelVoucher,
+    CanManageLedgers,
+    CanManageInventory,
+    CanManageCompanySettings,
+    user_has_company_roles
+)
 
 class CreateSalesInvoiceAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanCreateSales]
 
     def post(self, request):
         """
@@ -135,7 +148,7 @@ class CreateSalesInvoiceAPIView(APIView):
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class CreatePurchaseInvoiceAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanCreatePurchases]
 
     def post(self, request):
         data = request.data
@@ -226,7 +239,7 @@ class CreatePurchaseInvoiceAPIView(APIView):
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class TrialBalanceAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, company_id):
         try:
@@ -237,7 +250,7 @@ class TrialBalanceAPIView(APIView):
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class ListVouchersAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
     
     def get(self, request, company_id):
         try:
@@ -303,7 +316,10 @@ class ListVouchersAPIView(APIView):
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class VoucherDetailAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return [IsAuthenticated(), IsCompanyMember()]
+        return [IsAuthenticated(), CanCancelVoucher()]
     
     def get(self, request, voucher_id):
         try:
@@ -329,21 +345,15 @@ class VoucherDetailAPIView(APIView):
                     "total_amount": item.total_amount
                 })
             
-            sig_data = getattr(voucher.company, 'signature_data', None)
-            if not sig_data and voucher.company.proprietor_signature:
+            # Signature data URL
+            sig_data = None
+            if voucher.company.proprietor_signature:
+                import base64
                 try:
-                    import os, base64
-                    sig_path = voucher.company.proprietor_signature.path
-                    if os.path.exists(sig_path):
-                        with open(sig_path, 'rb') as f:
-                            raw = f.read()
-                            b64 = base64.b64encode(raw).decode('utf-8')
-                            sig_data = f"data:image/png;base64,{b64}"
-                            voucher.company.signature_data = sig_data
-                            voucher.company.save(update_fields=['signature_data'])
+                    sig_data = f"data:image/png;base64,{base64.b64encode(voucher.company.proprietor_signature).decode('utf-8')}"
                 except Exception:
                     pass
-            # Extract cartage and round off from ledger entries if present
+
             cartage_amount = Decimal('0.00')
             round_off_amount = Decimal('0.00')
             payment_ledger_obj = None
@@ -354,8 +364,6 @@ class VoucherDetailAPIView(APIView):
                     if amt > 0:
                         cartage_amount += amt
                 elif 'round off' in lname or entry.ledger.ledger_type == 'ROUND_OFF':
-                    # For sales: credit is +round_off (increase total), debit is -round_off (decrease total)
-                    # For purchase: debit is +round_off, credit is -round_off
                     if voucher.voucher_type == 'SALES':
                         round_off_amount += (entry.credit_amount - entry.debit_amount)
                     else:
@@ -421,7 +429,6 @@ class VoucherDetailAPIView(APIView):
         try:
             from apps.accounting.models import Voucher
             from apps.accounting.services.voucher_service import VoucherService
-            from apps.accounting.services.sequence_service import InvoiceSequenceService
             from apps.ledgers.models import Ledger
             
             voucher = Voucher.objects.filter(id=voucher_id, company__users__user=request.user).first()
@@ -431,9 +438,14 @@ class VoucherDetailAPIView(APIView):
                     "error": "Voucher not found or you do not have permission to delete it."
                 }, status=status.HTTP_404_NOT_FOUND)
 
+            if not user_has_company_roles(request.user, voucher.company, ['OWNER', 'ADMIN', 'ACCOUNTANT']):
+                return Response({
+                    "success": False,
+                    "error": "Permission denied: Only Owner, Admin, or Accountant can delete or cancel vouchers."
+                }, status=status.HTTP_403_FORBIDDEN)
+
             with transaction.atomic():
                 company = voucher.company
-                financial_year = voucher.financial_year
                 voucher_type = voucher.voucher_type
                 product_ids = list(voucher.items.values_list('product_id', flat=True))
                 voucher_num = voucher.voucher_number
@@ -443,26 +455,29 @@ class VoucherDetailAPIView(APIView):
                 if voucher.party_ledger_id:
                     affected_ledger_ids.add(voucher.party_ledger_id)
 
-                # If voucher is posted or validating, safely cancel & reverse accounting/stock first
                 if voucher.status in ['POSTED', 'VALIDATING']:
+                    # Safely cancel & reverse accounting/stock/allocations
                     VoucherService.cancel_voucher(voucher, user=request.user)
-                
-                # Delete voucher (cascades items, ledger_entries, and EDI requests)
-                voucher.delete()
-                
-                # Safe cleanup: only delete auto-created ad-hoc products with no category, no stock, no other entries
-                from apps.inventory.models import Product
-                for pid in set(product_ids):
-                    try:
-                        prod = Product.objects.filter(id=pid).first()
-                        if (prod and 
-                            prod.category is None and 
-                            prod.stock_quantity <= 0 and 
-                            not prod.voucher_items.exists() and 
-                            not prod.entries.exists()):
-                            prod.delete()
-                    except Exception:
-                        pass
+                    # POSTED vouchers remain recorded with status CANCELLED to preserve audit trail and sequence numbers.
+                    action_msg = "cancelled and reversed"
+                else:
+                    # DRAFT vouchers can be deleted safely
+                    voucher.delete()
+                    action_msg = "deleted"
+                    
+                    # Safe cleanup: only delete auto-created ad-hoc products with no category, no stock, no other entries
+                    from apps.inventory.models import Product
+                    for pid in set(product_ids):
+                        try:
+                            prod = Product.objects.filter(id=pid).first()
+                            if (prod and 
+                                prod.category is None and 
+                                prod.stock_quantity <= 0 and 
+                                not prod.voucher_items.exists() and 
+                                not prod.entries.exists()):
+                                prod.delete()
+                        except Exception:
+                            pass
 
                 # Single-source-of-truth recalculation for all affected ledgers
                 for lid in affected_ledger_ids:
@@ -470,14 +485,10 @@ class VoucherDetailAPIView(APIView):
                     if l:
                         VoucherService.recalculate_ledger_balance(l)
 
-                # Resync sequence counter so deleted vouchers roll back sequence
-                if financial_year:
-                    InvoiceSequenceService.resync_sequence(company, financial_year, voucher_type)
-
             type_label = "Voucher" if voucher_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL'] else "Invoice"
             return Response({
                 "success": True, 
-                "message": f"{type_label} #{voucher_num} deleted and reversed successfully."
+                "message": f"{type_label} #{voucher_num} {action_msg} successfully."
             })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -486,6 +497,7 @@ class VoucherDetailAPIView(APIView):
         try:
             from apps.accounting.models import Voucher, VoucherItem, LedgerEntry
             from apps.accounting.services.voucher_service import VoucherService
+            from apps.accounting.services.allocation_service import PaymentAllocationService
             from apps.inventory.models import Product, ProductCategory
             from apps.gst.services.gst_calculator import GSTCalculator
             from decimal import Decimal
@@ -494,6 +506,12 @@ class VoucherDetailAPIView(APIView):
                 id=voucher_id, 
                 company__users__user=request.user
             )
+            if not user_has_company_roles(request.user, voucher.company, ['OWNER', 'ADMIN', 'ACCOUNTANT']):
+                return Response({
+                    "success": False,
+                    "error": "Permission denied: Only Owner, Admin, or Accountant can modify vouchers."
+                }, status=status.HTTP_403_FORBIDDEN)
+
             company = voucher.company
             data = request.data
 
@@ -729,6 +747,7 @@ class VoucherDetailAPIView(APIView):
                         if party_ledger:
                             LedgerEntry.objects.create(
                                 voucher=voucher,
+                                company=company,
                                 ledger=party_ledger,
                                 debit_amount=rounded_total,
                                 credit_amount=Decimal('0.00')
@@ -742,6 +761,7 @@ class VoucherDetailAPIView(APIView):
 
                         LedgerEntry.objects.create(
                             voucher=voucher,
+                            company=company,
                             ledger=sales_ledger,
                             debit_amount=Decimal('0.00'),
                             credit_amount=total_taxable_value
@@ -750,13 +770,13 @@ class VoucherDetailAPIView(APIView):
                         tax_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Duties & Taxes', defaults={'nature': 'LIABILITY'})
                         if total_cgst > 0:
                             output_cgst, _ = Ledger.objects.get_or_create(company=company, name='Output CGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
-                            LedgerEntry.objects.create(voucher=voucher, ledger=output_cgst, debit_amount=Decimal('0.00'), credit_amount=total_cgst)
+                            LedgerEntry.objects.create(voucher=voucher, company=company, ledger=output_cgst, debit_amount=Decimal('0.00'), credit_amount=total_cgst)
                         if total_sgst > 0:
                             output_sgst, _ = Ledger.objects.get_or_create(company=company, name='Output SGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
-                            LedgerEntry.objects.create(voucher=voucher, ledger=output_sgst, debit_amount=Decimal('0.00'), credit_amount=total_sgst)
+                            LedgerEntry.objects.create(voucher=voucher, company=company, ledger=output_sgst, debit_amount=Decimal('0.00'), credit_amount=total_sgst)
                         if total_igst > 0:
                             output_igst, _ = Ledger.objects.get_or_create(company=company, name='Output IGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
-                            LedgerEntry.objects.create(voucher=voucher, ledger=output_igst, debit_amount=Decimal('0.00'), credit_amount=total_igst)
+                            LedgerEntry.objects.create(voucher=voucher, company=company, ledger=output_igst, debit_amount=Decimal('0.00'), credit_amount=total_igst)
 
                         # Credit Cartage Outward
                         if cartage_amt > Decimal('0.00'):
@@ -764,6 +784,7 @@ class VoucherDetailAPIView(APIView):
                             cartage_ledger = SalesInvoiceService._get_or_create_cartage_ledger(company, 'OUTWARD')
                             LedgerEntry.objects.create(
                                 voucher=voucher,
+                                company=company,
                                 ledger=cartage_ledger,
                                 debit_amount=Decimal('0.00'),
                                 credit_amount=cartage_amt
@@ -773,15 +794,16 @@ class VoucherDetailAPIView(APIView):
                             from apps.accounting.services.sales_service import SalesInvoiceService
                             round_off_ledger = SalesInvoiceService._get_or_create_round_off_ledger(company)
                             if round_off < Decimal('0.00'):
-                                LedgerEntry.objects.create(voucher=voucher, ledger=round_off_ledger, debit_amount=abs(round_off), credit_amount=Decimal('0.00'))
+                                LedgerEntry.objects.create(voucher=voucher, company=company, ledger=round_off_ledger, debit_amount=abs(round_off), credit_amount=Decimal('0.00'))
                             else:
-                                LedgerEntry.objects.create(voucher=voucher, ledger=round_off_ledger, debit_amount=Decimal('0.00'), credit_amount=round_off)
+                                LedgerEntry.objects.create(voucher=voucher, company=company, ledger=round_off_ledger, debit_amount=Decimal('0.00'), credit_amount=round_off)
 
                     else:
                         # PURCHASE Voucher
                         if party_ledger:
                             LedgerEntry.objects.create(
                                 voucher=voucher,
+                                company=company,
                                 ledger=party_ledger,
                                 debit_amount=Decimal('0.00'),
                                 credit_amount=rounded_total
@@ -795,6 +817,7 @@ class VoucherDetailAPIView(APIView):
 
                         LedgerEntry.objects.create(
                             voucher=voucher,
+                            company=company,
                             ledger=purchase_ledger,
                             debit_amount=total_taxable_value,
                             credit_amount=Decimal('0.00')
@@ -803,13 +826,13 @@ class VoucherDetailAPIView(APIView):
                         tax_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Duties & Taxes', defaults={'nature': 'LIABILITY'})
                         if total_cgst > 0:
                             input_cgst, _ = Ledger.objects.get_or_create(company=company, name='Input CGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
-                            LedgerEntry.objects.create(voucher=voucher, ledger=input_cgst, debit_amount=total_cgst, credit_amount=Decimal('0.00'))
+                            LedgerEntry.objects.create(voucher=voucher, company=company, ledger=input_cgst, debit_amount=total_cgst, credit_amount=Decimal('0.00'))
                         if total_sgst > 0:
                             input_sgst, _ = Ledger.objects.get_or_create(company=company, name='Input SGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
-                            LedgerEntry.objects.create(voucher=voucher, ledger=input_sgst, debit_amount=total_sgst, credit_amount=Decimal('0.00'))
+                            LedgerEntry.objects.create(voucher=voucher, company=company, ledger=input_sgst, debit_amount=total_sgst, credit_amount=Decimal('0.00'))
                         if total_igst > 0:
                             input_igst, _ = Ledger.objects.get_or_create(company=company, name='Input IGST', defaults={'group': tax_grp, 'ledger_type': 'TAX'})
-                            LedgerEntry.objects.create(voucher=voucher, ledger=input_igst, debit_amount=total_igst, credit_amount=Decimal('0.00'))
+                            LedgerEntry.objects.create(voucher=voucher, company=company, ledger=input_igst, debit_amount=total_igst, credit_amount=Decimal('0.00'))
 
                         # Debit Cartage Inward
                         if cartage_amt > Decimal('0.00'):
@@ -817,6 +840,7 @@ class VoucherDetailAPIView(APIView):
                             cartage_ledger = PurchaseInvoiceService._get_or_create_cartage_ledger(company, 'INWARD')
                             LedgerEntry.objects.create(
                                 voucher=voucher,
+                                company=company,
                                 ledger=cartage_ledger,
                                 debit_amount=cartage_amt,
                                 credit_amount=Decimal('0.00')
@@ -826,9 +850,9 @@ class VoucherDetailAPIView(APIView):
                             from apps.accounting.services.purchase_service import PurchaseInvoiceService
                             round_off_ledger = PurchaseInvoiceService._get_or_create_round_off_ledger(company)
                             if round_off > Decimal('0.00'):
-                                LedgerEntry.objects.create(voucher=voucher, ledger=round_off_ledger, debit_amount=round_off, credit_amount=Decimal('0.00'))
+                                LedgerEntry.objects.create(voucher=voucher, company=company, ledger=round_off_ledger, debit_amount=round_off, credit_amount=Decimal('0.00'))
                             else:
-                                LedgerEntry.objects.create(voucher=voucher, ledger=round_off_ledger, debit_amount=Decimal('0.00'), credit_amount=abs(round_off))
+                                LedgerEntry.objects.create(voucher=voucher, company=company, ledger=round_off_ledger, debit_amount=Decimal('0.00'), credit_amount=abs(round_off))
 
                     # 5. Re-post voucher to update stock & balances
                     VoucherService.post_voucher(voucher)
@@ -888,17 +912,20 @@ class VoucherDetailAPIView(APIView):
                     # 4. Create new ledger entries
                     if voucher.voucher_type == 'RECEIPT':
                         # Receipt: Debit Cash/Bank, Credit Customer
-                        LedgerEntry.objects.create(voucher=voucher, ledger=payment_ledger, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Receipt from {party_ledger.name}")
-                        LedgerEntry.objects.create(voucher=voucher, ledger=party_ledger, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Receipt via {payment_ledger.name}")
+                        LedgerEntry.objects.create(voucher=voucher, company=company, ledger=payment_ledger, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Receipt from {party_ledger.name}")
+                        LedgerEntry.objects.create(voucher=voucher, company=company, ledger=party_ledger, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Receipt via {payment_ledger.name}")
                     else:
                         # Payment: Debit Supplier, Credit Cash/Bank
-                        LedgerEntry.objects.create(voucher=voucher, ledger=party_ledger, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Payment via {payment_ledger.name}")
-                        LedgerEntry.objects.create(voucher=voucher, ledger=payment_ledger, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Payment to {party_ledger.name}")
+                        LedgerEntry.objects.create(voucher=voucher, company=company, ledger=party_ledger, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Payment via {payment_ledger.name}")
+                        LedgerEntry.objects.create(voucher=voucher, company=company, ledger=payment_ledger, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Payment to {party_ledger.name}")
 
                     # 5. Re-post voucher
                     VoucherService.post_voucher(voucher)
 
-                    # 6. Recalculate balances for all affected ledgers (old and new)
+                    # 6. Auto-allocate against unpaid invoices FIFO
+                    PaymentAllocationService.auto_allocate_voucher(voucher)
+
+                    # 7. Recalculate balances for all affected ledgers (old and new)
                     for lid in affected_ledger_ids:
                         l = Ledger.objects.filter(id=lid).first()
                         if l:
@@ -912,7 +939,7 @@ class VoucherDetailAPIView(APIView):
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class LedgerStatementAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
     
     def get(self, request, company_id, ledger_id):
         try:
@@ -1192,7 +1219,7 @@ class CreatePaymentReceiptAPIView(APIView):
         "voucher_date": "2026-08-27"    # optional, defaults to today
     }
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanPostVoucher]
 
     def post(self, request):
         from apps.accounting.models import Voucher, LedgerEntry
@@ -1201,29 +1228,38 @@ class CreatePaymentReceiptAPIView(APIView):
 
         data = request.data
         try:
-            company = Company.objects.get(id=data['company_id'], users__user=request.user)
-            party_ledger = Ledger.objects.get(id=data['party_ledger_id'], company=company)
-            payment_ledger = Ledger.objects.get(id=data['payment_ledger_id'], company=company)
+            from apps.common.tenant import get_company_ledger
+            from apps.common.money import to_decimal, quantize_money
+            from apps.accounting.services.sequence_service import InvoiceSequenceService
+            from apps.accounting.services.allocation_service import PaymentAllocationService
+            from apps.accounts.permissions import user_has_company_roles
+
+            company = Company.objects.get(id=data['company_id'], users__user=request.user, is_active=True)
             
-            voucher_type = data.get('voucher_type', 'RECEIPT')
+            if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN', 'ACCOUNTANT', 'SALES', 'PURCHASE']):
+                return Response({"success": False, "error": "Permission denied: Your role cannot create payment/receipt vouchers."}, status=403)
+
+            party_ledger = get_company_ledger(company, data['party_ledger_id'], "Party Ledger")
+            payment_ledger = get_company_ledger(company, data['payment_ledger_id'], "Payment/Bank Ledger")
+            
+            voucher_type = data.get('voucher_type', 'RECEIPT').upper()
             if voucher_type not in ('PAYMENT', 'RECEIPT'):
                 return Response({"success": False, "error": "voucher_type must be PAYMENT or RECEIPT"}, status=400)
             
-            amount = abs(float(data.get('amount', 0)))
-            if amount <= 0:
+            amount = abs(quantize_money(data.get('amount', '0.00')))
+            if amount <= Decimal('0.00'):
                 return Response({"success": False, "error": "Amount must be greater than 0"}, status=400)
             
             voucher_date_str = data.get('voucher_date')
             voucher_date = date.fromisoformat(voucher_date_str) if voucher_date_str else date.today()
 
-            # Generate voucher number
-            prefix = 'PAY' if voucher_type == 'PAYMENT' else 'REC'
-            count = Voucher.objects.filter(company=company, voucher_type=voucher_type).count() + 1
-            voucher_number = f"{prefix}-{count:04d}"
-
             with transaction.atomic():
+                # Sequential number generator with select_for_update
+                voucher_number, fy = InvoiceSequenceService.get_next_number(company, voucher_type, voucher_date)
+
                 voucher = Voucher.objects.create(
                     company=company,
+                    financial_year=fy,
                     voucher_type=voucher_type,
                     voucher_number=voucher_number,
                     voucher_date=voucher_date,
@@ -1237,21 +1273,25 @@ class CreatePaymentReceiptAPIView(APIView):
 
                 if voucher_type == 'RECEIPT':
                     # Receipt: Debit Cash/Bank, Credit Customer
-                    LedgerEntry.objects.create(voucher=voucher, ledger=payment_ledger, debit_amount=amount, credit_amount=0, narration=f"Receipt from {party_ledger.name}")
-                    LedgerEntry.objects.create(voucher=voucher, ledger=party_ledger, debit_amount=0, credit_amount=amount, narration=f"Receipt via {payment_ledger.name}")
+                    LedgerEntry.objects.create(voucher=voucher, company=company, ledger=payment_ledger, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Receipt from {party_ledger.name}")
+                    LedgerEntry.objects.create(voucher=voucher, company=company, ledger=party_ledger, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Receipt via {payment_ledger.name}")
                 else:
                     # Payment: Debit Supplier, Credit Cash/Bank
-                    LedgerEntry.objects.create(voucher=voucher, ledger=party_ledger, debit_amount=amount, credit_amount=0, narration=f"Payment via {payment_ledger.name}")
-                    LedgerEntry.objects.create(voucher=voucher, ledger=payment_ledger, debit_amount=0, credit_amount=amount, narration=f"Payment to {party_ledger.name}")
+                    LedgerEntry.objects.create(voucher=voucher, company=company, ledger=party_ledger, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Payment via {payment_ledger.name}")
+                    LedgerEntry.objects.create(voucher=voucher, company=company, ledger=payment_ledger, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Payment to {party_ledger.name}")
 
-                # Auto-post
+                # Auto-post voucher atomically
                 VoucherService.post_voucher(voucher)
+
+                # Auto-allocate against unpaid invoices FIFO
+                allocations = PaymentAllocationService.auto_allocate_voucher(voucher)
 
             return Response({
                 "success": True,
                 "message": f"{voucher_type.title()} Voucher posted successfully.",
                 "voucher_number": voucher.voucher_number,
-                "amount": amount,
+                "amount": str(amount),
+                "allocations": allocations
             }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
@@ -1259,7 +1299,7 @@ class CreatePaymentReceiptAPIView(APIView):
 
 
 class ListPaymentReceiptAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, company_id):
         try:
@@ -1370,7 +1410,10 @@ def compress_and_clean_attachment(b64_str, mime_type="application/pdf"):
         return b64_str, mime_type
 
 class UniversalVoucherAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return [IsAuthenticated(), IsCompanyMember()]
+        return [IsAuthenticated(), CanPostVoucher()]
 
     def get(self, request, company_id=None):
         try:
@@ -1584,6 +1627,7 @@ class UniversalVoucherAPIView(APIView):
 
                     LedgerEntry.objects.create(
                         voucher=voucher,
+                        company=company,
                         ledger=ledger,
                         debit_amount=dr,
                         credit_amount=cr,
@@ -1609,7 +1653,7 @@ class UniversalVoucherAPIView(APIView):
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class SyncTaxLedgersAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageLedgers]
 
     def post(self, request, company_id=None):
         try:
@@ -1631,7 +1675,7 @@ class SyncTaxLedgersAPIView(APIView):
 
 
 class PartyRatesAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, company_id=None):
         """

@@ -28,6 +28,13 @@ class PurchaseInvoiceService:
         End-to-End orchestration of a Purchase Invoice.
         """
         # 0. Safeguard: Ensure tax ledgers are strictly INPUT tax ledgers (never Output)
+        if party_ledger and party_ledger.company_id != company.id:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(f"Party ledger '{party_ledger.name}' does not belong to company '{company.name}'.")
+        if purchase_ledger and purchase_ledger.company_id != company.id:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(f"Purchase ledger '{purchase_ledger.name}' does not belong to company '{company.name}'.")
+
         if not input_cgst_ledger or 'output' in input_cgst_ledger.name.lower():
             input_cgst_ledger = PurchaseInvoiceService._get_or_create_input_tax_ledger(company, 'CGST')
         if not input_sgst_ledger or 'output' in input_sgst_ledger.name.lower():
@@ -66,7 +73,8 @@ class PurchaseInvoiceService:
         for item in items_data:
             product_id = item.get('product_id')
             if product_id:
-                product = Product.objects.get(id=product_id)
+                from apps.common.tenant import get_company_product
+                product = get_company_product(company, product_id)
             else:
                 raw_name = str(item.get('product_name') or item.get('name') or 'Unnamed Product').strip()
                 from apps.inventory.models import ProductCategory
@@ -201,24 +209,40 @@ class PurchaseInvoiceService:
             taxable_amount = gross - discount_amt
             
             # 2. Calculate GST
+            target_supplier_state = party_ledger.state_code or company.state_code
             taxes = GSTCalculator.calculate_taxes(
                 company_state_code=company.state_code,
-                party_state_code=party_ledger.state_code,
+                party_state_code=target_supplier_state,
                 taxable_amount=taxable_amount,
                 gst_rate=product.gst_rate
             )
             
             total_amount = taxable_amount + taxes['total_tax']
             
+            from apps.inventory.models import Warehouse
+            line_wh = None
+            if item.get('warehouse_id'):
+                line_wh = Warehouse.objects.filter(id=item['warehouse_id'], company=company).first()
+
             VoucherItem.objects.create(
                 voucher=voucher,
                 product=product,
+                warehouse=line_wh,
                 quantity=qty,
                 rate=rate,
                 discount_percent=discount_pct,
                 discount_amount=discount_amt,
                 taxable_amount=taxable_amount,
                 gst_rate=product.gst_rate,
+                cgst_rate=taxes.get('cgst_rate', Decimal('0.00')),
+                sgst_rate=taxes.get('sgst_rate', Decimal('0.00')),
+                igst_rate=taxes.get('igst_rate', Decimal('0.00')),
+                cess_rate=taxes.get('cess_rate', Decimal('0.00')),
+                cgst_amount=taxes.get('cgst', Decimal('0.00')),
+                sgst_amount=taxes.get('sgst', Decimal('0.00')),
+                igst_amount=taxes.get('igst', Decimal('0.00')),
+                cess_amount=taxes.get('cess', Decimal('0.00')),
+                hsn_code=product.hsn_code or item.get('hsn_code', ''),
                 total_amount=total_amount
             )
             

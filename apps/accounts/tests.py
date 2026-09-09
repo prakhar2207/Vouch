@@ -1,4 +1,4 @@
-﻿from django.test import TestCase
+from django.test import TestCase
 from rest_framework.test import APIClient
 from apps.accounts.models import User
 from apps.companies.models import Company, UserCompany
@@ -10,7 +10,7 @@ class RegisterViewTests(TestCase):
     def test_successful_registration(self):
         payload = {
             "email": "ranjana@example.com",
-            "password": "password123",
+            "password": "SecurePass123!@#",
             "name": "Shukla Enterprises",
             "gstin": "09ACHFS9225Q1Z7",
             "phone": "6386623787",
