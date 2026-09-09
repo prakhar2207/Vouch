@@ -68,6 +68,8 @@ export default function PrintInvoicePage() {
   const router = useRouter();
   const invoiceId = params.id as string;
   const [invoice, setInvoice] = useState<any>(null);
+  const [printScale, setPrintScale] = useState<number>(100);
+  const [pageMarginMm, setPageMarginMm] = useState<number>(8);
 
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
@@ -141,12 +143,9 @@ export default function PrintInvoicePage() {
     return `${API_BASE_URL}${sig.startsWith('/') ? '' : '/'}${sig}`;
   };
 
-  const [printScale, setPrintScale] = useState<number>(100);
-  const [pageMarginMm, setPageMarginMm] = useState<number>(8);
-
   return (
     <div className="bg-white text-black min-h-screen">
-      <style jsx global>{`
+      <style>{`
         @page {
           size: A4 portrait;
           margin: ${pageMarginMm}mm;
