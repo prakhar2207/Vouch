@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
@@ -251,12 +251,12 @@ export default function PartiesPage() {
                   setSearchTerm(e.target.value);
                   setFocusedIndex(-1);
                 }}
-                className="bg-card border border-border/40 text-foreground pl-10 pr-4 py-2 rounded-xl focus:ring-2 focus:ring-primary/40 outline-none w-full text-sm"
+                className="bg-card border border-border/40 text-foreground pl-10 pr-4 py-2.5 rounded-xl focus:ring-2 focus:ring-primary/40 outline-none w-full text-sm min-h-[40px]"
               />
               {searchTerm && (
                 <button 
                   onClick={() => setSearchTerm('')} 
-                  className="absolute right-3 top-2.5 text-xs text-muted-foreground hover:text-foreground"
+                  className="absolute right-3 top-3 text-xs text-muted-foreground hover:text-foreground"
                 >
                   ✕
                 </button>
@@ -267,14 +267,14 @@ export default function PartiesPage() {
             <div className="flex items-center gap-2">
               <Link 
                 href="/purchases/suppliers/new" 
-                className="bg-red-600/90 hover:bg-red-600 text-foreground px-3.5 py-2 rounded-xl shadow transition-colors text-xs font-bold whitespace-nowrap flex items-center gap-1.5"
+                className="bg-red-600/90 hover:bg-red-600 text-foreground px-4 py-2.5 rounded-xl shadow transition-colors text-sm font-semibold whitespace-nowrap flex items-center gap-2 min-h-[40px]"
               >
                 <Plus className="w-4 h-4" />
                 <span>Supplier</span>
               </Link>
               <Link 
                 href="/sales/customers/new" 
-                className="bg-primary hover:bg-primary/90 text-primary-foreground px-3.5 py-2 rounded-xl shadow-md shadow-primary/20 transition-colors text-xs font-bold whitespace-nowrap flex items-center gap-1.5"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2.5 rounded-xl shadow-md shadow-primary/20 transition-colors text-sm font-semibold whitespace-nowrap flex items-center gap-2 min-h-[40px]"
               >
                 <Plus className="w-4 h-4" />
                 <span>Customer</span>
@@ -284,20 +284,20 @@ export default function PartiesPage() {
         </div>
 
         {/* Filter Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-card/60 border border-border/40 p-2 rounded-2xl backdrop-blur shadow-sm">
-          <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-card/60 border border-border/40 p-2.5 rounded-2xl backdrop-blur shadow-sm">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => { setActiveFilter('ALL'); setFocusedIndex(-1); }}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer min-h-[36px] ${
                 activeFilter === 'ALL'
                   ? 'bg-muted text-foreground border border-border/60 shadow-xs'
                   : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
               }`}
             >
-              <Users className="w-3.5 h-3.5" />
+              <Users className="w-4 h-4" />
               <span>All Parties</span>
-              <span className="px-1.5 py-0.2 rounded-md bg-muted/80 text-[10px] font-mono font-bold">
+              <span className="px-2 py-0.5 rounded-md bg-muted/80 text-xs font-mono font-bold">
                 {counts.all}
               </span>
             </button>
@@ -305,15 +305,15 @@ export default function PartiesPage() {
             <button
               type="button"
               onClick={() => { setActiveFilter('SUPPLIER'); setFocusedIndex(-1); }}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer min-h-[36px] ${
                 activeFilter === 'SUPPLIER'
                   ? 'bg-red-500/20 text-red-400 border border-red-500/40 shadow-xs'
                   : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
               }`}
             >
-              <Building2 className="w-3.5 h-3.5 text-red-400" />
+              <Building2 className="w-4 h-4 text-red-400" />
               <span>Suppliers</span>
-              <span className="px-1.5 py-0.2 rounded-md bg-red-500/20 text-red-300 text-[10px] font-mono font-bold">
+              <span className="px-2 py-0.5 rounded-md bg-red-500/20 text-red-300 text-xs font-mono font-bold">
                 {counts.suppliers}
               </span>
             </button>
@@ -321,15 +321,15 @@ export default function PartiesPage() {
             <button
               type="button"
               onClick={() => { setActiveFilter('CUSTOMER'); setFocusedIndex(-1); }}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer min-h-[36px] ${
                 activeFilter === 'CUSTOMER'
                   ? 'bg-blue-500/20 text-blue-400 border border-blue-500/40 shadow-xs'
                   : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
               }`}
             >
-              <UserCheck className="w-3.5 h-3.5 text-blue-400" />
+              <UserCheck className="w-4 h-4 text-blue-400" />
               <span>Customers</span>
-              <span className="px-1.5 py-0.2 rounded-md bg-blue-500/20 text-blue-300 text-[10px] font-mono font-bold">
+              <span className="px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-300 text-xs font-mono font-bold">
                 {counts.customers}
               </span>
             </button>
@@ -409,8 +409,8 @@ export default function PartiesPage() {
                       <h3 className="text-lg font-bold text-foreground truncate group-hover:text-primary transition-colors" title={party.name}>
                         {party.name}
                       </h3>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className={`text-[11px] px-2.5 py-0.5 rounded-full border font-semibold ${
+                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                        <span className={`text-xs px-2.5 py-0.5 rounded-full border font-semibold ${
                           isCustomer 
                             ? 'text-primary bg-primary/10 border-primary/20' 
                             : 'text-red-400 bg-red-500/10 border-red-500/20'
@@ -418,12 +418,12 @@ export default function PartiesPage() {
                           {party.type}
                         </span>
                         {party.gstin && (
-                          <span className="text-[10px] font-mono text-muted-foreground bg-muted/40 px-2 py-0.5 rounded border border-border/40">
+                          <span className="text-xs font-mono text-muted-foreground bg-muted/40 px-2 py-0.5 rounded border border-border/40 font-medium">
                             {party.gstin}
                           </span>
                         )}
                         {Number(party.discount_percent || 0) > 0 && (
-                          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded font-semibold">
+                          <span className="text-xs font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded font-semibold">
                             {Number(party.discount_percent)}% Disc
                           </span>
                         )}
@@ -431,14 +431,14 @@ export default function PartiesPage() {
                     </div>
 
                     {/* Top Action Buttons */}
-                    <div className="flex items-center gap-1 opacity-100 sm:opacity-75 sm:group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-1.5 opacity-100 sm:opacity-75 sm:group-hover:opacity-100 transition-opacity">
                       <Link 
                         href={`/parties/${party.id}/edit`} 
                         onClick={e => e.stopPropagation()}
-                        className="p-1.5 rounded-lg bg-muted/80 hover:bg-primary text-muted-foreground hover:text-primary-foreground transition-colors"
+                        className="p-2 rounded-lg bg-muted/80 hover:bg-primary text-muted-foreground hover:text-primary-foreground transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center"
                         title="Edit Party (Ctrl+Enter / E)"
                       >
-                        <Edit2 className="w-3.5 h-3.5" />
+                        <Edit2 className="w-4 h-4" />
                       </Link>
                       <button 
                         type="button"
@@ -446,10 +446,10 @@ export default function PartiesPage() {
                           e.stopPropagation();
                           setDeletingParty(party);
                         }}
-                        className="p-1.5 rounded-lg bg-muted/80 hover:bg-rose-600 text-muted-foreground hover:text-foreground transition-colors"
+                        className="p-2 rounded-lg bg-muted/80 hover:bg-rose-600 text-muted-foreground hover:text-foreground transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center cursor-pointer"
                         title="Delete Party (Alt+D / Del)"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
@@ -468,10 +468,10 @@ export default function PartiesPage() {
                       </div>
                     )}
                     
-                    <div className="flex justify-between items-baseline pt-1 border-t border-border/40">
-                      <span className="text-muted-foreground text-xs">Current Balance</span>
+                    <div className="flex justify-between items-baseline pt-1.5 border-t border-border/40">
+                      <span className="text-muted-foreground text-xs font-medium">Current Balance</span>
                       <div className="text-right">
-                        <span className={`font-bold text-base font-mono ${
+                        <span className={`font-bold text-base font-mono tabular-nums ${
                           hasZeroBalance 
                             ? 'text-muted-foreground' 
                             : balanceNum > 0 
@@ -480,7 +480,7 @@ export default function PartiesPage() {
                         }`}>
                           ₹{Math.abs(balanceNum).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </span>
-                        <span className="text-[10px] text-muted-foreground ml-1 uppercase font-semibold">
+                        <span className="text-xs text-muted-foreground ml-1.5 uppercase font-semibold">
                           {party.opening_balance_type || 'DEBIT'}
                         </span>
                       </div>
@@ -493,9 +493,9 @@ export default function PartiesPage() {
                       <Link 
                         href={`/parties/${party.id}/edit`} 
                         onClick={e => e.stopPropagation()}
-                        className="text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors font-medium"
+                        className="text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors font-medium p-1"
                       >
-                        <Edit2 className="w-3 h-3" />
+                        <Edit2 className="w-3.5 h-3.5" />
                         <span>Edit</span>
                       </Link>
                       <span className="text-border">•</span>
@@ -505,9 +505,9 @@ export default function PartiesPage() {
                           e.stopPropagation();
                           setDeletingParty(party);
                         }}
-                        className="text-muted-foreground hover:text-rose-400 flex items-center gap-1 transition-colors font-medium"
+                        className="text-muted-foreground hover:text-rose-400 flex items-center gap-1 transition-colors font-medium p-1 cursor-pointer"
                       >
-                        <Trash2 className="w-3 h-3" />
+                        <Trash2 className="w-3.5 h-3.5" />
                         <span>Delete</span>
                       </button>
                     </div>
@@ -515,10 +515,10 @@ export default function PartiesPage() {
                     <Link 
                       href={`/parties/${party.id}/statement`} 
                       onClick={e => e.stopPropagation()}
-                      className="text-primary hover:text-primary/80 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform"
+                      className="text-primary hover:text-primary/80 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform p-1"
                     >
                       <span>Statement</span>
-                      <ArrowUpRight className="w-3.5 h-3.5" />
+                      <ArrowUpRight className="w-4 h-4" />
                     </Link>
                   </div>
                 </div>

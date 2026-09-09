@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -138,20 +138,20 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
                     onClose();
                   }}
                   onMouseEnter={() => setSelectedIndex(idx)}
-                  className={`flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
-                    isSelected ? "bg-blue-600 text-foreground font-medium" : "hover:bg-muted text-foreground"
+                  className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl cursor-pointer transition-colors ${
+                    isSelected ? "bg-primary text-primary-foreground font-medium shadow-sm" : "hover:bg-muted text-foreground"
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <span className={`text-xs px-2 py-0.5 rounded uppercase font-mono ${
-                      isSelected ? "bg-blue-700 text-foreground" : "bg-muted text-muted-foreground border border-border"
+                    <span className={`text-xs px-2 py-0.5 rounded uppercase font-mono font-bold ${
+                      isSelected ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground border border-border"
                     }`}>
                       {item.type}
                     </span>
                     <div>
-                      <div className="text-sm">{item.label}</div>
+                      <div className="text-sm font-semibold">{item.label}</div>
                       {(item as any).subtext && (
-                        <div className={`text-xs ${isSelected ? "text-blue-200" : "text-muted-foreground"}`}>
+                        <div className={`text-xs font-mono tabular-nums ${isSelected ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
                           {(item as any).subtext}
                         </div>
                       )}
@@ -159,8 +159,8 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
                   </div>
 
                   {(item as any).shortcut && (
-                    <kbd className={`px-2 py-0.5 text-xs font-mono rounded ${
-                      isSelected ? "bg-blue-700 text-foreground" : "bg-muted text-muted-foreground border border-border"
+                    <kbd className={`px-2 py-0.5 text-xs font-mono font-bold rounded ${
+                      isSelected ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground border border-border"
                     }`}>
                       {(item as any).shortcut}
                     </kbd>

@@ -4,7 +4,7 @@
 
 /* ─── Design System: Light Theme ─── */
 :root {
-  --background: #f8f9fb;
+  --background: #f8fafc;
   --foreground: #0f172a;
   --card: #ffffff;
   --card-foreground: #0f172a;
@@ -19,7 +19,7 @@
   --secondary-foreground: #1e293b;
 
   --muted: #f1f5f9;
-  --muted-foreground: #64748b;
+  --muted-foreground: #475569;
 
   --accent: #eff6ff;
   --accent-foreground: #1e40af;
@@ -37,9 +37,9 @@
 /* ─── Design System: Dark Theme ─── */
 .dark {
   --background: #0a0a0f;
-  --foreground: #f1f5f9;
-  --card: #111118;
-  --card-foreground: #f1f5f9;
+  --foreground: #e8edf5;
+  --card: #13131d;
+  --card-foreground: #e8edf5;
   --border: #1e1e2a;
   --input: #1e1e2a;
   --ring: #3b82f6;
@@ -106,6 +106,15 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Financial number formatting — tabular lining figures */
+.font-financial {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.01em;
 }
 
 /* Smooth theme transitions */

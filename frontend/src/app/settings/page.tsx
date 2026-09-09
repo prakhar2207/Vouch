@@ -266,7 +266,7 @@ export default function SettingsPage() {
 
             <div>
               <h2 className="text-lg font-semibold text-foreground mb-4 border-b border-border pb-2">Business Type & Complexity</h2>
-              <div className="bg-muted/50/50 p-4 rounded-lg border border-border space-y-3">
+              <div className="bg-muted/40 p-4 rounded-lg border border-border space-y-3">
                 <label className="block text-foreground font-medium">Retailer Scale (Complexity Level)</label>
                 <p className="text-muted-foreground text-sm">
                   This controls how many advanced ERP features (like Godowns, Batches, Serials) are visible by default. 
@@ -287,7 +287,7 @@ export default function SettingsPage() {
             <div>
               <h2 className="text-lg font-semibold text-foreground mb-4 border-b border-border pb-2">Accounting Preferences</h2>
               
-              <div className="flex items-center justify-between bg-muted/50/50 p-4 rounded-lg border border-border">
+              <div className="flex items-center justify-between bg-muted/40 p-4 rounded-lg border border-border">
                 <div>
                   <h3 className="text-foreground font-medium">Advanced Ledger Mapping</h3>
                   <p className="text-muted-foreground text-sm mt-1">
@@ -303,7 +303,7 @@ export default function SettingsPage() {
                 </button>
               </div>
               
-              <div className="flex items-center justify-between bg-muted/50/50 p-4 rounded-lg border border-border mt-4">
+              <div className="flex items-center justify-between bg-muted/40 p-4 rounded-lg border border-border mt-4">
                 <div>
                   <h3 className="text-foreground font-medium">Manual Invoice Number & Date</h3>
                   <p className="text-muted-foreground text-sm mt-1">
@@ -318,7 +318,7 @@ export default function SettingsPage() {
                   <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all ${enableManualInvoice ? 'left-6' : 'left-1'}`}></div>
                 </button>
               </div>
-              <div className="flex items-center justify-between bg-muted/50/50 p-4 rounded-lg border border-border mt-4">
+              <div className="flex items-center justify-between bg-muted/40 p-4 rounded-lg border border-border mt-4">
                 <div>
                   <h3 className="text-foreground font-medium">Advanced Item Creation</h3>
                   <p className="text-muted-foreground text-sm mt-1">
@@ -340,11 +340,11 @@ export default function SettingsPage() {
               <h2 className="text-lg font-semibold text-foreground">Network Integrations & Audit Exports</h2>
               
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="p-4 bg-muted/50/60 border border-border rounded-xl flex flex-col justify-between space-y-3">
+                <div className="p-4 bg-muted/30 border border-border rounded-xl flex flex-col justify-between space-y-3">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-bold text-foreground">B2B Network Interchange (EDI)</span>
-                      <span className="px-1.5 py-0.2 bg-blue-500/10 text-blue-400 text-[10px] font-mono rounded border border-blue-500/20">LIVE</span>
+                      <span className="px-1.5 py-0.2 bg-blue-500/10 text-blue-400 text-xs font-mono rounded border border-blue-500/20 font-semibold">LIVE</span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
                       Manage incoming e-invoices from registered suppliers. Review, digitally sign, and auto-post stock in 1 click.
@@ -358,11 +358,11 @@ export default function SettingsPage() {
                   </button>
                 </div>
 
-                <div className="p-4 bg-muted/50/60 border border-border rounded-xl flex flex-col justify-between space-y-3">
+                <div className="p-4 bg-muted/30 border border-border rounded-xl flex flex-col justify-between space-y-3">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-bold text-foreground">Tally XML Bridge</span>
-                      <span className="px-1.5 py-0.2 bg-purple-500/10 text-purple-400 text-[10px] font-mono rounded border border-purple-500/20">TallyPrime</span>
+                      <span className="px-1.5 py-0.2 bg-purple-500/10 text-purple-400 text-xs font-mono rounded border border-purple-500/20 font-semibold">TallyPrime</span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
                       Export your entire double-entry ledger, stock catalog, and vouchers into standard Tally XML format for external audit.
@@ -376,11 +376,11 @@ export default function SettingsPage() {
                   </button>
                 </div>
 
-                <div className="p-4 bg-muted/50/60 border border-border rounded-xl flex flex-col justify-between space-y-3">
+                <div className="p-4 bg-muted/30 border border-border rounded-xl flex flex-col justify-between space-y-3">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-bold text-foreground">Split Company Data</span>
-                      <span className="px-1.5 py-0.2 bg-purple-500/10 text-purple-400 text-[10px] font-mono rounded border border-purple-500/20">Tally ERP</span>
+                      <span className="px-1.5 py-0.2 bg-purple-500/10 text-purple-400 text-xs font-mono rounded border border-purple-500/20 font-semibold">Tally ERP</span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
                       Archive historical accounting years and spawn a standalone new company entity with settled P&L and static opening balances.
@@ -404,7 +404,7 @@ export default function SettingsPage() {
                 <div>
                   <h2 className="text-base sm:text-lg font-bold text-foreground flex items-center gap-2 flex-wrap">
                     <span>Financial Years & Period Closing</span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded font-bold">
+                    <span className="text-xs font-mono px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded font-bold">
                       GST Rule 46(b)
                     </span>
                   </h2>
@@ -424,7 +424,7 @@ export default function SettingsPage() {
 
               <div className="overflow-x-auto rounded-xl border border-border">
                 <table className="w-full text-left text-xs min-w-[500px]">
-                  <thead className="bg-muted/50/90 text-zinc-400 font-semibold border-b border-border">
+                  <thead className="bg-muted/60 text-muted-foreground font-semibold border-b border-border">
                     <tr>
                       <th className="px-4 py-2.5">Financial Year</th>
                       <th className="px-4 py-2.5">Code</th>

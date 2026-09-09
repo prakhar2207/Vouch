@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
@@ -235,10 +235,10 @@ export default function InventoryPage() {
             </div>
             <div className="min-w-0">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Stock Value</p>
-              <h3 className="text-xl font-bold text-foreground truncate">
+              <h3 className="text-xl font-bold font-mono tabular-nums text-foreground truncate">
                 ₹{(summary?.total_stock_value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </h3>
-              <p className="text-[11px] text-blue-400 font-medium mt-0.5">
+              <p className="text-xs text-blue-400 font-medium mt-0.5">
                 {(summary?.total_stock_quantity || 0).toLocaleString('en-IN')} units at cost
               </p>
             </div>
@@ -262,10 +262,10 @@ export default function InventoryPage() {
                     </div>
                     <div className="min-w-0">
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total MRP (List Price)</p>
-                      <h3 className="text-xl font-bold text-foreground truncate">
+                      <h3 className="text-xl font-bold font-mono tabular-nums text-foreground truncate">
                         ₹{listPriceValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </h3>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                      <p className="text-xs text-muted-foreground mt-0.5">
                         {retailDiscount > 0 ? (
                           <span className="text-purple-400 font-medium">
                             At {retailDiscount}% disc: ₹{effectiveRetailValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -276,7 +276,7 @@ export default function InventoryPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="mt-2.5 pt-2 border-t border-border/40 flex items-center justify-between text-[11px]">
+                  <div className="mt-2.5 pt-2 border-t border-border/40 flex items-center justify-between text-xs">
                     <span className="text-muted-foreground">Est. Retail Discount:</span>
                     <div className="flex items-center gap-1">
                       <input
@@ -286,13 +286,13 @@ export default function InventoryPage() {
                         placeholder="0"
                         value={retailDiscount || ''}
                         onChange={e => setRetailDiscount(Math.max(0, Math.min(99, parseFloat(e.target.value) || 0)))}
-                        className="w-12 bg-muted border border-border/60 rounded px-1.5 py-0.5 text-xs text-foreground font-mono font-bold text-right outline-none focus:border-purple-500"
+                        className="w-14 bg-muted border border-border/60 rounded-lg px-2 py-1 text-sm text-foreground font-mono font-bold text-right outline-none focus:border-purple-500 min-h-[30px]"
                       />
                       <span className="text-muted-foreground font-semibold">%</span>
                       {retailDiscount > 0 && (
                         <button
                           onClick={() => setRetailDiscount(0)}
-                          className="text-[10px] text-muted-foreground hover:text-foreground ml-1 px-1 py-0.5 rounded bg-muted"
+                          className="text-xs text-muted-foreground hover:text-foreground ml-1 px-1.5 py-0.5 rounded bg-muted cursor-pointer"
                           title="Reset to 0%"
                         >
                           ✕
@@ -311,17 +311,17 @@ export default function InventoryPage() {
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         {retailDiscount > 0 ? 'Realized Margin' : 'Gross Margin (At MRP)'}
                       </p>
-                      <h3 className="text-xl font-bold text-emerald-400 truncate">
+                      <h3 className="text-xl font-bold font-mono tabular-nums text-emerald-400 truncate">
                         ₹{effectiveMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </h3>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                      <p className="text-xs text-muted-foreground mt-0.5">
                         {marginMarkupPct}% {retailDiscount > 0 ? `markup after ${retailDiscount}% retail discount` : 'markup over cost at list price'}
                       </p>
                     </div>
                   </div>
-                  <div className="mt-2.5 pt-2 border-t border-border/40 text-[11px] text-muted-foreground flex items-center justify-between">
+                  <div className="mt-2.5 pt-2 border-t border-border/40 text-xs text-muted-foreground flex items-center justify-between">
                     <span>Retail vs Purchase Cost</span>
-                    <span className="font-medium text-foreground">
+                    <span className="font-semibold text-foreground font-mono tabular-nums">
                       ₹{stockCostValue > 0 ? ((effectiveRetailValue / stockCostValue)).toFixed(2) : '1.00'}x cost
                     </span>
                   </div>
@@ -339,7 +339,7 @@ export default function InventoryPage() {
               <h3 className="text-xl font-bold text-foreground truncate">
                 {summary?.total_items ?? categories.reduce((acc: number, c: any) => acc + (c.item_count || 0), 0)} Items
               </h3>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
+              <p className="text-xs text-muted-foreground mt-0.5">
                 Across {categories.length} product {categories.length === 1 ? 'category' : 'categories'}
               </p>
             </div>

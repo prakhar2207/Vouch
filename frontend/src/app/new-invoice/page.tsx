@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 import { API_BASE_URL } from '@/utils/api';
 import { useState, useEffect } from 'react';
 import axios from 'axios';
@@ -196,9 +196,9 @@ export default function NewInvoice() {
 
         <div className="space-y-3">
           {items.map((item, idx) => (
-            <div key={idx} className="flex flex-col sm:flex-row gap-3 items-center bg-gray-50/50 dark:bg-zinc-800/30 p-3 rounded-lg border border-border/50">
+            <div key={idx} className="flex flex-col sm:flex-row gap-3 items-center bg-muted/40 p-3 rounded-lg border border-border">
               <select 
-                className="bg-background border border-border p-2 rounded-md flex-1 w-full focus:ring-2 focus:ring-blue-500 outline-none" 
+                className="bg-background border border-border p-2.5 rounded-lg flex-1 w-full focus:ring-2 focus:ring-primary outline-none text-sm font-medium" 
                 value={item.product} 
                 onChange={e => updateItem(idx, 'product', e.target.value)}
               >
@@ -208,23 +208,23 @@ export default function NewInvoice() {
                 ))}
               </select>
               <div className="flex gap-3 w-full sm:w-auto">
-                <input type="number" placeholder="Qty" className="bg-background border border-border p-2 rounded-md w-24 focus:ring-2 focus:ring-blue-500 outline-none" value={item.quantity} onChange={e => updateItem(idx, 'quantity', e.target.value)} />
-                <input type="number" placeholder="Unit Price" className="bg-background border border-border p-2 rounded-md w-32 focus:ring-2 focus:ring-blue-500 outline-none" value={item.unit_price} onChange={e => updateItem(idx, 'unit_price', e.target.value)} />
-                <button onClick={() => setItems(items.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 dark:hover:text-red-400 font-bold p-2 bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40 rounded-md transition-colors">
-                  X
+                <input type="number" placeholder="Qty" className="bg-background border border-border p-2.5 rounded-lg w-24 focus:ring-2 focus:ring-primary outline-none font-mono tabular-nums text-sm font-semibold text-center" value={item.quantity} onChange={e => updateItem(idx, 'quantity', e.target.value)} />
+                <input type="number" placeholder="Unit Price" className="bg-background border border-border p-2.5 rounded-lg w-32 focus:ring-2 focus:ring-primary outline-none font-mono tabular-nums text-sm font-semibold text-right" value={item.unit_price} onChange={e => updateItem(idx, 'unit_price', e.target.value)} />
+                <button onClick={() => setItems(items.filter((_, i) => i !== idx))} className="text-destructive hover:text-destructive/80 font-bold p-2.5 bg-destructive/10 hover:bg-destructive/20 rounded-lg transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center">
+                  ✕
                 </button>
               </div>
             </div>
           ))}
           {items.length === 0 && (
-            <div className="text-center py-6 text-muted-foreground dark:text-muted-foreground text-sm">
+            <div className="text-center py-6 text-muted-foreground text-sm">
               No items added to the invoice yet.
             </div>
           )}
         </div>
         <button 
           onClick={handleAddItem} 
-          className="w-full bg-gray-50 hover:bg-gray-100 dark:bg-muted dark:hover:bg-zinc-700 border border-dashed border-border text-gray-600 dark:text-foreground/80 px-4 py-3 rounded-lg transition-colors font-medium mt-2"
+          className="w-full bg-muted/60 hover:bg-muted border border-dashed border-border text-foreground px-4 py-3 rounded-lg transition-colors font-medium mt-2 text-sm cursor-pointer"
         >
           + Add Line Item
         </button>
@@ -233,7 +233,7 @@ export default function NewInvoice() {
       <div className="flex justify-end pt-4">
         <button 
           onClick={handleSubmit} 
-          className="w-full sm:w-auto bg-green-600 text-foreground px-8 py-3 rounded-lg font-bold shadow hover:bg-green-700 transition-colors"
+          className="w-full sm:w-auto bg-primary text-primary-foreground px-8 py-3 rounded-xl font-bold shadow-md hover:bg-primary/90 transition-colors cursor-pointer"
         >
           Generate Invoice
         </button>

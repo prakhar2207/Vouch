@@ -43,11 +43,11 @@ export default function Login() {
             <span className="text-3xl font-black tracking-tight bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 bg-clip-text text-transparent">
               Vouch
             </span>
-            <span className="px-1.5 py-0.5 text-[9px] font-mono font-medium text-muted-foreground bg-muted border border-border/50 rounded">
+            <span className="px-2 py-0.5 text-xs font-mono font-semibold text-muted-foreground bg-muted border border-border rounded-md">
               CORE
             </span>
           </div>
-          <h1 className="text-lg font-bold text-foreground">Welcome back</h1>
+          <h1 className="text-xl font-extrabold text-foreground">Welcome back</h1>
           <p className="text-xs text-muted-foreground mt-1">Sign in to your accounting workspace</p>
         </div>
 
@@ -78,7 +78,7 @@ export default function Login() {
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-semibold text-foreground">Password</label>
-              <span className="text-[10px] text-muted-foreground cursor-default">Forgot password?</span>
+              <span className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">Forgot password?</span>
             </div>
             <div className="relative">
               <input 
@@ -104,7 +104,7 @@ export default function Login() {
           <button 
             type="submit" 
             disabled={loading}
-            className="w-full bg-primary text-primary-foreground p-3 rounded-xl font-bold text-sm hover:bg-primary/90 transition-all shadow-md shadow-primary/20 disabled:opacity-60 cursor-pointer flex items-center justify-center gap-2"
+            className="w-full min-h-[44px] bg-primary text-primary-foreground p-3 rounded-xl font-bold text-sm hover:bg-primary/90 transition-all shadow-md shadow-primary/20 disabled:opacity-60 cursor-pointer flex items-center justify-center gap-2"
           >
             {loading ? (
               <>
@@ -130,7 +130,7 @@ export default function Login() {
 
         {/* Keyboard hint */}
         <div className="mt-4 text-center">
-          <span className="text-[10px] text-muted-foreground/60 font-mono">
+          <span className="text-xs text-muted-foreground font-mono">
             Press Enter to sign in
           </span>
         </div>

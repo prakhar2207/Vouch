@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
@@ -316,7 +316,7 @@ export default function SalesInvoiceList() {
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-border bg-zinc-900/40 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <tr className="border-b border-border bg-muted/50 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     <th className="p-4">Invoice No.</th>
                     <th className="p-4">Date</th>
                     <th className="p-4">Party Name</th>
@@ -325,7 +325,7 @@ export default function SalesInvoiceList() {
                     <th className="p-4 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800/50 text-xs">
+                <tbody className="divide-y divide-border text-xs">
                   {invoices.map((inv, idx) => {
                     const isFocused = focusedIndex === idx;
                     return (
@@ -336,31 +336,31 @@ export default function SalesInvoiceList() {
                         onDoubleClick={() => router.push(`/sales/${inv.id}/print`)}
                         className={`transition-all duration-150 cursor-pointer group ${
                           isFocused
-                            ? 'bg-blue-500/10 ring-2 ring-inset ring-blue-500/60 border-l-4 border-l-blue-500'
-                            : 'hover:bg-zinc-800/20'
+                            ? 'bg-primary/10 ring-2 ring-inset ring-primary/40 border-l-4 border-l-primary'
+                            : 'hover:bg-muted/40'
                         }`}
                       >
-                        <td className="p-4 font-mono font-medium text-foreground">{inv.voucher_number}</td>
+                        <td className="p-4 font-mono font-semibold text-foreground text-sm">{inv.voucher_number}</td>
                         <td className="p-4 text-muted-foreground font-mono">{inv.date}</td>
-                        <td className="p-4 text-foreground/80 font-semibold">{inv.party_name}</td>
-                        <td className="p-4 font-bold text-foreground text-right font-mono">₹ {parseFloat(inv.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td className="p-4 text-foreground font-semibold text-sm">{inv.party_name}</td>
+                        <td className="p-4 font-bold text-foreground text-right font-mono tabular-nums text-sm">₹{parseFloat(inv.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                         <td className="p-4 text-center">
                           {inv.isOffline || inv.status === 'PENDING_SYNC' ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                              <CloudOff className="w-3 h-3" />
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                              <CloudOff className="w-3.5 h-3.5" />
                               Pending Sync
                             </span>
                           ) : (
-                            <span className={`px-2.5 py-1 text-xs font-bold rounded-full border ${inv.status === 'POSTED' ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
+                            <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${inv.status === 'POSTED' ? 'bg-green-500/10 text-green-500 border-green-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>
                               {inv.status}
                             </span>
                           )}
                         </td>
                         <td className="p-4 text-right">
-                          <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                             <button
                               onClick={() => handleStartEdit(inv)}
-                              className="px-2.5 py-1 bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                              className="px-3 py-1.5 bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                               title="Edit Sales Invoice"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
@@ -369,7 +369,7 @@ export default function SalesInvoiceList() {
 
                             <Link
                               href={`/sales/${inv.id}/print`}
-                              className="px-2.5 py-1 bg-muted/60 hover:bg-muted text-foreground rounded-lg text-xs font-semibold border border-border/70 transition-colors flex items-center gap-1 cursor-pointer"
+                              className="px-3 py-1.5 bg-muted/60 hover:bg-muted text-foreground rounded-lg text-xs font-semibold border border-border transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                               title="Print Invoice"
                             >
                               <Printer className="w-3.5 h-3.5" />
@@ -378,7 +378,7 @@ export default function SalesInvoiceList() {
 
                             <button
                               onClick={() => handleDeleteInvoice(inv.id, inv.voucher_number)}
-                              className="px-2.5 py-1 bg-rose-600/15 hover:bg-rose-600/25 text-rose-400 rounded-lg text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                              className="px-3 py-1.5 bg-rose-600/15 hover:bg-rose-600/25 text-rose-400 rounded-lg text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                               title="Delete Invoice"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -395,8 +395,8 @@ export default function SalesInvoiceList() {
 
               {/* Pagination Controls */}
               {pagination && pagination.total_count > 0 && (
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-border bg-zinc-900/20 text-xs text-muted-foreground">
-                  <div className="font-mono">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-3.5 border-t border-border bg-muted/20 text-xs text-muted-foreground">
+                  <div className="font-mono tabular-nums">
                     Showing <span className="font-semibold text-foreground">{pagination.offset + 1}</span> to{' '}
                     <span className="font-semibold text-foreground">
                       {Math.min(pagination.offset + pagination.limit, pagination.total_count)}
@@ -409,13 +409,13 @@ export default function SalesInvoiceList() {
                       type="button"
                       onClick={() => fetchInvoices(page - 1)}
                       disabled={page <= 1 || loading}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-input bg-muted/50 text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-input bg-muted/50 text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium min-h-[36px]"
                     >
-                      <ChevronLeft className="w-3.5 h-3.5" />
+                      <ChevronLeft className="w-4 h-4" />
                       <span>Previous</span>
                     </button>
 
-                    <div className="px-2.5 py-1 text-xs font-mono font-semibold text-foreground bg-muted rounded border border-input">
+                    <div className="px-3 py-1.5 text-xs font-mono font-semibold text-foreground bg-muted rounded-lg border border-input">
                       Page {page} of {pagination.total_pages || 1}
                     </div>
 
@@ -423,50 +423,50 @@ export default function SalesInvoiceList() {
                       type="button"
                       onClick={() => fetchInvoices(page + 1)}
                       disabled={!pagination.has_more || page >= pagination.total_pages || loading}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-input bg-muted/50 text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-input bg-muted/50 text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium min-h-[36px]"
                     >
                       <span>Next</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
+                      <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
               )}
 
               {/* Keyboard Shortcuts Hint Bar */}
-              <div className="p-3 border-t border-border bg-zinc-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-muted-foreground">
-                <div className="hidden sm:flex items-center gap-2 flex-wrap">
+              <div className="p-3.5 border-t border-border bg-muted/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-muted-foreground">
+                <div className="hidden sm:flex items-center gap-2.5 flex-wrap">
                   <span className="flex items-center gap-1">
-                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">↑</kbd>
-                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">↓</kbd>
-                    <span className="text-[11px]">Navigate</span>
+                    <kbd className="px-2 py-0.5 bg-muted rounded border border-input font-mono text-xs text-foreground font-semibold">↑</kbd>
+                    <kbd className="px-2 py-0.5 bg-muted rounded border border-input font-mono text-xs text-foreground font-semibold">↓</kbd>
+                    <span className="text-xs">Navigate</span>
                   </span>
                   <span>•</span>
                   <span className="flex items-center gap-1">
-                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">Ctrl</kbd>
+                    <kbd className="px-2 py-0.5 bg-muted rounded border border-input font-mono text-xs text-foreground font-semibold">Ctrl</kbd>
                     <span>+</span>
-                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">Enter</kbd>
-                    <span className="text-[11px]">Edit Invoice</span>
+                    <kbd className="px-2 py-0.5 bg-muted rounded border border-input font-mono text-xs text-foreground font-semibold">Enter</kbd>
+                    <span className="text-xs">Edit Invoice</span>
                   </span>
                   <span>•</span>
                   <span className="flex items-center gap-1">
-                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">Enter</kbd>
-                    <span className="text-[11px]">Print / View</span>
+                    <kbd className="px-2 py-0.5 bg-muted rounded border border-input font-mono text-xs text-foreground font-semibold">Enter</kbd>
+                    <span className="text-xs">Print / View</span>
                   </span>
                   <span>•</span>
                   <span className="flex items-center gap-1">
-                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">Alt</kbd>
+                    <kbd className="px-2 py-0.5 bg-muted rounded border border-input font-mono text-xs text-foreground font-semibold">Alt</kbd>
                     <span>+</span>
-                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">D</kbd>
-                    <span className="text-[11px]">Delete</span>
+                    <kbd className="px-2 py-0.5 bg-muted rounded border border-input font-mono text-xs text-foreground font-semibold">D</kbd>
+                    <span className="text-xs">Delete</span>
                   </span>
                   <span>•</span>
                   <span className="flex items-center gap-1">
-                    <kbd className="px-1.5 py-0.5 bg-muted rounded border border-input font-mono text-[10px] text-foreground font-bold">Esc</kbd>
-                    <span className="text-[11px]">Deselect</span>
+                    <kbd className="px-2 py-0.5 bg-muted rounded border border-input font-mono text-xs text-foreground font-semibold">Esc</kbd>
+                    <span className="text-xs">Deselect</span>
                   </span>
                 </div>
                 {focusedIndex >= 0 && (
-                  <span className="font-mono text-blue-400 font-semibold text-[11px]">
+                  <span className="font-mono tabular-nums text-blue-400 font-semibold text-xs">
                     Invoice {focusedIndex + 1} of {invoices.length} selected
                   </span>
                 )}

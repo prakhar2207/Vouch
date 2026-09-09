@@ -148,21 +148,21 @@ export default function Dashboard() {
             <Link
               id="tour-sales-btn"
               href="/sales/new"
-              className="flex-1 sm:flex-none justify-center px-3.5 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg text-xs font-semibold shadow-2xs transition-all flex items-center gap-1.5 cursor-pointer"
+              className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-sm font-semibold shadow-sm transition-all flex items-center gap-2 cursor-pointer min-h-[40px]"
             >
-              <Plus className="w-3.5 h-3.5" />
+              <Plus className="w-4 h-4" />
               <span>Sales</span>
-              <kbd className="hidden sm:inline text-[9px] font-mono px-1 py-0.2 bg-primary-foreground/20 rounded">F8</kbd>
+              <kbd className="hidden sm:inline text-xs font-mono font-semibold px-1.5 py-0.5 bg-primary-foreground/20 rounded">F8</kbd>
             </Link>
 
             <Link
               id="tour-purchase-btn"
               href="/purchases/new"
-              className="flex-1 sm:flex-none justify-center px-3.5 py-2 bg-secondary text-foreground hover:bg-secondary/80 border border-border/60 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer"
+              className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-secondary text-foreground hover:bg-secondary/80 border border-border/60 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer min-h-[40px]"
             >
-              <Sparkles className="w-3.5 h-3.5 text-muted-foreground" />
+              <Sparkles className="w-4 h-4 text-muted-foreground" />
               <span>Purchase</span>
-              <kbd className="hidden sm:inline text-[9px] font-mono px-1 py-0.2 bg-muted border border-border/50 rounded text-muted-foreground">F9</kbd>
+              <kbd className="hidden sm:inline text-xs font-mono font-semibold px-1.5 py-0.5 bg-muted border border-border/50 rounded text-muted-foreground">F9</kbd>
             </Link>
           </div>
         </div>
@@ -170,31 +170,31 @@ export default function Dashboard() {
         {/* 5-Column Metric Grid with Real-Time Stock Valuation */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           {/* Card 1: Total Sales */}
-          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
+          <div className="bg-card border border-border/40 rounded-xl p-4 sm:p-5 shadow-sm space-y-1.5 relative overflow-hidden">
             <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-blue-500 to-indigo-500" />
             <div className="flex items-center justify-between text-muted-foreground pl-2">
-              <span className="text-xs font-medium">Total Sales</span>
+              <span className="text-sm font-medium">Total Sales</span>
               <Receipt className="w-4 h-4 text-blue-500/70" />
             </div>
-            <div className={`text-2xl font-bold font-mono tracking-tight ${hasSales ? "text-foreground" : "text-foreground/90"}`}>
+            <div className={`text-2xl font-bold font-mono tabular-nums tracking-tight ${hasSales ? "text-foreground" : "text-foreground/90"}`}>
               ₹{kpis.total_sales.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-xs text-muted-foreground pl-2">
               {kpis.sales_vouchers_count} {kpis.sales_vouchers_count === 1 ? "invoice" : "invoices"} this period
             </div>
           </div>
 
           {/* Card 2: Total Purchases */}
-          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
+          <div className="bg-card border border-border/40 rounded-xl p-4 sm:p-5 shadow-sm space-y-1.5 relative overflow-hidden">
             <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-orange-500 to-rose-500" />
             <div className="flex items-center justify-between text-muted-foreground pl-2">
-              <span className="text-xs font-medium">Total Purchases</span>
+              <span className="text-sm font-medium">Total Purchases</span>
               <ShoppingCart className="w-4 h-4 text-orange-500/70" />
             </div>
-            <div className={`text-2xl font-bold font-mono tracking-tight ${hasPurchases ? "text-foreground" : "text-foreground/90"}`}>
+            <div className={`text-2xl font-bold font-mono tabular-nums tracking-tight ${hasPurchases ? "text-foreground" : "text-foreground/90"}`}>
               ₹{kpis.total_purchases.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-xs text-muted-foreground pl-2">
               {kpis.purchase_vouchers_count} {kpis.purchase_vouchers_count === 1 ? "bill" : "bills"} inward
             </div>
           </div>
@@ -202,45 +202,45 @@ export default function Dashboard() {
           {/* Card 3: Total Stock Value */}
           <Link 
             href="/inventory"
-            className="bg-card border border-border/40 hover:border-blue-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
+            className="bg-card border border-border/40 hover:border-blue-500/40 rounded-xl p-4 sm:p-5 shadow-sm space-y-1.5 transition-all group cursor-pointer block relative overflow-hidden"
             title="View Inventory Breakdown"
           >
             <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-cyan-500 to-blue-500" />
             <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
-              <span className="text-xs font-medium">Total Stock Value</span>
+              <span className="text-sm font-medium">Total Stock Value</span>
               <Boxes className="w-4 h-4 text-blue-400 group-hover:scale-110 transition-transform" />
             </div>
-            <div className="text-2xl font-bold font-mono tracking-tight text-blue-400">
+            <div className="text-2xl font-bold font-mono tabular-nums tracking-tight text-blue-400 pl-2">
               ₹{(kpis.total_stock_value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-[11px] text-muted-foreground flex items-center justify-between">
+            <div className="text-xs text-muted-foreground flex items-center justify-between pl-2">
               <span>{kpis.total_in_stock_items || 0} items ({Math.round(kpis.total_stock_qty || 0).toLocaleString("en-IN")} pcs)</span>
-              <span className="text-blue-400 text-[10px] font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
+              <span className="text-blue-400 text-xs font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
                 &rarr;
               </span>
             </div>
           </Link>
 
           {/* Card 4: Net Cash / Receivables */}
-          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
+          <div className="bg-card border border-border/40 rounded-xl p-4 sm:p-5 shadow-sm space-y-1.5 relative overflow-hidden">
             <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-emerald-500 to-teal-500" />
             <div className="flex items-center justify-between text-muted-foreground pl-2">
-              <span className="text-xs font-medium">Net Position</span>
+              <span className="text-sm font-medium">Net Position</span>
               <DollarSign className="w-4 h-4 text-emerald-500/70" />
             </div>
-            <div className={`text-2xl font-bold font-mono tracking-tight ${
+            <div className={`text-2xl font-bold font-mono tabular-nums tracking-tight ${
               kpis.net_position > 0 ? "text-emerald-500" : kpis.net_position < 0 ? "text-rose-500" : "text-foreground/90"
             }`}>
               ₹{Math.abs(kpis.net_position).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+            <div className="text-xs text-muted-foreground flex items-center gap-1 pl-2">
               {kpis.net_position > 0 ? (
                 <span className="text-emerald-500 flex items-center font-medium">
-                  <ArrowUpRight className="w-3 h-3" /> Surplus
+                  <ArrowUpRight className="w-3.5 h-3.5" /> Surplus
                 </span>
               ) : kpis.net_position < 0 ? (
                 <span className="text-rose-500 flex items-center font-medium">
-                  <ArrowDownRight className="w-3 h-3" /> Outstanding
+                  <ArrowDownRight className="w-3.5 h-3.5" /> Outstanding
                 </span>
               ) : (
                 <span>Balanced</span>
@@ -249,17 +249,17 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Card 4: Active Parties */}
-          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
+          {/* Card 5: Active Parties */}
+          <div className="bg-card border border-border/40 rounded-xl p-4 sm:p-5 shadow-sm space-y-1.5 relative overflow-hidden">
             <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-violet-500 to-purple-500" />
             <div className="flex items-center justify-between text-muted-foreground pl-2">
-              <span className="text-xs font-medium">Active Parties</span>
+              <span className="text-sm font-medium">Active Parties</span>
               <Users className="w-4 h-4 text-violet-500/70" />
             </div>
-            <div className="text-2xl font-bold font-mono tracking-tight text-foreground/90">
+            <div className="text-2xl font-bold font-mono tabular-nums tracking-tight text-foreground/90 pl-2">
               {rfmList.length}
             </div>
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-xs text-muted-foreground pl-2">
               Customers & Suppliers on record
             </div>
           </div>
@@ -302,8 +302,8 @@ export default function Dashboard() {
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" />
-                    <XAxis dataKey="date" stroke="currentColor" className="text-muted-foreground" fontSize={11} />
-                    <YAxis stroke="currentColor" className="text-muted-foreground" fontSize={11} />
+                    <XAxis dataKey="date" stroke="currentColor" className="text-muted-foreground" fontSize={12} />
+                    <YAxis stroke="currentColor" className="text-muted-foreground" fontSize={12} />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: "var(--card)",
@@ -317,7 +317,7 @@ export default function Dashboard() {
                       type="monotone"
                       dataKey="sales"
                       stroke="#3b82f6"
-                      strokeWidth={1.5}
+                      strokeWidth={2}
                       fillOpacity={1}
                       fill="url(#salesVelocityGrad)"
                     />
@@ -327,8 +327,8 @@ export default function Dashboard() {
                 <div className="h-full flex flex-col items-center justify-center border border-dashed border-border/60 rounded-lg text-center p-6 space-y-1.5">
                   <TrendingUp className="w-6 h-6 text-muted-foreground/40" />
                   <div className="text-xs font-medium text-muted-foreground">No transaction data yet</div>
-                  <div className="text-[11px] text-muted-foreground/80">
-                    Create a sales invoice (<kbd className="font-mono text-[10px]">F8</kbd>) to start tracking velocity.
+                  <div className="text-xs text-muted-foreground/80">
+                    Create a sales invoice (<kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F8</kbd>) to start tracking velocity.
                   </div>
                 </div>
               )}
@@ -368,18 +368,18 @@ export default function Dashboard() {
                       const segName = customer.segment || "Standard";
                       return (
                         <tr key={idx} className="hover:bg-muted/40 transition-colors">
-                          <td className="py-2.5 font-medium text-foreground truncate max-w-[120px]">
+                          <td className="py-3 font-medium text-foreground truncate max-w-[120px]">
                             {customer.party_ledger__name || "Customer"}
                           </td>
-                          <td className="py-2.5">
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground border border-border/50">
+                          <td className="py-3">
+                            <span className="px-2 py-0.5 rounded text-xs font-semibold bg-muted text-muted-foreground border border-border/50">
                               {segName}
                             </span>
                           </td>
-                          <td className="py-2.5 text-right font-mono text-muted-foreground">
+                          <td className="py-3 text-right font-mono tabular-nums text-muted-foreground">
                             {customer.frequency}
                           </td>
-                          <td className="py-2.5 text-right font-mono font-medium text-foreground">
+                          <td className="py-3 text-right font-mono tabular-nums font-semibold text-foreground">
                             ₹{Number(customer.monetary).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                           </td>
                         </tr>
@@ -391,7 +391,7 @@ export default function Dashboard() {
                 <div className="h-44 flex flex-col items-center justify-center border border-dashed border-border/60 rounded-lg text-center p-6 space-y-1.5">
                   <Users className="w-6 h-6 text-muted-foreground/40" />
                   <div className="text-xs font-medium text-muted-foreground">No customer records yet</div>
-                  <div className="text-[11px] text-muted-foreground/80">
+                  <div className="text-xs text-muted-foreground/80">
                     Customer loyalty and order statistics will populate here automatically.
                   </div>
                 </div>
@@ -416,31 +416,31 @@ export default function Dashboard() {
             <table className="w-full min-w-[520px] text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-border/60 text-muted-foreground">
-                  <th className="py-2 font-medium">Voucher No.</th>
-                  <th className="py-2 font-medium">Date</th>
-                  <th className="py-2 font-medium">Type</th>
-                  <th className="py-2 font-medium">Particulars</th>
-                  <th className="py-2 font-medium">Status</th>
-                  <th className="py-2 font-medium text-right">Amount</th>
+                  <th className="py-2.5 font-medium">Voucher No.</th>
+                  <th className="py-2.5 font-medium">Date</th>
+                  <th className="py-2.5 font-medium">Type</th>
+                  <th className="py-2.5 font-medium">Particulars</th>
+                  <th className="py-2.5 font-medium">Status</th>
+                  <th className="py-2.5 font-medium text-right">Amount</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/30">
                 {vouchers.slice(0, 6).map((v) => (
                   <tr key={v.id} className="hover:bg-muted/40 transition-colors">
-                    <td className="py-2 font-mono font-medium text-foreground">{v.voucher_number}</td>
-                    <td className="py-2 text-muted-foreground">{v.date || v.voucher_date}</td>
-                    <td className="py-2">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium uppercase bg-muted text-muted-foreground border border-border/50">
+                    <td className="py-3 font-mono tabular-nums font-semibold text-foreground">{v.voucher_number}</td>
+                    <td className="py-3 text-muted-foreground">{v.date || v.voucher_date}</td>
+                    <td className="py-3">
+                      <span className="px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase bg-muted text-muted-foreground border border-border/50">
                         {v.type || v.voucher_type}
                       </span>
                     </td>
-                    <td className="py-2 text-foreground font-medium">{v.party_name || "General Entry"}</td>
-                    <td className="py-2">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">
+                    <td className="py-3 text-foreground font-medium">{v.party_name || "General Entry"}</td>
+                    <td className="py-3">
+                      <span className="px-2 py-0.5 rounded text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">
                         {v.status}
                       </span>
                     </td>
-                    <td className="py-2 text-right font-mono font-medium text-foreground">
+                    <td className="py-3 text-right font-mono tabular-nums font-semibold text-foreground">
                       ₹{Number(v.total_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                     </td>
                   </tr>
@@ -448,7 +448,7 @@ export default function Dashboard() {
                 {!hasTransactions && (
                   <tr>
                     <td colSpan={6} className="py-8 text-center text-muted-foreground text-xs">
-                      No vouchers posted yet. Press <kbd className="font-mono text-[10px] bg-muted px-1 py-0.2 rounded border">F8</kbd> for Sales or <kbd className="font-mono text-[10px] bg-muted px-1 py-0.2 rounded border">F9</kbd> for Purchases.
+                      No vouchers posted yet. Press <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F8</kbd> for Sales or <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F9</kbd> for Purchases.
                     </td>
                   </tr>
                 )}

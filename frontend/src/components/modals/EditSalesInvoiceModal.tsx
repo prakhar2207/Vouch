@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
@@ -342,14 +342,14 @@ export default function EditSalesInvoiceModal({
 
               <div className="border border-border/70 rounded-xl overflow-hidden">
                 <table className="w-full text-xs text-left border-collapse">
-                  <thead className="bg-muted/40 border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
+                  <thead className="bg-muted/60 border-b border-border text-muted-foreground uppercase text-xs tracking-wider font-semibold">
                     <tr>
-                      <th className="p-2.5 w-6">#</th>
+                      <th className="p-2.5 w-6 text-center">#</th>
                       <th className="p-2.5">Item Name / Size</th>
                       <th className="p-2.5 w-28">Brand</th>
                       <th className="p-2.5 w-24">HSN Code</th>
                       <th className="p-2.5 w-20 text-right">Qty</th>
-                      <th className="p-2.5 w-16">Unit</th>
+                      <th className="p-2.5 w-16 text-center">Unit</th>
                       <th className="p-2.5 w-24 text-right">Rate (₹)</th>
                       <th className="p-2.5 w-20 text-right">Disc %</th>
                       <th className="p-2.5 w-20 text-right">GST %</th>
@@ -357,7 +357,7 @@ export default function EditSalesInvoiceModal({
                       <th className="p-2.5 w-10 text-center"></th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-border/30">
+                  <tbody className="divide-y divide-border/40">
                     {items.map((item, idx) => {
                       const gross = item.quantity * item.rate;
                       const disc = gross * ((item.discount_percent || 0) / 100);
@@ -366,8 +366,8 @@ export default function EditSalesInvoiceModal({
                       const lineTotal = lineTaxable + lineTax;
 
                       return (
-                        <tr key={idx} className="hover:bg-muted/15">
-                          <td className="p-2 text-muted-foreground font-mono text-center">
+                        <tr key={idx} className="hover:bg-muted/30 transition-colors">
+                          <td className="p-2 text-muted-foreground font-mono tabular-nums text-center text-xs font-semibold">
                             {idx + 1}
                           </td>
 
@@ -381,7 +381,7 @@ export default function EditSalesInvoiceModal({
                               onChange={(e) =>
                                 updateItemField(idx, "product_name", e.target.value)
                               }
-                              className="w-full bg-muted/40 border border-border/50 text-foreground font-medium px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500"
+                              className="w-full min-h-[32px] bg-background/50 border border-border/60 text-foreground font-medium px-2.5 py-1 rounded-md outline-none focus:border-primary focus:bg-background"
                             />
                           </td>
 
@@ -392,7 +392,7 @@ export default function EditSalesInvoiceModal({
                               placeholder="e.g. Modicord"
                               value={item.brand || ""}
                               onChange={(e) => updateItemField(idx, "brand", e.target.value)}
-                              className="w-full bg-muted/40 border border-border/50 text-foreground text-xs px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+                              className="w-full min-h-[32px] bg-background/50 border border-border/60 text-foreground text-xs px-2.5 py-1 rounded-md outline-none focus:border-primary focus:bg-background font-medium"
                             />
                           </td>
 
@@ -403,7 +403,7 @@ export default function EditSalesInvoiceModal({
                               placeholder="4010"
                               value={item.hsn_code}
                               onChange={(e) => updateItemField(idx, "hsn_code", e.target.value)}
-                              className="w-full bg-muted/40 border border-border/50 text-foreground font-mono px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500 text-center"
+                              className="w-full min-h-[32px] bg-background/50 border border-border/60 text-foreground font-mono tabular-nums px-2 py-1 rounded-md outline-none focus:border-primary focus:bg-background text-center text-xs font-medium"
                             />
                           </td>
 
@@ -418,7 +418,7 @@ export default function EditSalesInvoiceModal({
                               onChange={(e) =>
                                 updateItemField(idx, "quantity", parseFloat(e.target.value) || 0)
                               }
-                              className="w-full bg-muted/40 border border-border/50 text-foreground font-mono px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500 text-right font-bold"
+                              className="w-full min-h-[32px] bg-background/50 border border-border/60 text-foreground font-mono tabular-nums px-2 py-1 rounded-md outline-none focus:border-primary focus:bg-background text-right font-bold text-xs"
                             />
                           </td>
 
@@ -430,7 +430,7 @@ export default function EditSalesInvoiceModal({
                               onChange={(e) =>
                                 updateItemField(idx, "unit", e.target.value.toUpperCase())
                               }
-                              className="w-full bg-muted/40 border border-border/50 text-muted-foreground font-mono text-[11px] px-1.5 py-1 rounded outline-none text-center"
+                              className="w-full min-h-[32px] bg-background/50 border border-border/60 text-muted-foreground font-mono text-xs px-1.5 py-1 rounded-md outline-none text-center font-medium"
                             />
                           </td>
 
@@ -445,7 +445,7 @@ export default function EditSalesInvoiceModal({
                               onChange={(e) =>
                                 updateItemField(idx, "rate", parseFloat(e.target.value) || 0)
                               }
-                              className="w-full bg-muted/40 border border-border/50 text-foreground font-mono px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500 text-right font-bold"
+                              className="w-full min-h-[32px] bg-background/50 border border-border/60 text-foreground font-mono tabular-nums px-2 py-1 rounded-md outline-none focus:border-primary focus:bg-background text-right font-bold text-xs"
                             />
                           </td>
 
@@ -464,7 +464,7 @@ export default function EditSalesInvoiceModal({
                                   parseFloat(e.target.value) || 0
                                 )
                               }
-                              className="w-full bg-muted/40 border border-border/50 text-amber-400 font-mono text-[11px] px-1 py-1 rounded outline-none text-right font-bold"
+                              className="w-full min-h-[32px] bg-background/50 border border-border/60 text-amber-500 font-mono tabular-nums text-xs px-1.5 py-1 rounded-md outline-none text-right font-bold focus:border-primary focus:bg-background"
                             />
                           </td>
 
@@ -475,28 +475,28 @@ export default function EditSalesInvoiceModal({
                               onChange={(e) =>
                                 updateItemField(idx, "gst_rate", parseFloat(e.target.value) || 0)
                               }
-                              className="w-full bg-muted/50 border border-input text-foreground font-mono text-[11px] px-1 py-1 rounded outline-none text-right cursor-pointer"
+                              className="w-full min-h-[32px] bg-background border border-border text-foreground font-mono tabular-nums text-xs px-1.5 py-1 rounded-md outline-none text-right cursor-pointer"
                             >
-                              <option value={0} className="bg-muted/50 text-foreground">
+                              <option value={0} className="bg-background text-foreground">
                                 0%
                               </option>
-                              <option value={5} className="bg-muted/50 text-foreground">
+                              <option value={5} className="bg-background text-foreground">
                                 5%
                               </option>
-                              <option value={12} className="bg-muted/50 text-foreground">
+                              <option value={12} className="bg-background text-foreground">
                                 12%
                               </option>
-                              <option value={18} className="bg-muted/50 text-foreground">
+                              <option value={18} className="bg-background text-foreground">
                                 18%
                               </option>
-                              <option value={28} className="bg-muted/50 text-foreground">
+                              <option value={28} className="bg-background text-foreground">
                                 28%
                               </option>
                             </select>
                           </td>
 
                           {/* Line Total */}
-                          <td className="p-2 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
+                          <td className="p-2 text-right font-mono tabular-nums font-bold text-emerald-500 whitespace-nowrap text-xs">
                             ₹
                             {lineTotal.toLocaleString("en-IN", {
                               minimumFractionDigits: 2,
@@ -509,7 +509,7 @@ export default function EditSalesInvoiceModal({
                             <button
                               type="button"
                               onClick={() => handleRemoveItem(idx)}
-                              className="p-1 text-muted-foreground hover:text-rose-400 transition-colors cursor-pointer"
+                              className="p-1.5 min-w-[30px] min-h-[30px] inline-flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors cursor-pointer"
                               title="Delete line"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -543,33 +543,33 @@ export default function EditSalesInvoiceModal({
               <div className="bg-muted/30 p-4 rounded-xl border border-border/70 space-y-2 text-xs">
                 <div className="flex justify-between text-muted-foreground">
                   <span>Gross Amount:</span>
-                  <span className="font-mono text-foreground">
+                  <span className="font-mono tabular-nums font-semibold text-foreground">
                     ₹{grossTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </span>
                 </div>
                 {totalDiscount > 0 && (
-                  <div className="flex justify-between text-amber-400">
+                  <div className="flex justify-between text-amber-500 font-medium">
                     <span>Discount:</span>
-                    <span className="font-mono">
+                    <span className="font-mono tabular-nums font-semibold">
                       -₹{totalDiscount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 )}
                 <div className="flex justify-between text-muted-foreground">
                   <span>Taxable Subtotal:</span>
-                  <span className="font-mono text-foreground">
+                  <span className="font-mono tabular-nums font-semibold text-foreground">
                     ₹{taxableTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="flex justify-between text-muted-foreground">
                   <span>Total Taxes (GST):</span>
-                  <span className="font-mono text-foreground">
+                  <span className="font-mono tabular-nums font-semibold text-foreground">
                     ₹{totalTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-muted-foreground">
                   <span>Cartage / Freight Outward:</span>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1.5">
                     <span className="text-muted-foreground font-mono">₹</span>
                     <input
                       type="number"
@@ -578,7 +578,7 @@ export default function EditSalesInvoiceModal({
                       value={cartageAmount}
                       onChange={(e) => setCartageAmount(e.target.value)}
                       placeholder="0.00"
-                      className="w-24 bg-card border border-border/80 text-foreground text-right px-2 py-0.5 rounded font-mono text-xs focus:ring-1 focus:ring-blue-500 outline-none"
+                      className="w-28 bg-background border border-border text-foreground text-right px-2.5 py-1 rounded font-mono tabular-nums text-xs font-semibold focus:border-primary outline-none"
                     />
                   </div>
                 </div>
@@ -587,10 +587,10 @@ export default function EditSalesInvoiceModal({
                   <span
                     className={
                       roundOff < 0
-                        ? "text-emerald-400 font-mono font-medium"
+                        ? "text-emerald-500 font-mono tabular-nums font-semibold"
                         : roundOff > 0
-                        ? "text-amber-400 font-mono font-medium"
-                        : "text-muted-foreground font-mono"
+                        ? "text-amber-500 font-mono tabular-nums font-semibold"
+                        : "text-muted-foreground font-mono tabular-nums"
                     }
                   >
                     {roundOff > 0
@@ -600,9 +600,9 @@ export default function EditSalesInvoiceModal({
                       : `₹0.00`}
                   </span>
                 </div>
-                <div className="flex justify-between border-t border-border/50 pt-2 font-bold text-sm">
+                <div className="flex justify-between border-t border-border pt-2.5 font-bold text-sm">
                   <span>Net Invoice Amount:</span>
-                  <span className="font-mono text-emerald-400 text-base">
+                  <span className="font-mono tabular-nums text-primary text-base font-black">
                     ₹{grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </span>
                 </div>

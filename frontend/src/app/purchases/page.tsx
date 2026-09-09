@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from "react";
 import axios from "axios";
@@ -344,9 +344,9 @@ export default function PurchaseInvoiceList() {
                       >
                       {/* Invoice No */}
                       <td className="p-4 font-mono font-medium text-foreground flex items-center gap-2">
-                        <span className="font-bold">{inv.voucher_number}</span>
+                        <span className="font-bold text-sm">{inv.voucher_number}</span>
                         {inv.has_attachment && (
-                          <span className="px-1.5 py-0.5 bg-blue-500/15 text-blue-400 rounded text-[10px] font-bold border border-blue-500/30">
+                          <span className="px-2 py-0.5 bg-blue-500/15 text-blue-400 rounded text-xs font-semibold border border-blue-500/30">
                             📎 Doc
                           </span>
                         )}
@@ -356,16 +356,16 @@ export default function PurchaseInvoiceList() {
                       <td className="p-4 text-muted-foreground font-mono">{inv.date}</td>
 
                       {/* Party */}
-                      <td className="p-4 text-foreground font-semibold">{inv.party_name}</td>
+                      <td className="p-4 text-foreground font-semibold text-sm">{inv.party_name}</td>
 
                       {/* Amount */}
-                      <td className="p-4 font-bold text-foreground font-mono text-right text-sm">
-                        ₹ {parseFloat(inv.total_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      <td className="p-4 font-bold text-foreground font-mono tabular-nums text-right text-sm">
+                        ₹{parseFloat(inv.total_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </td>
 
                       {/* Status */}
                       <td className="p-4 text-center">
-                        <span className={`px-2.5 py-1 text-[10px] font-bold rounded-full border ${
+                        <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${
                           inv.status === "POSTED"
                             ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                             : "bg-amber-500/10 text-amber-400 border-amber-500/20"
@@ -376,10 +376,10 @@ export default function PurchaseInvoiceList() {
 
                       {/* Actions */}
                       <td className="p-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                           <button
                             onClick={() => handleOpenVoucherDetail(inv.id)}
-                            className="px-2.5 py-1 bg-muted/60 hover:bg-muted text-foreground rounded-lg text-xs font-semibold border border-border/70 transition-colors flex items-center gap-1 cursor-pointer"
+                            className="px-3 py-1.5 bg-muted/60 hover:bg-muted text-foreground rounded-lg text-xs font-semibold border border-border transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                             title="View Document"
                           >
                             <Eye className="w-3.5 h-3.5" />
@@ -388,7 +388,7 @@ export default function PurchaseInvoiceList() {
                           
                           <button
                             onClick={() => handleStartEdit(inv)}
-                            className="px-2.5 py-1 bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                            className="px-3 py-1.5 bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                             title="Edit Invoice"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
@@ -397,7 +397,7 @@ export default function PurchaseInvoiceList() {
 
                           <button
                             onClick={() => handleDeleteInvoice(inv.id, inv.voucher_number)}
-                            className="px-2.5 py-1 bg-rose-600/15 hover:bg-rose-600/25 text-rose-400 rounded-lg text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                            className="px-3 py-1.5 bg-rose-600/15 hover:bg-rose-600/25 text-rose-400 rounded-lg text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                             title="Delete Invoice & Reverse Stock"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -634,14 +634,14 @@ export default function PurchaseInvoiceList() {
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => setZoomLevel((z) => Math.max(50, z - 25))}
-                            className="px-2 py-0.5 bg-muted rounded text-[11px] hover:bg-muted/80"
+                            className="px-3 py-1 bg-muted rounded-lg text-xs font-semibold hover:bg-muted/80 border border-border min-h-[30px] min-w-[30px]"
                           >
                             -
                           </button>
-                          <span className="text-[11px] font-mono">{zoomLevel}%</span>
+                          <span className="text-xs font-mono font-semibold">{zoomLevel}%</span>
                           <button
                             onClick={() => setZoomLevel((z) => Math.min(200, z + 25))}
-                            className="px-2 py-0.5 bg-muted rounded text-[11px] hover:bg-muted/80"
+                            className="px-3 py-1 bg-muted rounded-lg text-xs font-semibold hover:bg-muted/80 border border-border min-h-[30px] min-w-[30px]"
                           >
                             +
                           </button>

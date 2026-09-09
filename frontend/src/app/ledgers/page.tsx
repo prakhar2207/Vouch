@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
 import Link from 'next/link';
@@ -789,31 +789,31 @@ export default function LedgersPage() {
                           {l.nature}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-muted-foreground font-mono text-[11px]">
+                      <td className="py-3.5 px-4 text-muted-foreground font-mono text-xs">
                         {l.ledger_type}
                       </td>
-                      <td className="py-3 px-4 text-muted-foreground">
+                      <td className="py-3.5 px-4 text-muted-foreground">
                         {l.gstin ? (
-                          <div className="font-mono text-zinc-300">{l.gstin}</div>
+                          <div className="font-mono text-foreground/80 font-medium text-xs">{l.gstin}</div>
                         ) : l.phone ? (
-                          <div>{l.phone}</div>
+                          <div className="text-xs">{l.phone}</div>
                         ) : (
-                          <span className="text-zinc-600">—</span>
+                          <span className="text-muted-foreground/60">—</span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-medium">
+                      <td className="py-3.5 px-4 text-right font-mono tabular-nums font-semibold">
                         {(() => {
                           const isCreditType = l.opening_balance_type === 'CREDIT';
                           const raw = Number(l.current_balance || 0);
                           const isDr = isCreditType ? raw < 0 : raw >= 0;
                           const absVal = Math.abs(raw);
                           return (
-                            <div className="inline-flex items-center justify-end gap-1">
+                            <div className="inline-flex items-center justify-end gap-1.5">
                               <span className={isDr ? 'text-foreground' : 'text-amber-400'}>
                                 ₹{absVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                               </span>
                               <span
-                                className={`text-[10px] font-semibold px-1 py-0.2 rounded ${
+                                className={`text-xs font-semibold px-1.5 py-0.5 rounded ${
                                   isDr
                                     ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
                                     : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
@@ -825,32 +825,32 @@ export default function LedgersPage() {
                           );
                         })()}
                       </td>
-                      <td className="py-3 px-4 text-center">
+                      <td className="py-3.5 px-4 text-center">
                         <span
-                          className={`inline-block w-2 h-2 rounded-full ${
+                          className={`inline-block w-2.5 h-2.5 rounded-full ${
                             l.is_active !== false ? 'bg-emerald-400' : 'bg-zinc-500'
                           }`}
                           title={l.is_active !== false ? 'Active' : 'Archived'}
                         />
                       </td>
-                      <td className="py-3 px-4 text-right" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1.5">
+                      <td className="py-3.5 px-4 text-right" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-2">
                           <Link
                             href={`/ledgers/${l.id}/statement`}
-                            className="p-1.5 rounded-lg border border-border/60 hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-colors cursor-pointer"
+                            className="p-2 rounded-lg border border-border/60 hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-colors cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
                             title="View Account Statement & Invoices"
                           >
-                            <FileText className="w-3.5 h-3.5" />
+                            <FileText className="w-4 h-4" />
                           </Link>
                           <button
                             onClick={e => {
                               e.stopPropagation();
                               handleOpenEditModal(l);
                             }}
-                            className="p-1.5 rounded-lg border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                            className="p-2 rounded-lg border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
                             title="Edit Account Head"
                           >
-                            <Edit2 className="w-3.5 h-3.5" />
+                            <Edit2 className="w-4 h-4" />
                           </button>
                           <button
                             onClick={e => {
@@ -858,10 +858,10 @@ export default function LedgersPage() {
                               setDeleteError('');
                               setDeletingLedger(l);
                             }}
-                            className="p-1.5 rounded-lg border border-border/60 hover:bg-rose-500/10 text-muted-foreground hover:text-rose-400 transition-colors cursor-pointer"
+                            className="p-2 rounded-lg border border-border/60 hover:bg-rose-500/10 text-muted-foreground hover:text-rose-400 transition-colors cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
                             title="Delete Account Head"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </td>

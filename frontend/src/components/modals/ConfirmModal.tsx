@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { AlertTriangle, Trash2, Info } from 'lucide-react';
 
 interface ConfirmModalProps {
@@ -52,7 +52,7 @@ export default function ConfirmModal({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div 
-        className="bg-muted/50 border border-border rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200"
+        className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-6">
@@ -60,14 +60,14 @@ export default function ConfirmModal({
             {styles.icon}
           </div>
           <h3 className="text-xl font-bold text-foreground mb-2">{title}</h3>
-          <p className="text-zinc-400 text-sm leading-relaxed">
+          <p className="text-muted-foreground text-sm leading-relaxed">
             {description}
           </p>
         </div>
-        <div className="flex items-center gap-3 p-4 bg-zinc-950 border-t border-border">
+        <div className="flex items-center gap-3 p-4 bg-muted/40 border-t border-border">
           <button 
             onClick={onClose}
-            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold text-zinc-300 bg-muted hover:bg-zinc-700 transition-colors"
+            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold text-foreground bg-secondary hover:bg-secondary/80 border border-border/50 transition-colors cursor-pointer"
           >
             {cancelText}
           </button>

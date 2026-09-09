@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
@@ -409,8 +409,8 @@ export default function PurchasePage() {
             
             <div className="p-2 space-y-6">
                 {groupedItems.map((group, gIndex) => (
-                    <div key={gIndex} className="border border-border rounded-lg overflow-hidden bg-zinc-900/30">
-                        <div className="p-3 sm:p-4 bg-zinc-900/80 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div key={gIndex} className="border border-border rounded-xl overflow-hidden bg-card shadow-sm">
+                        <div className="p-3 sm:p-4 bg-muted/40 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div className="flex-1 max-w-md flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                                 <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Category:</label>
                                 <select 
@@ -444,45 +444,45 @@ export default function PurchasePage() {
                         
                         <div className="overflow-x-auto">
                             <table className="w-full min-w-[550px] text-left border-collapse">
-                                <thead className="bg-zinc-900/40 text-muted-foreground text-xs uppercase tracking-wider">
+                                <thead className="bg-muted/60 text-muted-foreground text-xs uppercase tracking-wider">
                                     <tr>
-                                        <th className="p-3 font-medium">Product Name</th>
-                                        <th className="p-3 font-medium w-36">Brand</th>
-                                        <th className="p-3 font-medium w-24">Qty</th>
-                                        <th className="p-3 font-medium w-32">Rate (₹)</th>
-                                        <th className="p-3 font-medium w-24">Disc %</th>
-                                        <th className="p-3 font-medium w-32 text-right">Amount</th>
+                                        <th className="p-3 font-semibold">Product Name</th>
+                                        <th className="p-3 font-semibold w-36">Brand</th>
+                                        <th className="p-3 font-semibold w-24 text-center">Qty</th>
+                                        <th className="p-3 font-semibold w-32 text-right">Rate (₹)</th>
+                                        <th className="p-3 font-semibold w-24 text-center">Disc %</th>
+                                        <th className="p-3 font-semibold w-32 text-right">Amount</th>
                                         <th className="p-3 w-12"></th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-zinc-800/50">
+                                <tbody className="divide-y divide-border/60">
                                     {group.items.map((item, iIndex) => {
                                         const gross = Number(item.quantity) * Number(item.rate);
                                         const discount = gross * (Number(item.discount_percent)/100);
                                         const taxable = gross - discount;
                                         
                                         return (
-                                        <tr key={iIndex} className="hover:bg-zinc-800/40 transition-colors">
+                                        <tr key={iIndex} className="hover:bg-muted/40 transition-colors">
                                             <td className="p-2">
-                                                <input type="text" placeholder="e.g. Item Name" value={item.product_name} onChange={e => updateItem(gIndex, iIndex, 'product_name', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-sm" />
+                                                <input type="text" placeholder="e.g. Item Name" value={item.product_name} onChange={e => updateItem(gIndex, iIndex, 'product_name', e.target.value)} className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-sm font-medium" />
                                             </td>
                                             <td className="p-2">
-                                                <input type="text" placeholder="e.g. Fenner" value={item.brand || ''} onChange={e => updateItem(gIndex, iIndex, 'brand', e.target.value)} className="w-full bg-transparent border border-border hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-sm" />
+                                                <input type="text" placeholder="e.g. Fenner" value={item.brand || ''} onChange={e => updateItem(gIndex, iIndex, 'brand', e.target.value)} className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-sm font-medium" />
                                             </td>
                                             <td className="p-2">
-                                                <input type="number" min="1" value={item.quantity} onChange={e => updateItem(gIndex, iIndex, 'quantity', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-center text-sm" />
+                                                <input type="number" min="1" value={item.quantity} onChange={e => updateItem(gIndex, iIndex, 'quantity', e.target.value)} className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-center text-sm font-mono tabular-nums font-semibold" />
                                             </td>
                                             <td className="p-2">
-                                                <input type="number" min="0" value={item.rate} onChange={e => updateItem(gIndex, iIndex, 'rate', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-right text-sm" />
+                                                <input type="number" min="0" value={item.rate} onChange={e => updateItem(gIndex, iIndex, 'rate', e.target.value)} className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-right text-sm font-mono tabular-nums font-semibold" />
                                             </td>
                                             <td className="p-2">
-                                                <input type="number" min="0" max="100" value={item.discount_percent} onChange={e => updateItem(gIndex, iIndex, 'discount_percent', e.target.value)} className="w-full bg-transparent border border-transparent hover:border-input focus:border-blue-500 rounded p-1.5 outline-none text-foreground transition-all text-center text-sm" />
+                                                <input type="number" min="0" max="100" value={item.discount_percent} onChange={e => updateItem(gIndex, iIndex, 'discount_percent', e.target.value)} className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-center text-sm font-mono tabular-nums font-semibold" />
                                             </td>
-                                            <td className="p-2 text-right font-medium text-foreground">
+                                            <td className="p-2 text-right font-bold text-foreground font-mono tabular-nums text-sm">
                                                 ₹{taxable.toFixed(2)}
                                             </td>
                                             <td className="p-2 text-center">
-                                                <button onClick={() => removeRow(gIndex, iIndex)} className="text-zinc-600 hover:text-red-400 transition-colors p-1">
+                                                <button onClick={() => removeRow(gIndex, iIndex)} className="text-muted-foreground hover:text-destructive transition-colors p-1.5 rounded hover:bg-destructive/10 min-w-[32px] min-h-[32px] inline-flex items-center justify-center">
                                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                                 </button>
                                             </td>
@@ -511,30 +511,30 @@ export default function PurchasePage() {
         {/* Totals Section */}
         <div className="flex justify-end">
             <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-sm p-6 space-y-3">
-                <div className="flex justify-between text-muted-foreground">
+                <div className="flex justify-between text-muted-foreground text-sm">
                     <span>Gross Total</span>
-                    <span>₹{grossTotal.toFixed(2)}</span>
+                    <span className="font-mono tabular-nums font-semibold text-foreground">₹{grossTotal.toFixed(2)}</span>
                 </div>
                 {isInterState ? (
-                    <div className="flex justify-between text-blue-400">
+                    <div className="flex justify-between text-primary text-sm font-medium">
                         <span>IGST</span>
-                        <span>₹{totalTax.toFixed(2)}</span>
+                        <span className="font-mono tabular-nums font-semibold">₹{totalTax.toFixed(2)}</span>
                     </div>
                 ) : (
                     <>
-                        <div className="flex justify-between text-muted-foreground">
+                        <div className="flex justify-between text-muted-foreground text-sm">
                             <span>CGST</span>
-                            <span>₹{(totalTax / 2).toFixed(2)}</span>
+                            <span className="font-mono tabular-nums font-semibold text-foreground">₹{(totalTax / 2).toFixed(2)}</span>
                         </div>
-                        <div className="flex justify-between text-muted-foreground">
+                        <div className="flex justify-between text-muted-foreground text-sm">
                             <span>SGST</span>
-                            <span>₹{(totalTax / 2).toFixed(2)}</span>
+                            <span className="font-mono tabular-nums font-semibold text-foreground">₹{(totalTax / 2).toFixed(2)}</span>
                         </div>
                     </>
                 )}
-                <div className="flex justify-between items-center text-muted-foreground">
+                <div className="flex justify-between items-center text-muted-foreground text-sm">
                     <span>Cartage / Freight Inward</span>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1.5">
                         <span className="text-muted-foreground font-mono text-sm">₹</span>
                         <input
                             type="number"
@@ -543,19 +543,19 @@ export default function PurchasePage() {
                             value={cartageAmount}
                             onChange={(e) => setCartageAmount(e.target.value)}
                             placeholder="0.00"
-                            className="w-28 bg-muted/50 border border-input text-foreground text-right px-2 py-1 rounded font-mono text-sm focus:ring-1 focus:ring-blue-500 outline-none"
+                            className="w-32 bg-background border border-border text-foreground text-right px-3 py-1.5 rounded-lg font-mono tabular-nums font-semibold text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
                         />
                     </div>
                 </div>
-                <div className="flex justify-between text-muted-foreground">
+                <div className="flex justify-between text-muted-foreground text-sm">
                     <span>Round Off</span>
-                    <span className={roundOff < 0 ? "text-emerald-400 font-mono font-medium" : roundOff > 0 ? "text-amber-400 font-mono font-medium" : "text-muted-foreground font-mono"}>
+                    <span className={roundOff < 0 ? "text-emerald-500 font-mono tabular-nums font-semibold" : roundOff > 0 ? "text-amber-500 font-mono tabular-nums font-semibold" : "text-muted-foreground font-mono tabular-nums"}>
                         {roundOff > 0 ? `+₹${roundOff.toFixed(2)}` : roundOff < 0 ? `-₹${Math.abs(roundOff).toFixed(2)}` : `₹0.00`}
                     </span>
                 </div>
-                <div className="border-t border-input pt-3 flex justify-between text-xl font-bold text-foreground">
+                <div className="border-t border-border pt-4 flex justify-between text-xl font-bold text-foreground">
                     <span>Grand Total</span>
-                    <span className="font-mono">₹{grandTotal.toFixed(2)}</span>
+                    <span className="font-mono tabular-nums text-2xl text-primary font-black">₹{grandTotal.toFixed(2)}</span>
                 </div>
             </div>
         </div>
