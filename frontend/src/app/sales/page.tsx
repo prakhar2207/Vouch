@@ -321,6 +321,7 @@ export default function SalesInvoiceList() {
                     <th className="p-4">Date</th>
                     <th className="p-4">Party Name</th>
                     <th className="p-4 text-right">Total Amount</th>
+                    <th className="p-4 text-center">Payment</th>
                     <th className="p-4 text-center">Status</th>
                     <th className="p-4 text-right">Actions</th>
                   </tr>
@@ -344,6 +345,24 @@ export default function SalesInvoiceList() {
                         <td className="p-4 text-muted-foreground font-mono">{inv.date}</td>
                         <td className="p-4 text-foreground font-semibold text-sm">{inv.party_name}</td>
                         <td className="p-4 font-bold text-foreground text-right font-mono tabular-nums text-sm">₹{parseFloat(inv.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td className="p-4 text-center">
+                          {inv.payment_status === 'PAID' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-mono">
+                              PAID
+                            </span>
+                          ) : inv.payment_status === 'PARTIAL' ? (
+                            <span
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/20 font-mono"
+                              title={`Paid: ₹${inv.paid_amount || 0}`}
+                            >
+                              PARTIAL (₹{Number(inv.paid_amount || 0).toLocaleString('en-IN')})
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/20 font-mono">
+                              UNPAID
+                            </span>
+                          )}
+                        </td>
                         <td className="p-4 text-center">
                           {inv.isOffline || inv.status === 'PENDING_SYNC' ? (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">

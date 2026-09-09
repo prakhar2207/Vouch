@@ -1,4 +1,4 @@
-﻿from rest_framework.views import APIView
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from apps.companies.models import Company
@@ -36,9 +36,16 @@ class RFMAnalysisView(APIView):
 class SalesForecastView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, company_id):
+    def get(self, request, company_id=None):
         try:
-            company = Company.objects.get(id=company_id, users__user=request.user)
+            if not company_id:
+                company = Company.objects.filter(users__user=request.user).first()
+            else:
+                company = Company.objects.get(id=company_id, users__user=request.user)
+
+            if not company:
+                return Response({"success": False, "error": "Company not found"}, status=404)
+
             days = int(request.query_params.get('days', 30))
             data = AnalyticsEngine.forecast_sales(company, days=days)
             return Response({"success": True, "data": data})

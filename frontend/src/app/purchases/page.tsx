@@ -266,13 +266,28 @@ export default function PurchaseInvoiceList() {
                           </span>
                         )}
                       </div>
-                      <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
-                        inv.status === "POSTED"
-                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                          : "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                      }`}>
-                        {inv.status}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {inv.payment_status === 'PAID' ? (
+                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+                            PAID
+                          </span>
+                        ) : inv.payment_status === 'PARTIAL' ? (
+                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono">
+                            PARTIAL
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 font-mono">
+                            UNPAID
+                          </span>
+                        )}
+                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
+                          inv.status === "POSTED"
+                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                            : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                        }`}>
+                          {inv.status}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="flex items-center justify-between text-xs">
@@ -321,6 +336,7 @@ export default function PurchaseInvoiceList() {
                     <th className="p-4">Date</th>
                     <th className="p-4">Supplier Party</th>
                     <th className="p-4 text-right">Total Amount</th>
+                    <th className="p-4 text-center">Payment</th>
                     <th className="p-4 text-center">Status</th>
                     <th className="p-4 text-right">Actions</th>
                   </tr>
@@ -361,6 +377,26 @@ export default function PurchaseInvoiceList() {
                       {/* Amount */}
                       <td className="p-4 font-bold text-foreground font-mono tabular-nums text-right text-sm">
                         ₹{parseFloat(inv.total_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
+
+                      {/* Payment */}
+                      <td className="p-4 text-center">
+                        {inv.payment_status === 'PAID' ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+                            PAID
+                          </span>
+                        ) : inv.payment_status === 'PARTIAL' ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono"
+                            title={`Paid: ₹${inv.paid_amount || 0}`}
+                          >
+                            PARTIAL (₹{Number(inv.paid_amount || 0).toLocaleString('en-IN')})
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 font-mono">
+                            UNPAID
+                          </span>
+                        )}
                       </td>
 
                       {/* Status */}

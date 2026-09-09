@@ -153,3 +153,92 @@ class CompanyViewSet(viewsets.ModelViewSet):
             
         settings.save()
         return Response({"success": True, "message": "Settings updated"})
+
+    @action(detail=True, methods=['get', 'post'])
+    def members(self, request, pk=None):
+        company = self.get_object()
+        from apps.accounts.models import User
+        from .models import UserCompany
+
+        if request.method == 'GET':
+            user_companies = UserCompany.objects.filter(company=company).select_related('user').order_by('created_at')
+            data = [
+                {
+                    "id": str(uc.id),
+                    "user_id": str(uc.user.id),
+                    "email": uc.user.email,
+                    "name": uc.user.first_name or uc.user.email.split('@')[0],
+                    "role": uc.role,
+                    "is_current_user": uc.user_id == request.user.id,
+                    "created_at": uc.created_at.strftime('%Y-%m-%d')
+                }
+                for uc in user_companies
+            ]
+            return Response({"success": True, "data": data})
+
+        # POST: Invite or add member
+        if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN']):
+            return Response({"success": False, "error": "Only Owners and Admins can invite team members."}, status=status.HTTP_403_FORBIDDEN)
+
+        email = (request.data.get('email') or '').strip().lower()
+        role = (request.data.get('role') or 'VIEWER').strip().upper()
+        if not email:
+            return Response({"success": False, "error": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        allowed_roles = ['ADMIN', 'ACCOUNTANT', 'SALES', 'PURCHASE', 'VIEWER']
+        if role not in allowed_roles:
+            return Response({"success": False, "error": f"Invalid role. Allowed roles: {', '.join(allowed_roles)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(email__iexact=email).first()
+        if not user:
+            import secrets
+            temp_pass = secrets.token_urlsafe(12) + "A1!"
+            user = User.objects.create_user(email=email, password=temp_pass)
+
+        uc, created = UserCompany.objects.get_or_create(
+            company=company,
+            user=user,
+            defaults={'role': role}
+        )
+        if not created:
+            uc.role = role
+            uc.save(update_fields=['role'])
+
+        return Response({
+            "success": True,
+            "message": f"User '{email}' assigned role '{role}'.",
+            "data": {
+                "id": str(uc.id),
+                "user_id": str(user.id),
+                "email": user.email,
+                "role": uc.role
+            }
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['patch', 'delete'], url_path=r'members/(?P<member_id>[^/.]+)')
+    def member_detail(self, request, pk=None, member_id=None):
+        company = self.get_object()
+        from .models import UserCompany
+
+        if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN']):
+            return Response({"success": False, "error": "Only Owners and Admins can manage team members."}, status=status.HTTP_403_FORBIDDEN)
+
+        uc = UserCompany.objects.filter(id=member_id, company=company).first()
+        if not uc:
+            return Response({"success": False, "error": "Member not found in this company."}, status=status.HTTP_404_NOT_FOUND)
+
+        if uc.role == 'OWNER' and not getattr(request.user, 'is_superuser', False):
+            return Response({"success": False, "error": "Company Owner cannot be modified or removed."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if request.method == 'DELETE':
+            uc.delete()
+            return Response({"success": True, "message": "Member removed from company."})
+
+        new_role = (request.data.get('role') or '').strip().upper()
+        allowed_roles = ['ADMIN', 'ACCOUNTANT', 'SALES', 'PURCHASE', 'VIEWER']
+        if new_role not in allowed_roles:
+            return Response({"success": False, "error": f"Invalid role: {new_role}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        uc.role = new_role
+        uc.save(update_fields=['role'])
+        return Response({"success": True, "message": f"Role updated to {new_role}."})

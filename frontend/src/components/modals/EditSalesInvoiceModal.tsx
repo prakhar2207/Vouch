@@ -53,6 +53,9 @@ export default function EditSalesInvoiceModal({
   const [narration, setNarration] = useState("");
   const [cartageAmount, setCartageAmount] = useState<number | string>("");
   const [items, setItems] = useState<EditableSalesItem[]>([]);
+  const [allocations, setAllocations] = useState<any[]>([]);
+  const [paidAmount, setPaidAmount] = useState<number>(0);
+  const [paymentStatus, setPaymentStatus] = useState<string>("UNPAID");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -75,6 +78,9 @@ export default function EditSalesInvoiceModal({
         setPartyName(v.party?.name || "");
         setNarration(v.narration || "");
         setCartageAmount(v.cartage_amount ? Number(v.cartage_amount) : "");
+        setAllocations(v.allocations || []);
+        setPaidAmount(Number(v.paid_amount || 0));
+        setPaymentStatus(v.payment_status || "UNPAID");
 
         const loadedItems: EditableSalesItem[] = (v.items || []).map((item: any) => ({
           id: item.id,
@@ -607,6 +613,52 @@ export default function EditSalesInvoiceModal({
                   </span>
                 </div>
               </div>
+            </div>
+
+            {/* Payment Settlements & Bill Allocations Breakdown */}
+            <div className="bg-muted/30 p-4 rounded-xl border border-border/70 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Receipt className="w-4 h-4 text-primary" />
+                  <h4 className="text-xs font-bold text-foreground">Linked Payments & Bill Allocations</h4>
+                </div>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono border ${
+                  paymentStatus === 'PAID'
+                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                    : paymentStatus === 'PARTIAL'
+                    ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                    : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                }`}>
+                  {paymentStatus} (₹{paidAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} Settled)
+                </span>
+              </div>
+
+              {allocations.length > 0 ? (
+                <div className="overflow-x-auto rounded-lg border border-border/50">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead className="bg-muted/60 text-muted-foreground text-[10px] uppercase">
+                      <tr>
+                        <th className="p-2">Receipt Voucher</th>
+                        <th className="p-2">Date</th>
+                        <th className="p-2 text-right">Allocated Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {allocations.map((alloc: any, i: number) => (
+                        <tr key={alloc.id || i} className="hover:bg-muted/20">
+                          <td className="p-2 text-foreground font-semibold">{alloc.voucher_number || `Voucher #${alloc.voucher_id?.slice(0, 8)}`}</td>
+                          <td className="p-2 text-muted-foreground">{alloc.voucher_date || '-'}</td>
+                          <td className="p-2 text-right font-bold text-emerald-500">₹{Number(alloc.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  No payment receipts allocated against this invoice yet. Outstanding balance: ₹{Math.max(0, grandTotal - paidAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}.
+                </p>
+              )}
             </div>
 
             {/* Modal Footer */}

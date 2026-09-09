@@ -287,8 +287,39 @@ class ListVouchersAPIView(APIView):
             ).order_by('-voucher_date', '-created_at')
 
             page_vouchers = list(vouchers[offset:offset+limit])
-            data = [
-                {
+
+            from apps.accounting.models import PaymentAllocation
+            from django.db.models import Sum
+            page_v_ids = [v.id for v in page_vouchers]
+            alloc_by_inv = {row['invoice_voucher_id']: row['paid'] for row in PaymentAllocation.objects.filter(invoice_voucher_id__in=page_v_ids).values('invoice_voucher_id').annotate(paid=Sum('allocated_amount'))}
+            alloc_by_pmt = {row['payment_voucher_id']: row['allocated'] for row in PaymentAllocation.objects.filter(payment_voucher_id__in=page_v_ids).values('payment_voucher_id').annotate(allocated=Sum('allocated_amount'))}
+
+            data = []
+            for v in page_vouchers:
+                tot = v.total_amount or Decimal('0.00')
+                if v.voucher_type in ['SALES', 'PURCHASE']:
+                    paid = alloc_by_inv.get(v.id, Decimal('0.00'))
+                    if paid >= tot and tot > 0:
+                        p_status = 'PAID'
+                    elif paid > 0:
+                        p_status = 'PARTIAL'
+                    else:
+                        p_status = 'UNPAID'
+                    paid_amt = float(paid)
+                elif v.voucher_type in ['PAYMENT', 'RECEIPT']:
+                    allocated = alloc_by_pmt.get(v.id, Decimal('0.00'))
+                    if allocated >= tot and tot > 0:
+                        p_status = 'ALLOCATED'
+                    elif allocated > 0:
+                        p_status = 'PARTIAL'
+                    else:
+                        p_status = 'UNALLOCATED'
+                    paid_amt = float(allocated)
+                else:
+                    p_status = 'N/A'
+                    paid_amt = 0.0
+
+                data.append({
                     "id": str(v.id),
                     "voucher_number": v.reference_number if (v.voucher_type == 'PURCHASE' and v.reference_number and not v.voucher_number.startswith('G/')) else v.voucher_number,
                     "reference_number": v.reference_number or "",
@@ -296,10 +327,11 @@ class ListVouchersAPIView(APIView):
                     "date": v.voucher_date.strftime('%Y-%m-%d'),
                     "status": v.status,
                     "total_amount": v.total_amount,
+                    "paid_amount": paid_amt,
+                    "payment_status": p_status,
                     "has_attachment": bool(v.has_attachment_flag),
                     "party_name": v.party_ledger.name if v.party_ledger else "N/A"
-                } for v in page_vouchers
-            ]
+                })
             return Response({
                 "success": True,
                 "data": data,
@@ -372,6 +404,32 @@ class VoucherDetailAPIView(APIView):
                     if entry.ledger_id != voucher.party_ledger_id:
                         payment_ledger_obj = entry.ledger
 
+            from apps.accounting.models import PaymentAllocation
+            allocations_data = []
+            paid_amount_total = Decimal('0.00')
+            if voucher.voucher_type in ['SALES', 'PURCHASE']:
+                for alloc in PaymentAllocation.objects.filter(invoice_voucher=voucher).select_related('payment_voucher'):
+                    paid_amount_total += alloc.allocated_amount
+                    allocations_data.append({
+                        "id": str(alloc.id),
+                        "voucher_id": str(alloc.payment_voucher_id),
+                        "voucher_number": alloc.payment_voucher.voucher_number,
+                        "voucher_type": alloc.payment_voucher.voucher_type,
+                        "date": alloc.payment_voucher.voucher_date.strftime('%Y-%m-%d'),
+                        "allocated_amount": float(alloc.allocated_amount)
+                    })
+            elif voucher.voucher_type in ['PAYMENT', 'RECEIPT']:
+                for alloc in PaymentAllocation.objects.filter(payment_voucher=voucher).select_related('invoice_voucher'):
+                    paid_amount_total += alloc.allocated_amount
+                    allocations_data.append({
+                        "id": str(alloc.id),
+                        "voucher_id": str(alloc.invoice_voucher_id),
+                        "voucher_number": alloc.invoice_voucher.voucher_number,
+                        "voucher_type": alloc.invoice_voucher.voucher_type,
+                        "date": alloc.invoice_voucher.voucher_date.strftime('%Y-%m-%d'),
+                        "allocated_amount": float(alloc.allocated_amount)
+                    })
+
             data = {
                 "id": str(voucher.id),
                 "voucher_number": voucher.voucher_number,
@@ -379,6 +437,9 @@ class VoucherDetailAPIView(APIView):
                 "date": voucher.voucher_date.strftime('%Y-%m-%d'),
                 "status": voucher.status,
                 "total_amount": voucher.total_amount,
+                "paid_amount": float(paid_amount_total),
+                "unallocated_amount": float(max(Decimal('0.00'), (voucher.total_amount or Decimal('0.00')) - paid_amount_total)),
+                "allocations": allocations_data,
                 "cartage_amount": float(cartage_amount),
                 "round_off_amount": float(round_off_amount),
                 "narration": voucher.narration,
@@ -1458,8 +1519,38 @@ class UniversalVoucherAPIView(APIView):
 
             page_vouchers = list(qs[offset:offset+limit])
 
-            data = [
-                {
+            from apps.accounting.models import PaymentAllocation
+            from django.db.models import Sum
+            page_v_ids = [v.id for v in page_vouchers]
+            alloc_by_inv = {row['invoice_voucher_id']: row['paid'] for row in PaymentAllocation.objects.filter(invoice_voucher_id__in=page_v_ids).values('invoice_voucher_id').annotate(paid=Sum('allocated_amount'))}
+            alloc_by_pmt = {row['payment_voucher_id']: row['allocated'] for row in PaymentAllocation.objects.filter(payment_voucher_id__in=page_v_ids).values('payment_voucher_id').annotate(allocated=Sum('allocated_amount'))}
+
+            data = []
+            for v in page_vouchers:
+                tot = v.total_amount or Decimal('0.00')
+                if v.voucher_type in ['SALES', 'PURCHASE']:
+                    paid = alloc_by_inv.get(v.id, Decimal('0.00'))
+                    if paid >= tot and tot > 0:
+                        p_status = 'PAID'
+                    elif paid > 0:
+                        p_status = 'PARTIAL'
+                    else:
+                        p_status = 'UNPAID'
+                    paid_amt = float(paid)
+                elif v.voucher_type in ['PAYMENT', 'RECEIPT']:
+                    allocated = alloc_by_pmt.get(v.id, Decimal('0.00'))
+                    if allocated >= tot and tot > 0:
+                        p_status = 'ALLOCATED'
+                    elif allocated > 0:
+                        p_status = 'PARTIAL'
+                    else:
+                        p_status = 'UNALLOCATED'
+                    paid_amt = float(allocated)
+                else:
+                    p_status = 'N/A'
+                    paid_amt = 0.0
+
+                data.append({
                     "id": str(v.id),
                     "voucher_number": v.reference_number if (v.voucher_type == 'PURCHASE' and v.reference_number and not v.voucher_number.startswith('G/')) else v.voucher_number,
                     "reference_number": v.reference_number or "",
@@ -1467,12 +1558,13 @@ class UniversalVoucherAPIView(APIView):
                     "date": v.voucher_date.strftime('%Y-%m-%d'),
                     "status": v.status,
                     "total_amount": str(v.total_amount),
+                    "paid_amount": paid_amt,
+                    "payment_status": p_status,
                     "party_name": v.party_ledger.name if v.party_ledger else "General Entry",
                     "narration": v.narration or "",
                     "has_attachment": bool(v.has_attachment_flag),
                     "attachment_mime": v.attachment_mime or "",
-                } for v in page_vouchers
-            ]
+                })
             return Response({
                 "success": True,
                 "data": data,
@@ -1745,6 +1837,30 @@ class PartyRatesAPIView(APIView):
                         rates_map[pname] = entry
 
             return Response({"success": True, "data": rates_map})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class RebuildBalancesAPIView(APIView):
+    permission_classes = [IsAuthenticated, CanManageLedgers]
+
+    def post(self, request, company_id=None):
+        try:
+            from apps.companies.models import Company
+            from apps.accounting.services.balance_rebuild import BalanceRebuildService
+            if company_id:
+                company = Company.objects.get(id=company_id, users__user=request.user)
+            else:
+                company = Company.objects.filter(users__user=request.user).first()
+            if not company:
+                return Response({"success": False, "error": "Company not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            res = BalanceRebuildService.rebuild_company_ledger_balances(company)
+            return Response({
+                "success": True,
+                "message": f"Successfully recalculated {res['rebuilt_ledgers_count']} ledger balances.",
+                "data": res
+            })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 

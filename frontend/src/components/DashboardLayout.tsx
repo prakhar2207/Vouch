@@ -24,6 +24,8 @@ import {
   Lock,
   Scissors,
   ArrowRight,
+  Scale,
+  ShieldCheck,
 } from "lucide-react";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -99,7 +101,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const isReportsActive =
     pathname.startsWith("/export") ||
-    pathname.startsWith("/analytics");
+    pathname.startsWith("/analytics") ||
+    pathname.startsWith("/reports") ||
+    pathname.startsWith("/audit");
 
   return (
     <div className="min-h-screen bg-background font-sans text-foreground flex flex-col">
@@ -301,6 +305,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <Link
                       href="/parties"
+                      onClick={() => setIsReportsDropdownOpen(false)}
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                     >
                       <div>
@@ -308,6 +313,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         <div className="text-xs text-muted-foreground">Party running balance</div>
                       </div>
                       <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                    </Link>
+                    <Link
+                      href="/reports/trial-balance"
+                      onClick={() => setIsReportsDropdownOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-medium">Trial Balance</div>
+                        <div className="text-xs text-muted-foreground">Ledger equilibrium & balances</div>
+                      </div>
+                      <span className="text-xs font-mono font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded">TB</span>
+                    </Link>
+                    <Link
+                      href="/audit"
+                      onClick={() => setIsReportsDropdownOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-medium">Audit Trail</div>
+                        <div className="text-xs text-muted-foreground">Tamper-evident system logs</div>
+                      </div>
+                      <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
                     </Link>
                     <div className="border-t border-border/40 my-1"></div>
                     <button
@@ -576,6 +603,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               >
                 <span>Tally XML Export</span>
                 <kbd className="text-xs font-mono font-semibold px-1.5 py-0.5 bg-muted border border-border/60 rounded text-muted-foreground">Alt+O</kbd>
+              </Link>
+              <Link
+                href="/reports/trial-balance"
+                onClick={() => setIsMobileNavOpen(false)}
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                  pathname.startsWith("/reports/trial-balance") ? "bg-muted font-semibold text-foreground" : "text-muted-foreground hover:bg-muted/60"
+                }`}
+              >
+                <span>Trial Balance</span>
+                <span className="text-xs font-mono font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded">TB</span>
+              </Link>
+              <Link
+                href="/audit"
+                onClick={() => setIsMobileNavOpen(false)}
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                  pathname.startsWith("/audit") ? "bg-muted font-semibold text-foreground" : "text-muted-foreground hover:bg-muted/60"
+                }`}
+              >
+                <span>Audit Trail</span>
+                <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
               </Link>
               <Link
                 href="/settings"

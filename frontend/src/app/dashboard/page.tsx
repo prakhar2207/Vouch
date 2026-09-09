@@ -38,6 +38,8 @@ export default function Dashboard() {
   const { startTour, setIsHelpOpen } = useShortcuts();
   const [insights, setInsights] = useState<any>(null);
   const [vouchers, setVouchers] = useState<any[]>([]);
+  const [forecast, setForecast] = useState<any>(null);
+  const [chartMode, setChartMode] = useState<'VELOCITY' | 'FORECAST'>('VELOCITY');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -60,13 +62,17 @@ export default function Dashboard() {
           return;
         }
 
-        const [insightsRes, vouchersRes] = await Promise.all([
+        const [insightsRes, vouchersRes, forecastRes] = await Promise.all([
           axios.get(`${API_BASE_URL}/api/insights/`, { headers }).catch(() => ({ data: { data: null } })),
           axios.get(`${API_BASE_URL}/api/vouchers/`, { headers }).catch(() => ({ data: { data: [] } })),
+          axios.get(`${API_BASE_URL}/api/v1/analytics/forecast/?days=30`, { headers }).catch(() => ({ data: { data: null } })),
         ]);
 
         setInsights(insightsRes.data?.data);
         setVouchers(vouchersRes.data?.data || []);
+        if (forecastRes.data?.success && forecastRes.data?.data) {
+          setForecast(forecastRes.data.data);
+        }
       } catch (err) {
         console.error(err);
         setError("Failed to fetch dashboard data.");
@@ -267,72 +273,172 @@ export default function Dashboard() {
 
         {/* Task 4: Clean 2-Column Section (60% Sales Velocity / 40% Top Customers) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          {/* Left: Sales Velocity Area Chart (60% width) */}
+          {/* Left: Sales Velocity & Predictive AI Forecast Area Chart (60% width) */}
           <div className="lg:col-span-7 bg-card border border-border/50 rounded-xl p-5 shadow-2xs flex flex-col space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                  <span>Sales Velocity</span>
-                  <span title="Daily revenue trajectory over time" className="cursor-help text-muted-foreground hover:text-foreground">
+                  <span>{chartMode === 'VELOCITY' ? 'Sales Velocity' : 'AI Sales Forecast (30-Day)'}</span>
+                  <span title={chartMode === 'VELOCITY' ? 'Daily revenue trajectory over time' : 'Machine learning linear projection over historical velocity'} className="cursor-help text-muted-foreground hover:text-foreground">
                     <Info className="w-3.5 h-3.5" />
                   </span>
                 </h2>
-                <p className="text-xs text-muted-foreground">Day-to-day revenue flow and billing frequency</p>
+                <p className="text-xs text-muted-foreground">
+                  {chartMode === 'VELOCITY' ? 'Day-to-day revenue flow and billing frequency' : 'Predictive revenue trajectory with confidence intervals'}
+                </p>
               </div>
 
-              {trend.growth_rate_pct !== 0 && (
-                <span className={`px-2 py-0.5 text-[11px] font-mono font-medium rounded border ${
-                  trend.growth_rate_pct > 0
-                    ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                    : "bg-rose-500/10 text-rose-500 border-rose-500/20"
-                }`}>
-                  {trend.growth_rate_pct > 0 ? `+${trend.growth_rate_pct}%` : `${trend.growth_rate_pct}%`}
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                <div className="flex items-center bg-muted/60 p-1 rounded-lg border border-border/40">
+                  <button
+                    type="button"
+                    onClick={() => setChartMode('VELOCITY')}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors cursor-pointer ${
+                      chartMode === 'VELOCITY'
+                        ? 'bg-card text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Historical
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChartMode('FORECAST')}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors flex items-center gap-1 cursor-pointer ${
+                      chartMode === 'FORECAST'
+                        ? 'bg-purple-600 text-white shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <Sparkles className="w-3 h-3 text-amber-300" />
+                    <span>AI Forecast</span>
+                  </button>
+                </div>
+
+                {chartMode === 'VELOCITY' && trend.growth_rate_pct !== 0 && (
+                  <span className={`px-2 py-0.5 text-[11px] font-mono font-medium rounded border ${
+                    trend.growth_rate_pct > 0
+                      ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                      : "bg-rose-500/10 text-rose-500 border-rose-500/20"
+                  }`}>
+                    {trend.growth_rate_pct > 0 ? `+${trend.growth_rate_pct}%` : `${trend.growth_rate_pct}%`}
+                  </span>
+                )}
+                {chartMode === 'FORECAST' && forecast && (
+                  <span className={`px-2 py-0.5 text-[11px] font-mono font-medium rounded border ${
+                    forecast.trend_status === 'Booming'
+                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                      : forecast.trend_status === 'Declining'
+                      ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                      : "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                  }`}>
+                    {forecast.trend_status}
+                  </span>
+                )}
+              </div>
             </div>
 
-            <div className="h-60 w-full pt-1">
-              {trend.daily_trend && trend.daily_trend.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={trend.daily_trend}>
-                    <defs>
-                      <linearGradient id="salesVelocityGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25} />
-                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" />
-                    <XAxis dataKey="date" stroke="currentColor" className="text-muted-foreground" fontSize={12} />
-                    <YAxis stroke="currentColor" className="text-muted-foreground" fontSize={12} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "var(--card)",
-                        borderColor: "var(--border)",
-                        borderRadius: "8px",
-                        fontSize: "12px",
-                      }}
-                      formatter={(val: any) => [`₹${Number(val).toLocaleString("en-IN")}`, "Sales"]}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="sales"
-                      stroke="#3b82f6"
-                      strokeWidth={2}
-                      fillOpacity={1}
-                      fill="url(#salesVelocityGrad)"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center border border-dashed border-border/60 rounded-lg text-center p-6 space-y-1.5">
-                  <TrendingUp className="w-6 h-6 text-muted-foreground/40" />
-                  <div className="text-xs font-medium text-muted-foreground">No transaction data yet</div>
-                  <div className="text-xs text-muted-foreground/80">
-                    Create a sales invoice (<kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F8</kbd>) to start tracking velocity.
+            {chartMode === 'FORECAST' ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs px-1 text-muted-foreground font-sans">
+                  <div>
+                    Projected Total: <span className="font-bold text-foreground font-mono">₹{(forecast?.projected_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div>
+                    Daily Avg: <span className="font-bold text-foreground font-mono">₹{(forecast?.projected_daily_average || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                   </div>
                 </div>
-              )}
-            </div>
+
+                <div className="h-48 w-full pt-1">
+                  {forecast?.daily_forecast && forecast.daily_forecast.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={forecast.daily_forecast}>
+                        <defs>
+                          <linearGradient id="forecastGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.35} />
+                            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" />
+                        <XAxis dataKey="date" stroke="currentColor" className="text-muted-foreground" fontSize={11} />
+                        <YAxis stroke="currentColor" className="text-muted-foreground" fontSize={11} />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: "var(--card)",
+                            borderColor: "var(--border)",
+                            borderRadius: "8px",
+                            fontSize: "12px",
+                          }}
+                          formatter={(val: any) => [`₹${Number(val).toLocaleString("en-IN")}`, "Projected Sales"]}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="projected_sales"
+                          stroke="#8b5cf6"
+                          strokeWidth={2}
+                          fillOpacity={1}
+                          fill="url(#forecastGrad)"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                      No sales data available for projection.
+                    </div>
+                  )}
+                </div>
+
+                {forecast?.trend_summary && (
+                  <div className="text-[11px] text-muted-foreground bg-muted/40 px-3 py-1.5 rounded-lg border border-border/40 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                    <span>{forecast.trend_summary}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="h-60 w-full pt-1">
+                {trend.daily_trend && trend.daily_trend.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={trend.daily_trend}>
+                      <defs>
+                        <linearGradient id="salesVelocityGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25} />
+                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" />
+                      <XAxis dataKey="date" stroke="currentColor" className="text-muted-foreground" fontSize={12} />
+                      <YAxis stroke="currentColor" className="text-muted-foreground" fontSize={12} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "var(--card)",
+                          borderColor: "var(--border)",
+                          borderRadius: "8px",
+                          fontSize: "12px",
+                        }}
+                        formatter={(val: any) => [`₹${Number(val).toLocaleString("en-IN")}`, "Sales"]}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="sales"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        fillOpacity={1}
+                        fill="url(#salesVelocityGrad)"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center border border-dashed border-border/60 rounded-lg text-center p-6 space-y-1.5">
+                    <TrendingUp className="w-6 h-6 text-muted-foreground/40" />
+                    <div className="text-xs font-medium text-muted-foreground">No transaction data yet</div>
+                    <div className="text-xs text-muted-foreground/80">
+                      Create a sales invoice (<kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F8</kbd>) to start tracking velocity.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Right: Top Customers & Outstandings (40% width) */}

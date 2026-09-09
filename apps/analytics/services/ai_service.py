@@ -145,6 +145,47 @@ class AnalyticsEngine:
         }
 
     @staticmethod
+    def forecast_sales(company: Company, days: int = 30):
+        """
+        Projects future daily sales for the next `days` using linear trend projection
+        over historical sales voucher velocity.
+        """
+        import datetime
+        trend_info = AnalyticsEngine.get_sales_trend(company)
+        avg_sales = float(trend_info.get("average_daily_sales", 0.0))
+        slope = float(trend_info.get("slope", 0.0))
+        status = trend_info.get("status", "Constant")
+
+        today = datetime.date.today()
+        forecast_list = []
+        projected_total = 0.0
+
+        for i in range(1, days + 1):
+            future_date = today + datetime.timedelta(days=i)
+            base_proj = max(0.0, avg_sales + (slope * (i / 10.0)))
+            lower = max(0.0, round(base_proj * 0.85, 2))
+            upper = round(base_proj * 1.15, 2)
+            proj = round(base_proj, 2)
+            projected_total += proj
+
+            forecast_list.append({
+                "date": future_date.strftime('%Y-%m-%d'),
+                "projected_sales": proj,
+                "lower_bound": lower,
+                "upper_bound": upper
+            })
+
+        return {
+            "forecast_days": days,
+            "projected_total": round(projected_total, 2),
+            "projected_daily_average": round(projected_total / max(1, days), 2),
+            "trend_status": status,
+            "trend_summary": trend_info.get("summary", ""),
+            "daily_forecast": forecast_list,
+            "historical_daily_average": avg_sales
+        }
+
+    @staticmethod
     def get_full_insights(company: Company):
         """
         Consolidated AI insights endpoint combining RFM clustering, sales trajectory, and KPIs.

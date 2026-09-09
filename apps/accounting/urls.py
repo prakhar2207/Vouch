@@ -3,7 +3,7 @@ from .views import (
     CreateSalesInvoiceAPIView, CreatePurchaseInvoiceAPIView, TrialBalanceAPIView, 
     ListVouchersAPIView, VoucherDetailAPIView, LedgerStatementAPIView, 
     CreatePaymentReceiptAPIView, ListPaymentReceiptAPIView, UniversalVoucherAPIView,
-    SyncTaxLedgersAPIView, PartyRatesAPIView
+    SyncTaxLedgersAPIView, PartyRatesAPIView, RebuildBalancesAPIView
 )
 from .ocr_views import OCRExtractAPIView
 from .b2b_views import (
@@ -36,6 +36,10 @@ urlpatterns = [
     # Tax Ledgers Auto-healing & Sync
     path('sync-tax-ledgers/', SyncTaxLedgersAPIView.as_view(), name='sync_tax_ledgers'),
     path('sync-tax-ledgers/<uuid:company_id>/', SyncTaxLedgersAPIView.as_view(), name='sync_tax_ledgers_company'),
+
+    # Rebuild Balances
+    path('rebuild-balances/', RebuildBalancesAPIView.as_view(), name='rebuild_balances'),
+    path('rebuild-balances/<uuid:company_id>/', RebuildBalancesAPIView.as_view(), name='rebuild_balances_company'),
 
     # Party Past Item Rates
     path('party-rates/', PartyRatesAPIView.as_view(), name='party_rates'),

@@ -104,3 +104,6 @@ export function useAccountingPeriod() {
   }
   return context;
 }
+
+export const usePeriod = useAccountingPeriod;
+

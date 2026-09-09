@@ -35,9 +35,59 @@ export default function PurchasePage() {
   const [cartageAmount, setCartageAmount] = useState<number | string>('');
   
   const [categories, setCategories] = useState<any[]>([]);
+  const [partyRates, setPartyRates] = useState<Record<string, any>>({});
+  const [loadingPartyRates, setLoadingPartyRates] = useState(false);
   const [groupedItems, setGroupedItems] = useState([
     { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 } ] }
   ]);
+
+  const fetchPartyRates = async (pId: string, currentCompanyId?: string) => {
+    const targetCompanyId = currentCompanyId || companyId;
+    if (!pId || !targetCompanyId) return;
+    try {
+      setLoadingPartyRates(true);
+      const token = getAccessToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.get(
+        `${API_BASE_URL}/api/v1/accounting/party-rates/?party_id=${pId}&company_id=${targetCompanyId}&type=PURCHASE`,
+        { headers }
+      );
+      if (res.data?.success) {
+        const rates = res.data.data || {};
+        setPartyRates(rates);
+
+        setGroupedItems((prev) =>
+          prev.map((group: any) => ({
+            ...group,
+            items: group.items.map((item: any) => {
+              if (!item.product_name) return item;
+              const cleanName = String(item.product_name).trim().toLowerCase();
+              const cleanBrand = String(item.brand || '').trim().toLowerCase();
+              const keyBrand = `${cleanName}|${cleanBrand}`;
+              const pastRateInfo = (item.product_id && rates[item.product_id]) || rates[keyBrand] || rates[cleanName];
+              if (pastRateInfo && Number(pastRateInfo.rate) > 0 && Number(item.rate) === 0) {
+                return {
+                  ...item,
+                  rate: Number(pastRateInfo.rate),
+                };
+              }
+              return item;
+            }),
+          }))
+        );
+      }
+    } catch (err) {
+      console.warn('Could not fetch supplier past rates:', err);
+    } finally {
+      setLoadingPartyRates(false);
+    }
+  };
+
+  useEffect(() => {
+    if (partyLedgerId && companyId) {
+      fetchPartyRates(partyLedgerId, companyId);
+    }
+  }, [partyLedgerId, companyId]);
 
   useEffect(() => {
     if (workingDate) {
@@ -241,7 +291,19 @@ export default function PurchasePage() {
 
   const updateItem = (gIndex: number, iIndex: number, field: string, value: any) => {
     const newGroups = [...groupedItems];
-    (newGroups[gIndex].items[iIndex] as any)[field] = value;
+    const item = newGroups[gIndex].items[iIndex] as any;
+    item[field] = value;
+
+    if ((field === 'product_name' || field === 'brand') && partyRates) {
+      const cleanName = String(field === 'product_name' ? value : item.product_name || '').trim().toLowerCase();
+      const cleanBrand = String(field === 'brand' ? value : item.brand || '').trim().toLowerCase();
+      const keyBrand = `${cleanName}|${cleanBrand}`;
+      const pastRateInfo = (item.product_id && partyRates[item.product_id]) || partyRates[keyBrand] || partyRates[cleanName];
+      if (pastRateInfo && Number(pastRateInfo.rate) > 0 && Number(item.rate) === 0) {
+        item.rate = Number(pastRateInfo.rate);
+      }
+    }
+
     setGroupedItems(newGroups);
   };
 
@@ -376,7 +438,14 @@ export default function PurchasePage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <div className="flex justify-between items-center mb-1.5">
-                <label className="block text-sm font-medium text-muted-foreground">Party (Supplier)</label>
+                <label className="block text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                  <span>Party (Supplier)</span>
+                  {loadingPartyRates && (
+                    <span className="text-[10px] text-blue-400 font-mono animate-pulse">
+                      (Loading past rates...)
+                    </span>
+                  )}
+                </label>
                 <Link href="/purchases/suppliers/new" className="text-xs text-red-500 hover:text-red-400">+ Add New Supplier</Link>
               </div>
               <select value={partyLedgerId} onChange={e => setPartyLedgerId(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all">
@@ -474,6 +543,27 @@ export default function PurchasePage() {
                                             </td>
                                             <td className="p-2">
                                                 <input type="number" min="0" value={item.rate} onChange={e => updateItem(gIndex, iIndex, 'rate', e.target.value)} className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-right text-sm font-mono tabular-nums font-semibold" />
+                                                {(() => {
+                                                   const cleanName = String(item.product_name || '').trim().toLowerCase();
+                                                   const cleanBrand = String(item.brand || '').trim().toLowerCase();
+                                                   const pId = (item as any).product_id;
+                                                   const keyBrand = `${cleanName}|${cleanBrand}`;
+                                                   const pastRateInfo = (pId && partyRates[pId]) || partyRates[keyBrand] || partyRates[cleanName];
+                                                   if (pastRateInfo && Number(pastRateInfo.rate) > 0) {
+                                                     return (
+                                                       <button
+                                                         type="button"
+                                                         onClick={() => updateItem(gIndex, iIndex, 'rate', pastRateInfo.rate)}
+                                                         className="mt-1 text-[10px] font-mono text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 px-1.5 py-0.5 rounded border border-blue-500/20 flex items-center justify-between w-full cursor-pointer transition-colors"
+                                                         title={`Last purchased at ₹${pastRateInfo.rate} on ${pastRateInfo.voucher_date || 'prior bill'}`}
+                                                       >
+                                                         <span>Last: ₹{Number(pastRateInfo.rate).toLocaleString('en-IN')}</span>
+                                                         <span className="text-[9px] text-muted-foreground underline">Apply</span>
+                                                       </button>
+                                                     );
+                                                   }
+                                                   return null;
+                                                 })()}
                                             </td>
                                             <td className="p-2">
                                                 <input type="number" min="0" max="100" value={item.discount_percent} onChange={e => updateItem(gIndex, iIndex, 'discount_percent', e.target.value)} className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-center text-sm font-mono tabular-nums font-semibold" />
