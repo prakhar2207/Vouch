@@ -346,6 +346,7 @@ class VoucherDetailAPIView(APIView):
             # Extract cartage and round off from ledger entries if present
             cartage_amount = Decimal('0.00')
             round_off_amount = Decimal('0.00')
+            payment_ledger_obj = None
             for entry in voucher.ledger_entries.select_related('ledger').all():
                 lname = entry.ledger.name.lower()
                 if 'cartage' in lname or 'freight' in lname:
@@ -359,6 +360,9 @@ class VoucherDetailAPIView(APIView):
                         round_off_amount += (entry.credit_amount - entry.debit_amount)
                     else:
                         round_off_amount += (entry.debit_amount - entry.credit_amount)
+                elif voucher.voucher_type in ['PAYMENT', 'RECEIPT']:
+                    if entry.ledger_id != voucher.party_ledger_id:
+                        payment_ledger_obj = entry.ledger
 
             data = {
                 "id": str(voucher.id),
@@ -370,6 +374,9 @@ class VoucherDetailAPIView(APIView):
                 "cartage_amount": float(cartage_amount),
                 "round_off_amount": float(round_off_amount),
                 "narration": voucher.narration,
+                "party_ledger_id": str(voucher.party_ledger.id) if voucher.party_ledger else None,
+                "payment_ledger_id": str(payment_ledger_obj.id) if payment_ledger_obj else None,
+                "payment_ledger_name": payment_ledger_obj.name if payment_ledger_obj else None,
                 "company": {
                     "name": voucher.company.name,
                     "address": voucher.company.address,
@@ -466,9 +473,10 @@ class VoucherDetailAPIView(APIView):
                 if financial_year:
                     InvoiceSequenceService.resync_sequence(company, financial_year, voucher_type)
 
+            type_label = "Voucher" if voucher_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL'] else "Invoice"
             return Response({
                 "success": True, 
-                "message": f"Invoice #{voucher_num} deleted and reversed successfully."
+                "message": f"{type_label} #{voucher_num} deleted and reversed successfully."
             })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -823,10 +831,75 @@ class VoucherDetailAPIView(APIView):
 
                     # 5. Re-post voucher to update stock & balances
                     VoucherService.post_voucher(voucher)
+                elif voucher.voucher_type in ['PAYMENT', 'RECEIPT']:
+                    # Update Payment or Receipt voucher
+                    from apps.ledgers.models import Ledger
+                    from datetime import date
+
+                    # Track all affected ledgers (previous + new)
+                    affected_ledger_ids = set(voucher.ledger_entries.values_list('ledger_id', flat=True))
+                    if voucher.party_ledger_id:
+                        affected_ledger_ids.add(voucher.party_ledger_id)
+
+                    # 1. Reverse previous accounting if posted or validating
+                    if voucher.status in ['POSTED', 'VALIDATING']:
+                        VoucherService.cancel_voucher(voucher, user=request.user)
+
+                    # 2. Clear old ledger entries
+                    voucher.ledger_entries.all().delete()
+
+                    # 3. Determine updated party and cash/bank ledgers
+                    if 'party_ledger_id' in data and data['party_ledger_id']:
+                        party_ledger = Ledger.objects.get(id=data['party_ledger_id'], company=company)
+                        voucher.party_ledger = party_ledger
+                    else:
+                        party_ledger = voucher.party_ledger
+
+                    payment_ledger_id = data.get('payment_ledger_id')
+                    if payment_ledger_id:
+                        payment_ledger = Ledger.objects.get(id=payment_ledger_id, company=company)
+                    else:
+                        # Fallback to existing non-party ledger
+                        existing_entry = voucher.ledger_entries.exclude(ledger=party_ledger).first()
+                        payment_ledger = existing_entry.ledger if existing_entry else None
+
+                    if not party_ledger or not payment_ledger:
+                        raise ValueError("Both party ledger and cash/bank ledger are required to update a payment/receipt voucher.")
+
+                    affected_ledger_ids.add(party_ledger.id)
+                    affected_ledger_ids.add(payment_ledger.id)
+
+                    # Update amount
+                    if 'amount' in data and data['amount']:
+                        amount = abs(Decimal(str(data['amount'])))
+                    else:
+                        amount = voucher.total_amount
+
+                    voucher.total_amount = amount
+
+                    # 4. Create new ledger entries
+                    if voucher.voucher_type == 'RECEIPT':
+                        # Receipt: Debit Cash/Bank, Credit Customer
+                        LedgerEntry.objects.create(voucher=voucher, ledger=payment_ledger, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Receipt from {party_ledger.name}")
+                        LedgerEntry.objects.create(voucher=voucher, ledger=party_ledger, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Receipt via {payment_ledger.name}")
+                    else:
+                        # Payment: Debit Supplier, Credit Cash/Bank
+                        LedgerEntry.objects.create(voucher=voucher, ledger=party_ledger, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Payment via {payment_ledger.name}")
+                        LedgerEntry.objects.create(voucher=voucher, ledger=payment_ledger, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Payment to {party_ledger.name}")
+
+                    # 5. Re-post voucher
+                    VoucherService.post_voucher(voucher)
+
+                    # 6. Recalculate balances for all affected ledgers (old and new)
+                    for lid in affected_ledger_ids:
+                        l = Ledger.objects.filter(id=lid).first()
+                        if l:
+                            VoucherService.recalculate_ledger_balance(l)
                 else:
                     voucher.save()
 
-            return Response({"success": True, "message": f"{voucher.voucher_type.title()} invoice updated successfully."})
+            type_label = "Voucher" if voucher.voucher_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL'] else "invoice"
+            return Response({"success": True, "message": f"{voucher.voucher_type.title()} {type_label} updated successfully."})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
