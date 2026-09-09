@@ -141,12 +141,15 @@ export default function PrintInvoicePage() {
     return `${API_BASE_URL}${sig.startsWith('/') ? '' : '/'}${sig}`;
   };
 
-    return (
+  const [printScale, setPrintScale] = useState<number>(100);
+  const [pageMarginMm, setPageMarginMm] = useState<number>(8);
+
+  return (
     <div className="bg-white text-black min-h-screen">
       <style jsx global>{`
         @page {
           size: A4 portrait;
-          margin: 10mm;
+          margin: ${pageMarginMm}mm;
         }
         @media print {
           html, body {
@@ -171,29 +174,85 @@ export default function PrintInvoicePage() {
             border: none !important;
           }
           .print-sheet {
-            width: 190mm !important;
-            height: 277mm !important;
-            min-height: 277mm !important;
-            max-height: 277mm !important;
+            width: calc(210mm - ${pageMarginMm * 2}mm) !important;
+            height: calc(297mm - ${pageMarginMm * 2}mm) !important;
+            min-height: calc(297mm - ${pageMarginMm * 2}mm) !important;
+            max-height: calc(297mm - ${pageMarginMm * 2}mm) !important;
             padding: 0 !important;
-            margin: 0 !important;
+            margin: 0 auto !important;
             box-shadow: none !important;
             box-sizing: border-box !important;
+            transform: scale(${printScale / 100}) !important;
+            transform-origin: top center !important;
           }
         }
       `}</style>
 
-      {/* Print Button (Hidden on Print) */}
-      <div className="print:hidden p-3 sm:p-4 bg-gray-100 border-b border-gray-300 flex justify-between items-center gap-2">
-         <button onClick={() => router.back()} className="text-gray-600 hover:text-gray-900 font-medium text-xs sm:text-sm cursor-pointer">&larr; Back</button>
-         <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-4 sm:px-6 py-2 rounded shadow font-semibold text-xs sm:text-sm cursor-pointer transition-colors">
-           Print Invoice (A4)
-         </button>
+      {/* Print Controls Bar (Hidden on Print) */}
+      <div className="print:hidden p-3 sm:p-4 bg-slate-900 text-white border-b border-slate-700 flex flex-wrap justify-between items-center gap-4 sticky top-0 z-50 shadow-md">
+         <div className="flex items-center gap-3">
+           <button onClick={() => router.back()} className="text-slate-300 hover:text-white font-medium text-xs sm:text-sm cursor-pointer flex items-center gap-1 bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded transition-colors">
+             &larr; Back
+           </button>
+           <span className="font-semibold text-sm hidden sm:inline text-slate-200">Invoice Print Preview</span>
+         </div>
+
+         {/* Advanced Print Customization Options */}
+         <div className="flex flex-wrap items-center gap-4 text-xs">
+           {/* Scale Control */}
+           <div className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded border border-slate-700">
+             <label htmlFor="scale-range" className="text-slate-300 font-medium whitespace-nowrap">Scale:</label>
+             <input 
+               id="scale-range"
+               type="range" 
+               min="80" 
+               max="115" 
+               step="1"
+               value={printScale}
+               onChange={(e) => setPrintScale(Number(e.target.value))}
+               className="w-20 sm:w-28 accent-blue-500 cursor-pointer"
+             />
+             <span className="w-10 text-right font-mono font-bold text-blue-400">{printScale}%</span>
+             <button 
+               onClick={() => setPrintScale(100)} 
+               title="Reset scale to 100%"
+               className="text-[10px] text-slate-400 hover:text-white underline cursor-pointer ml-1">
+               Reset
+             </button>
+           </div>
+
+           {/* Margins Control */}
+           <div className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded border border-slate-700">
+             <label htmlFor="margin-select" className="text-slate-300 font-medium whitespace-nowrap">Margin:</label>
+             <select 
+               id="margin-select"
+               value={pageMarginMm}
+               onChange={(e) => setPageMarginMm(Number(e.target.value))}
+               className="bg-slate-900 text-white border border-slate-700 rounded px-2 py-0.5 cursor-pointer text-xs focus:ring-1 focus:ring-blue-500">
+               <option value="5">Tight (5mm)</option>
+               <option value="8">Standard (8mm)</option>
+               <option value="12">Relaxed (12mm)</option>
+               <option value="15">Wide (15mm)</option>
+             </select>
+           </div>
+
+           {/* Print Trigger */}
+           <button 
+             onClick={() => window.print()} 
+             className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded shadow-lg font-bold text-xs sm:text-sm cursor-pointer transition-all hover:shadow-blue-500/25 flex items-center gap-2">
+             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+             </svg>
+             Print Invoice (A4)
+           </button>
+         </div>
       </div>
 
       {/* A4 Sheet Container Wrapper */}
-      <div className="print-sheet-wrapper w-full overflow-x-auto p-2 sm:p-8 flex justify-start sm:justify-center">
-        <div className="print-sheet w-[210mm] min-w-[210mm] min-h-[297mm] bg-white p-8 pb-12 shadow-[0_0_10px_rgba(0,0,0,0.1)] print:shadow-none print:p-0 flex flex-col">
+      <div className="print-sheet-wrapper w-full overflow-x-auto p-2 sm:p-8 flex justify-start sm:justify-center bg-slate-200">
+        <div 
+          style={{ transform: `scale(${printScale / 100})`, transformOrigin: 'top center' }}
+          className="print-sheet w-[210mm] min-w-[210mm] min-h-[297mm] bg-white p-8 pb-12 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none print:p-0 flex flex-col transition-transform duration-150">
         
         {/* Main Border Box */}
         <div className="border-2 border-black flex-1 flex flex-col justify-between">
