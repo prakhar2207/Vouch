@@ -169,8 +169,8 @@ export default function PrintInvoicePage() {
       </div>
 
       {/* A4 Sheet Container Wrapper */}
-      <div className="w-full overflow-x-auto p-2 sm:p-8 flex justify-start sm:justify-center bg-slate-200 print:bg-white print:p-0">
-        <div className="w-[210mm] min-h-[297mm] bg-white p-8 pb-12 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none print:p-0 flex flex-col">
+      <div className="w-full overflow-x-auto p-4 sm:p-8 flex justify-center bg-slate-200 print:bg-white print:p-0">
+        <div className="w-[210mm] min-h-[297mm] print:min-h-[95vh] bg-white p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none print:p-6 print:pt-10 flex flex-col mx-auto">
         
         {/* Main Border Box */}
         <div className="border-2 border-black flex-1 flex flex-col justify-between">
