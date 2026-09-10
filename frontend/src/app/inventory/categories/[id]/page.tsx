@@ -248,16 +248,20 @@ export default function CategoryDetailPage() {
         { headers }
       );
       if (res.data.success) {
-        setProducts(prev => prev.map(p => {
-          if (p.id === productId) return { ...p, ...payload };
-          if (p.variants) {
-            return {
-              ...p,
-              variants: p.variants.map((v: any) => v.id === productId ? { ...v, ...payload } : v)
-            };
-          }
-          return p;
-        }));
+        setProducts(prev => {
+          const updated = prev.map(p => {
+            if (p.id === productId) return { ...p, ...payload };
+            if (p.variants) {
+              return {
+                ...p,
+                variants: p.variants.map((v: any) => v.id === productId ? { ...v, ...payload } : v)
+              };
+            }
+            return p;
+          });
+          offlineDb.masters.put({ key: `category_products_${categoryId}`, data: updated, updatedAt: Date.now() }).catch(() => {});
+          return updated;
+        });
         setEditingId(null);
         setEditData({});
         toast.success("Item updated successfully!");
@@ -279,7 +283,11 @@ export default function CategoryDetailPage() {
       );
       if (res.data.success) {
         toast.success("Item deleted successfully!");
-        setProducts(prev => prev.filter(p => p.id !== productId));
+        setProducts(prev => {
+          const updated = prev.filter(p => p.id !== productId);
+          offlineDb.masters.put({ key: `category_products_${categoryId}`, data: updated, updatedAt: Date.now() }).catch(() => {});
+          return updated;
+        });
         if (editingId === productId) cancelEdit();
       }
     } catch (err: any) {
