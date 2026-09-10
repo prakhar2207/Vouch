@@ -10,6 +10,8 @@ from .b2b_views import (
     InwardVoucherInboxView, InwardVoucherDetailView, InwardVoucherAcceptView, InwardVoucherRejectView
 )
 from .tally_views import TallyExportAPIView
+import apps.accounting.banking_views
+import apps.accounting.health_views
 
 urlpatterns = [
     path('vouchers/', UniversalVoucherAPIView.as_view(), name='universal_vouchers'),
@@ -44,5 +46,19 @@ urlpatterns = [
     # Party Past Item Rates
     path('party-rates/', PartyRatesAPIView.as_view(), name='party_rates'),
     path('party-rates/<uuid:company_id>/', PartyRatesAPIView.as_view(), name='party_rates_company'),
+
+    # Bank Intelligence & Reconciliation
+    path('banking/upload/', apps.accounting.banking_views.BankStatementUploadAPIView.as_view(), name='banking_upload'),
+    path('banking/transactions/', apps.accounting.banking_views.BankTransactionListAPIView.as_view(), name='banking_transactions'),
+    path('banking/transactions/<uuid:pk>/resolve/', apps.accounting.banking_views.BankTransactionResolveAPIView.as_view(), name='banking_transaction_resolve'),
+    path('banking/mappings/', apps.accounting.banking_views.PartyMappingListAPIView.as_view(), name='banking_mappings'),
+    path('banking/mappings/<uuid:pk>/', apps.accounting.banking_views.PartyMappingListAPIView.as_view(), name='banking_mapping_detail'),
+    path('banking/summary/', apps.accounting.banking_views.BankSummaryAPIView.as_view(), name='banking_summary'),
+
+    # Accounting Health & Vouch Assistant
+    path('health/', apps.accounting.health_views.AccountingHealthAPIView.as_view(), name='accounting_health'),
+    path('health/diagnose-balance/', apps.accounting.health_views.DiagnoseBalanceAPIView.as_view(), name='diagnose_balance'),
+    path('health/findings/<uuid:pk>/preview/', apps.accounting.health_views.FindingFixPreviewAPIView.as_view(), name='finding_fix_preview'),
+    path('health/findings/<uuid:pk>/fix/', apps.accounting.health_views.FindingFixExecuteAPIView.as_view(), name='finding_fix_execute'),
 ]
 

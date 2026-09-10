@@ -308,16 +308,16 @@ class VoucherService:
         # Check if double-entry opening vouchers exist for this ledger
         has_opening_entries = LedgerEntry.objects.filter(
             ledger=locked_ledger,
-            voucher__status='POSTED',
+            voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED'],
             voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
         ).exists()
 
         op_balance = Decimal('0.00') if has_opening_entries else Decimal(str(locked_ledger.opening_balance or '0.00'))
         
-        # Only POSTED vouchers affect accounting balances
+        # POSTED vouchers and explicit REVERSED/CORRECTED balancing history affect accounting balances
         totals = LedgerEntry.objects.filter(
             ledger=locked_ledger,
-            voucher__status='POSTED'
+            voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED']
         ).aggregate(
             total_dr=Sum('debit_amount'),
             total_cr=Sum('credit_amount')

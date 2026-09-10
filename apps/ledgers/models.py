@@ -47,6 +47,9 @@ class Ledger(models.Model):
     phone = models.CharField(max_length=20, null=True, blank=True)
     email = models.EmailField(null=True, blank=True)
     address = models.TextField(null=True, blank=True)
+    bank_account_number = models.CharField(max_length=100, null=True, blank=True)
+    bank_ifsc = models.CharField(max_length=50, null=True, blank=True)
+    upi_id = models.CharField(max_length=100, null=True, blank=True)
     
     is_active = models.BooleanField(default=True)
     is_archived = models.BooleanField(default=False)

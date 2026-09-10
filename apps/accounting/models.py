@@ -352,3 +352,172 @@ class InwardVoucherRequest(models.Model):
 
     def __str__(self):
         return f"EDI #{self.id} | {self.source_company.name} -> {self.target_company.name} ({self.status})"
+
+
+class BankStatementImport(models.Model):
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending'),
+        ('PROCESSING', 'Processing'),
+        ('COMPLETED', 'Completed'),
+        ('PARTIAL', 'Partial with Warnings'),
+        ('FAILED', 'Failed'),
+    )
+
+    FORMAT_CHOICES = (
+        ('CSV', 'CSV Statement'),
+        ('XLSX', 'Excel Spreadsheet (XLSX)'),
+        ('XLS', 'Excel Spreadsheet (XLS)'),
+        ('PDF', 'PDF Statement'),
+        ('IMAGE', 'Scanned Statement / Image'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='bank_statement_imports')
+    bank_ledger = models.ForeignKey(Ledger, on_delete=models.PROTECT, related_name='statement_imports')
+    source_file_name = models.CharField(max_length=255)
+    file_format = models.CharField(max_length=20, choices=FORMAT_CHOICES, default='CSV')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    total_rows = models.PositiveIntegerField(default=0)
+    successful_rows = models.PositiveIntegerField(default=0)
+    unresolved_rows = models.PositiveIntegerField(default=0)
+    failed_rows = models.PositiveIntegerField(default=0)
+    error_summary = models.JSONField(default=list, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='bank_imports')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['company', 'bank_ledger', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"Import {self.source_file_name} ({self.status}) - {self.successful_rows}/{self.total_rows} rows"
+
+
+class BankTransaction(models.Model):
+    STATUS_CHOICES = (
+        ('UNPROCESSED', 'Unprocessed'),
+        ('MATCHED_AUTO', 'Matched (Automatic)'),
+        ('MATCHED_SUGGESTED', 'Matched (Suggested)'),
+        ('UNRESOLVED', 'Unresolved'),
+        ('RECONCILED', 'Reconciled'),
+        ('IGNORED', 'Ignored'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='bank_transactions')
+    statement_import = models.ForeignKey(BankStatementImport, on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions')
+    bank_ledger = models.ForeignKey(Ledger, on_delete=models.PROTECT, related_name='bank_transactions')
+    transaction_date = models.DateField(db_index=True)
+    value_date = models.DateField(null=True, blank=True)
+    description = models.TextField()
+    normalized_narration = models.CharField(max_length=500, db_index=True)
+    reference_number = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    debit_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    credit_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    balance = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    source_file = models.CharField(max_length=255, blank=True)
+    source_page = models.IntegerField(null=True, blank=True)
+    extraction_confidence = models.FloatField(default=1.0)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='UNPROCESSED', db_index=True)
+    matched_party = models.ForeignKey(Ledger, on_delete=models.SET_NULL, null=True, blank=True, related_name='matched_bank_transactions')
+    matched_voucher = models.ForeignKey(Voucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='reconciled_bank_transactions')
+    matched_invoice = models.ForeignKey(Voucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='invoice_bank_transactions')
+    match_confidence = models.FloatField(default=0.0)
+    match_notes = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-transaction_date', '-created_at']
+        indexes = [
+            models.Index(fields=['company', 'transaction_date']),
+            models.Index(fields=['company', 'status']),
+            models.Index(fields=['company', 'reference_number']),
+            models.Index(fields=['company', 'bank_ledger']),
+        ]
+
+    def __str__(self):
+        amount = self.credit_amount if self.credit_amount > 0 else -self.debit_amount
+        return f"{self.transaction_date} | ₹{amount} | {self.normalized_narration[:40]} ({self.status})"
+
+
+class PartyMapping(models.Model):
+    MAPPING_TYPE_CHOICES = (
+        ('UPI', 'UPI ID'),
+        ('BANK_ACCOUNT', 'Bank Account / IFSC'),
+        ('NARRATION', 'Narration Keyword / Entity'),
+        ('EXPENSE_CATEGORY', 'Expense Category'),
+        ('RECURRING_CHARGE', 'Recurring Charge'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='party_mappings')
+    pattern = models.CharField(max_length=255)
+    normalized_pattern = models.CharField(max_length=255, db_index=True)
+    party = models.ForeignKey(Ledger, on_delete=models.CASCADE, related_name='learned_mappings')
+    mapping_type = models.CharField(max_length=50, choices=MAPPING_TYPE_CHOICES, default='NARRATION')
+    confirmed_by_user = models.BooleanField(default=True)
+    confidence = models.FloatField(default=1.0)
+    usage_count = models.PositiveIntegerField(default=1)
+    last_used = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('company', 'normalized_pattern', 'mapping_type')
+        indexes = [
+            models.Index(fields=['company', 'mapping_type', 'normalized_pattern']),
+        ]
+
+    def __str__(self):
+        return f"{self.pattern} -> {self.party.name} ({self.mapping_type}, count={self.usage_count})"
+
+
+class AccountingFinding(models.Model):
+    SEVERITY_CHOICES = (
+        ('CRITICAL', 'Critical'),
+        ('WARNING', 'Warning'),
+        ('INFO', 'Info'),
+    )
+
+    CATEGORY_CHOICES = (
+        ('TRIAL_BALANCE', 'Trial Balance Equilibrium'),
+        ('WRONG_PARTY', 'Possible Wrong Party'),
+        ('DUPLICATE', 'Duplicate Invoices/Bills'),
+        ('BANK', 'Bank Reconciliation Mismatch'),
+        ('PAYMENT', 'Payment Allocation Anomaly'),
+        ('GST', 'GST Rate or State Mismatch'),
+        ('INVENTORY', 'Inventory & Stock Discrepancy'),
+        ('OPENING_BALANCE', 'Opening Balance Discrepancy'),
+        ('NUMBERING', 'Voucher Numbering Sequence'),
+        ('UNUSUAL_ACTIVITY', 'Unusual Business Activity'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='accounting_findings')
+    severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, db_index=True)
+    category = models.CharField(max_length=50, choices=CATEGORY_CHOICES, db_index=True)
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    evidence = models.JSONField(default=dict, blank=True)
+    expected_state = models.TextField(blank=True)
+    actual_state = models.TextField(blank=True)
+    probable_cause = models.TextField(blank=True)
+    suggested_action = models.TextField(blank=True)
+    confidence = models.FloatField(default=0.90)
+    fix_action = models.CharField(max_length=50, null=True, blank=True)
+    fix_preview = models.JSONField(default=dict, blank=True)
+    is_resolved = models.BooleanField(default=False, db_index=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='resolved_findings')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['company', 'is_resolved', 'severity']),
+            models.Index(fields=['company', 'category']),
+        ]
+
+    def __str__(self):
+        return f"[{self.severity}] {self.title} ({self.category})"

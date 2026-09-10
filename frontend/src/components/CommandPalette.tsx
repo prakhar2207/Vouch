@@ -53,6 +53,8 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
     { label: "B2B Network EDI Inbox (Auto-Handshake)", shortcut: "EDI", action: () => router.push("/network/inbox") },
     { label: "Export to Tally XML (TallyPrime & CA Guide)", shortcut: "Alt+O", action: () => router.push("/export/tally") },
     { label: "View Dashboard & AI Analytics", shortcut: "D", action: () => router.push("/dashboard") },
+    { label: "Bank Intelligence & Statement Reconciliation", shortcut: "B", action: () => router.push("/banking") },
+    { label: "Bookkeeping Health & Integrity Assistant", shortcut: "H", action: () => router.push("/health") },
     { label: "Inventory Products Master", shortcut: "I", action: () => router.push("/inventory") },
     { label: "Parties & Customers List", shortcut: "P", action: () => router.push("/parties") },
     { label: "Payments & Receipts Vouchers", shortcut: "V", action: () => router.push("/vouchers") },
