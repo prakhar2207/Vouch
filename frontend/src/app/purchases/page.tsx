@@ -9,7 +9,8 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
 import EditPurchaseInvoiceModal from "@/components/modals/EditPurchaseInvoiceModal";
 import ConfirmModal from "@/components/modals/ConfirmModal";
-import { Edit2, Trash2, Eye, FileText, Plus, ChevronLeft, ChevronRight } from "lucide-react";
+import { Edit2, Trash2, Eye, FileText, Plus, ChevronLeft, ChevronRight, AlertCircle, RefreshCw } from "lucide-react";
+import { offlineDb } from "@/lib/db/offlineDb";
 
 export default function PurchaseInvoiceList() {
   const router = useRouter();
@@ -17,6 +18,7 @@ export default function PurchaseInvoiceList() {
 
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [page, setPage] = useState<number>(1);
   const [pagination, setPagination] = useState<any>(null);
   const pageSize = 50;
@@ -41,17 +43,32 @@ export default function PurchaseInvoiceList() {
 
   const fetchInvoices = async (targetPage: number = page) => {
     setLoading(true);
+    setFetchError(null);
+
+    // 1. Try reading from offline cache first
+    try {
+      const cached = await offlineDb.masters.get('cached_purchase_invoices');
+      if (cached?.data?.length && invoices.length === 0) {
+        setInvoices(cached.data);
+      }
+    } catch (e) {
+      // ignore
+    }
+
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers, timeout: 8000 });
       const companyId = compRes.data.data[0]?.id;
-      if (!companyId) return;
+      if (!companyId) {
+        setFetchError("No company found for the current user.");
+        return;
+      }
 
       const offset = (targetPage - 1) * pageSize;
       const res = await axios.get(
         `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?type=PURCHASE&limit=${pageSize}&offset=${offset}`,
-        { headers }
+        { headers, timeout: 8000 }
       );
       const purchaseVouchers = (res.data.data || []).filter((v: any) => v.type === "PURCHASE");
       setInvoices(purchaseVouchers);
@@ -59,8 +76,22 @@ export default function PurchaseInvoiceList() {
         setPagination(res.data.pagination);
       }
       setPage(targetPage);
-    } catch (err) {
-      console.error(err);
+      setFetchError(null);
+
+      // Cache remote purchase invoices for offline viewing
+      offlineDb.masters.put({ key: 'cached_purchase_invoices', data: purchaseVouchers, updatedAt: Date.now() }).catch(() => {});
+    } catch (err: any) {
+      console.error("fetchInvoices error:", err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || err.message || "Failed to load purchase invoices";
+      
+      const cached = await offlineDb.masters.get('cached_purchase_invoices').catch(() => null);
+      if (cached?.data?.length) {
+        setInvoices(cached.data);
+        toast.warning("Loaded purchase invoices from offline cache. Live server unreachable.");
+      } else {
+        setFetchError(errorMsg);
+        toast.error("Failed to load invoices", errorMsg);
+      }
     } finally {
       setLoading(false);
     }
@@ -226,6 +257,24 @@ export default function PurchaseInvoiceList() {
           {loading ? (
             <div className="flex items-center justify-center p-16 text-muted-foreground text-sm">
               Loading invoices...
+            </div>
+          ) : fetchError && invoices.length === 0 ? (
+            <div className="flex flex-col items-center justify-center p-16 text-center bg-card">
+              <div className="w-16 h-16 rounded-2xl bg-destructive/10 text-destructive flex items-center justify-center mb-3 border border-destructive/20">
+                <AlertCircle className="w-8 h-8" />
+              </div>
+              <h3 className="text-lg font-bold mb-1 text-foreground">Unable to Load Invoices</h3>
+              <p className="text-muted-foreground max-w-md mx-auto mb-5 text-xs font-mono">
+                {fetchError}
+              </p>
+              <button
+                type="button"
+                onClick={() => fetchInvoices(page)}
+                className="px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-bold shadow-sm flex items-center gap-1.5 cursor-pointer transition-all"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Retry Connection</span>
+              </button>
             </div>
           ) : invoices.length === 0 ? (
             <div className="flex flex-col items-center justify-center p-16 text-center bg-card">
