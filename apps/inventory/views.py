@@ -1,3 +1,4 @@
+from decimal import Decimal
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -184,8 +185,20 @@ class ProductListView(APIView):
                 else:
                     qs = qs.filter(category_id=category_id)
                 
+            category_stock_val = Decimal('0.00')
+            category_retail_val = Decimal('0.00')
+            category_stock_qty = Decimal('0.00')
+
             data = []
             for p in qs:
+                sq = p.stock_quantity if p.stock_quantity is not None else Decimal('0.00')
+                pp = p.purchase_price if p.purchase_price is not None else Decimal('0.00')
+                sp = p.selling_price if p.selling_price is not None else Decimal('0.00')
+                if sq > Decimal('0.00'):
+                    category_stock_val += (sq * pp)
+                    category_retail_val += (sq * sp)
+                    category_stock_qty += sq
+
                 has_posted_purchase = bool(getattr(p, 'has_posted_purchase', False))
                 data.append({
                     "id": str(p.id),
@@ -213,9 +226,6 @@ class ProductListView(APIView):
                     "track_batches": p.track_batches,
                     "track_serial_numbers": p.track_serial_numbers
                 })
-            category_stock_val = sum((p.stock_quantity * p.purchase_price) for p in qs if p.stock_quantity > Decimal('0.00'))
-            category_retail_val = sum((p.stock_quantity * p.selling_price) for p in qs if p.stock_quantity > Decimal('0.00'))
-            category_stock_qty = sum(p.stock_quantity for p in qs if p.stock_quantity > Decimal('0.00'))
             
             return Response({
                 "success": True, 

@@ -8,6 +8,7 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { Boxes, Tag, Layers, TrendingUp, Plus } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
+import { offlineDb } from '@/lib/db/offlineDb';
 
 export default function InventoryPage() {
   const router = useRouter();
@@ -31,18 +32,42 @@ export default function InventoryPage() {
   const fetchCategories = async () => {
     setLoading(true);
     try {
+      // 1. Try local offline cache first
+      try {
+        const cachedComp = await offlineDb.masters.get('company');
+        if (cachedComp?.data?.id) setCompanyId(cachedComp.data.id);
+
+        const cachedCats = await offlineDb.masters.get('categories');
+        const cachedSummary = await offlineDb.masters.get('inventory_summary');
+        if (cachedCats?.data?.length) {
+          setCategories(cachedCats.data);
+          if (cachedSummary?.data) setSummary(cachedSummary.data);
+          setLoading(false);
+        }
+      } catch (cacheErr) {
+        console.warn('Could not read categories from offline cache', cacheErr);
+      }
+
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const cid = compRes.data.data[0]?.id;
+      const comp = compRes.data.data[0];
+      const cid = comp?.id;
       if (!cid) return;
       setCompanyId(cid);
+      offlineDb.masters.put({ key: 'company', data: comp, updatedAt: Date.now() }).catch(() => {});
 
       const res = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cid}/`, { headers });
-      setCategories(res.data.data || []);
-      setSummary(res.data.summary || null);
+      const catList = res.data.data || [];
+      const sumData = res.data.summary || null;
+      setCategories(catList);
+      setSummary(sumData);
+      offlineDb.masters.put({ key: 'categories', data: catList, updatedAt: Date.now() }).catch(() => {});
+      if (sumData) {
+        offlineDb.masters.put({ key: 'inventory_summary', data: sumData, updatedAt: Date.now() }).catch(() => {});
+      }
     } catch (err) {
-      console.error(err);
+      console.error('Network fetch failed in inventory, using offline cache if available:', err);
     } finally {
       setLoading(false);
     }

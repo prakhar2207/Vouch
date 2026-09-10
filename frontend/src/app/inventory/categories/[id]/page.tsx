@@ -11,6 +11,7 @@ import PriceListImportModal from '@/components/modals/PriceListImportModal';
 import BulkBrandDiscountModal from '@/components/modals/BulkBrandDiscountModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 import ItemHistoryModal from '@/components/modals/ItemHistoryModal';
+import { offlineDb } from '@/lib/db/offlineDb';
 import { 
   ArrowUpDown, 
   FileSpreadsheet, 
@@ -132,21 +133,47 @@ export default function CategoryDetailPage() {
   const fetchData = async () => {
     setLoading(true);
     try {
+      // 1. First, attempt to load cached masters from offline IndexedDB
+      try {
+        const cachedComp = await offlineDb.masters.get('company');
+        if (cachedComp?.data?.id) {
+          setCompanyId(cachedComp.data.id);
+        }
+        const cachedCat = await offlineDb.masters.get(`category_${categoryId}`);
+        if (cachedCat?.data) {
+          setCategory(cachedCat.data);
+        }
+        const cachedProds = await offlineDb.masters.get(`category_products_${categoryId}`);
+        if (cachedProds?.data?.length) {
+          setProducts(cachedProds.data);
+          setLoading(false);
+        }
+      } catch (cacheErr) {
+        console.warn('Could not read from local offline cache', cacheErr);
+      }
+
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const cid = compRes.data.data[0]?.id;
+      const comp = compRes.data.data[0];
+      const cid = comp?.id;
       if (!cid) return;
       setCompanyId(cid);
+      offlineDb.masters.put({ key: 'company', data: comp, updatedAt: Date.now() }).catch(() => {});
 
       const catRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cid}/`, { headers });
       const cat = (catRes.data.data || []).find((c: any) => c.id === categoryId);
-      setCategory(cat);
+      if (cat) {
+        setCategory(cat);
+        offlineDb.masters.put({ key: `category_${categoryId}`, data: cat, updatedAt: Date.now() }).catch(() => {});
+      }
 
       const prodRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/products/${cid}/?category=${categoryId}`, { headers });
-      setProducts(prodRes.data.data || []);
+      const prodList = prodRes.data.data || [];
+      setProducts(prodList);
+      offlineDb.masters.put({ key: `category_products_${categoryId}`, data: prodList, updatedAt: Date.now() }).catch(() => {});
     } catch (err) {
-      console.error(err);
+      console.error('Network fetch failed in category detail, using offline cache if available:', err);
     } finally {
       setLoading(false);
     }

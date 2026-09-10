@@ -6,6 +6,7 @@ import {
   BackgroundSyncPlugin,
   CacheFirst,
   ExpirationPlugin,
+  NetworkFirst,
   NetworkOnly,
   StaleWhileRevalidate,
   type RuntimeCaching,
@@ -24,8 +25,35 @@ const bgSyncPlugin = new BackgroundSyncPlugin("vouch-outbox-sync", {
   maxRetentionTime: 24 * 60, // Retry for max of 24 Hours (in minutes)
 });
 
+// Fallback plugin for navigation requests when offline
+const documentFallbackPlugin = {
+  handlerDidError: async ({ request }: { request: Request }) => {
+    if (request.mode === "navigate" || request.destination === "document") {
+      const match = await caches.match("/~offline", { ignoreSearch: true });
+      if (match) return match;
+    }
+    return Response.error();
+  },
+};
+
 // Accounting custom runtime caching strategies
 const accountingCustomCaching: RuntimeCaching[] = [
+  // 0. Navigation / Documents (NetworkFirst with 3s timeout and offline fallback)
+  {
+    matcher: ({ request }: any) => request.mode === "navigate" || request.destination === "document",
+    handler: new NetworkFirst({
+      cacheName: "vouch-pages-cache",
+      networkTimeoutSeconds: 3,
+      plugins: [
+        new ExpirationPlugin({
+          maxEntries: 50,
+          maxAgeSeconds: 7 * 24 * 60 * 60, // 7 days
+        }),
+        documentFallbackPlugin,
+      ],
+    }),
+  },
+
   // 1. Static Assets & Fonts (CacheFirst)
   {
     matcher: /\/_next\/static\/.+\.(?:js|css)$/i,
@@ -81,15 +109,14 @@ installSerwist({
   precacheEntries: self.__SW_MANIFEST,
   skipWaiting: true,
   clientsClaim: true,
-  navigationPreload: true,
+  navigationPreload: false,
   runtimeCaching: [...accountingCustomCaching, ...defaultCache],
   fallbacks: {
     entries: [
       {
         url: "/~offline",
-        revision: "v1",
         matcher({ request }: any) {
-          return request.destination === "document";
+          return request.destination === "document" || request.mode === "navigate";
         },
       } as any,
     ],
