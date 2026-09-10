@@ -1,4 +1,6 @@
 from decimal import Decimal
+from django.db import transaction
+from apps.common.money import to_decimal
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -172,11 +174,6 @@ class ProductListView(APIView):
 
             qs = Product.objects.filter(company=company).select_related('category').annotate(
                 has_posted_purchase=Exists(has_posted_purchase_subquery)
-            ).only(
-                'id', 'name', 'alias', 'brand', 'sku', 'category_id', 'category__name', 'category__hsn_code', 'category__gst_rate',
-                'hsn_code', 'unit', 'alternate_unit', 'conversion_factor', 'gst_rate', 'tax_override',
-                'selling_price', 'wholesaler_price', 'min_selling_price', 'purchase_price',
-                'purchase_price_from_invoice', 'stock_quantity', 'costing_method', 'track_batches', 'track_serial_numbers', 'created_at'
             ).order_by('-created_at')
 
             if category_id:
@@ -220,7 +217,7 @@ class ProductListView(APIView):
                     "min_selling_price": p.min_selling_price,
                     "purchase_price": p.purchase_price,
                     "purchase_price_from_invoice": getattr(p, 'purchase_price_from_invoice', False) and has_posted_purchase,
-                    "stock_quantity": int(round(p.stock_quantity)) if is_integer_unit(p.unit) else p.stock_quantity,
+                    "stock_quantity": int(round(sq)) if is_integer_unit(p.unit) else sq,
                     "has_invoice_stock": has_posted_purchase,
                     "costing_method": getattr(p, 'costing_method', 'AVG_COST') or 'AVG_COST',
                     "track_batches": p.track_batches,
@@ -261,70 +258,78 @@ class ProductListView(APIView):
             tax_override = data.get('tax_override', False)
             if tax_override:
                 active_hsn = data.get('override_hsn_code', '')
-                active_gst = data.get('override_gst_rate', 0.00)
+                active_gst = to_decimal(data.get('override_gst_rate', '0.00'))
             else:
                 active_hsn = category.hsn_code if category else data.get('hsn_code', '')
-                active_gst = category.gst_rate if category else data.get('gst_rate', 18.00)
+                active_gst = to_decimal(category.gst_rate if category else data.get('gst_rate', '18.00'))
 
-            product = Product.objects.create(
-                company=company,
-                category=category,
-                name=data.get('name'),
-                brand=data.get('brand', ''),
-                alias=data.get('alias', ''),
-                sku=sku,
-                barcode=data.get('barcode', ''),
-                description=data.get('description', ''),
-                unit=data.get('unit', 'PCS'),
-                alternate_unit=data.get('alternate_unit', ''),
-                conversion_factor=data.get('conversion_factor', 1.0000),
-                hsn_code=active_hsn,
-                gst_rate=active_gst,
-                tax_override=tax_override,
-                override_hsn_code=data.get('override_hsn_code', ''),
-                override_gst_rate=data.get('override_gst_rate', 0.00) if data.get('override_gst_rate') else None,
-                selling_price=data.get('selling_price', 0.00),
-                wholesaler_price=data.get('wholesaler_price', 0.00),
-                min_selling_price=data.get('min_selling_price', 0.00),
-                purchase_price=data.get('purchase_price', 0.00),
-                reorder_level=data.get('reorder_level', 0.00),
-                costing_method=data.get('costing_method', 'AVG_COST'),
-                track_batches=data.get('track_batches', False),
-                track_serial_numbers=data.get('track_serial_numbers', False)
-            )
+            purchase_price = to_decimal(data.get('purchase_price', '0.00'))
+            selling_price = to_decimal(data.get('selling_price', '0.00'))
+            wholesaler_price = to_decimal(data.get('wholesaler_price', '0.00'))
+            min_selling_price = to_decimal(data.get('min_selling_price', '0.00'))
+            reorder_level = to_decimal(data.get('reorder_level', '0.00'))
+            conversion_factor = to_decimal(data.get('conversion_factor', '1.0000'))
+            override_gst_rate = to_decimal(data['override_gst_rate']) if data.get('override_gst_rate') else None
 
-            # Handle Opening Stock (Feature 7)
-            from apps.common.money import to_decimal
-            opening_qty = to_decimal(data.get('opening_qty', '0.00'))
-            if is_integer_unit(product.unit):
-                opening_qty = Decimal(int(round(opening_qty)))
-            if opening_qty > Decimal('0.00'):
-                from apps.inventory.models import Warehouse, InventoryEntry
-                # Find default warehouse or use provided
-                warehouse_id = data.get('warehouse_id')
-                if warehouse_id:
-                    warehouse = Warehouse.objects.get(id=warehouse_id, company=company)
-                else:
-                    warehouse = Warehouse.objects.filter(company=company).first()
-                    if not warehouse:
-                        warehouse = Warehouse.objects.create(company=company, name="Main Warehouse")
-                
-                InventoryEntry.objects.create(
+            with transaction.atomic():
+                product = Product.objects.create(
                     company=company,
-                    product=product,
-                    warehouse=warehouse,
-                    movement_type='IN',
-                    quantity=opening_qty,
-                    rate=product.purchase_price,
-                    total_value=(opening_qty * product.purchase_price).quantize(Decimal('0.01')),
-                    batch_number=data.get('opening_batch_number', ''),
-                    expiry_date=data.get('opening_expiry_date', None) or None,
-                    serial_number=data.get('opening_serial_number', '')
+                    category=category,
+                    name=data.get('name'),
+                    brand=data.get('brand', ''),
+                    alias=data.get('alias', ''),
+                    sku=sku,
+                    barcode=data.get('barcode', ''),
+                    description=data.get('description', ''),
+                    unit=data.get('unit', 'PCS'),
+                    alternate_unit=data.get('alternate_unit', ''),
+                    conversion_factor=conversion_factor,
+                    hsn_code=active_hsn,
+                    gst_rate=active_gst,
+                    tax_override=tax_override,
+                    override_hsn_code=data.get('override_hsn_code', ''),
+                    override_gst_rate=override_gst_rate,
+                    selling_price=selling_price,
+                    wholesaler_price=wholesaler_price,
+                    min_selling_price=min_selling_price,
+                    purchase_price=purchase_price,
+                    reorder_level=reorder_level,
+                    costing_method=data.get('costing_method', 'AVG_COST'),
+                    track_batches=data.get('track_batches', False),
+                    track_serial_numbers=data.get('track_serial_numbers', False)
                 )
-                
-                # Update product stock
-                product.stock_quantity = opening_qty
-                product.save(update_fields=['stock_quantity'])
+
+                # Handle Opening Stock (Feature 7)
+                opening_qty = to_decimal(data.get('opening_qty', '0.00'))
+                if is_integer_unit(product.unit):
+                    opening_qty = Decimal(int(round(opening_qty)))
+                if opening_qty > Decimal('0.00'):
+                    from apps.inventory.models import Warehouse, InventoryEntry
+                    # Find default warehouse or use provided
+                    warehouse_id = data.get('warehouse_id')
+                    if warehouse_id:
+                        warehouse = Warehouse.objects.get(id=warehouse_id, company=company)
+                    else:
+                        warehouse = Warehouse.objects.filter(company=company).first()
+                        if not warehouse:
+                            warehouse = Warehouse.objects.create(company=company, name="Main Warehouse")
+                    
+                    InventoryEntry.objects.create(
+                        company=company,
+                        product=product,
+                        warehouse=warehouse,
+                        movement_type='IN',
+                        quantity=opening_qty,
+                        rate=purchase_price,
+                        total_value=(opening_qty * purchase_price).quantize(Decimal('0.01')),
+                        batch_number=data.get('opening_batch_number', ''),
+                        expiry_date=data.get('opening_expiry_date', None) or None,
+                        serial_number=data.get('opening_serial_number', '')
+                    )
+                    
+                    # Update product stock
+                    product.stock_quantity = opening_qty
+                    product.save(update_fields=['stock_quantity'])
 
             return Response({
                 "success": True, 
@@ -354,18 +359,17 @@ class ProductDetailView(APIView):
             if 'name' in data: product.name = data['name']
             if 'alias' in data: product.alias = data['alias']
             if 'brand' in data: product.brand = data['brand']
-            if 'selling_price' in data: product.selling_price = data['selling_price']
-            if 'wholesaler_price' in data: product.wholesaler_price = data['wholesaler_price']
-            if 'min_selling_price' in data: product.min_selling_price = data['min_selling_price']
+            if 'selling_price' in data: product.selling_price = to_decimal(data['selling_price'])
+            if 'wholesaler_price' in data: product.wholesaler_price = to_decimal(data['wholesaler_price'])
+            if 'min_selling_price' in data: product.min_selling_price = to_decimal(data['min_selling_price'])
             if 'purchase_price' in data: 
-                product.purchase_price = data['purchase_price']
+                product.purchase_price = to_decimal(data['purchase_price'])
                 product.purchase_price_from_invoice = False
             if 'sku' in data: product.sku = data['sku']
             if 'unit' in data: product.unit = data['unit']
             if 'costing_method' in data: product.costing_method = data['costing_method']
             
             if 'stock_quantity' in data:
-                from apps.common.money import to_decimal
                 new_stock = to_decimal(data['stock_quantity'])
                 if is_integer_unit(product.unit):
                     new_stock = Decimal(int(round(new_stock)))
@@ -373,14 +377,15 @@ class ProductDetailView(APIView):
                 
                 # Also update the Opening Stock InventoryEntry
                 from apps.inventory.models import InventoryEntry, Warehouse
+                curr_pp = to_decimal(product.purchase_price)
                 opening_entry = InventoryEntry.objects.filter(product=product, voucher_id__isnull=True).first()
                 if opening_entry:
                     if new_stock == Decimal('0.00'):
                         opening_entry.delete()
                     else:
                         opening_entry.quantity = new_stock
-                        opening_entry.rate = product.purchase_price
-                        opening_entry.total_value = (new_stock * product.purchase_price).quantize(Decimal('0.01'))
+                        opening_entry.rate = curr_pp
+                        opening_entry.total_value = (new_stock * curr_pp).quantize(Decimal('0.01'))
                         opening_entry.save()
                 elif new_stock > Decimal('0.00'):
                     warehouse = Warehouse.objects.filter(company=company).first()
@@ -392,8 +397,8 @@ class ProductDetailView(APIView):
                         warehouse=warehouse,
                         movement_type='IN',
                         quantity=new_stock,
-                        rate=product.purchase_price,
-                        total_value=(new_stock * product.purchase_price).quantize(Decimal('0.01'))
+                        rate=curr_pp,
+                        total_value=(new_stock * curr_pp).quantize(Decimal('0.01'))
                     )
 
             product.save()
@@ -469,13 +474,13 @@ class BulkBrandDiscountUpdateAPIView(APIView):
             if not category_id or not brand or discount_percent is None:
                 return Response({"success": False, "error": "category_id, brand, and discount_percent are required"}, status=400)
                 
-            discount_factor = (100 - float(discount_percent)) / 100.0
+            discount_factor = (Decimal('100.00') - to_decimal(discount_percent)) / Decimal('100.00')
             
             # Get products
             products = Product.objects.filter(company=company, category_id=category_id, brand=brand)
             updated_count = 0
             for p in products:
-                new_purchase_price = float(p.selling_price) * discount_factor
+                new_purchase_price = (to_decimal(p.selling_price) * discount_factor).quantize(Decimal('0.01'))
                 p.purchase_price = new_purchase_price
                 p.purchase_price_from_invoice = False
                 p.save(update_fields=['purchase_price', 'purchase_price_from_invoice'])
