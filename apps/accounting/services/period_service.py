@@ -26,7 +26,13 @@ class PeriodBalanceService:
 
         # 1. Initial Opening Balance Commenced
         initial_net = Decimal('0.00')
-        if d_from is None or not ledger.opening_date or ledger.opening_date <= d_from:
+        has_opening_entries = LedgerEntry.objects.filter(
+            ledger=ledger,
+            voucher__status='POSTED',
+            voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
+        ).exists()
+
+        if not has_opening_entries and (d_from is None or not ledger.opening_date or ledger.opening_date <= d_from):
             if ledger.opening_balance_type == 'DEBIT':
                 initial_net = ledger.opening_balance
             else:

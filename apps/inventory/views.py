@@ -193,6 +193,7 @@ class ProductListView(APIView):
                     "alias": p.alias or "",
                     "brand": p.brand or "",
                     "sku": p.sku,
+                    "barcode": p.barcode or "",
                     "category": p.category.name if p.category else "Unassigned",
                     "category_id": str(p.category.id) if p.category else None,
                     "hsn_code": p.hsn_code if p.tax_override else (p.category.hsn_code if p.category and p.category.hsn_code else (p.hsn_code or "")),

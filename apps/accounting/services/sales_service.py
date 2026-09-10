@@ -27,7 +27,8 @@ class SalesInvoiceService:
         buyer_state_code=None,
         buyer_phone=None,
         cartage_amount: Decimal = Decimal('0.00'),
-        cartage_ledger: Ledger = None
+        cartage_ledger: Ledger = None,
+        due_date=None
     ):
         """
         End-to-End orchestration of a Sales Invoice.
@@ -36,6 +37,7 @@ class SalesInvoiceService:
         3. Generates the exact 5-way double-entry accounting strings.
         Returns the DRAFT voucher.
         """
+        import datetime
         # 0. Safeguard: Ensure tax ledgers are strictly OUTPUT tax ledgers (never Input)
         if party_ledger and party_ledger.company_id != company.id:
             from rest_framework.exceptions import ValidationError
@@ -62,6 +64,19 @@ class SalesInvoiceService:
         # 1. Create Voucher Header
         from apps.accounting.services.sequence_service import InvoiceSequenceService
         v_date = manual_voucher_date if manual_voucher_date else timezone.now().date()
+        if isinstance(v_date, str):
+            v_date = datetime.date.fromisoformat(v_date.split('T')[0])
+
+        calculated_due_date = due_date
+        if not calculated_due_date:
+            credit_days = getattr(party_ledger, 'credit_period_days', 0) or 0
+            if credit_days > 0:
+                calculated_due_date = v_date + datetime.timedelta(days=credit_days)
+            else:
+                calculated_due_date = v_date
+        elif isinstance(calculated_due_date, str):
+            calculated_due_date = datetime.date.fromisoformat(calculated_due_date.split('T')[0])
+
         if manual_voucher_number:
             v_num = manual_voucher_number
             fy = InvoiceSequenceService.get_or_create_active_fy(company, v_date)
@@ -76,6 +91,7 @@ class SalesInvoiceService:
             voucher_type='SALES',
             voucher_number=v_num,
             voucher_date=v_date,
+            due_date=calculated_due_date,
             party_ledger=party_ledger,
             buyer_name=buyer_name,
             buyer_address=buyer_address,
@@ -214,6 +230,24 @@ class SalesInvoiceService:
 
         voucher.total_amount = rounded_total
         voucher.save(update_fields=['total_amount'])
+
+        # Credit Limit Check
+        if party_ledger and party_ledger.credit_limit and party_ledger.credit_limit > Decimal('0.00'):
+            current_out = party_ledger.current_balance or Decimal('0.00')
+            projected_out = current_out + rounded_total
+            if projected_out > party_ledger.credit_limit:
+                exceeded_by = projected_out - party_ledger.credit_limit
+                settings = getattr(company, 'settings', None)
+                if settings and getattr(settings, 'enforce_credit_limit', False):
+                    from rest_framework.exceptions import ValidationError
+                    raise ValidationError(
+                        f"Credit limit exceeded by ₹{exceeded_by}. Maximum allowed credit is ₹{party_ledger.credit_limit}."
+                    )
+                voucher.credit_limit_warning = {
+                    "exceeded_by": str(exceeded_by),
+                    "credit_limit": str(party_ledger.credit_limit),
+                    "projected_outstanding": str(projected_out)
+                }
         
         # 3. Generate strict Ledger Entries (The Double Entry)
         # Debit the Party (Customer) with rounded total payable amount

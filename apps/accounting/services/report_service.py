@@ -1,4 +1,4 @@
-from django.db.models import Sum
+from django.db.models import Sum, Q
 from decimal import Decimal
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger, LedgerGroup
@@ -10,7 +10,9 @@ class ReportService:
         Generates the Trial Balance for a company by summing all ledger balances.
         Returns a strict dictionary proving Total Debit == Total Credit.
         """
-        ledgers = Ledger.objects.filter(company=company, is_active=True).select_related('group')
+        ledgers = Ledger.objects.filter(company=company).filter(
+            Q(is_active=True) | ~Q(current_balance=Decimal('0.00'))
+        ).select_related('group')
         
         trial_balance = []
         total_debit = Decimal('0.00')

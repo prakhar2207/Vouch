@@ -3,7 +3,9 @@ import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
 
 export async function queueOfflineVoucher(voucherType: string, payload: any, voucherDate: string) {
-  const localId = `local-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  const localId = typeof crypto !== "undefined" && crypto.randomUUID 
+    ? crypto.randomUUID() 
+    : `cmd-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   const entry: OfflineVoucher = {
     localId,
     voucherType,
@@ -35,32 +37,44 @@ export async function executeClientOutboxSync() {
     try {
       await offlineDb.vouchers.update(item.id!, { status: "SYNCING" });
 
-      let endpoint = `${API_BASE_URL}/api/vouchers/`;
-      if (item.voucherType === "SALES") {
-        endpoint = `${API_BASE_URL}/api/v1/accounting/sales-invoice/`;
-      } else if (item.voucherType === "PURCHASE") {
-        endpoint = `${API_BASE_URL}/api/v1/accounting/purchase-invoice/`;
-      }
+      const commandId = item.localId;
+      const companyId = item.payload.company_id || item.payload.company;
 
-      const response = await fetch(endpoint, {
+      const pushPayload = {
+        company_id: companyId,
+        commands: [
+          {
+            command_id: commandId,
+            command_type: `CREATE_${item.voucherType.toUpperCase()}`,
+            payload: item.payload,
+            device_id: typeof window !== "undefined" ? window.navigator.userAgent.substring(0, 50) : "web-client"
+          }
+        ]
+      };
+
+      const response = await fetch(`${API_BASE_URL}/api/v1/accounting/sync/push/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(item.payload),
+        body: JSON.stringify(pushPayload),
       });
 
-      if (response.ok) {
+      const resData = await response.json();
+
+      if (response.ok && (resData.success || resData.processed_count > 0)) {
+        const cmdResult = resData.results?.[0];
         await offlineDb.vouchers.update(item.id!, {
           status: "SYNCED",
+          voucherNumber: cmdResult?.voucher_number,
           syncedAt: Date.now(),
         });
       } else {
-        const errText = await response.text();
+        const errMsg = resData.errors?.[0]?.error || (typeof resData === "string" ? resData : JSON.stringify(resData));
         await offlineDb.vouchers.update(item.id!, {
           status: "FAILED",
-          errorMessage: errText,
+          errorMessage: errMsg,
           retryCount: (item.retryCount || 0) + 1,
         });
       }

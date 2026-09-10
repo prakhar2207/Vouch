@@ -42,14 +42,28 @@ class Ledger(models.Model):
     current_balance = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     
     credit_limit = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    credit_period_days = models.PositiveIntegerField(default=0, help_text="Credit terms in days (0 for Immediate)")
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0.00, help_text="Default discount percentage for this party")
     phone = models.CharField(max_length=20, null=True, blank=True)
     email = models.EmailField(null=True, blank=True)
     address = models.TextField(null=True, blank=True)
     
     is_active = models.BooleanField(default=True)
+    is_archived = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def canonical_role(self):
+        lt = (self.ledger_type or '').upper()
+        if lt in ['CUSTOMER', 'SUPPLIER', 'BOTH']:
+            return lt
+        grp_name = (self.group.name if self.group else '').lower()
+        if 'debtor' in grp_name:
+            return 'CUSTOMER'
+        if 'creditor' in grp_name:
+            return 'SUPPLIER'
+        return 'OTHER'
 
     @property
     def initial_opening_balance(self):

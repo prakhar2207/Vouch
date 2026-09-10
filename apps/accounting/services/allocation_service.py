@@ -22,25 +22,37 @@ class PaymentAllocationService:
         """
         Returns all posted invoices for a party that have remaining unpaid balances,
         ordered by voucher_date ascending (FIFO order).
+        Eliminates N+1 query overhead by batch-aggregating allocations in a single query.
         """
         if not party_ledger:
             return []
 
-        # If party is debtor (customer), look for posted SALES
-        # If party is creditor (supplier), look for posted PURCHASE
-        target_vtype = 'SALES' if party_ledger.group and 'debtor' in party_ledger.group.name.lower() else 'PURCHASE'
+        # Canonical party role: CUSTOMER (receivable) vs SUPPLIER (payable)
+        is_customer = (party_ledger.canonical_role == 'CUSTOMER') or (party_ledger.opening_balance_type == 'DEBIT')
+        target_vtypes = ['SALES', 'OPENING_INVOICE'] if is_customer else ['PURCHASE', 'OPENING_BILL']
 
-        invoices = Voucher.objects.filter(
+        invoices = list(Voucher.objects.filter(
             company=company,
             party_ledger=party_ledger,
-            voucher_type=target_vtype,
+            voucher_type__in=target_vtypes,
             status='POSTED'
-        ).order_by('voucher_date', 'created_at')
+        ).order_by('due_date', 'voucher_date', 'created_at'))
+
+        if not invoices:
+            return []
+
+        inv_ids = [inv.id for inv in invoices]
+        allocations_map = {}
+        if inv_ids:
+            alloc_totals = PaymentAllocation.objects.filter(
+                invoice_voucher_id__in=inv_ids
+            ).values('invoice_voucher_id').annotate(total_paid=Sum('allocated_amount'))
+            allocations_map = {item['invoice_voucher_id']: item['total_paid'] for item in alloc_totals}
 
         unpaid = []
         for inv in invoices:
             total = quantize_money(inv.total_amount)
-            paid = PaymentAllocationService.get_voucher_allocated_amount(inv)
+            paid = quantize_money(allocations_map.get(inv.id, Decimal('0.00')))
             remaining = total - paid
             if remaining > Decimal('0.00'):
                 unpaid.append({
@@ -61,6 +73,7 @@ class PaymentAllocationService:
         Automatically performs FIFO allocation of a Payment or Receipt voucher
         against the party's oldest outstanding invoices.
         Any remaining unallocated amount represents an Advance.
+        Enforces strict cross-company isolation invariant.
         """
         if payment_voucher.voucher_type not in ['PAYMENT', 'RECEIPT']:
             return []
@@ -81,6 +94,11 @@ class PaymentAllocationService:
                 break
 
             inv = Voucher.objects.get(id=inv_info['voucher_id'])
+            # P1-18: Payment Allocation Company Invariant
+            if inv.company_id != payment_voucher.company_id:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError("Cross-company payment allocation is strictly prohibited.")
+
             inv_due = Decimal(inv_info['remaining_amount'])
             alloc_amt = min(rem_funds, inv_due)
 
@@ -98,3 +116,22 @@ class PaymentAllocationService:
             rem_funds -= alloc_amt
 
         return allocations
+
+    @classmethod
+    @transaction.atomic
+    def allocate_payment(cls, payment_voucher: Voucher, invoice_voucher: Voucher, allocated_amount: Decimal) -> PaymentAllocation:
+        """
+        Allocates a specific payment amount against an invoice.
+        Enforces strict cross-company isolation invariant.
+        """
+        if payment_voucher.company_id != invoice_voucher.company_id:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError("Cross-company payment allocation is strictly prohibited.")
+
+        alloc = PaymentAllocation.objects.create(
+            company=payment_voucher.company,
+            payment_voucher=payment_voucher,
+            invoice_voucher=invoice_voucher,
+            allocated_amount=allocated_amount
+        )
+        return alloc

@@ -9,7 +9,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useShortcuts } from '@/context/ShortcutContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
 import { useToast } from '@/context/ToastContext';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, ScanBarcode } from 'lucide-react';
 import { queueOfflineVoucher } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
 
@@ -58,6 +58,8 @@ export default function SalesPage() {
   const [groupedItems, setGroupedItems] = useState<any[]>([
     { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: 0 } ] }
   ]);
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const barcodeInputRef = React.useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (workingDate) {
@@ -717,6 +719,102 @@ export default function SalesPage() {
       }
     ]);
   };
+
+  const handleBarcodeScan = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const rawCode = barcodeInput.trim();
+    if (!rawCode) return;
+
+    const codeLower = rawCode.toLowerCase();
+    const matchedProd = products.find((p: any) => 
+      (p.barcode && String(p.barcode).trim().toLowerCase() === codeLower) ||
+      (p.sku && String(p.sku).trim().toLowerCase() === codeLower) ||
+      (p.alias && String(p.alias).trim().toLowerCase() === codeLower) ||
+      (p.name && String(p.name).trim().toLowerCase() === codeLower)
+    );
+
+    if (!matchedProd) {
+      toast.error(`Barcode / SKU "${rawCode}" not found in catalog.`);
+      setBarcodeInput('');
+      return;
+    }
+
+    const newGroups = [...groupedItems];
+
+    // Check if already in current line items -> increment quantity
+    for (let g = 0; g < newGroups.length; g++) {
+      for (let i = 0; i < newGroups[g].items.length; i++) {
+        const it = newGroups[g].items[i];
+        if (it.product_id === matchedProd.id) {
+          const newQty = (Number(it.quantity) || 0) + 1;
+          it.quantity = newQty;
+          setGroupedItems(newGroups);
+          toast.success(`Incremented ${matchedProd.name} (Qty: ${newQty})`);
+          setBarcodeInput('');
+          return;
+        }
+      }
+    }
+
+    // Determine rate: past party rate or catalog selling price
+    const keyId = matchedProd.id;
+    const cleanName = String(matchedProd.name || '').trim().toLowerCase();
+    const cleanBrand = String(matchedProd.brand || '').trim().toLowerCase();
+    const keyBrand = `${cleanName}|${cleanBrand}`;
+    const pastRateInfo = (keyId && partyRates[keyId]) || partyRates[keyBrand] || partyRates[cleanName];
+    const catalogMrp = parseFloat(matchedProd.selling_price) || 0;
+    const rate = (pastRateInfo && Number(pastRateInfo.rate) > 0) ? Number(pastRateInfo.rate) : catalogMrp;
+
+    const newItem = {
+      product_name: matchedProd.name,
+      product_id: matchedProd.id,
+      brand: matchedProd.brand || '',
+      unit: matchedProd.unit || 'PCS',
+      stock_quantity: matchedProd.stock_quantity ?? 0,
+      quantity: 1,
+      rate: rate,
+      mrp: catalogMrp,
+      discount_percent: currentPartyDiscount > 0 ? currentPartyDiscount : 0,
+      last_party_rate: pastRateInfo ? Number(pastRateInfo.rate) : null,
+      last_party_date: pastRateInfo ? pastRateInfo.voucher_date : null,
+      last_party_vnum: pastRateInfo ? pastRateInfo.voucher_number : null,
+    };
+
+    const targetCatId = matchedProd.category_id;
+    let targetGroupIdx = newGroups.findIndex((g: any) => g.category_id === targetCatId);
+
+    if (targetGroupIdx === -1 && newGroups.length === 1 && !newGroups[0].items[0]?.product_id && !newGroups[0].items[0]?.product_name) {
+      targetGroupIdx = 0;
+      if (targetCatId) {
+        newGroups[0].category_id = targetCatId;
+        const cat = categories.find(c => c.id === targetCatId);
+        if (cat) {
+          newGroups[0].hsn_code = cat.hsn_code || '';
+          newGroups[0].gst_rate = Number(cat.gst_rate) || 18;
+        }
+      }
+      newGroups[0].items[0] = newItem;
+    } else if (targetGroupIdx !== -1) {
+      if (newGroups[targetGroupIdx].items.length === 1 && !newGroups[targetGroupIdx].items[0]?.product_id && !newGroups[targetGroupIdx].items[0]?.product_name) {
+        newGroups[targetGroupIdx].items[0] = newItem;
+      } else {
+        newGroups[targetGroupIdx].items.push(newItem);
+      }
+    } else {
+      const cat = categories.find(c => c.id === targetCatId);
+      newGroups.push({
+        category_id: targetCatId || '',
+        hsn_code: cat?.hsn_code || '',
+        gst_rate: Number(cat?.gst_rate) || 18,
+        items: [newItem]
+      });
+    }
+
+    setGroupedItems(newGroups);
+    toast.success(`Added ${matchedProd.name}`);
+    setBarcodeInput('');
+  };
   
   const removeCategoryGroup = (gIndex: number) => {
     if (groupedItems.length === 1) return;
@@ -971,9 +1069,30 @@ export default function SalesPage() {
 
         {/* Line Items Card */}
         <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-border flex justify-between items-center">
-                <h2 className="text-lg font-semibold text-foreground">Line Items by Category</h2>
-                <span className="text-xs text-blue-400 bg-blue-400/10 px-2 py-1 rounded border border-blue-400/20">Auto-Creates & Inherits Tax</span>
+            <div className="p-4 sm:p-6 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-semibold text-foreground">Line Items by Category</h2>
+                    <span className="text-xs text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded border border-blue-400/20">Auto-Creates & Inherits Tax</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">Rapid billing for retail and wholesale</p>
+                </div>
+                
+                {/* Barcode Quick-Scan Input (P1-5) */}
+                <div className="flex items-center gap-2 w-full md:w-80">
+                  <div className="relative w-full">
+                    <ScanBarcode className="w-4 h-4 text-primary absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      ref={barcodeInputRef}
+                      type="text"
+                      value={barcodeInput}
+                      onChange={(e) => setBarcodeInput(e.target.value)}
+                      onKeyDown={handleBarcodeScan}
+                      placeholder="Scan Barcode / SKU (Press Enter)..."
+                      className="w-full pl-9 pr-3 py-1.5 bg-muted/60 border border-input rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:bg-background transition-all font-mono"
+                    />
+                  </div>
+                </div>
             </div>
             
             <div className="p-2 space-y-6">

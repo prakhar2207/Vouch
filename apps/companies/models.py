@@ -61,6 +61,7 @@ class CompanySettings(models.Model):
     enable_ledger_mapping = models.BooleanField(default=False)
     enable_manual_invoice_number = models.BooleanField(default=False)
     enable_advanced_item_creation = models.BooleanField(default=False)
+    enforce_credit_limit = models.BooleanField(default=False, help_text="If True, blocks sales when credit limit exceeded; if False, only warns")
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):

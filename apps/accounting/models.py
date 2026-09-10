@@ -34,6 +34,9 @@ class VoucherSequence(models.Model):
         ('JOURNAL', 'Journal'),
         ('CREDIT_NOTE', 'Credit Note'),
         ('DEBIT_NOTE', 'Debit Note'),
+        ('OPENING', 'Opening Balance'),
+        ('OPENING_INVOICE', 'Opening Invoice'),
+        ('OPENING_BILL', 'Opening Bill'),
     )
 
     METHOD_CHOICES = (
@@ -92,6 +95,9 @@ class Voucher(models.Model):
         ('PURCHASE', 'Purchase'),
         ('CREDIT_NOTE', 'Credit Note'),
         ('DEBIT_NOTE', 'Debit Note'),
+        ('OPENING', 'Opening Balance'),
+        ('OPENING_INVOICE', 'Opening Invoice'),
+        ('OPENING_BILL', 'Opening Bill'),
     )
     
     STATUS_CHOICES = (
@@ -99,6 +105,21 @@ class Voucher(models.Model):
         ('VALIDATING', 'Validating'),
         ('POSTED', 'Posted'),
         ('CANCELLED', 'Cancelled'),
+        ('SUPERSEDED', 'Superseded'),
+        ('REVERSED', 'Reversed'),
+        ('CORRECTED', 'Corrected'),
+    )
+
+    CORRECTION_TYPE_CHOICES = (
+        ('CLERICAL', 'Clerical / Typo'),
+        ('QUANTITY', 'Wrong Quantity'),
+        ('RATE', 'Wrong Price / Rate'),
+        ('PRODUCT', 'Wrong Product'),
+        ('CUSTOMER', 'Wrong Customer Details'),
+        ('GST', 'Wrong GST'),
+        ('DATE', 'Wrong Date'),
+        ('PAYMENT', 'Payment Adjustment'),
+        ('OTHER', 'Other'),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -106,7 +127,20 @@ class Voucher(models.Model):
     financial_year = models.ForeignKey(FinancialYear, on_delete=models.PROTECT, null=True, blank=True, related_name='vouchers')
     voucher_type = models.CharField(max_length=20, choices=VOUCHER_TYPE_CHOICES)
     voucher_number = models.CharField(max_length=100)
+    external_invoice_number = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    reversal_voucher = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='reverses_vouchers')
+    corrects_voucher = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='corrected_by_vouchers')
+    
+    # Revision / History relationships (P0 & P1)
+    revision_of = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='revisions')
+    superseded_by = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='supersedes')
+    revision_number = models.PositiveIntegerField(default=1)
+    correction_reason = models.TextField(null=True, blank=True)
+    correction_type = models.CharField(max_length=30, choices=CORRECTION_TYPE_CHOICES, null=True, blank=True)
+    corrected_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='voucher_corrections')
+    corrected_at = models.DateTimeField(null=True, blank=True)
     voucher_date = models.DateField()
+    due_date = models.DateField(null=True, blank=True)
     reference_number = models.CharField(max_length=100, null=True, blank=True)
     party_ledger = models.ForeignKey(Ledger, on_delete=models.PROTECT, null=True, blank=True, related_name='party_vouchers')
     
@@ -259,8 +293,10 @@ class PaymentAllocation(models.Model):
 class OfflineCommand(models.Model):
     STATUS_CHOICES = (
         ('RECEIVED', 'Received'),
+        ('PROCESSING', 'Processing'),
         ('PROCESSED', 'Processed'),
         ('FAILED', 'Failed'),
+        ('CONFLICT', 'Conflict'),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -272,7 +308,10 @@ class OfflineCommand(models.Model):
     payload = models.JSONField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='RECEIVED')
     result_voucher = models.ForeignKey(Voucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='originating_command')
+    error_code = models.CharField(max_length=50, null=True, blank=True)
     error_message = models.TextField(null=True, blank=True)
+    retry_count = models.PositiveIntegerField(default=0)
+    failed_at = models.DateTimeField(null=True, blank=True)
     client_created_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(null=True, blank=True)

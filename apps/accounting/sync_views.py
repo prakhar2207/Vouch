@@ -203,31 +203,36 @@ class SyncPushAPIView(APIView):
             if not cmd_id:
                 continue
 
-            # Idempotency Check: if command already processed, skip duplicate posting
-            existing_cmd = OfflineCommand.objects.filter(command_id=cmd_id, company=company).select_related('result_voucher').first()
-            if existing_cmd:
-                processed_commands.append({
-                    'command_id': cmd_id,
-                    'status': existing_cmd.status,
-                    'voucher_id': str(existing_cmd.result_voucher_id) if existing_cmd.result_voucher_id else None,
-                    'voucher_number': existing_cmd.result_voucher.voucher_number if existing_cmd.result_voucher else None,
-                    'idempotent_cached': True
-                })
-                continue
+            # P0-2 & P0-3: Persist OfflineCommand outside the business transaction so failures are not rolled back
+            cmd_obj, created = OfflineCommand.objects.get_or_create(
+                command_id=cmd_id,
+                company=company,
+                defaults={
+                    'device_id': device_id,
+                    'user': request.user,
+                    'command_type': cmd_type,
+                    'payload': payload,
+                    'status': 'PROCESSING'
+                }
+            )
+
+            # Idempotency Check: if command already processed, skip duplicate posting and return cached voucher result
+            if not created:
+                if cmd_obj.status == 'PROCESSED' and cmd_obj.result_voucher:
+                    processed_commands.append({
+                        'command_id': cmd_id,
+                        'status': 'PROCESSED',
+                        'voucher_id': str(cmd_obj.result_voucher_id),
+                        'voucher_number': cmd_obj.result_voucher.voucher_number,
+                        'idempotent_cached': True
+                    })
+                    continue
+                cmd_obj.status = 'PROCESSING'
+                cmd_obj.retry_count += 1
+                cmd_obj.save(update_fields=['status', 'retry_count'])
 
             try:
                 with transaction.atomic():
-                    # Record command receipt
-                    cmd_obj = OfflineCommand.objects.create(
-                        command_id=cmd_id,
-                        device_id=device_id,
-                        company=company,
-                        user=request.user,
-                        command_type=cmd_type,
-                        payload=payload,
-                        status='RECEIVED'
-                    )
-
                     voucher = None
 
                     if 'SALE' in cmd_type:
@@ -281,13 +286,57 @@ class SyncPushAPIView(APIView):
                             cartage_amount=to_decimal(payload.get('cartage_amount', 0))
                         )
 
+                    elif 'PAYMENT' in cmd_type or 'RECEIPT' in cmd_type:
+                        from apps.accounting.services.allocation_service import PaymentAllocationService
+                        from apps.accounting.services.sequence_service import InvoiceSequenceService
+
+                        vtype = 'PAYMENT' if 'PAYMENT' in cmd_type else 'RECEIPT'
+                        party_ledger_id = payload.get('party_ledger_id')
+                        party_ledger = get_company_ledger(company, party_ledger_id, "Party Ledger")
+                        amount = to_decimal(payload.get('amount') or payload.get('total_amount', 0))
+                        
+                        payment_ledger_id = payload.get('payment_ledger_id')
+                        payment_ledger = get_company_ledger(company, payment_ledger_id, "Payment Account") if payment_ledger_id else None
+                        if not payment_ledger:
+                            payment_ledger, _ = Ledger.objects.get_or_create(company=company, name="Cash", defaults={"ledger_type": "CASH"})
+
+                        v_date = payload.get('voucher_date') or timezone.now().date()
+                        v_num, fy = InvoiceSequenceService.get_next_number(company, vtype, v_date)
+
+                        voucher = Voucher.objects.create(
+                            company=company,
+                            financial_year=fy,
+                            voucher_type=vtype,
+                            voucher_number=v_num,
+                            voucher_date=v_date,
+                            party_ledger=party_ledger,
+                            status='DRAFT',
+                            total_amount=amount,
+                            created_by=request.user,
+                            narration=payload.get('narration') or f"{vtype.capitalize()} for {party_ledger.name}"
+                        )
+
+                        if vtype == 'PAYMENT':
+                            LedgerEntry.objects.create(voucher=voucher, ledger=party_ledger, debit_amount=amount, credit_amount=Decimal('0.00'))
+                            LedgerEntry.objects.create(voucher=voucher, ledger=payment_ledger, debit_amount=Decimal('0.00'), credit_amount=amount)
+                        else:
+                            LedgerEntry.objects.create(voucher=voucher, ledger=payment_ledger, debit_amount=amount, credit_amount=Decimal('0.00'))
+                            LedgerEntry.objects.create(voucher=voucher, ledger=party_ledger, debit_amount=Decimal('0.00'), credit_amount=amount)
+
+                        VoucherService.post_voucher(voucher)
+                        PaymentAllocationService.auto_allocate_voucher(voucher)
+
                     if voucher:
                         # Authoritative server-side posting
-                        VoucherService.post_voucher(voucher)
+                        if voucher.status != 'POSTED':
+                            VoucherService.post_voucher(voucher)
+
                         cmd_obj.status = 'PROCESSED'
                         cmd_obj.result_voucher = voucher
                         cmd_obj.processed_at = timezone.now()
-                        cmd_obj.save(update_fields=['status', 'result_voucher', 'processed_at'])
+                        cmd_obj.error_code = None
+                        cmd_obj.error_message = None
+                        cmd_obj.save(update_fields=['status', 'result_voucher', 'processed_at', 'error_code', 'error_message'])
 
                         processed_commands.append({
                             'command_id': cmd_id,
@@ -297,7 +346,17 @@ class SyncPushAPIView(APIView):
                         })
 
             except Exception as e:
-                errors.append({'command_id': cmd_id, 'error': str(e)})
+                from rest_framework.exceptions import ValidationError as DRFValidationError
+                from django.core.exceptions import ValidationError as DjangoValidationError
+
+                is_val_err = isinstance(e, (DRFValidationError, DjangoValidationError))
+                cmd_obj.status = 'FAILED'
+                cmd_obj.error_code = 'VALIDATION_ERROR' if is_val_err else 'EXECUTION_ERROR'
+                cmd_obj.error_message = str(e)
+                cmd_obj.failed_at = timezone.now()
+                cmd_obj.save(update_fields=['status', 'error_code', 'error_message', 'failed_at'])
+
+                errors.append({'command_id': cmd_id, 'error': str(e), 'error_code': cmd_obj.error_code})
 
         return Response({
             'success': len(errors) == 0,

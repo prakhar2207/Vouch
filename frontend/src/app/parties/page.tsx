@@ -17,7 +17,9 @@ import {
   UserCheck, 
   ArrowUpRight,
   Plus,
-  RefreshCw
+  RefreshCw,
+  Archive,
+  RotateCcw
 } from 'lucide-react';
 
 export default function PartiesPage() {
@@ -58,26 +60,51 @@ export default function PartiesPage() {
       if (!cid) return;
       setCompanyId(cid);
 
-      const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers });
+      const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/?show_archived=true`, { headers });
       
       const rawLedgers = ledgersRes.data.data || [];
       const filteredParties = rawLedgers.filter((l: any) => 
-        l.group.includes('Debtor') || 
-        l.group.includes('Creditor') || 
-        l.name.includes('Customer') || 
-        l.name.includes('Supplier') ||
+        l.canonical_role === 'CUSTOMER' ||
+        l.canonical_role === 'SUPPLIER' ||
+        l.canonical_role === 'BOTH' ||
         l.ledger_type === 'CUSTOMER' ||
-        l.ledger_type === 'SUPPLIER'
-      ).map((l: any) => ({
-        ...l,
-        type: (l.group.includes('Debtor') || l.ledger_type === 'CUSTOMER') ? 'Customer' : 'Supplier'
-      }));
+        l.ledger_type === 'SUPPLIER' ||
+        l.ledger_type === 'BOTH' ||
+        l.group.includes('Debtor') || 
+        l.group.includes('Creditor')
+      ).map((l: any) => {
+        const isCust = l.canonical_role === 'CUSTOMER' || l.ledger_type === 'CUSTOMER' || l.group.includes('Debtor');
+        const isSupp = l.canonical_role === 'SUPPLIER' || l.ledger_type === 'SUPPLIER' || l.group.includes('Creditor');
+        const isBoth = l.canonical_role === 'BOTH' || l.ledger_type === 'BOTH' || (isCust && isSupp);
+        return {
+          ...l,
+          role: isBoth ? 'BOTH' : (isCust ? 'CUSTOMER' : 'SUPPLIER'),
+          type: isBoth ? 'Both' : (isCust ? 'Customer' : 'Supplier')
+        };
+      });
 
       setParties(filteredParties);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleArchiveParty = async (party: any) => {
+    if (!companyId) return;
+    try {
+      const token = getAccessToken();
+      const action = party.is_archived ? 'unarchive' : 'archive';
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/ledgers/${companyId}/${party.id}/archive/`,
+        { action },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      toast.success(party.is_archived ? "Party Restored" : "Party Archived", res.data.message);
+      await fetchParties();
+    } catch (err: any) {
+      toast.error("Action Failed", err.response?.data?.error || err.message);
     }
   };
 
@@ -422,6 +449,21 @@ export default function PartiesPage() {
                             {party.gstin}
                           </span>
                         )}
+                        {party.is_archived && (
+                          <span className="text-xs font-mono text-muted-foreground bg-muted/80 px-2 py-0.5 rounded border border-border/60 font-semibold">
+                            Archived
+                          </span>
+                        )}
+                        {party.credit_period_days > 0 && (
+                          <span className="text-xs font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded font-medium">
+                            {party.credit_period_days}d terms
+                          </span>
+                        )}
+                        {party.credit_limit && (
+                          <span className="text-xs font-mono text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded font-medium">
+                            Limit ₹{Number(party.credit_limit).toLocaleString('en-IN')}
+                          </span>
+                        )}
                         {Number(party.discount_percent || 0) > 0 && (
                           <span className="text-xs font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded font-semibold">
                             {Number(party.discount_percent)}% Disc
@@ -469,19 +511,29 @@ export default function PartiesPage() {
                     )}
                     
                     <div className="flex justify-between items-baseline pt-1.5 border-t border-border/40">
-                      <span className="text-muted-foreground text-xs font-medium">Current Balance</span>
+                      <span className="text-muted-foreground text-xs font-medium">Balance</span>
                       <div className="text-right">
                         <span className={`font-bold text-base font-mono tabular-nums ${
                           hasZeroBalance 
                             ? 'text-muted-foreground' 
-                            : balanceNum > 0 
+                            : (isCustomer && balanceNum > 0) || (!isCustomer && balanceNum < 0)
                             ? 'text-emerald-400' 
                             : 'text-rose-400'
                         }`}>
                           ₹{Math.abs(balanceNum).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </span>
-                        <span className="text-xs text-muted-foreground ml-1.5 uppercase font-semibold">
-                          {party.opening_balance_type || 'DEBIT'}
+                        <span className={`text-xs ml-1.5 font-bold px-2 py-0.5 rounded-full ${
+                          hasZeroBalance
+                            ? 'text-muted-foreground bg-muted/60'
+                            : isCustomer
+                            ? (balanceNum > 0 ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20' : 'text-blue-400 bg-blue-500/10 border border-blue-500/20')
+                            : (balanceNum > 0 ? 'text-rose-400 bg-rose-500/10 border border-rose-500/20' : 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20')
+                        }`}>
+                          {hasZeroBalance 
+                            ? 'Settled' 
+                            : isCustomer 
+                            ? (balanceNum > 0 ? 'To Collect' : 'Advance') 
+                            : (balanceNum > 0 ? 'To Pay' : 'Advance Paid')}
                         </span>
                       </div>
                     </div>
@@ -498,6 +550,19 @@ export default function PartiesPage() {
                         <Edit2 className="w-3.5 h-3.5" />
                         <span>Edit</span>
                       </Link>
+                      <span className="text-border">•</span>
+                      <button 
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleArchiveParty(party);
+                        }}
+                        className={`hover:text-foreground flex items-center gap-1 transition-colors font-medium p-1 cursor-pointer ${party.is_archived ? 'text-emerald-400' : 'text-muted-foreground hover:text-amber-400'}`}
+                        title={party.is_archived ? "Restore Party" : "Archive Party"}
+                      >
+                        {party.is_archived ? <RotateCcw className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
+                        <span>{party.is_archived ? 'Restore' : 'Archive'}</span>
+                      </button>
                       <span className="text-border">•</span>
                       <button 
                         type="button"

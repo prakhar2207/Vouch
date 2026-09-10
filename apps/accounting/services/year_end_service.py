@@ -118,8 +118,19 @@ class YearEndClosingService:
                 op_dr = existing_lb.opening_balance if existing_lb.opening_type == 'DR' else Decimal('0.00')
                 op_cr = existing_lb.opening_balance if existing_lb.opening_type == 'CR' else Decimal('0.00')
             else:
-                op_dr = ledger.opening_balance if ledger.opening_balance_type == 'DEBIT' else Decimal('0.00')
-                op_cr = ledger.opening_balance if ledger.opening_balance_type == 'CREDIT' else Decimal('0.00')
+                has_opening_entries = LedgerEntry.objects.filter(
+                    ledger=ledger,
+                    voucher__company_id=company_id,
+                    voucher__financial_year=current_fy,
+                    voucher__status='POSTED',
+                    voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
+                ).exists()
+                if has_opening_entries:
+                    op_dr = Decimal('0.00')
+                    op_cr = Decimal('0.00')
+                else:
+                    op_dr = ledger.opening_balance if ledger.opening_balance_type == 'DEBIT' else Decimal('0.00')
+                    op_cr = ledger.opening_balance if ledger.opening_balance_type == 'CREDIT' else Decimal('0.00')
 
             # Aggregate posted voucher entries in current FY
             entries_agg = LedgerEntry.objects.filter(

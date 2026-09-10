@@ -147,14 +147,34 @@ class AnalyticsEngine:
     @staticmethod
     def forecast_sales(company: Company, days: int = 30):
         """
-        Projects future daily sales for the next `days` using linear trend projection
-        over historical sales voucher velocity.
+        P1-15: Honest sales forecasting.
+        Requires at least 7 distinct active selling days for statistical validity.
+        Communicates uncertainty via confidence tiers (HIGH/MEDIUM/LOW).
+        Avoids fabricated ±15% fixed margins.
         """
         import datetime
+        vouchers = Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
+        distinct_days = vouchers.values('voucher_date').distinct().count()
+
+        if distinct_days < 7:
+            return {
+                "forecast_days": days,
+                "projected_total": 0.0,
+                "projected_daily_average": 0.0,
+                "trend_status": "Insufficient Data",
+                "confidence": "LOW",
+                "sample_size_days": distinct_days,
+                "trend_summary": f"Not enough sales history for a reliable forecast ({distinct_days}/7 active selling days recorded).",
+                "daily_forecast": [],
+                "historical_daily_average": 0.0
+            }
+
         trend_info = AnalyticsEngine.get_sales_trend(company)
         avg_sales = float(trend_info.get("average_daily_sales", 0.0))
         slope = float(trend_info.get("slope", 0.0))
         status = trend_info.get("status", "Constant")
+
+        confidence = "HIGH" if distinct_days >= 30 else "MEDIUM"
 
         today = datetime.date.today()
         forecast_list = []
@@ -163,8 +183,9 @@ class AnalyticsEngine:
         for i in range(1, days + 1):
             future_date = today + datetime.timedelta(days=i)
             base_proj = max(0.0, avg_sales + (slope * (i / 10.0)))
-            lower = max(0.0, round(base_proj * 0.85, 2))
-            upper = round(base_proj * 1.15, 2)
+            spread = round(base_proj * 0.10 if confidence == "HIGH" else base_proj * 0.20, 2)
+            lower = max(0.0, round(base_proj - spread, 2))
+            upper = round(base_proj + spread, 2)
             proj = round(base_proj, 2)
             projected_total += proj
 
@@ -180,7 +201,9 @@ class AnalyticsEngine:
             "projected_total": round(projected_total, 2),
             "projected_daily_average": round(projected_total / max(1, days), 2),
             "trend_status": status,
-            "trend_summary": trend_info.get("summary", ""),
+            "confidence": confidence,
+            "sample_size_days": distinct_days,
+            "trend_summary": f"{trend_info.get('summary', '')} Confidence: {confidence} based on {distinct_days} days of history.",
             "daily_forecast": forecast_list,
             "historical_daily_average": avg_sales
         }
@@ -188,27 +211,66 @@ class AnalyticsEngine:
     @staticmethod
     def get_full_insights(company: Company):
         """
-        Consolidated AI insights endpoint combining RFM clustering, sales trajectory, and KPIs.
+        P1-12 & P1-13: Owner-first dashboard metrics and actionable business alerts.
+        Replaces misleading 'Net Position' (sales - purchases) with real-world financial figures:
+        Today's Sales, Today's Collections, Money to Collect, Bills to Pay, Cash & Bank, Stock Value.
         """
-        rfm_segments = AnalyticsEngine.get_rfm_segments(company)
-        trend = AnalyticsEngine.get_sales_trend(company)
-        
+        from apps.ledgers.models import Ledger
+        from apps.inventory.models import Product
+        from django.db.models import F, ExpressionWrapper, DecimalField, Q
+        import datetime
+
+        today = timezone.now().date()
+
+        # 1. Today's figures
+        today_sales = Voucher.objects.filter(
+            company=company, voucher_type='SALES', voucher_date=today, status='POSTED'
+        ).aggregate(Sum('total_amount'))['total_amount__sum'] or Decimal('0.00')
+
+        today_collections = Voucher.objects.filter(
+            company=company, voucher_type='RECEIPT', voucher_date=today, status='POSTED'
+        ).aggregate(Sum('total_amount'))['total_amount__sum'] or Decimal('0.00')
+
+        # 2. Cumulative Volumes
         total_sales = Voucher.objects.filter(
             company=company, voucher_type='SALES', status='POSTED'
         ).aggregate(Sum('total_amount'))['total_amount__sum'] or Decimal('0.00')
-        
+
         total_purchases = Voucher.objects.filter(
             company=company, voucher_type='PURCHASE', status='POSTED'
         ).aggregate(Sum('total_amount'))['total_amount__sum'] or Decimal('0.00')
-        
+
         sales_count = Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED').count()
         purchase_count = Voucher.objects.filter(company=company, voucher_type='PURCHASE', status='POSTED').count()
-        
-        from apps.inventory.models import Product
-        from django.db.models import F, ExpressionWrapper, DecimalField
+
+        # 3. Money to Collect (Sundry Debtors / Customer Outstanding)
+        debtors_balance = Ledger.objects.filter(
+            company=company, group__nature='ASSET', group__name__icontains='Debtor'
+        ).aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
+        if debtors_balance == Decimal('0.00'):
+            debtors_balance = Ledger.objects.filter(
+                company=company, ledger_type='PARTY', current_balance__gt=0
+            ).aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
+
+        # 4. Bills to Pay (Sundry Creditors / Supplier Outstanding)
+        creditors_balance = Ledger.objects.filter(
+            company=company, group__nature='LIABILITY', group__name__icontains='Creditor'
+        ).aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
+        if creditors_balance == Decimal('0.00'):
+            neg_parties = Ledger.objects.filter(
+                company=company, ledger_type='PARTY', current_balance__lt=0
+            ).aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
+            creditors_balance = abs(neg_parties)
+
+        # 5. Cash & Bank
+        cash_bank = Ledger.objects.filter(
+            company=company, ledger_type__in=['CASH', 'BANK']
+        ).aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
+
+        # 6. Stock Valuation
         stock_val_expr = ExpressionWrapper(F('stock_quantity') * F('purchase_price'), output_field=DecimalField(max_digits=15, decimal_places=2))
         retail_val_expr = ExpressionWrapper(F('stock_quantity') * F('selling_price'), output_field=DecimalField(max_digits=15, decimal_places=2))
-        
+
         in_stock_prods = Product.objects.filter(company=company, stock_quantity__gt=0)
         total_stock_value = in_stock_prods.annotate(v=stock_val_expr).aggregate(Sum('v'))['v__sum'] or Decimal('0.00')
         total_retail_value = in_stock_prods.annotate(v=retail_val_expr).aggregate(Sum('v'))['v__sum'] or Decimal('0.00')
@@ -216,17 +278,47 @@ class AnalyticsEngine:
         total_in_stock_items = in_stock_prods.count()
         total_catalog_items = Product.objects.filter(company=company).count()
 
+        # 7. Actionable Business Alerts (P2-3)
+        alerts = []
+        low_stock_prods = Product.objects.filter(company=company, stock_quantity__lte=5, stock_quantity__gte=0, is_active=True)[:4]
+        for lp in low_stock_prods:
+            alerts.append({
+                "type": "LOW_STOCK",
+                "severity": "WARNING",
+                "message": f"Low Stock: '{lp.name}' has only {lp.stock_quantity} {lp.unit or 'units'} remaining."
+            })
+
+        # Overdue Customer Invoices
+        overdue_invoices = Voucher.objects.filter(
+            company=company, voucher_type='SALES', status='POSTED',
+            voucher_date__lt=today - datetime.timedelta(days=30)
+        ).select_related('party_ledger')[:3]
+        for oi in overdue_invoices:
+            alerts.append({
+                "type": "OVERDUE_INVOICE",
+                "severity": "INFO",
+                "message": f"Overdue Bill: Invoice #{oi.voucher_number} for {oi.party_ledger.name if oi.party_ledger else 'Customer'} (₹{oi.total_amount}) is past 30 days."
+            })
+
+        rfm_segments = AnalyticsEngine.get_rfm_segments(company)
+        trend = AnalyticsEngine.get_sales_trend(company)
+
         return {
             "business_health": trend["status"],
             "trend_summary": trend["summary"],
             "trend_details": trend,
             "rfm_clusters": rfm_segments,
+            "actionable_alerts": alerts,
             "kpis": {
+                "today_sales": float(today_sales),
+                "today_collections": float(today_collections),
+                "money_to_collect": float(debtors_balance),
+                "bills_to_pay": float(creditors_balance),
+                "cash_and_bank": float(cash_bank),
                 "total_sales": float(total_sales),
                 "total_purchases": float(total_purchases),
                 "sales_vouchers_count": sales_count,
                 "purchase_vouchers_count": purchase_count,
-                "net_position": float(total_sales - total_purchases),
                 "total_stock_value": float(total_stock_value),
                 "total_retail_value": float(total_retail_value),
                 "total_stock_qty": float(total_stock_qty),

@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.utils import timezone
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 from apps.accounting.models import Voucher, LedgerEntry
@@ -206,6 +207,90 @@ class VoucherService:
 
     @staticmethod
     @transaction.atomic
+    def create_reversal_voucher(voucher: Voucher, user=None, reason="Correction Reversal") -> Voucher:
+        """
+        P0-4 & P0-5: Strictly immutable posted transaction reversal.
+        Creates an explicit balancing reversal Journal voucher that posts opposite debits & credits,
+        reverts stock movements, and transitions original voucher to 'REVERSED'.
+        Original voucher, items, and ledger entries remain permanently intact and auditable.
+        """
+        if voucher.status not in ['POSTED', 'VALIDATING']:
+            raise ValidationError(f"Only POSTED transactions can be reversed (current status: {voucher.status}).")
+
+        from apps.accounting.models import Voucher, LedgerEntry
+        from apps.inventory.services.stock_service import StockService
+        from apps.audit.services.audit_service import AuditService
+
+        # 1. Revert Stock atomically
+        if voucher.voucher_type in ['SALES', 'PURCHASE']:
+            StockService.revert_voucher_stock(voucher)
+
+        # 2. Revert Payment Allocations
+        from apps.accounting.models import PaymentAllocation
+        from django.db.models import Q
+        PaymentAllocation.objects.filter(
+            Q(payment_voucher=voucher) | Q(invoice_voucher=voucher)
+        ).delete()
+
+        # 3. Create explicit Reversal Voucher
+        rev_num = f"REV-{voucher.voucher_number}"
+        if Voucher.objects.filter(company=voucher.company, voucher_number=rev_num).exists():
+            rev_num = f"REV-{voucher.voucher_number}-{int(timezone.now().timestamp())}"
+
+        rev_voucher = Voucher.objects.create(
+            company=voucher.company,
+            financial_year=voucher.financial_year,
+            voucher_type='JOURNAL',
+            voucher_number=rev_num,
+            voucher_date=timezone.now().date(),
+            reference_number=voucher.voucher_number,
+            party_ledger=voucher.party_ledger,
+            status='POSTED',
+            total_amount=voucher.total_amount,
+            created_by=user or voucher.created_by,
+            narration=f"Reversal of {voucher.voucher_type} #{voucher.voucher_number}. Reason: {reason}",
+            reversal_voucher=voucher
+        )
+
+        # 4. Generate inverse ledger entries (Credit what was debited, Debit what was credited)
+        entries = list(voucher.ledger_entries.select_related('ledger').all())
+        ledger_ids = [entry.ledger_id for entry in entries]
+        locked_ledgers = {
+            l.id: l for l in Ledger.objects.select_for_update().filter(id__in=set(ledger_ids))
+        }
+
+        for entry in entries:
+            LedgerEntry.objects.create(
+                voucher=rev_voucher,
+                ledger_id=entry.ledger_id,
+                debit_amount=entry.credit_amount,
+                credit_amount=entry.debit_amount,
+                narration=f"Reversal of {voucher.voucher_number}: {entry.narration or ''}"
+            )
+
+        # 5. Mark original voucher as REVERSED and link
+        voucher.status = 'REVERSED'
+        voucher.reversal_voucher = rev_voucher
+        voucher.save(update_fields=['status', 'reversal_voucher'])
+
+        # 6. Recalculate single-source-of-truth balances
+        for ledger in locked_ledgers.values():
+            VoucherService.recalculate_ledger_balance(ledger)
+
+        # 7. Audit log
+        AuditService.log_action(
+            company=voucher.company,
+            user=user or voucher.created_by,
+            action='REVERSE',
+            model_name='Voucher',
+            record_id=voucher.id,
+            changes={"status": "REVERSED", "reversal_voucher_id": str(rev_voucher.id)}
+        )
+
+        return rev_voucher
+
+    @staticmethod
+    @transaction.atomic
     def recalculate_ledger_balance(ledger) -> Decimal:
         """
         Recalculates ledger.current_balance strictly from the single source of truth:
@@ -219,7 +304,15 @@ class VoucherService:
         from django.db.models import Sum
 
         locked_ledger = Ledger.objects.select_for_update().get(id=ledger.id)
-        op_balance = Decimal(str(locked_ledger.opening_balance or '0.00'))
+        
+        # Check if double-entry opening vouchers exist for this ledger
+        has_opening_entries = LedgerEntry.objects.filter(
+            ledger=locked_ledger,
+            voucher__status='POSTED',
+            voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
+        ).exists()
+
+        op_balance = Decimal('0.00') if has_opening_entries else Decimal(str(locked_ledger.opening_balance or '0.00'))
         
         # Only POSTED vouchers affect accounting balances
         totals = LedgerEntry.objects.filter(
@@ -239,4 +332,5 @@ class VoucherService:
             locked_ledger.current_balance = op_balance + total_cr - total_dr
 
         locked_ledger.save(update_fields=['current_balance'])
+        ledger.current_balance = locked_ledger.current_balance
         return locked_ledger.current_balance

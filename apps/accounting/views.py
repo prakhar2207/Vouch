@@ -516,11 +516,13 @@ class VoucherDetailAPIView(APIView):
                 if voucher.party_ledger_id:
                     affected_ledger_ids.add(voucher.party_ledger_id)
 
-                if voucher.status in ['POSTED', 'VALIDATING']:
-                    # Safely cancel & reverse accounting/stock/allocations
-                    VoucherService.cancel_voucher(voucher, user=request.user)
-                    # POSTED vouchers remain recorded with status CANCELLED to preserve audit trail and sequence numbers.
-                    action_msg = "cancelled and reversed"
+                if voucher.status in ['POSTED', 'VALIDATING', 'REVERSED', 'CANCELLED', 'CORRECTED']:
+                    # P0-5: Never physically delete posted financial documents
+                    if voucher.status in ['POSTED', 'VALIDATING']:
+                        VoucherService.create_reversal_voucher(voucher, user=request.user, reason="User Cancellation")
+                        action_msg = "cancelled and reversed (accounting records preserved)"
+                    else:
+                        action_msg = "is already cancelled/reversed"
                 else:
                     # DRAFT vouchers can be deleted safely
                     voucher.delete()
@@ -594,11 +596,71 @@ class VoucherDetailAPIView(APIView):
 
                 # Full line items update
                 if 'items' in data and isinstance(data['items'], list):
-                    # 1. Reverse previous accounting & stock if POSTED or VALIDATING
+                    # P0-4: Posted transactions must be immutable!
+                    # If voucher was POSTED, do NOT mutate in place or delete items/ledger entries!
                     if voucher.status in ['POSTED', 'VALIDATING']:
-                        VoucherService.cancel_voucher(voucher, user=request.user)
+                        from apps.accounting.services.sales_service import SalesInvoiceService
+                        from apps.accounting.services.purchase_service import PurchaseInvoiceService
 
-                    # 2. Clear old items and ledger entries (never delete product master records during edit)
+                        # 1. Reverse original voucher via explicit Reversal voucher
+                        VoucherService.create_reversal_voucher(voucher, user=request.user, reason="Correction Reversal")
+
+                        # 2. Generate new corrected voucher
+                        if voucher.voucher_type == 'SALES':
+                            new_v = SalesInvoiceService.generate_sales_invoice(
+                                company=company,
+                                user=request.user,
+                                party_ledger=voucher.party_ledger,
+                                items_data=data['items'],
+                                sales_ledger=None,
+                                cgst_ledger=None,
+                                sgst_ledger=None,
+                                igst_ledger=None,
+                                manual_voucher_date=data.get('voucher_date', voucher.voucher_date),
+                                buyer_name=data.get('buyer_name', voucher.buyer_name),
+                                buyer_address=data.get('buyer_address', voucher.buyer_address),
+                                buyer_gstin=data.get('buyer_gstin', voucher.buyer_gstin),
+                                buyer_state_code=data.get('buyer_state_code', voucher.buyer_state_code),
+                                buyer_phone=data.get('buyer_phone', voucher.buyer_phone),
+                                cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0))
+                            )
+                        elif voucher.voucher_type == 'PURCHASE':
+                            new_v = PurchaseInvoiceService.generate_purchase_invoice(
+                                company=company,
+                                user=request.user,
+                                party_ledger=voucher.party_ledger,
+                                items_data=data['items'],
+                                purchase_ledger=None,
+                                input_cgst_ledger=None,
+                                input_sgst_ledger=None,
+                                input_igst_ledger=None,
+                                supplier_invoice_number=data.get('voucher_number') or voucher.external_invoice_number,
+                                voucher_date=data.get('voucher_date', voucher.voucher_date),
+                                cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0))
+                            )
+                        else:
+                            from rest_framework.exceptions import ValidationError
+                            raise ValidationError(f"Voucher type {voucher.voucher_type} correction not supported via item patch.")
+
+                        # 3. Post the new corrected voucher
+                        VoucherService.post_voucher(new_v)
+
+                        # 4. Link vouchers
+                        voucher.status = 'CORRECTED'
+                        voucher.corrects_voucher = new_v
+                        voucher.save(update_fields=['status', 'corrects_voucher'])
+
+                        return Response({
+                            "success": True,
+                            "message": f"Invoice #{voucher.voucher_number} reversed and corrected via #{new_v.voucher_number}.",
+                            "original_voucher_number": voucher.voucher_number,
+                            "new_voucher_id": str(new_v.id),
+                            "new_voucher_number": new_v.voucher_number,
+                            "status": new_v.status,
+                            "total_amount": new_v.total_amount
+                        })
+
+                    # If DRAFT, safe to edit lines in place before initial posting
                     voucher.items.all().delete()
                     voucher.ledger_entries.all().delete()
 

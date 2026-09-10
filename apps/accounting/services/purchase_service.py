@@ -42,26 +42,39 @@ class PurchaseInvoiceService:
         if not input_igst_ledger or 'output' in input_igst_ledger.name.lower():
             input_igst_ledger = PurchaseInvoiceService._get_or_create_input_tax_ledger(company, 'IGST')
 
-        # 1. Create Voucher Header
+        # 1. Create Voucher Header (Strict Separation of Vouch PO and Supplier Invoice No.)
         from apps.accounting.services.sequence_service import InvoiceSequenceService
         v_date = voucher_date if voucher_date else timezone.now().date()
-        if supplier_invoice_number and supplier_invoice_number.strip():
-            v_num = supplier_invoice_number.strip()
-            fy = InvoiceSequenceService.get_or_create_active_fy(company, v_date)
-        else:
-            v_num, fy = InvoiceSequenceService.get_next_number(company, 'PURCHASE', v_date)
-        
+        v_num, fy = InvoiceSequenceService.get_next_number(company, 'PURCHASE', v_date)
+        ext_invoice_num = str(supplier_invoice_number).strip() if supplier_invoice_number else None
+
+        # P2-2: Duplicate Supplier Invoice Detection
+        if ext_invoice_num and party_ledger:
+            existing_dup = Voucher.objects.filter(
+                company=company,
+                party_ledger=party_ledger,
+                external_invoice_number__iexact=ext_invoice_num,
+                status__in=['POSTED', 'DRAFT', 'VALIDATING']
+            ).first()
+            if existing_dup:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError(
+                    f"Duplicate supplier bill: Supplier '{party_ledger.name}' already has bill '{ext_invoice_num}' "
+                    f"recorded on {existing_dup.voucher_date} (Vouch PO #{existing_dup.voucher_number})."
+                )
+
         voucher = Voucher.objects.create(
             company=company,
             financial_year=fy,
             voucher_type='PURCHASE',
             voucher_number=v_num,
-            reference_number=supplier_invoice_number,
+            external_invoice_number=ext_invoice_num,
+            reference_number=ext_invoice_num or v_num,
             voucher_date=v_date,
             party_ledger=party_ledger,
             status='DRAFT',
             created_by=user,
-            narration=f"Purchase from {party_ledger.name}"
+            narration=f"Purchase from {party_ledger.name}" + (f" (Bill #{ext_invoice_num})" if ext_invoice_num else "")
         )
         
         total_invoice_value = Decimal('0.00')

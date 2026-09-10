@@ -63,8 +63,17 @@ class StockService:
                 entry_total = line_cogs
             else:
                 product.stock_quantity += qty
-                entry_rate = Decimal(str(item.rate))
-                entry_total = Decimal(str(item.total_amount))
+                # P0-9: Separate Recoverable GST from Inventory Cost
+                # Recoverable GST (Input CGST, SGST, IGST) is recorded in balance sheet tax asset ledgers.
+                # Only the taxable value (net of item discounts) represents inventory acquisition cost.
+                taxable_amt = Decimal(str(getattr(item, 'taxable_amount', 0) or 0))
+                if taxable_amt <= Decimal('0.00'):
+                    rate_val = Decimal(str(item.rate))
+                    disc_pct = Decimal(str(getattr(item, 'discount_percent', 0) or 0))
+                    taxable_amt = (qty * rate_val * (Decimal('100') - disc_pct) / Decimal('100')).quantize(Decimal('0.01'))
+                
+                entry_total = taxable_amt
+                entry_rate = (entry_total / qty).quantize(Decimal('0.01')) if qty > Decimal('0.00') else Decimal('0.00')
                 
             product.save(update_fields=['stock_quantity', 'updated_at'])
             
@@ -87,9 +96,9 @@ class StockService:
         """
         Calculates the total cost value and effective unit rate for a sale of qty_to_sell
         based on the product's configured costing method:
+        - AVG_COST / MOVING_AVG (Default): True Moving Weighted Average computed strictly on remaining unconsumed inventory layers
         - FIFO: Consumes unexhausted historical inward lots in chronological order
         - LIFO: Consumes unexhausted historical inward lots in reverse chronological order
-        - AVG_COST: Weighted average cost of all available inward lots
         - STD_COST: Fixed purchase_price
         Returns (total_cost, unit_cost_rate)
         """
@@ -109,27 +118,15 @@ class StockService:
             total = (fallback_rate * qty_needed).quantize(Decimal('0.01'))
             return total, fallback_rate
 
-        if method == 'AVG_COST':
-            total_qty = sum(e.quantity for e in in_qs)
-            total_val = sum(e.total_value for e in in_qs)
-            if total_qty > Decimal('0.00'):
-                avg_rate = (total_val / total_qty).quantize(Decimal('0.01'))
-                total = (avg_rate * qty_needed).quantize(Decimal('0.01'))
-                return total, avg_rate
-            total = (fallback_rate * qty_needed).quantize(Decimal('0.01'))
-            return total, fallback_rate
-
-        # For FIFO / LIFO: Determine how much quantity has already been consumed by past sales
+        # Determine how much quantity has already been consumed by prior sales
         out_qs = InventoryEntry.objects.filter(product=product, movement_type='OUT')
         if exclude_voucher_id:
             out_qs = out_qs.exclude(voucher_id=exclude_voucher_id)
         already_consumed = sum(e.quantity for e in out_qs)
 
         in_entries = list(in_qs)
-        if method == 'LIFO':
-            in_entries.reverse()
 
-        # Deduct already_consumed from oldest inward entries
+        # Deduct already_consumed from chronological inward entries to find actual remaining inventory layers
         rem_consumed = already_consumed
         available_layers = []
         for entry in in_entries:
@@ -138,9 +135,36 @@ class StockService:
             else:
                 avail_qty = entry.quantity - rem_consumed
                 rem_consumed = Decimal('0.00')
-                available_layers.append({'rate': entry.rate, 'qty': avail_qty})
+                available_layers.append({
+                    'rate': entry.rate,
+                    'qty': avail_qty,
+                    'total_value': (avail_qty * entry.rate).quantize(Decimal('0.01'))
+                })
 
-        # Now consume available layers for qty_needed
+        # P0-8: Moving Weighted Average on remaining unexhausted inventory
+        if method in ['AVG_COST', 'MOVING_AVG', 'WEIGHTED_AVG']:
+            rem_stock_qty = sum(l['qty'] for l in available_layers)
+            rem_stock_val = sum(l['total_value'] for l in available_layers)
+
+            if rem_stock_qty > Decimal('0.00'):
+                avg_rate = (rem_stock_val / rem_stock_qty).quantize(Decimal('0.01'))
+                # If selling within available stock, value at moving average
+                take_qty = min(qty_needed, rem_stock_qty)
+                total = (avg_rate * take_qty).quantize(Decimal('0.01'))
+                # Remainder (if negative stock) priced at fallback
+                over_qty = qty_needed - take_qty
+                if over_qty > Decimal('0.00'):
+                    total += (over_qty * fallback_rate).quantize(Decimal('0.01'))
+                effective_rate = (total / qty_needed).quantize(Decimal('0.01'))
+                return total, effective_rate
+
+            total = (fallback_rate * qty_needed).quantize(Decimal('0.01'))
+            return total, fallback_rate
+
+        # FIFO / LIFO layer-by-layer consumption
+        if method == 'LIFO':
+            available_layers.reverse()
+
         total_cost = Decimal('0.00')
         still_needed = qty_needed
         for layer in available_layers:
@@ -150,7 +174,7 @@ class StockService:
             total_cost += take_qty * layer['rate']
             still_needed -= take_qty
 
-        # If more quantity was sold than available inward layers, price remainder at fallback_rate
+        # If more quantity was sold than available inward layers (negative stock), price remainder at fallback_rate
         if still_needed > Decimal('0.00'):
             total_cost += still_needed * fallback_rate
 

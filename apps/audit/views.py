@@ -59,10 +59,12 @@ class AuditLogListView(APIView):
                 for log in page_logs
             ]
 
+            chain_integrity = self.verify_company_chain(company)
+
             return Response({
                 "success": True,
                 "data": data,
-                "chain_integrity": "VERIFIED",
+                "chain_integrity": chain_integrity,
                 "pagination": {
                     "total_count": total_count,
                     "limit": limit,
@@ -74,3 +76,27 @@ class AuditLogListView(APIView):
             })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @staticmethod
+    def verify_company_chain(company) -> str:
+        """
+        P1-17: Cryptographic audit chain verification.
+        Valid states: 'VERIFIED', 'BROKEN', 'NOT_VERIFIED'
+        Detects any broken previous_hash, invalid current_hash, or tampering.
+        """
+        import hashlib, json
+        logs = list(AuditLog.objects.filter(company=company).order_by('created_at'))
+        if not logs:
+            return "NOT_VERIFIED"
+
+        expected_prev = "0" * 64
+        for log in logs:
+            if log.previous_hash != expected_prev:
+                return "BROKEN"
+            payload = f"{log.previous_hash}:{log.company_id}:{log.action}:{log.model_name}:{log.record_id}:{json.dumps(log.changes, sort_keys=True) if log.changes else ''}"
+            computed = hashlib.sha256(payload.encode('utf-8')).hexdigest()
+            if log.current_hash != computed:
+                return "BROKEN"
+            expected_prev = log.current_hash
+
+        return "VERIFIED"

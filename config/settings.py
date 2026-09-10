@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import os
 import environ
 from pathlib import Path
 
@@ -28,7 +29,18 @@ SECRET_KEY = env('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool('DEBUG', default=False)
 
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['*'])
+if DEBUG:
+    ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['*'])
+else:
+    default_hosts = [
+        'vouch-api-752s.onrender.com',
+        'localhost',
+        '127.0.0.1',
+    ]
+    render_hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+    if render_hostname and render_hostname not in default_hosts:
+        default_hosts.append(render_hostname)
+    ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=default_hosts)
 
 # Application definition
 INSTALLED_APPS = [
@@ -173,13 +185,17 @@ SIMPLE_JWT = {
 from corsheaders.defaults import default_headers, default_methods
 
 # Cross-Origin Resource Sharing (CORS) & CSRF
-CORS_ALLOW_ALL_ORIGINS = True
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = env.bool('CORS_ALLOW_ALL_ORIGINS', default=True)
+else:
+    CORS_ALLOW_ALL_ORIGINS = env.bool('CORS_ALLOW_ALL_ORIGINS', default=False)
+
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOWED_ORIGINS = [
+CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
     'https://vouch-pi-one.vercel.app',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
-]
+])
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://.*\.vercel\.app$",
     r"^https://.*\.onrender\.com$",

@@ -105,11 +105,15 @@ export default function Dashboard() {
   }
 
   const kpis = insights?.kpis || {
+    today_sales: 0,
+    today_collections: 0,
+    money_to_collect: 0,
+    bills_to_pay: 0,
+    cash_and_bank: 0,
     total_sales: 0,
     total_purchases: 0,
     sales_vouchers_count: 0,
     purchase_vouchers_count: 0,
-    net_position: 0,
     total_stock_value: 0,
     total_in_stock_items: 0,
     total_stock_qty: 0,
@@ -123,6 +127,7 @@ export default function Dashboard() {
     summary: "Sales volume is steady and consistent.",
   };
 
+  const alerts = insights?.actionable_alerts || [];
   const rfmList = insights?.rfm_clusters || [];
 
   const hasSales = kpis.total_sales > 0;
@@ -133,16 +138,16 @@ export default function Dashboard() {
     <DashboardLayout>
       <div className="space-y-6 pb-12">
         
-        {/* Task 2: Clean Dashboard Header & Action Cluster */}
+        {/* Header & Quick Actions Cluster */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border/40 pb-5">
           <div>
             <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Business Overview</h1>
             <p className="text-xs text-muted-foreground mt-1">
-              Real-time summary of sales, outstandings, and operational activity.
+              Real-time summary of sales, outstandings, and operational cash position.
             </p>
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <button
               onClick={() => setIsHelpOpen(true)}
               className="p-2 text-muted-foreground hover:text-foreground rounded-lg border border-border/50 hover:bg-muted/60 transition-colors cursor-pointer"
@@ -154,121 +159,159 @@ export default function Dashboard() {
             <Link
               id="tour-sales-btn"
               href="/sales/new"
-              className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-sm font-semibold shadow-sm transition-all flex items-center gap-2 cursor-pointer min-h-[40px]"
+              className="px-4 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-sm font-semibold shadow-sm transition-all flex items-center gap-2 cursor-pointer min-h-[40px]"
             >
               <Plus className="w-4 h-4" />
-              <span>Sales</span>
+              <span>Sell</span>
               <kbd className="hidden sm:inline text-xs font-mono font-semibold px-1.5 py-0.5 bg-primary-foreground/20 rounded">F8</kbd>
             </Link>
 
             <Link
               id="tour-purchase-btn"
               href="/purchases/new"
-              className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-secondary text-foreground hover:bg-secondary/80 border border-border/60 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer min-h-[40px]"
+              className="px-4 py-2.5 bg-secondary text-foreground hover:bg-secondary/80 border border-border/60 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer min-h-[40px]"
             >
               <Sparkles className="w-4 h-4 text-muted-foreground" />
-              <span>Purchase</span>
+              <span>Buy</span>
               <kbd className="hidden sm:inline text-xs font-mono font-semibold px-1.5 py-0.5 bg-muted border border-border/50 rounded text-muted-foreground">F9</kbd>
+            </Link>
+
+            <Link
+              href="/parties"
+              className="px-3.5 py-2.5 bg-card hover:bg-muted text-foreground border border-border/60 rounded-xl text-sm font-semibold transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px]"
+            >
+              <ArrowDownRight className="w-4 h-4 text-emerald-500" />
+              <span>Receive</span>
+            </Link>
+
+            <Link
+              href="/parties"
+              className="px-3.5 py-2.5 bg-card hover:bg-muted text-foreground border border-border/60 rounded-xl text-sm font-semibold transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px]"
+            >
+              <ArrowUpRight className="w-4 h-4 text-rose-500" />
+              <span>Pay</span>
             </Link>
           </div>
         </div>
 
-        {/* 5-Column Metric Grid with Real-Time Stock Valuation */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          {/* Card 1: Total Sales */}
-          <div className="bg-card border border-border/40 rounded-xl p-4 sm:p-5 shadow-sm space-y-1.5 relative overflow-hidden">
+        {/* Actionable Business Alerts Banner (P2-3) */}
+        {alerts.length > 0 && (
+          <div className="space-y-2">
+            {alerts.map((alert: any, idx: number) => (
+              <div
+                key={idx}
+                className="flex items-center gap-3 p-3.5 rounded-xl border border-amber-500/20 bg-amber-500/10 text-foreground text-xs font-medium"
+              >
+                <Info className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>{alert.message}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* 6-Column Owner-First Metric Grid (P1-12 & P1-13) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+          {/* Card 1: Today's Sales */}
+          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
             <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-blue-500 to-indigo-500" />
             <div className="flex items-center justify-between text-muted-foreground pl-2">
-              <span className="text-sm font-medium">Total Sales</span>
+              <span className="text-xs font-medium">Today's Sales</span>
               <Receipt className="w-4 h-4 text-blue-500/70" />
             </div>
-            <div className={`text-2xl font-bold font-mono tabular-nums tracking-tight ${hasSales ? "text-foreground" : "text-foreground/90"}`}>
-              ₹{kpis.total_sales.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-foreground pl-2">
+              ₹{(kpis.today_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-xs text-muted-foreground pl-2">
-              {kpis.sales_vouchers_count} {kpis.sales_vouchers_count === 1 ? "invoice" : "invoices"} this period
+            <div className="text-[11px] text-muted-foreground pl-2">
+              Total: ₹{kpis.total_sales.toLocaleString("en-IN", { minimumFractionDigits: 0 })}
             </div>
           </div>
 
-          {/* Card 2: Total Purchases */}
-          <div className="bg-card border border-border/40 rounded-xl p-4 sm:p-5 shadow-sm space-y-1.5 relative overflow-hidden">
-            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-orange-500 to-rose-500" />
+          {/* Card 2: Today's Collections */}
+          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
+            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-emerald-500 to-teal-500" />
             <div className="flex items-center justify-between text-muted-foreground pl-2">
-              <span className="text-sm font-medium">Total Purchases</span>
-              <ShoppingCart className="w-4 h-4 text-orange-500/70" />
+              <span className="text-xs font-medium">Today's Collected</span>
+              <ArrowDownRight className="w-4 h-4 text-emerald-500/70" />
             </div>
-            <div className={`text-2xl font-bold font-mono tabular-nums tracking-tight ${hasPurchases ? "text-foreground" : "text-foreground/90"}`}>
-              ₹{kpis.total_purchases.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-emerald-500 pl-2">
+              ₹{(kpis.today_collections || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-xs text-muted-foreground pl-2">
-              {kpis.purchase_vouchers_count} {kpis.purchase_vouchers_count === 1 ? "bill" : "bills"} inward
+            <div className="text-[11px] text-muted-foreground pl-2">
+              Incoming cash/receipts
             </div>
           </div>
 
-          {/* Card 3: Total Stock Value */}
-          <Link 
-            href="/inventory"
-            className="bg-card border border-border/40 hover:border-blue-500/40 rounded-xl p-4 sm:p-5 shadow-sm space-y-1.5 transition-all group cursor-pointer block relative overflow-hidden"
-            title="View Inventory Breakdown"
+          {/* Card 3: Money to Collect (Sundry Debtors) */}
+          <Link
+            href="/parties"
+            className="bg-card border border-border/40 hover:border-emerald-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
           >
-            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-cyan-500 to-blue-500" />
+            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-teal-500 to-emerald-500" />
             <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
-              <span className="text-sm font-medium">Total Stock Value</span>
-              <Boxes className="w-4 h-4 text-blue-400 group-hover:scale-110 transition-transform" />
+              <span className="text-xs font-medium">Money to Collect</span>
+              <Users className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
             </div>
-            <div className="text-2xl font-bold font-mono tabular-nums tracking-tight text-blue-400 pl-2">
-              ₹{(kpis.total_stock_value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-emerald-400 pl-2">
+              ₹{(kpis.money_to_collect || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-xs text-muted-foreground flex items-center justify-between pl-2">
-              <span>{kpis.total_in_stock_items || 0} items ({Math.round(kpis.total_stock_qty || 0).toLocaleString("en-IN")} pcs)</span>
-              <span className="text-blue-400 text-xs font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
-                &rarr;
-              </span>
+            <div className="text-[11px] text-muted-foreground pl-2">
+              Customer outstandings &rarr;
             </div>
           </Link>
 
-          {/* Card 4: Net Cash / Receivables */}
-          <div className="bg-card border border-border/40 rounded-xl p-4 sm:p-5 shadow-sm space-y-1.5 relative overflow-hidden">
-            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-emerald-500 to-teal-500" />
-            <div className="flex items-center justify-between text-muted-foreground pl-2">
-              <span className="text-sm font-medium">Net Position</span>
-              <DollarSign className="w-4 h-4 text-emerald-500/70" />
+          {/* Card 4: Bills to Pay (Sundry Creditors) */}
+          <Link
+            href="/parties"
+            className="bg-card border border-border/40 hover:border-rose-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
+          >
+            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-orange-500 to-rose-500" />
+            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
+              <span className="text-xs font-medium">Bills to Pay</span>
+              <ShoppingCart className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
             </div>
-            <div className={`text-2xl font-bold font-mono tabular-nums tracking-tight ${
-              kpis.net_position > 0 ? "text-emerald-500" : kpis.net_position < 0 ? "text-rose-500" : "text-foreground/90"
-            }`}>
-              ₹{Math.abs(kpis.net_position).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-rose-400 pl-2">
+              ₹{(kpis.bills_to_pay || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-xs text-muted-foreground flex items-center gap-1 pl-2">
-              {kpis.net_position > 0 ? (
-                <span className="text-emerald-500 flex items-center font-medium">
-                  <ArrowUpRight className="w-3.5 h-3.5" /> Surplus
-                </span>
-              ) : kpis.net_position < 0 ? (
-                <span className="text-rose-500 flex items-center font-medium">
-                  <ArrowDownRight className="w-3.5 h-3.5" /> Outstanding
-                </span>
-              ) : (
-                <span>Balanced</span>
-              )}
-              <span className="text-muted-foreground/80">· Sales minus Purchases</span>
+            <div className="text-[11px] text-muted-foreground pl-2">
+              Supplier outstandings &rarr;
             </div>
-          </div>
+          </Link>
 
-          {/* Card 5: Active Parties */}
-          <div className="bg-card border border-border/40 rounded-xl p-4 sm:p-5 shadow-sm space-y-1.5 relative overflow-hidden">
-            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-violet-500 to-purple-500" />
-            <div className="flex items-center justify-between text-muted-foreground pl-2">
-              <span className="text-sm font-medium">Active Parties</span>
-              <Users className="w-4 h-4 text-violet-500/70" />
+          {/* Card 5: Cash & Bank */}
+          <Link
+            href="/ledgers"
+            className="bg-card border border-border/40 hover:border-blue-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
+          >
+            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-indigo-500 to-blue-500" />
+            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
+              <span className="text-xs font-medium">Cash & Bank</span>
+              <DollarSign className="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform" />
             </div>
-            <div className="text-2xl font-bold font-mono tabular-nums tracking-tight text-foreground/90 pl-2">
-              {rfmList.length}
+            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-foreground pl-2">
+              ₹{(kpis.cash_and_bank || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-xs text-muted-foreground pl-2">
-              Customers & Suppliers on record
+            <div className="text-[11px] text-muted-foreground pl-2">
+              Liquid funds available &rarr;
             </div>
-          </div>
+          </Link>
+
+          {/* Card 6: Total Stock Value */}
+          <Link 
+            href="/inventory"
+            className="bg-card border border-border/40 hover:border-cyan-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
+          >
+            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-cyan-500 to-sky-500" />
+            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
+              <span className="text-xs font-medium">Stock Value</span>
+              <Boxes className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-cyan-400 pl-2">
+              ₹{(kpis.total_stock_value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </div>
+            <div className="text-[11px] text-muted-foreground pl-2">
+              {kpis.total_in_stock_items || 0} items in stock &rarr;
+            </div>
+          </Link>
         </div>
 
         {/* Task 4: Clean 2-Column Section (60% Sales Velocity / 40% Top Customers) */}
