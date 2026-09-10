@@ -204,6 +204,10 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
 ]
 CORS_ALLOW_METHODS = list(default_methods)
 CORS_ALLOW_HEADERS = list(default_headers) + [
+    'x-company-id',
+    'company-id',
+    'x-financial-year',
+    'x-period',
     'x-gemini-key',
     'x-csrftoken',
     'x-requested-with',

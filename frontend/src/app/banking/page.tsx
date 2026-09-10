@@ -205,7 +205,7 @@ export default function BankingPage() {
     setRefreshing(true);
     try {
       const headers = getHeaders();
-      const params: any = {};
+      const params: any = { company_id: companyId };
       if (selectedBankId) {
         params.bank_ledger_id = selectedBankId;
       }
@@ -222,7 +222,7 @@ export default function BankingPage() {
         axios.get(`${API_BASE_URL}/api/v1/accounting/banking/transactions/`, { headers, params }),
         axios.get(`${API_BASE_URL}/api/v1/accounting/banking/summary/`, {
           headers,
-          params: selectedBankId ? { bank_ledger_id: selectedBankId } : {},
+          params: { company_id: companyId, ...(selectedBankId ? { bank_ledger_id: selectedBankId } : {}) },
         }),
       ]);
 
@@ -241,7 +241,7 @@ export default function BankingPage() {
     setLoadingMappings(true);
     try {
       const headers = getHeaders();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/banking/mappings/`, { headers });
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/banking/mappings/?company_id=${companyId}`, { headers });
       setMappings(res.data || []);
     } catch (err: any) {
       toast.error("Failed to load learned rules", err.message);

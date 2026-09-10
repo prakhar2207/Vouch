@@ -168,7 +168,7 @@ export default function HealthPage() {
         Authorization: `Bearer ${token}`,
         "X-Company-ID": targetCid,
       };
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/health/`, { headers });
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${targetCid}`, { headers });
       setReport(res.data);
     } catch (err: any) {
       console.error(err);
@@ -184,7 +184,7 @@ export default function HealthPage() {
     setIsDiagnosticOpen(true);
     try {
       const headers = getHeaders();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/health/diagnose-balance/`, { headers });
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/health/diagnose-balance/?company_id=${companyId}`, { headers });
       setDiagnosticResult(res.data);
     } catch (err: any) {
       toast.error("Diagnostic failed", err.message || "Could not diagnose balance.");
@@ -198,7 +198,7 @@ export default function HealthPage() {
     setLoadingPreview(true);
     try {
       const headers = getHeaders();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/health/findings/${finding.id}/preview/`, {
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/health/findings/${finding.id}/preview/?company_id=${companyId}`, {
         headers,
       });
       setPreviewData(res.data);
@@ -217,7 +217,7 @@ export default function HealthPage() {
       const headers = getHeaders();
       const res = await axios.post(
         `${API_BASE_URL}/api/v1/accounting/health/findings/${previewFinding.id}/fix/`,
-        {},
+        { company_id: companyId },
         { headers }
       );
 

@@ -73,7 +73,7 @@ export default function Dashboard() {
           axios.get(`${API_BASE_URL}/api/insights/`, { headers }).catch(() => ({ data: { data: null } })),
           axios.get(`${API_BASE_URL}/api/vouchers/`, { headers }).catch(() => ({ data: { data: [] } })),
           axios.get(`${API_BASE_URL}/api/v1/analytics/forecast/?days=30`, { headers }).catch(() => ({ data: { data: null } })),
-          axios.get(`${API_BASE_URL}/api/v1/accounting/health/`, { headers: companyHeaders }).catch(() => ({ data: null })),
+          axios.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${cid}`, { headers: companyHeaders }).catch(() => ({ data: null })),
         ]);
 
         setInsights(insightsRes.data?.data);
