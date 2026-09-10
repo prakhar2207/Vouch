@@ -4,6 +4,7 @@ import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
 import { useToast } from "@/context/ToastContext";
+import { offlineDb } from "@/lib/db/offlineDb";
 import {
   X,
   Check,
@@ -22,12 +23,19 @@ interface EditableItem {
   id?: string;
   product_id?: string;
   product_name: string;
+  category_id?: string;
+  category_name?: string;
   brand?: string;
   hsn_code: string;
   quantity: number;
   unit: string;
   rate: number;
   gst_rate: number;
+}
+
+interface CategoryOption {
+  id: string;
+  name: string;
 }
 
 interface EditPurchaseInvoiceModalProps {
@@ -51,13 +59,50 @@ export default function EditPurchaseInvoiceModal({
   const [partyName, setPartyName] = useState("");
   const [narration, setNarration] = useState("");
   const [items, setItems] = useState<EditableItem[]>([]);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (isOpen && voucher?.id) {
       loadFullVoucher();
+      fetchCategories();
     }
   }, [isOpen, voucher?.id]);
+
+  const fetchCategories = async (companyId?: string) => {
+    try {
+      try {
+        const cached = await offlineDb.masters.get("categories");
+        if (cached?.data?.length) {
+          setCategories(cached.data);
+        }
+      } catch (err) {
+        // ignore cache error
+      }
+
+      const cid = companyId || voucher?.company_id || voucher?.company?.id;
+      const token = getAccessToken();
+      const headers = { Authorization: `Bearer ${token}` };
+
+      if (cid) {
+        const res = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cid}/`, { headers });
+        if (res.data?.data) {
+          setCategories(res.data.data);
+        }
+      } else {
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+        const activeComp = compRes.data?.data?.[0];
+        if (activeComp?.id) {
+          const res = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${activeComp.id}/`, { headers });
+          if (res.data?.data) {
+            setCategories(res.data.data);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load categories", e);
+    }
+  };
 
   const loadFullVoucher = async () => {
     setLoadingDetails(true);
@@ -68,6 +113,9 @@ export default function EditPurchaseInvoiceModal({
 
       if (res.data.success && res.data.data) {
         const v = res.data.data;
+        if (v.company?.id || v.company_id) {
+          fetchCategories(v.company?.id || v.company_id);
+        }
         setInvoiceNumber(v.voucher_number || "");
         setInvoiceDate(v.date || "");
         setPartyName(v.party?.name || "");
@@ -77,6 +125,8 @@ export default function EditPurchaseInvoiceModal({
           id: item.id,
           product_id: item.product_id || undefined,
           product_name: item.product_name || "",
+          category_id: item.category_id || undefined,
+          category_name: item.category_name || "Unassigned",
           brand: item.brand || "",
           hsn_code: item.hsn_code || "",
           quantity: parseFloat(item.quantity) || 1,
@@ -88,6 +138,8 @@ export default function EditPurchaseInvoiceModal({
         if (loadedItems.length === 0) {
           loadedItems.push({
             product_name: "",
+            category_id: undefined,
+            category_name: "Unassigned",
             brand: "",
             hsn_code: "",
             quantity: 1,
@@ -121,6 +173,8 @@ export default function EditPurchaseInvoiceModal({
       ...prev,
       {
         product_name: "",
+        category_id: undefined,
+        category_name: "Unassigned",
         brand: "",
         hsn_code: "",
         quantity: 1,
@@ -188,6 +242,8 @@ export default function EditPurchaseInvoiceModal({
         items: items.map((it) => ({
           product_id: it.product_id,
           product_name: it.product_name.trim(),
+          category_id: it.category_id || null,
+          category_name: it.category_name || "",
           brand: it.brand?.trim() || "",
           hsn_code: it.hsn_code.trim(),
           quantity: it.quantity,
@@ -326,13 +382,14 @@ export default function EditPurchaseInvoiceModal({
                   <thead className="bg-muted/60 border-b border-border text-muted-foreground uppercase text-xs tracking-wider font-semibold">
                     <tr>
                       <th className="p-2.5 w-6 text-center">#</th>
-                      <th className="p-2.5">Item Name / Size</th>
-                      <th className="p-2.5 w-28">Brand</th>
-                      <th className="p-2.5 w-24">HSN Code</th>
-                      <th className="p-2.5 w-20 text-right">Qty</th>
-                      <th className="p-2.5 w-16 text-center">Unit</th>
-                      <th className="p-2.5 w-24 text-right">Rate (₹)</th>
-                      <th className="p-2.5 w-20 text-right">GST %</th>
+                      <th className="p-2.5 min-w-[130px]">Item Name / Size</th>
+                      <th className="p-2.5 w-32">Category</th>
+                      <th className="p-2.5 w-24">Brand</th>
+                      <th className="p-2.5 w-20">HSN Code</th>
+                      <th className="p-2.5 w-18 text-right">Qty</th>
+                      <th className="p-2.5 w-14 text-center">Unit</th>
+                      <th className="p-2.5 w-22 text-right">Rate (₹)</th>
+                      <th className="p-2.5 w-18 text-right">GST %</th>
                       <th className="p-2.5 w-24 text-right">Total (₹)</th>
                       <th className="p-2.5 w-10 text-center"></th>
                     </tr>
@@ -357,6 +414,27 @@ export default function EditPurchaseInvoiceModal({
                               onChange={(e) => updateItemField(idx, "product_name", e.target.value)}
                               className="w-full min-h-[32px] bg-background/50 border border-border/60 text-foreground font-medium px-2.5 py-1 rounded-md outline-none focus:border-primary focus:bg-background"
                             />
+                          </td>
+
+                          {/* Category */}
+                          <td className="p-2">
+                            <select
+                              value={item.category_id || ""}
+                              onChange={(e) => {
+                                const selectedId = e.target.value;
+                                const selectedCat = categories.find((c) => c.id === selectedId);
+                                updateItemField(idx, "category_id", selectedId || undefined);
+                                updateItemField(idx, "category_name", selectedCat ? selectedCat.name : "Unassigned");
+                              }}
+                              className="w-full min-h-[32px] bg-background/50 border border-border/60 text-foreground text-xs px-2 py-1 rounded-md outline-none focus:border-primary focus:bg-background font-medium cursor-pointer"
+                            >
+                              <option value="" className="bg-background text-foreground">Unassigned</option>
+                              {categories.map((cat) => (
+                                <option key={cat.id} value={cat.id} className="bg-background text-foreground">
+                                  {cat.name}
+                                </option>
+                              ))}
+                            </select>
                           </td>
 
                           {/* Brand */}

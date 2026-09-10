@@ -357,7 +357,7 @@ class VoucherDetailAPIView(APIView):
         try:
             from apps.accounting.models import Voucher, VoucherItem
             voucher = Voucher.objects.select_related('company', 'party_ledger').get(id=voucher_id, company__users__user=request.user)
-            items = VoucherItem.objects.filter(voucher=voucher).select_related('product')
+            items = VoucherItem.objects.filter(voucher=voucher).select_related('product', 'product__category')
             
             items_data = []
             for item in items:
@@ -365,6 +365,8 @@ class VoucherDetailAPIView(APIView):
                     "id": str(item.id),
                     "product_id": str(item.product.id) if item.product else None,
                     "product_name": item.product.name if item.product else "Unnamed Product",
+                    "category_id": str(item.product.category_id) if item.product and item.product.category_id else None,
+                    "category_name": item.product.category.name if item.product and item.product.category else "Unassigned",
                     "brand": item.product.brand or "" if item.product else "",
                     "hsn_code": item.product.hsn_code if item.product else "",
                     "quantity": item.quantity,
@@ -447,7 +449,9 @@ class VoucherDetailAPIView(APIView):
                 "party_ledger_id": str(voucher.party_ledger.id) if voucher.party_ledger else None,
                 "payment_ledger_id": str(payment_ledger_obj.id) if payment_ledger_obj else None,
                 "payment_ledger_name": payment_ledger_obj.name if payment_ledger_obj else None,
+                "company_id": str(voucher.company.id),
                 "company": {
+                    "id": str(voucher.company.id),
                     "name": voucher.company.name,
                     "address": voucher.company.address,
                     "city": voucher.company.city,
@@ -636,7 +640,8 @@ class VoucherDetailAPIView(APIView):
                                 input_igst_ledger=None,
                                 supplier_invoice_number=data.get('voucher_number') or voucher.external_invoice_number,
                                 voucher_date=data.get('voucher_date', voucher.voucher_date),
-                                cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0))
+                                cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
+                                exclude_voucher_id=voucher.id
                             )
                         else:
                             from rest_framework.exceptions import ValidationError
@@ -800,7 +805,12 @@ class VoucherDetailAPIView(APIView):
                         else:
                             if item_brand and not product.brand:
                                 product.brand = item_brand
-                            if not product.category and category:
+                            category_specified = ('category_id' in item or 'category_name' in item)
+                            if category_specified:
+                                target_cat_id = category.id if category else None
+                                if product.category_id != target_cat_id:
+                                    product.category = category
+                            elif not product.category and category:
                                 product.category = category
                             if voucher.voucher_type == 'PURCHASE' and net_rate > Decimal('0.00'):
                                 product.purchase_price = net_rate

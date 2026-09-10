@@ -22,7 +22,8 @@ class PurchaseInvoiceService:
         supplier_invoice_number: str = None, 
         voucher_date=None,
         cartage_amount: Decimal = Decimal('0.00'),
-        cartage_ledger: Ledger = None
+        cartage_ledger: Ledger = None,
+        exclude_voucher_id = None
     ):
         """
         End-to-End orchestration of a Purchase Invoice.
@@ -34,6 +35,14 @@ class PurchaseInvoiceService:
         if purchase_ledger and purchase_ledger.company_id != company.id:
             from rest_framework.exceptions import ValidationError
             raise ValidationError(f"Purchase ledger '{purchase_ledger.name}' does not belong to company '{company.name}'.")
+
+        if not purchase_ledger:
+            from apps.ledgers.models import LedgerGroup
+            purchase_ledger = Ledger.objects.filter(company=company, ledger_type='PURCHASE').first() or \
+                              Ledger.objects.filter(company=company, name__icontains='Purchase').first()
+            if not purchase_ledger:
+                exp_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Purchase Accounts', defaults={'nature': 'EXPENSE'})
+                purchase_ledger, _ = Ledger.objects.get_or_create(company=company, name='Purchase Account', defaults={'group': exp_grp, 'ledger_type': 'PURCHASE'})
 
         if not input_cgst_ledger or 'output' in input_cgst_ledger.name.lower():
             input_cgst_ledger = PurchaseInvoiceService._get_or_create_input_tax_ledger(company, 'CGST')
@@ -50,12 +59,15 @@ class PurchaseInvoiceService:
 
         # P2-2: Duplicate Supplier Invoice Detection
         if ext_invoice_num and party_ledger:
-            existing_dup = Voucher.objects.filter(
+            dup_qs = Voucher.objects.filter(
                 company=company,
                 party_ledger=party_ledger,
                 external_invoice_number__iexact=ext_invoice_num,
                 status__in=['POSTED', 'DRAFT', 'VALIDATING']
-            ).first()
+            )
+            if exclude_voucher_id:
+                dup_qs = dup_qs.exclude(id=exclude_voucher_id)
+            existing_dup = dup_qs.first()
             if existing_dup:
                 from rest_framework.exceptions import ValidationError
                 raise ValidationError(
@@ -84,34 +96,56 @@ class PurchaseInvoiceService:
         total_igst = Decimal('0.00')
         
         for item in items_data:
+            from apps.inventory.models import ProductCategory
+            from apps.inventory.services.normalization_service import normalize_product_name, get_canonical_key, strip_category_prefix
+            import uuid
+
+            category = None
+            category_specified = ('category_id' in item or 'category_name' in item)
+            category_id = item.get('category_id')
+            category_name = item.get('category_name')
+
+            if category_id and str(category_id).strip() and str(category_id).lower() not in ('null', 'none', 'unassigned'):
+                try:
+                    category = ProductCategory.objects.filter(id=category_id, company=company).first()
+                except Exception:
+                    pass
+            elif category_name and str(category_name).strip() and str(category_name).lower() not in ('unassigned', 'null', 'none'):
+                category = ProductCategory.objects.filter(name__iexact=str(category_name).strip(), company=company).first()
+                if not category:
+                    category = ProductCategory.objects.create(
+                        company=company,
+                        name=str(category_name).strip(),
+                        hsn_code=item.get('hsn_code', ''),
+                        gst_rate=Decimal(str(item.get('gst_rate', '18.00')))
+                    )
+
             product_id = item.get('product_id')
             if product_id:
                 from apps.common.tenant import get_company_product
                 product = get_company_product(company, product_id)
+                if product:
+                    update_fields = []
+                    if category_specified:
+                        target_cat_id = category.id if category else None
+                        if product.category_id != target_cat_id:
+                            product.category = category
+                            update_fields.append('category')
+                    if item.get('hsn_code') and product.hsn_code != str(item['hsn_code']).strip():
+                        product.hsn_code = str(item['hsn_code']).strip()
+                        update_fields.append('hsn_code')
+                    if item.get('gst_rate') is not None:
+                        try:
+                            g_rate = Decimal(str(item['gst_rate']))
+                            if product.gst_rate != g_rate:
+                                product.gst_rate = g_rate
+                                update_fields.append('gst_rate')
+                        except Exception:
+                            pass
+                    if update_fields:
+                        product.save(update_fields=update_fields)
             else:
                 raw_name = str(item.get('product_name') or item.get('name') or 'Unnamed Product').strip()
-                from apps.inventory.models import ProductCategory
-                from apps.inventory.services.normalization_service import normalize_product_name, get_canonical_key, strip_category_prefix
-                import uuid
-
-                category = None
-                category_id = item.get('category_id')
-                category_name = item.get('category_name')
-
-                if category_id and str(category_id).strip():
-                    try:
-                        category = ProductCategory.objects.filter(id=category_id, company=company).first()
-                    except Exception:
-                        pass
-                elif category_name and str(category_name).strip():
-                    category = ProductCategory.objects.filter(name__iexact=str(category_name).strip(), company=company).first()
-                    if not category:
-                        category = ProductCategory.objects.create(
-                            company=company,
-                            name=str(category_name).strip(),
-                            hsn_code=item.get('hsn_code', ''),
-                            gst_rate=Decimal(str(item.get('gst_rate', '18.00')))
-                        )
 
                 cat_name = category.name if category else None
                 name = normalize_product_name(raw_name, cat_name)
@@ -197,7 +231,12 @@ class PurchaseInvoiceService:
                     else:
                         created = False
 
-                if not created and not product.category and category:
+                if not created and category_specified:
+                    target_cat_id = category.id if category else None
+                    if product.category_id != target_cat_id:
+                        product.category = category
+                        product.save(update_fields=['category'])
+                elif not created and not product.category and category:
                     product.category = category
                     product.save(update_fields=['category'])
 

@@ -110,11 +110,45 @@ class SalesInvoiceService:
         total_igst = Decimal('0.00')
         
         for item in items_data:
+            from apps.inventory.models import ProductCategory
+            category = None
+            category_specified = ('category_id' in item or 'category_name' in item)
+            category_id = item.get('category_id')
+            category_name = item.get('category_name')
+
+            if category_id and str(category_id).strip() and str(category_id).lower() not in ('null', 'none', 'unassigned'):
+                try:
+                    category = ProductCategory.objects.filter(id=category_id, company=company).first()
+                except Exception:
+                    pass
+            elif category_name and str(category_name).strip() and str(category_name).lower() not in ('unassigned', 'null', 'none'):
+                category = ProductCategory.objects.filter(name__iexact=str(category_name).strip(), company=company).first()
+
             product = None
             product_id = item.get('product_id')
             if product_id and str(product_id).strip():
                 from apps.common.tenant import get_company_product
                 product = get_company_product(company, product_id)
+                if product:
+                    update_fields = []
+                    if category_specified:
+                        target_cat_id = category.id if category else None
+                        if product.category_id != target_cat_id:
+                            product.category = category
+                            update_fields.append('category')
+                    if item.get('hsn_code') and product.hsn_code != str(item['hsn_code']).strip():
+                        product.hsn_code = str(item['hsn_code']).strip()
+                        update_fields.append('hsn_code')
+                    if item.get('gst_rate') is not None:
+                        try:
+                            g_rate = Decimal(str(item['gst_rate']))
+                            if product.gst_rate != g_rate:
+                                product.gst_rate = g_rate
+                                update_fields.append('gst_rate')
+                        except Exception:
+                            pass
+                    if update_fields:
+                        product.save(update_fields=update_fields)
 
             if not product:
                 # Auto-create product on the fly if it doesn't exist
@@ -131,23 +165,21 @@ class SalesInvoiceService:
                 }
                 
                 # Link category and inherit if available
-                category_id = item.get('category_id')
-                if category_id and str(category_id).strip():
-                    from apps.inventory.models import ProductCategory
-                    try:
-                        category = ProductCategory.objects.filter(id=category_id, company=company).first()
-                        if category:
-                            defaults_dict['category'] = category
-                            defaults_dict['hsn_code'] = category.hsn_code
-                            defaults_dict['gst_rate'] = category.gst_rate
-                    except Exception:
-                        pass
+                if category:
+                    defaults_dict['category'] = category
+                    defaults_dict['hsn_code'] = category.hsn_code
+                    defaults_dict['gst_rate'] = category.gst_rate
                 
                 product, created = Product.objects.get_or_create(
                     company=company,
                     name=name,
                     defaults=defaults_dict
                 )
+                if not created and category_specified:
+                    target_cat_id = category.id if category else None
+                    if product.category_id != target_cat_id:
+                        product.category = category
+                        product.save(update_fields=['category'])
 
             qty = Decimal(str(item['quantity']))
             rate = Decimal(str(item.get('rate', '0.00')))
