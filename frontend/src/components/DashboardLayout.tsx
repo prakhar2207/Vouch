@@ -129,11 +129,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="w-full px-3 sm:px-6 h-14 flex items-center justify-between gap-2 sm:gap-4">
           
           {/* Left Section: Brand & Core Nav */}
-          <div className="flex items-center gap-2 sm:gap-6 min-w-0">
-            {/* Mobile Hamburger Button */}
+          <div className="flex items-center gap-2 lg:gap-4 min-w-0">
+            {/* Mobile / Tablet Hamburger Button */}
             <button
               onClick={() => setIsMobileNavOpen(true)}
-              className="md:hidden p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer shrink-0 min-h-[36px] min-w-[36px] flex items-center justify-center"
+              className="lg:hidden p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer shrink-0 min-h-[36px] min-w-[36px] flex items-center justify-center"
               aria-label="Open Navigation Menu"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -142,7 +142,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </button>
 
             {/* Brand Logo with subtle muted CORE badge */}
-            <div id="tour-header-brand" className="flex items-center gap-2 shrink-0">
+            <div id="tour-header-brand" className="flex items-center gap-1.5 shrink-0">
               <Link
                 href="/dashboard"
                 className="text-xl font-black tracking-tight text-foreground hover:opacity-90 flex items-center gap-1.5 shrink-0"
@@ -157,84 +157,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
 
             {/* Desktop Navigation Links */}
-            <nav className="hidden md:flex items-center gap-1 min-w-0">
+            <nav className="hidden lg:flex items-center gap-0.5 xl:gap-1 min-w-0">
               {/* Dashboard */}
               <Link
                 id="tour-dashboard-link"
                 href="/dashboard"
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
                   pathname === "/dashboard"
                     ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                 }`}
               >
                 Dashboard
-              </Link>
-
-              {/* Parties */}
-              <Link
-                id="tour-parties-link"
-                href="/parties"
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
-                  pathname.startsWith("/parties")
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                }`}
-              >
-                Parties
-              </Link>
-
-              {/* Chart of Accounts / Ledgers */}
-              <Link
-                id="tour-ledgers-link"
-                href="/ledgers"
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
-                  pathname.startsWith("/ledgers")
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                }`}
-              >
-                Chart of Accounts
-              </Link>
-
-              {/* Inventory */}
-              <Link
-                id="tour-inventory-link"
-                href="/inventory"
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
-                  pathname.startsWith("/inventory")
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                }`}
-              >
-                Inventory
-              </Link>
-
-              {/* Banking */}
-              <Link
-                id="tour-banking-link"
-                href="/banking"
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
-                  pathname.startsWith("/banking")
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                }`}
-              >
-                Banking
-              </Link>
-
-              {/* Books Health */}
-              <Link
-                id="tour-health-link"
-                href="/health"
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1.5 ${
-                  pathname.startsWith("/health")
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                }`}
-              >
-                <Activity className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Books Health</span>
               </Link>
 
               {/* Vouchers Dropdown */}
@@ -244,7 +178,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     setIsVouchersDropdownOpen(!isVouchersDropdownOpen);
                     setIsReportsDropdownOpen(false);
                   }}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                     isVouchersActive
                       ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
@@ -311,6 +245,58 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 )}
               </div>
 
+              {/* Parties */}
+              <Link
+                id="tour-parties-link"
+                href="/parties"
+                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
+                  pathname.startsWith("/parties")
+                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                Parties
+              </Link>
+
+              {/* Accounts */}
+              <Link
+                id="tour-ledgers-link"
+                href="/ledgers"
+                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
+                  pathname.startsWith("/ledgers")
+                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                Accounts
+              </Link>
+
+              {/* Inventory */}
+              <Link
+                id="tour-inventory-link"
+                href="/inventory"
+                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
+                  pathname.startsWith("/inventory")
+                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                Inventory
+              </Link>
+
+              {/* Banking */}
+              <Link
+                id="tour-banking-link"
+                href="/banking"
+                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
+                  pathname.startsWith("/banking")
+                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                Banking
+              </Link>
+
               {/* Reports Dropdown */}
               <div ref={reportsRef} className="relative">
                 <button
@@ -318,7 +304,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     setIsReportsDropdownOpen(!isReportsDropdownOpen);
                     setIsVouchersDropdownOpen(false);
                   }}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                     isReportsActive
                       ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
@@ -428,7 +414,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   setIsFYDropdownOpen(false);
                   setIsUserMenuOpen(false);
                 }}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px] max-w-[170px]"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px] max-w-[120px] xl:max-w-[170px]"
                 title="Active Company"
               >
                 <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -484,15 +470,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div ref={fyRef} className="relative hidden md:block">
               <button
                 onClick={() => setIsPeriodModalOpen(true)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px]"
+                className="flex items-center gap-1.5 xl:gap-2 px-2.5 xl:px-3 py-1.5 rounded-lg border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px]"
                 title="Change Accounting Period (Alt + F2)"
               >
-                <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
-                <span className="font-mono tabular-nums text-xs font-medium text-foreground">
-                  {activeFY ? (activeFY.code || activeFY.name) : "FY 26-27"} · {workingDate ? workingDate.slice(5) : "Today"}
+                <Calendar className="w-3.5 xl:w-4 h-3.5 xl:h-4 text-muted-foreground shrink-0" />
+                <span className="font-mono tabular-nums text-xs font-medium text-foreground whitespace-nowrap">
+                  {activeFY ? (activeFY.code || activeFY.name) : "FY 26-27"}<span className="hidden xl:inline"> · {workingDate ? workingDate.slice(5) : "Today"}</span>
                 </span>
                 <span className={`w-2 h-2 rounded-full shrink-0 ${activeFY?.is_closed ? "bg-amber-400" : "bg-emerald-400"}`}></span>
-                <kbd className="hidden sm:inline-block text-xs font-mono px-1.5 py-0.5 bg-background border border-border/60 rounded text-muted-foreground font-semibold">
+                <kbd className="hidden 2xl:inline-block text-xs font-mono px-1.5 py-0.5 bg-background border border-border/60 rounded text-muted-foreground font-semibold">
                   Alt+F2
                 </kbd>
               </button>
@@ -506,7 +492,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               title="Command Search (Ctrl+K)"
             >
               <Search className="w-4 h-4 text-muted-foreground" />
-              <span className="hidden xl:inline text-xs font-normal">Search...</span>
+              <span className="hidden 2xl:inline text-xs font-normal">Search...</span>
               <kbd className="hidden sm:inline-block text-xs font-mono px-1.5 py-0.5 bg-background border border-border/60 rounded text-muted-foreground font-semibold">
                 Ctrl+K
               </kbd>
@@ -516,7 +502,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <button
               id="tour-help-btn"
               onClick={() => setIsHelpOpen(true)}
-              className="hidden md:inline-flex p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted/60 transition-colors cursor-pointer min-h-[36px] min-w-[36px] items-center justify-center"
+              className="hidden xl:inline-flex p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted/60 transition-colors cursor-pointer min-h-[36px] min-w-[36px] items-center justify-center"
               title="Keyboard Shortcuts & Help (F1)"
             >
               <HelpCircle className="w-4 h-4" />
@@ -588,7 +574,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Mobile Navigation Drawer */}
       {isMobileNavOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
+        <div className="fixed inset-0 z-50 lg:hidden">
           <div
             className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
             onClick={() => setIsMobileNavOpen(false)}

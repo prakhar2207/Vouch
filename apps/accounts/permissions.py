@@ -23,8 +23,15 @@ def get_authorized_company(request, company_id=None):
     if not target_id and hasattr(request, 'query_params'):
         target_id = request.query_params.get('company_id')
 
-    if not target_id:
+    if not target_id or str(target_id).strip().lower() in ['undefined', 'null', 'none', '']:
         raise PermissionDenied("X-Company-ID header or company_id parameter is required.")
+
+    import uuid
+    try:
+        clean_uuid = uuid.UUID(str(target_id).strip())
+        target_id = str(clean_uuid)
+    except (ValueError, TypeError, AttributeError):
+        raise NotFound(f"Company ID '{target_id}' is not a valid UUID.")
 
     company = Company.objects.filter(id=target_id).first()
     if not company:

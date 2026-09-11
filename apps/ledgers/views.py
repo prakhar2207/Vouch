@@ -9,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from .models import Ledger, LedgerGroup
 from apps.companies.models import Company
 from apps.accounting.models import Voucher, LedgerEntry, FinancialYear
-from apps.accounts.permissions import IsCompanyMember, CanManageLedgers
+from apps.accounts.permissions import IsCompanyMember, CanManageLedgers, get_authorized_company
 from apps.audit.services.audit_service import AuditService
 from apps.ledgers.services.opening_balance_service import OpeningBalanceService
 from apps.ledgers.services.party_merge_service import PartyMergeService
@@ -22,7 +22,7 @@ class LedgerGroupListView(APIView):
 
     def get(self, request, company_id):
         try:
-            company = Company.objects.get(id=company_id, users__user=request.user)
+            company = get_authorized_company(request, company_id)
             groups = LedgerGroup.objects.filter(company=company).order_by('nature', 'name')
             data = [
                 {
@@ -40,7 +40,7 @@ class LedgerGroupListView(APIView):
 
     def post(self, request, company_id):
         try:
-            company = Company.objects.get(id=company_id, users__user=request.user)
+            company = get_authorized_company(request, company_id)
             data = request.data
             name = str(data.get('name') or '').strip()
             nature = str(data.get('nature') or 'ASSET').strip().upper()
@@ -82,7 +82,7 @@ class LedgerListView(APIView):
     
     def get(self, request, company_id):
         try:
-            company = Company.objects.get(id=company_id, users__user=request.user)
+            company = get_authorized_company(request, company_id)
             
             # Enforce strict GST separation & auto-heal historical entries
             from apps.accounting.services.sales_service import SalesInvoiceService
@@ -133,7 +133,7 @@ class LedgerListView(APIView):
 
     def post(self, request, company_id):
         try:
-            company = Company.objects.get(id=company_id, users__user=request.user)
+            company = get_authorized_company(request, company_id)
             data = request.data
             
             name = str(data.get('name') or '').strip()

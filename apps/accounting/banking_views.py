@@ -74,13 +74,28 @@ class BankTransactionListAPIView(APIView):
         # Filter by status
         st = request.query_params.get('status')
         if st:
-            statuses = [s.strip().upper() for s in st.split(',')]
-            qs = qs.filter(status__in=statuses)
+            raw_statuses = [s.strip().upper() for s in st.split(',') if s.strip()]
+            resolved_statuses = []
+            for s in raw_statuses:
+                if s == 'NEEDS_REVIEW':
+                    resolved_statuses.extend(['MATCHED_SUGGESTED', 'NEEDS_REVIEW'])
+                elif s == 'MATCHED':
+                    resolved_statuses.extend(['MATCHED_AUTO', 'RECONCILED'])
+                elif s == 'UNRESOLVED':
+                    resolved_statuses.extend(['UNRESOLVED', 'UNPROCESSED'])
+                else:
+                    resolved_statuses.append(s)
+            qs = qs.filter(status__in=list(set(resolved_statuses)))
 
         # Filter by bank ledger
         bank_ledger_id = request.query_params.get('bank_ledger_id')
-        if bank_ledger_id:
-            qs = qs.filter(bank_ledger_id=bank_ledger_id)
+        if bank_ledger_id and str(bank_ledger_id).strip().lower() not in ['null', 'undefined', 'all', 'none', '']:
+            try:
+                import uuid
+                uuid.UUID(str(bank_ledger_id).strip())
+                qs = qs.filter(bank_ledger_id=str(bank_ledger_id).strip())
+            except (ValueError, TypeError, AttributeError):
+                pass
 
         # Search query
         search = request.query_params.get('search')
@@ -207,5 +222,15 @@ class BankSummaryAPIView(APIView):
         company = get_authorized_company(request)
 
         bank_ledger_id = request.query_params.get('bank_ledger_id')
+        if bank_ledger_id and str(bank_ledger_id).strip().lower() in ['null', 'undefined', 'all', 'none', '']:
+            bank_ledger_id = None
+        elif bank_ledger_id:
+            try:
+                import uuid
+                uuid.UUID(str(bank_ledger_id).strip())
+                bank_ledger_id = str(bank_ledger_id).strip()
+            except (ValueError, TypeError, AttributeError):
+                bank_ledger_id = None
+
         summary = BankReconciliationService.get_reconciliation_summary(company, bank_ledger_id)
         return Response(summary, status=status.HTTP_200_OK)

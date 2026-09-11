@@ -556,58 +556,89 @@ class BankStatementService:
         valid_rows = []
         errors = []
 
-        import pymupdf
-        doc = pymupdf.open(stream=file_content, filetype="pdf")
+        doc = None
+        has_pymupdf = False
+        try:
+            import pymupdf
+            doc = pymupdf.open(stream=file_content, filetype="pdf")
+            has_pymupdf = True
+        except ImportError:
+            doc = None
+            has_pymupdf = False
 
-        # Check total extracted text to determine if digital vector PDF or scanned
-        total_text_chars = sum(len(page.get_text("text").strip()) for page in doc)
-        if total_text_chars < 80:
-            return [], [{"row": 0, "error": "Scanned or image-only PDF detected. Initiating Vision OCR.", "raw": ""}]
+        pages_text = []
 
-        # Strategy A: Try pymupdf find_tables()
-        for page_idx, page in enumerate(doc):
-            try:
-                tables = page.find_tables()
-                for table in tables:
-                    extracted = table.extract()
-                    if not extracted or len(extracted) < 2:
-                        continue
-                    header = [str(c or '').strip() for c in extracted[0]]
-                    col_map = cls.detect_columns(header)
-                    if 'date' in col_map and ('debit' in col_map or 'credit' in col_map or 'amount' in col_map):
-                        for r_idx, row in enumerate(extracted[1:]):
-                            if not row or all(not str(c).strip() for c in row):
-                                continue
-                            try:
-                                d_str = str(row[col_map['date']]).strip()
-                                dt = cls.parse_date_str(d_str)
-                                if not dt:
+        if has_pymupdf and doc is not None:
+            # Check total extracted text to determine if digital vector PDF or scanned
+            total_text_chars = sum(len(page.get_text("text").strip()) for page in doc)
+            if total_text_chars < 80:
+                return [], [{"row": 0, "error": "Scanned or image-only PDF detected. Initiating Vision OCR.", "raw": ""}]
+
+            # Strategy A: Try pymupdf find_tables()
+            for page_idx, page in enumerate(doc):
+                try:
+                    tables = page.find_tables()
+                    for table in tables:
+                        extracted = table.extract()
+                        if not extracted or len(extracted) < 2:
+                            continue
+                        header = [str(c or '').strip() for c in extracted[0]]
+                        col_map = cls.detect_columns(header)
+                        if 'date' in col_map and ('debit' in col_map or 'credit' in col_map or 'amount' in col_map):
+                            for r_idx, row in enumerate(extracted[1:]):
+                                if not row or all(not str(c).strip() for c in row):
                                     continue
-                                desc = str(row[col_map['desc']]).strip() if 'desc' in col_map and col_map['desc'] < len(row) else ""
-                                ref = str(row[col_map['ref']]).strip() if 'ref' in col_map and col_map['ref'] < len(row) else ""
-                                deb = cls.clean_amount_str(row[col_map['debit']]) if 'debit' in col_map and col_map['debit'] < len(row) else Decimal('0.00')
-                                cred = cls.clean_amount_str(row[col_map['credit']]) if 'credit' in col_map and col_map['credit'] < len(row) else Decimal('0.00')
-                                bal = cls.clean_amount_str(row[col_map['balance']]) if 'balance' in col_map and col_map['balance'] < len(row) and str(row[col_map['balance']]).strip() else None
+                                try:
+                                    d_str = str(row[col_map['date']]).strip()
+                                    dt = cls.parse_date_str(d_str)
+                                    if not dt:
+                                        continue
+                                    desc = str(row[col_map['desc']]).strip() if 'desc' in col_map and col_map['desc'] < len(row) else ""
+                                    ref = str(row[col_map['ref']]).strip() if 'ref' in col_map and col_map['ref'] < len(row) else ""
+                                    deb = cls.clean_amount_str(row[col_map['debit']]) if 'debit' in col_map and col_map['debit'] < len(row) else Decimal('0.00')
+                                    cred = cls.clean_amount_str(row[col_map['credit']]) if 'credit' in col_map and col_map['credit'] < len(row) else Decimal('0.00')
+                                    bal = cls.clean_amount_str(row[col_map['balance']]) if 'balance' in col_map and col_map['balance'] < len(row) and str(row[col_map['balance']]).strip() else None
 
-                                if deb > 0 or cred > 0:
-                                    valid_rows.append({
-                                        "date": dt,
-                                        "value_date": dt,
-                                        "description": desc,
-                                        "reference": cls.extract_reference_number(desc, ref),
-                                        "debit": deb,
-                                        "credit": cred,
-                                        "balance": bal,
-                                        "confidence": 0.98,
-                                        "source_page": page_idx + 1
-                                    })
-                            except Exception:
-                                continue
-            except Exception:
-                pass
+                                    if deb > 0 or cred > 0:
+                                        valid_rows.append({
+                                            "date": dt,
+                                            "value_date": dt,
+                                            "description": desc,
+                                            "reference": cls.extract_reference_number(desc, ref),
+                                            "debit": deb,
+                                            "credit": cred,
+                                            "balance": bal,
+                                            "confidence": 0.98,
+                                            "source_page": page_idx + 1
+                                        })
+                                except Exception:
+                                    continue
+                except Exception:
+                    pass
 
-        if len(valid_rows) > 0:
-            return valid_rows, errors
+            if len(valid_rows) > 0:
+                return valid_rows, errors
+
+            # Gather text for Strategy B
+            for page_idx, page in enumerate(doc):
+                txt = page.get_text("text") or ""
+                pages_text.append((page_idx + 1, txt))
+        else:
+            # Fallback to pypdf for text extraction when PyMuPDF is not installed
+            try:
+                import io
+                from pypdf import PdfReader
+                reader = PdfReader(io.BytesIO(file_content))
+                total_text_chars = 0
+                for p_idx, page in enumerate(reader.pages):
+                    txt = page.extract_text() or ""
+                    total_text_chars += len(txt.strip())
+                    pages_text.append((p_idx + 1, txt))
+
+                if total_text_chars < 80:
+                    return [], [{"row": 0, "error": "Scanned or image-only PDF detected. Initiating Vision OCR.", "raw": ""}]
+            except Exception as e:
+                return [], [{"row": 0, "error": f"PDF reading failed: {str(e)}", "raw": ""}]
 
         # Strategy B: Multi-line narration stitching line tokenizer
         date_start_re = re.compile(
@@ -617,12 +648,11 @@ class BankStatementService:
         amt_finder_re = re.compile(r'(\b\d{1,3}(?:,\d{2,3})*\.\d{2}\b|\b\d+\.\d{2}\b)')
 
         all_lines = []
-        for page_idx, page in enumerate(doc):
-            txt = page.get_text("text") or ""
+        for page_idx, txt in pages_text:
             for line in txt.splitlines():
                 l_str = line.strip()
                 if l_str:
-                    all_lines.append((page_idx + 1, l_str))
+                    all_lines.append((page_idx, l_str))
 
         pending_blocks = []
         current_block = None
@@ -736,12 +766,16 @@ class BankStatementService:
         pages_to_process = []
 
         if is_pdf:
-            import pymupdf
-            doc = pymupdf.open(stream=file_bytes, filetype="pdf")
-            max_pages = min(5, len(doc))
-            for p_idx in range(max_pages):
-                pix = doc[p_idx].get_pixmap(dpi=200)
-                pages_to_process.append((p_idx + 1, pix.tobytes("png"), "image/png"))
+            try:
+                import pymupdf
+                doc = pymupdf.open(stream=file_bytes, filetype="pdf")
+                max_pages = min(5, len(doc))
+                for p_idx in range(max_pages):
+                    pix = doc[p_idx].get_pixmap(dpi=200)
+                    pages_to_process.append((p_idx + 1, pix.tobytes("png"), "image/png"))
+            except (ImportError, Exception):
+                # If pymupdf is not available, pass the PDF directly to Gemini Vision
+                pages_to_process.append((1, file_bytes, "application/pdf"))
         else:
             pages_to_process.append((1, file_bytes, mime_type))
 

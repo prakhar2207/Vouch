@@ -17,17 +17,6 @@ declare global {
 
 declare const self: ServiceWorkerGlobalScope;
 
-// Fallback plugin for navigation requests when offline
-const documentFallbackPlugin = {
-  handlerDidError: async ({ request }: { request: Request }) => {
-    if (request.mode === "navigate" || request.destination === "document") {
-      const match = await caches.match("/~offline", { ignoreSearch: true });
-      if (match) return match;
-    }
-    return Response.error();
-  },
-};
-
 // Filter defaultCache so catch-all matchers do NOT intercept backend API or cross-origin calls
 const safeDefaultCache = defaultCache.filter((entry) => {
   if (entry.matcher instanceof RegExp && entry.matcher.toString() === "/.*/i") {
@@ -41,7 +30,7 @@ const safeDefaultCache = defaultCache.filter((entry) => {
 // (e.g., /api/v1/companies/, /api/v1/sync/, onrender.com backend, etc.)
 // All offline financial data is managed authoritatively via IndexedDB (Dexie).
 const accountingCustomCaching: RuntimeCaching[] = [
-  // 0. Navigation / Documents (NetworkFirst with 3s timeout and offline fallback)
+  // 0. Navigation / Documents (NetworkFirst with offline fallback via Serwist fallbacks config)
   {
     matcher: ({ request, url }: any) => {
       // Never intercept API calls or backend endpoints
@@ -50,13 +39,11 @@ const accountingCustomCaching: RuntimeCaching[] = [
     },
     handler: new NetworkFirst({
       cacheName: "vouch-pages-cache",
-      networkTimeoutSeconds: 3,
       plugins: [
         new ExpirationPlugin({
           maxEntries: 50,
           maxAgeSeconds: 7 * 24 * 60 * 60, // 7 days
         }),
-        documentFallbackPlugin,
       ],
     }),
   },

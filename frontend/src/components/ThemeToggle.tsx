@@ -13,44 +13,35 @@ export function ThemeToggle() {
   }, []);
 
   if (!mounted) {
-    return <div className="w-[104px] h-9" />; // Placeholder
+    return <div className="w-9 h-9" />;
   }
 
+  const cycleTheme = () => {
+    if (theme === "light") setTheme("dark");
+    else if (theme === "dark") setTheme("system");
+    else setTheme("light");
+  };
+
+  const getLabel = () => {
+    if (theme === "light") return "Light Theme (click for Dark)";
+    if (theme === "dark") return "Dark Theme (click for System)";
+    return "System Theme (click for Light)";
+  };
+
   return (
-    <div className="flex items-center gap-1 bg-muted p-1 rounded-lg border border-border">
-      <button
-        onClick={() => setTheme("light")}
-        className={`p-1.5 rounded-md transition-colors ${
-          theme === "light"
-            ? "bg-card text-foreground shadow-sm"
-            : "text-muted-foreground hover:text-foreground"
-        }`}
-        title="Light"
-      >
-        <Sun className="h-4 w-4" />
-      </button>
-      <button
-        onClick={() => setTheme("dark")}
-        className={`p-1.5 rounded-md transition-colors ${
-          theme === "dark"
-            ? "bg-card text-foreground shadow-sm"
-            : "text-muted-foreground hover:text-foreground"
-        }`}
-        title="Dark"
-      >
+    <button
+      onClick={cycleTheme}
+      className="w-9 h-9 rounded-lg border border-border/50 bg-muted/20 hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs flex items-center justify-center shrink-0"
+      title={getLabel()}
+      aria-label={getLabel()}
+    >
+      {theme === "dark" ? (
         <Moon className="h-4 w-4" />
-      </button>
-      <button
-        onClick={() => setTheme("system")}
-        className={`p-1.5 rounded-md transition-colors ${
-          theme === "system"
-            ? "bg-card text-foreground shadow-sm"
-            : "text-muted-foreground hover:text-foreground"
-        }`}
-        title="System"
-      >
+      ) : theme === "light" ? (
+        <Sun className="h-4 w-4" />
+      ) : (
         <Monitor className="h-4 w-4" />
-      </button>
-    </div>
+      )}
+    </button>
   );
 }

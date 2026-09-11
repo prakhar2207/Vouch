@@ -336,29 +336,81 @@ class BankReconciliationService:
         """Calculates aggregate dashboard counters for bank reconciliation."""
         from django.db.models import Sum, Count, Q
 
+        valid_bank_id = None
+        if bank_ledger_id and str(bank_ledger_id).strip().lower() not in ['null', 'undefined', 'all', 'none', '']:
+            try:
+                import uuid
+                uuid.UUID(str(bank_ledger_id).strip())
+                valid_bank_id = str(bank_ledger_id).strip()
+            except (ValueError, TypeError, AttributeError):
+                valid_bank_id = None
+
         qs = BankTransaction.objects.filter(company=company)
-        if bank_ledger_id:
-            qs = qs.filter(bank_ledger_id=bank_ledger_id)
+        if valid_bank_id:
+            qs = qs.filter(bank_ledger_id=valid_bank_id)
 
         stats = qs.aggregate(
             total=Count('id'),
             matched_auto=Count('id', filter=Q(status='MATCHED_AUTO')),
             matched_suggested=Count('id', filter=Q(status='MATCHED_SUGGESTED')),
-            unresolved=Count('id', filter=Q(status='UNRESOLVED')),
+            unresolved=Count('id', filter=Q(status__in=['UNRESOLVED', 'UNPROCESSED'])),
             reconciled=Count('id', filter=Q(status='RECONCILED')),
             ignored=Count('id', filter=Q(status='IGNORED')),
+            total_debits=Sum('debit_amount'),
+            total_credits=Sum('credit_amount'),
             unrec_debit=Sum('debit_amount', filter=Q(status__in=['UNPROCESSED', 'UNRESOLVED', 'MATCHED_SUGGESTED'])),
             unrec_credit=Sum('credit_amount', filter=Q(status__in=['UNPROCESSED', 'UNRESOLVED', 'MATCHED_SUGGESTED']))
         )
 
+        total_tx = stats['total'] or 0
+        auto_matched = stats['matched_auto'] or 0
+        suggested = stats['matched_suggested'] or 0
+        unresolved = stats['unresolved'] or 0
+        reconciled = stats['reconciled'] or 0
+        ignored = stats['ignored'] or 0
+
+        # Calculate statement closing balance (latest transaction balance if available)
+        statement_closing_balance = None
+        latest_tx = qs.exclude(balance__isnull=True).order_by('-transaction_date', '-created_at').first()
+        if latest_tx and latest_tx.balance is not None:
+            statement_closing_balance = str(latest_tx.balance)
+
+        # Calculate book closing balance
+        book_closing_balance = None
+        if valid_bank_id:
+            bank_ledger = Ledger.objects.filter(id=valid_bank_id, company=company).first()
+            if bank_ledger:
+                book_closing_balance = str(bank_ledger.current_balance or Decimal('0.00'))
+
+        reconciliation_gap = None
+        is_balanced = False
+        if statement_closing_balance is not None and book_closing_balance is not None:
+            gap = abs(Decimal(statement_closing_balance) - Decimal(book_closing_balance))
+            reconciliation_gap = str(gap)
+            is_balanced = (gap == Decimal('0.00'))
+        elif unresolved == 0 and suggested == 0:
+            is_balanced = True
+            reconciliation_gap = "0.00"
+
         return {
-            "total_transactions": stats['total'] or 0,
-            "auto_matched": stats['matched_auto'] or 0,
-            "suggested": stats['matched_suggested'] or 0,
-            "unresolved": stats['unresolved'] or 0,
-            "reconciled": stats['reconciled'] or 0,
-            "ignored": stats['ignored'] or 0,
+            "total_transactions": total_tx,
+            "auto_matched": auto_matched,
+            "suggested": suggested,
+            "unresolved": unresolved,
+            "reconciled": reconciled,
+            "ignored": ignored,
+            "unresolved_count": unresolved,
+            "needs_review_count": suggested,
+            "matched_count": auto_matched + reconciled,
+            "reconciled_count": reconciled,
+            "ignored_count": ignored,
+            "total_debits": str(stats['total_debits'] or Decimal('0.00')),
+            "total_credits": str(stats['total_credits'] or Decimal('0.00')),
             "unreconciled_debit_amount": str(stats['unrec_debit'] or Decimal('0.00')),
             "unreconciled_credit_amount": str(stats['unrec_credit'] or Decimal('0.00')),
-            "net_unreconciled_amount": str(Decimal(str(stats['unrec_credit'] or '0.00')) - Decimal(str(stats['unrec_debit'] or '0.00')))
+            "net_unreconciled_amount": str(Decimal(str(stats['unrec_credit'] or '0.00')) - Decimal(str(stats['unrec_debit'] or '0.00'))),
+            "statement_closing_balance": statement_closing_balance or "0.00",
+            "book_closing_balance": book_closing_balance or "0.00",
+            "reconciliation_gap": reconciliation_gap or "0.00",
+            "is_balanced": is_balanced
         }

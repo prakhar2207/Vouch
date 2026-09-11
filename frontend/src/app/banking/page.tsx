@@ -104,12 +104,15 @@ interface PartyMappingItem {
   last_used: string;
 }
 
+const isValidId = (id: unknown): id is string =>
+  typeof id === "string" && id.trim() !== "" && id !== "undefined" && id !== "null";
+
 export default function BankingPage() {
   const router = useRouter();
   const { toast } = useToast();
 
   const { activeCompany, companyId: activeCompanyId } = useCompany();
-  const [companyId, setCompanyId] = useState<string>(activeCompanyId || "");
+  const [companyId, setCompanyId] = useState<string>(isValidId(activeCompanyId) ? activeCompanyId : "");
   const [bankLedgers, setBankLedgers] = useState<BankLedger[]>([]);
   const [selectedBankId, setSelectedBankId] = useState<string>("");
   const [allLedgers, setAllLedgers] = useState<any[]>([]);
@@ -152,13 +155,13 @@ export default function BankingPage() {
   }, [router, activeCompanyId]);
 
   useEffect(() => {
-    if (activeCompanyId && activeCompanyId !== companyId) {
+    if (isValidId(activeCompanyId) && activeCompanyId !== companyId) {
       setCompanyId(activeCompanyId);
     }
   }, [activeCompanyId]);
 
   useEffect(() => {
-    if (companyId) {
+    if (isValidId(companyId)) {
       fetchTransactionsAndSummary();
     }
   }, [companyId, selectedBankId, activeTab]);
@@ -175,16 +178,21 @@ export default function BankingPage() {
     setLoading(true);
     try {
       const token = getAccessToken();
-      let cid = activeCompanyId;
+      let cid = isValidId(activeCompanyId) ? activeCompanyId : "";
       if (!cid && typeof window !== "undefined") {
-        cid = localStorage.getItem("vouch_active_company_id");
+        const stored = localStorage.getItem("vouch_active_company_id");
+        if (isValidId(stored)) {
+          cid = stored;
+        }
       }
       if (!cid) {
         const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
-        cid = list[0]?.id;
+        if (list.length > 0 && isValidId(list[0]?.id)) {
+          cid = list[0].id;
+        }
       }
       if (!cid) {
         toast.error("No company found", "Please create or select an active company first.");
@@ -192,11 +200,14 @@ export default function BankingPage() {
         return;
       }
       setCompanyId(cid);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("vouch_active_company_id", cid);
+      }
 
       const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, {
         headers: { Authorization: `Bearer ${token}`, "X-Company-ID": cid },
       });
-      const rawLedgers: any[] = ledgersRes.data.data || [];
+      const rawLedgers: any[] = ledgersRes.data?.data || (Array.isArray(ledgersRes.data) ? ledgersRes.data : []);
       setAllLedgers(rawLedgers);
 
       const banks = rawLedgers.filter(
@@ -204,62 +215,82 @@ export default function BankingPage() {
       );
       setBankLedgers(banks);
 
-      if (banks.length > 0) {
+      if (banks.length > 0 && isValidId(banks[0]?.id)) {
         setSelectedBankId(banks[0].id);
       }
     } catch (err: any) {
-      console.error(err);
-      toast.error("Failed to load banking profile", err.message || "Network error");
+      console.error("Failed to load banking profile:", err);
+      toast.error("Failed to load banking profile", err.response?.data?.error || err.message || "Network error");
     } finally {
       setLoading(false);
     }
   };
 
   const fetchTransactionsAndSummary = async () => {
-    if (!companyId) return;
+    if (!isValidId(companyId)) return;
     setRefreshing(true);
     try {
       const headers = getHeaders();
       const params: any = { company_id: companyId };
-      if (selectedBankId) {
+      if (isValidId(selectedBankId)) {
         params.bank_ledger_id = selectedBankId;
       }
 
       if (activeTab === "NEEDS_REVIEW") {
-        params.status = "NEEDS_REVIEW";
+        params.status = "MATCHED_SUGGESTED,NEEDS_REVIEW";
       } else if (activeTab === "UNRESOLVED") {
-        params.status = "UNRESOLVED";
+        params.status = "UNRESOLVED,UNPROCESSED";
       } else if (activeTab === "MATCHED") {
-        params.status = "MATCHED,RECONCILED";
+        params.status = "MATCHED_AUTO,RECONCILED";
       }
 
       const [txRes, summaryRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/api/v1/accounting/banking/transactions/`, { headers, params }),
         axios.get(`${API_BASE_URL}/api/v1/accounting/banking/summary/`, {
           headers,
-          params: { company_id: companyId, ...(selectedBankId ? { bank_ledger_id: selectedBankId } : {}) },
+          params: { company_id: companyId, ...(isValidId(selectedBankId) ? { bank_ledger_id: selectedBankId } : {}) },
         }),
       ]);
 
-      setTransactions(txRes.data.results || []);
-      setSummary(summaryRes.data || null);
+      const txList = txRes.data?.results || (Array.isArray(txRes.data) ? txRes.data : []);
+      setTransactions(txList);
+
+      const sData = summaryRes.data || null;
+      if (sData) {
+        setSummary({
+          total_transactions: sData.total_transactions ?? 0,
+          unresolved_count: sData.unresolved_count ?? sData.unresolved ?? 0,
+          needs_review_count: sData.needs_review_count ?? sData.suggested ?? 0,
+          matched_count: sData.matched_count ?? ((sData.auto_matched ?? 0) + (sData.reconciled ?? 0)),
+          reconciled_count: sData.reconciled_count ?? sData.reconciled ?? 0,
+          ignored_count: sData.ignored_count ?? sData.ignored ?? 0,
+          total_debits: sData.total_debits ?? sData.unreconciled_debit_amount ?? "0.00",
+          total_credits: sData.total_credits ?? sData.unreconciled_credit_amount ?? "0.00",
+          statement_closing_balance: sData.statement_closing_balance ?? null,
+          book_closing_balance: sData.book_closing_balance ?? null,
+          reconciliation_gap: sData.reconciliation_gap ?? null,
+          is_balanced: Boolean(sData.is_balanced),
+        });
+      } else {
+        setSummary(null);
+      }
     } catch (err: any) {
-      console.error(err);
-      toast.error("Error loading bank transactions", err.message || "Could not fetch data.");
+      console.error("Error loading bank transactions:", err);
+      toast.error("Error loading bank transactions", err.response?.data?.error || err.message || "Could not fetch data.");
     } finally {
       setRefreshing(false);
     }
   };
 
   const fetchMappings = async () => {
-    if (!companyId) return;
+    if (!isValidId(companyId)) return;
     setLoadingMappings(true);
     try {
       const headers = getHeaders();
       const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/banking/mappings/?company_id=${companyId}`, { headers });
-      setMappings(res.data || []);
+      setMappings(Array.isArray(res.data) ? res.data : []);
     } catch (err: any) {
-      toast.error("Failed to load learned rules", err.message);
+      toast.error("Failed to load learned rules", err.response?.data?.error || err.message);
     } finally {
       setLoadingMappings(false);
     }
