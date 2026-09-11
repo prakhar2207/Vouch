@@ -196,17 +196,28 @@ class SyncPushAPIView(APIView):
                 continue
 
             # P0-2 & P0-3: Persist OfflineCommand outside the business transaction so failures are not rolled back
-            cmd_obj, created = OfflineCommand.objects.get_or_create(
-                command_id=cmd_id,
-                company=company,
-                defaults={
-                    'device_id': device_id,
-                    'user': request.user,
-                    'command_type': cmd_type,
-                    'payload': payload,
-                    'status': 'PROCESSING'
-                }
-            )
+            existing_cmd = OfflineCommand.objects.filter(command_id=cmd_id).first()
+            if existing_cmd:
+                if existing_cmd.company_id != company.id:
+                    errors.append({
+                        'command_id': cmd_id,
+                        'error': 'Command ID already registered to another company/tenant',
+                        'error_code': 'TENANT_MISMATCH'
+                    })
+                    continue
+                cmd_obj = existing_cmd
+                created = False
+            else:
+                cmd_obj = OfflineCommand.objects.create(
+                    command_id=cmd_id,
+                    company=company,
+                    device_id=device_id,
+                    user=request.user,
+                    command_type=cmd_type,
+                    payload=payload,
+                    status='PROCESSING'
+                )
+                created = True
 
             # Idempotency Check: if command already processed, skip duplicate posting and return cached voucher result
             if not created:
@@ -346,7 +357,10 @@ class SyncPushAPIView(APIView):
                 cmd_obj.error_code = 'VALIDATION_ERROR' if is_val_err else 'EXECUTION_ERROR'
                 cmd_obj.error_message = str(e)
                 cmd_obj.failed_at = timezone.now()
-                cmd_obj.save(update_fields=['status', 'error_code', 'error_message', 'failed_at'])
+                try:
+                    cmd_obj.save(update_fields=['status', 'error_code', 'error_message', 'failed_at'])
+                except Exception:
+                    pass
 
                 errors.append({'command_id': cmd_id, 'error': str(e), 'error_code': cmd_obj.error_code})
 

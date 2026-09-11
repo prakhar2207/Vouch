@@ -20,88 +20,105 @@ export async function queueOfflineVoucher(voucherType: string, payload: any, vou
   return { id, localId, status: "QUEUED_OFFLINE" };
 }
 
+let isSyncInProgress = false;
+
 export async function executeClientOutboxSync() {
   if (typeof window === "undefined" || !navigator.onLine) return;
+  if (isSyncInProgress) return;
+  isSyncInProgress = true;
 
-  // Reset any orphaned SYNCING items back to PENDING if previous sync was interrupted
   try {
-    const orphaned = await offlineDb.vouchers
-      .where("status")
-      .equals("SYNCING")
-      .toArray();
-    for (const orphan of orphaned) {
-      if (orphan.id) {
-        await offlineDb.vouchers.update(orphan.id, { status: "PENDING" });
-      }
-    }
-  } catch (e) {
-    console.warn("Failed to reset orphaned syncing vouchers:", e);
-  }
-
-  const pending = await offlineDb.vouchers
-    .where("status")
-    .equals("PENDING")
-    .toArray();
-
-  if (pending.length === 0) return;
-
-  const token = getAccessToken();
-  if (!token) return;
-
-  for (const item of pending) {
+    // Reset any orphaned SYNCING items back to PENDING if previous sync was interrupted
     try {
-      await offlineDb.vouchers.update(item.id!, { status: "SYNCING" });
+      const orphaned = await offlineDb.vouchers
+        .where("status")
+        .equals("SYNCING")
+        .toArray();
+      for (const orphan of orphaned) {
+        if (orphan.id) {
+          await offlineDb.vouchers.update(orphan.id, { status: "PENDING" });
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to reset orphaned syncing vouchers:", e);
+    }
 
-      const commandId = item.localId;
-      const companyId = item.payload.company_id || item.payload.company;
+    const pending = await offlineDb.vouchers
+      .where("status")
+      .equals("PENDING")
+      .toArray();
 
-      const pushPayload = {
-        company_id: companyId,
-        commands: [
-          {
-            command_id: commandId,
-            command_type: `CREATE_${item.voucherType.toUpperCase()}`,
-            payload: item.payload,
-            device_id: typeof window !== "undefined" ? window.navigator.userAgent.substring(0, 50) : "web-client"
-          }
-        ]
-      };
+    if (pending.length === 0) return;
 
-      const response = await fetch(`${API_BASE_URL}/api/v1/sync/push/`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "X-Company-ID": companyId || "",
-        },
-        body: JSON.stringify(pushPayload),
-      });
+    const token = getAccessToken();
+    if (!token) return;
 
-      const resData = await response.json().catch(() => ({}));
+    for (const item of pending) {
+      try {
+        await offlineDb.vouchers.update(item.id!, { status: "SYNCING" });
 
-      if (response.ok && (resData.success || resData.processed_count > 0)) {
-        const cmdResult = resData.results?.[0];
-        await offlineDb.vouchers.update(item.id!, {
-          status: "SYNCED",
-          voucherNumber: cmdResult?.voucher_number,
-          syncedAt: Date.now(),
+        const commandId = item.localId;
+        const companyId = item.payload.company_id || item.payload.company;
+
+        const pushPayload = {
+          company_id: companyId,
+          commands: [
+            {
+              command_id: commandId,
+              command_type: `CREATE_${item.voucherType.toUpperCase()}`,
+              payload: item.payload,
+              device_id: typeof window !== "undefined" ? window.navigator.userAgent.substring(0, 50) : "web-client"
+            }
+          ]
+        };
+
+        const response = await fetch(`${API_BASE_URL}/api/v1/sync/push/`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            "X-Company-ID": companyId || "",
+          },
+          body: JSON.stringify(pushPayload),
         });
-      } else {
-        const errMsg = resData.errors?.[0]?.error || resData.error || (typeof resData === "string" ? resData : "Server rejected command");
+
+        const resData = await response.json().catch(() => ({}));
+
+        if (response.ok && (resData.success || resData.processed_count > 0)) {
+          const cmdResult = resData.results?.find((r: any) => r.command_id === commandId) || resData.results?.[0];
+          if (cmdResult && cmdResult.status === "PROCESSED") {
+            await offlineDb.vouchers.update(item.id!, {
+              status: "SYNCED",
+              voucherNumber: cmdResult?.voucher_number,
+              syncedAt: Date.now(),
+            });
+          } else {
+            const cmdErr = resData.errors?.find((e: any) => e.command_id === commandId)?.error || "Server processing failed";
+            await offlineDb.vouchers.update(item.id!, {
+              status: "FAILED",
+              errorMessage: cmdErr,
+              retryCount: (item.retryCount || 0) + 1,
+            });
+          }
+        } else {
+          const errMsg = resData.errors?.find((e: any) => e.command_id === commandId)?.error || resData.errors?.[0]?.error || resData.error || (typeof resData === "string" ? resData : "Server rejected command");
+          await offlineDb.vouchers.update(item.id!, {
+            status: "FAILED",
+            errorMessage: errMsg,
+            retryCount: (item.retryCount || 0) + 1,
+          });
+        }
+      } catch (err: any) {
+        const isOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
         await offlineDb.vouchers.update(item.id!, {
-          status: "FAILED",
-          errorMessage: errMsg,
+          status: isOnline ? "FAILED" : "PENDING",
+          errorMessage: err?.message || "Network error during sync",
           retryCount: (item.retryCount || 0) + 1,
         });
       }
-    } catch (err: any) {
-      const isOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
-      await offlineDb.vouchers.update(item.id!, {
-        status: isOnline ? "FAILED" : "PENDING",
-        errorMessage: err?.message || "Network error during sync",
-        retryCount: (item.retryCount || 0) + 1,
-      });
     }
+  } finally {
+    isSyncInProgress = false;
   }
 }
 

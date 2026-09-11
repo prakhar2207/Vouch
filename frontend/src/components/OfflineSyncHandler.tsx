@@ -6,24 +6,41 @@ export default function OfflineSyncHandler() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // Listen for service worker background sync broadcasts
+    // 1. Listen for service worker background sync broadcasts
+    let swHandler: ((event: MessageEvent) => void) | null = null;
     if ("serviceWorker" in navigator) {
-      const handleMessage = (event: MessageEvent) => {
+      swHandler = (event: MessageEvent) => {
         if (event.data && event.data.type === "TRIGGER_OUTBOX_SYNC") {
           executeClientOutboxSync();
         }
       };
-      navigator.serviceWorker.addEventListener("message", handleMessage);
+      navigator.serviceWorker.addEventListener("message", swHandler);
+    }
 
-      // On app mount, attempt outbox sync if online
-      if (navigator.onLine) {
+    // 2. Window online & visibility change listeners (fallback for Safari, iOS, and non-SW envs)
+    const handleOnline = () => {
+      triggerOutboxSync();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
         triggerOutboxSync();
       }
+    };
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("visibilitychange", handleVisibility);
 
-      return () => {
-        navigator.serviceWorker.removeEventListener("message", handleMessage);
-      };
+    // 3. On app mount, attempt outbox sync immediately if online
+    if (navigator.onLine) {
+      triggerOutboxSync();
     }
+
+    return () => {
+      if (swHandler && "serviceWorker" in navigator) {
+        navigator.serviceWorker.removeEventListener("message", swHandler);
+      }
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, []);
 
   return null;
