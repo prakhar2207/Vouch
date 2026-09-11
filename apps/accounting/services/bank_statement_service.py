@@ -10,42 +10,85 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+from pydantic import BaseModel, Field
 from apps.accounting.models import BankStatementImport, BankTransaction
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
 
+
+class BankTransactionSchema(BaseModel):
+    date: str = Field(description="Transaction date in YYYY-MM-DD format")
+    value_date: Optional[str] = Field(default="", description="Value date in YYYY-MM-DD format if present")
+    description: str = Field(description="Complete cleaned narration or particulars of the transaction")
+    reference: Optional[str] = Field(default="", description="Cheque number, UTR, or bank reference number")
+    debit: float = Field(default=0.0, description="Withdrawal / debit amount as positive number")
+    credit: float = Field(default=0.0, description="Deposit / credit amount as positive number")
+    balance: Optional[float] = Field(default=None, description="Closing balance after transaction")
+
+
+class BankStatementExtractionSchema(BaseModel):
+    opening_balance: Optional[float] = Field(default=None, description="Opening balance if stated")
+    closing_balance: Optional[float] = Field(default=None, description="Closing balance if stated")
+    transactions: List[BankTransactionSchema] = Field(default_factory=list, description="Extracted bank transactions")
+
+
 class BankStatementService:
     """
-    Multi-format bank statement parser & normalizer.
-    Supports CSV, Excel (XLSX/XLS), PDF, and Scanned Image OCR.
-    Extracts, validates, cleans narration, and detects duplicate transactions.
-    Survives partial failures and preserves per-row error tracking.
+    Forensic-grade multi-format bank statement parser & normalizer.
+    Supports CSV, Excel (XLSX/XLS), Native PDF, Scanned PDF, and Images (PNG/JPG).
+    
+    Architectural Invariants:
+    1. Deterministic parser where reliable + OCR where necessary + AI vision fallback.
+    2. Mandatory balance chain validation: opening + sum(credits) - sum(debits) == closing.
+    3. Multi-line narration stitching preserving references, UPI IDs, and GSTINs.
+    4. Deterministic transaction fingerprinting (SHA-256) & file hash deduplication.
+    5. Amount and date OCR confusion safety.
     """
 
     DATE_PATTERNS = [
-        "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%y", "%d-%m-%y",
+        "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y",
+        "%d/%m/%y", "%d-%m-%y", "%d.%m.%y",
+        "%Y-%m-%d", "%Y/%m/%d",
         "%d-%b-%Y", "%d-%b-%y", "%d %b %Y", "%d %b %y",
-        "%d-%B-%Y", "%d %B %Y", "%Y/%m/%d"
+        "%d-%B-%Y", "%d %B %Y"
     ]
 
     @classmethod
     def clean_amount_str(cls, val: Any) -> Decimal:
+        """
+        Deterministic amount normalizer with OCR error safety.
+        Cleans currency symbols, handles OCR digit confusions (O/o->0, l/I->1, B->8, S->5),
+        Indian numbering formats, and negative signs.
+        """
         if val is None:
             return Decimal('0.00')
         s = str(val).strip()
-        if not s or s.lower() in ['nan', 'none', '-', '', 'null', 'nil']:
+        if not s or s.lower() in ['nan', 'none', '-', '', 'null', 'nil', '.']:
             return Decimal('0.00')
-        s = re.sub(r'[₹$€£, ]', '', s)
-        is_dr = False
-        is_cr = False
-        if s.upper().endswith('DR') or s.upper().startswith('DR'):
-            is_dr = True
-            s = re.sub(r'(?i)dr', '', s).strip()
-        elif s.upper().endswith('CR') or s.upper().startswith('CR'):
-            is_cr = True
-            s = re.sub(r'(?i)cr', '', s).strip()
+
+        # Strip currency symbols and whitespace
+        s = re.sub(r'[₹$€£\s]', '', s)
+
+        # Handle negative brackets e.g. (1,250.00)
+        is_negative = False
         if s.startswith('(') and s.endswith(')'):
-            s = '-' + s[1:-1].strip()
+            is_negative = True
+            s = s[1:-1].strip()
+
+        # Handle trailing/leading DR/CR
+        s = re.sub(r'(?i)\bdr\b', '', s).strip()
+        s = re.sub(r'(?i)\bcr\b', '', s).strip()
+
+        # Check if digits are corrupted by common OCR letter substitutions
+        if re.search(r'\d', s):
+            s = re.sub(r'(?<=[0-9,.])[Oo](?=[0-9,.])|^[Oo](?=[0-9,.])|(?<=[0-9,.])[Oo]$', '0', s)
+            s = re.sub(r'(?<=[0-9,.])[lI](?=[0-9,.])|^[lI](?=[0-9,.])|(?<=[0-9,.])[lI]$', '1', s)
+            s = re.sub(r'(?<=[0-9,.])[B](?=[0-9,.])|^[B](?=[0-9,.])|(?<=[0-9,.])[B]$', '8', s)
+            s = re.sub(r'(?<=[0-9,.])[Ss](?=[0-9,.])|^[Ss](?=[0-9,.])|(?<=[0-9,.])[Ss]$', '5', s)
+
+        # Remove commas
+        s = s.replace(',', '')
+
         try:
             val_dec = Decimal(s)
             return abs(val_dec)
@@ -53,25 +96,61 @@ class BankStatementService:
             return Decimal('0.00')
 
     @classmethod
-    def parse_date_str(cls, val: Any) -> Optional[datetime.date]:
+    def parse_date_str(cls, val: Any, preferred_format: Optional[str] = None) -> Optional[datetime.date]:
+        """
+        Parses date string with boundary and calendar validity checks.
+        Rejects impossible dates (month > 12, day > 31, leap year mismatches).
+        """
         if not val:
             return None
         if isinstance(val, (datetime.date, datetime.datetime)):
             return val.date() if isinstance(val, datetime.datetime) else val
         s = str(val).strip()
         s = s.split(' ')[0].split('T')[0]
-        for pattern in cls.DATE_PATTERNS:
+
+        patterns = [preferred_format] if preferred_format else []
+        patterns += [p for p in cls.DATE_PATTERNS if p != preferred_format]
+
+        for pattern in patterns:
             try:
-                return datetime.datetime.strptime(s, pattern).date()
-            except ValueError:
+                dt = datetime.datetime.strptime(s, pattern).date()
+                if 1990 <= dt.year <= 2050:
+                    return dt
+            except (ValueError, TypeError):
                 continue
         return None
 
     @classmethod
+    def detect_batch_date_format(cls, date_strings: List[str]) -> str:
+        """
+        Disambiguates DD/MM/YYYY vs MM/DD/YYYY across the batch.
+        If any date has the first component > 12 (e.g. 25/01/2026),
+        the entire statement is unequivocally DD/MM/YYYY.
+        """
+        has_day_over_12 = False
+        has_month_over_12 = False
+
+        for raw in date_strings:
+            m = re.match(r'^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})', str(raw).strip())
+            if m:
+                c1 = int(m.group(1))
+                c2 = int(m.group(2))
+                if c1 > 12:
+                    has_day_over_12 = True
+                if c2 > 12:
+                    has_month_over_12 = True
+
+        if has_day_over_12:
+            return "%d/%m/%Y"
+        elif has_month_over_12:
+            return "%m/%d/%Y"
+        return "%d/%m/%Y"
+
+    @classmethod
     def normalize_narration(cls, text: str) -> str:
         """
-        Cleans bank narration, removes redundant whitespace,
-        and standardizes identifiers for reliable party matching.
+        Cleans bank narration, normalizes whitespace and standardizes
+        beneficiary identifiers for accurate matching.
         """
         if not text:
             return ""
@@ -81,7 +160,7 @@ class BankStatementService:
 
     @classmethod
     def extract_upi_id(cls, text: str) -> Optional[str]:
-        """Extracts UPI VPA handle from narration if present, e.g. 'UPI/rajesh@okhdfcbank/...'"""
+        """Extracts UPI VPA handle from narration if present (e.g. 'UPI/rajesh@okhdfcbank/...')"""
         if not text:
             return None
         match = re.search(r'([a-zA-Z0-9._\-]+@[a-zA-Z0-9]+)', text)
@@ -91,11 +170,12 @@ class BankStatementService:
 
     @classmethod
     def extract_reference_number(cls, text: str, ref_col_val: Optional[str] = None) -> Optional[str]:
-        if ref_col_val and str(ref_col_val).strip() and str(ref_col_val).strip().lower() not in ['nan', 'none', '-']:
+        """Extracts Cheque number, UTR, or transaction reference from dedicated column or narration."""
+        if ref_col_val and str(ref_col_val).strip() and str(ref_col_val).strip().lower() not in ['nan', 'none', '-', '']:
             return str(ref_col_val).strip()
         if not text:
             return None
-        utr_match = re.search(r'(?:UTR|REF|NO|CHQ|NEFT|IMPS)[/:\s\-]+([A-Za-z0-9]{6,22})', text, re.IGNORECASE)
+        utr_match = re.search(r'(?:UTR|REF|NO|CHQ|NEFT|RTGS|IMPS)[/:\s\-]+([A-Za-z0-9]{6,22})', text, re.IGNORECASE)
         if utr_match:
             return utr_match.group(1).upper()
         rrn_match = re.search(r'\b(\d{12})\b', text)
@@ -104,10 +184,17 @@ class BankStatementService:
         return None
 
     @classmethod
-    def compute_transaction_fingerprint(cls, company_id: Any, bank_ledger_id: Any, tx_date: Any, debit: Decimal, credit: Decimal, identifier: str) -> str:
+    def compute_transaction_fingerprint(
+        cls,
+        company_id: Any,
+        bank_ledger_id: Any,
+        tx_date: Any,
+        debit: Decimal,
+        credit: Decimal,
+        identifier: str
+    ) -> str:
         """
         Deterministic SHA-256 fingerprint ensuring strict bank transaction idempotency.
-        Combines company, account, date, debit, credit, and reference/cleaned narration.
         """
         raw_key = f"{company_id}:{bank_ledger_id}:{tx_date}:{debit:.2f}:{credit:.2f}:{(identifier or '').strip().upper()}"
         return hashlib.sha256(raw_key.encode('utf-8')).hexdigest()
@@ -116,23 +203,26 @@ class BankStatementService:
     def detect_columns(cls, header_row: List[str]) -> Dict[str, int]:
         """
         Identifies column indices for Date, Value Date, Description, Reference,
-        Debit, Credit, Amount, and Balance based on common Indian bank headers.
+        Debit, Credit, Amount, Balance, and Type based on Indian bank formats
+        (SBI, HDFC, ICICI, Axis, Kotak, PNB, etc.).
         """
         mapping = {}
-        cleaned = [str(col).strip().lower() for col in header_row]
+        cleaned = [str(col).strip().lower() for col in header_row if col is not None]
 
-        date_aliases = ['txn date', 'transaction date', 'trans date', 'date', 'posting date', 'value dt', 'txndate']
+        date_aliases = ['txn date', 'transaction date', 'trans date', 'date', 'posting date', 'value dt', 'txndate', 'tran date']
         val_date_aliases = ['value date', 'val date', 'value dt', 'v.date']
         desc_aliases = ['narration', 'description', 'particulars', 'remarks', 'transaction remarks', 'details', 'trans details', 'statement details']
-        ref_aliases = ['chq/ref no', 'chq / ref no', 'ref no', 'ref', 'reference', 'cheque no', 'chq no', 'utr', 'tran id', 'txn id', 'reference number', 'cheque / ref. no.']
-        dr_aliases = ['debit', 'withdrawal', 'dr', 'dr amount', 'withdrawals', 'debit amount', 'withdrawal (dr)']
-        cr_aliases = ['credit', 'deposit', 'cr', 'cr amount', 'deposits', 'credit amount', 'deposit (cr)']
+        ref_aliases = ['chq/ref no', 'chq / ref no', 'ref no', 'ref', 'reference', 'cheque no', 'chq no', 'utr', 'tran id', 'txn id', 'reference number', 'cheque / ref. no.', 'chqno', 'cheque number']
+        dr_aliases = ['debit', 'withdrawal', 'dr', 'dr amount', 'withdrawals', 'debit amount', 'withdrawal (dr)', 'withdrawal amt.', 'withdrawal amount (inr )']
+        cr_aliases = ['credit', 'deposit', 'cr', 'cr amount', 'deposits', 'credit amount', 'deposit (cr)', 'deposit amt.', 'deposit amount (inr )']
         amount_aliases = ['amount', 'txn amount', 'transaction amount', 'net amount']
-        bal_aliases = ['balance', 'closing balance', 'running balance', 'bal', 'closing bal', 'balance (inr)']
+        bal_aliases = ['balance', 'closing balance', 'running balance', 'bal', 'closing bal', 'balance (inr)', 'balance (inr )', 'closing balance (inr )']
         type_aliases = ['dr/cr', 'type', 'cr/dr', 'indicator', 'txn type']
 
         for idx, col in enumerate(cleaned):
-            if 'val' in col and any(alias in col for alias in val_date_aliases) and 'value_date' not in mapping:
+            if any(alias == col or alias in col for alias in type_aliases) and 'type' not in mapping:
+                mapping['type'] = idx
+            elif 'val' in col and any(alias in col for alias in val_date_aliases) and 'value_date' not in mapping:
                 mapping['value_date'] = idx
             elif any(alias == col or col.startswith(alias) for alias in date_aliases) and 'date' not in mapping:
                 mapping['date'] = idx
@@ -140,16 +230,14 @@ class BankStatementService:
                 mapping['desc'] = idx
             elif any(alias in col for alias in ref_aliases) and 'ref' not in mapping:
                 mapping['ref'] = idx
-            elif any(alias in col for alias in dr_aliases) and 'debit' not in mapping:
+            elif any(alias == col or alias in col for alias in dr_aliases) and 'debit' not in mapping and 'cr' not in col:
                 mapping['debit'] = idx
-            elif any(alias in col for alias in cr_aliases) and 'credit' not in mapping:
+            elif any(alias == col or alias in col for alias in cr_aliases) and 'credit' not in mapping and 'dr' not in col:
                 mapping['credit'] = idx
             elif any(alias in col for alias in amount_aliases) and 'amount' not in mapping:
                 mapping['amount'] = idx
             elif any(alias in col for alias in bal_aliases) and 'balance' not in mapping:
                 mapping['balance'] = idx
-            elif any(alias in col for alias in type_aliases) and 'type' not in mapping:
-                mapping['type'] = idx
 
         if 'date' not in mapping:
             for idx, col in enumerate(cleaned):
@@ -160,8 +248,99 @@ class BankStatementService:
         return mapping
 
     @classmethod
+    def validate_balance_chain(
+        cls,
+        rows: List[Dict[str, Any]],
+        explicit_opening: Optional[Decimal] = None,
+        explicit_closing: Optional[Decimal] = None
+    ) -> Dict[str, Any]:
+        """
+        Mandatory Phase 4 balance chain validator:
+        1. Line-by-line running balance verification:
+           balance_{i} == balance_{i-1} + credit_{i} - debit_{i}
+        2. Statement-level verification:
+           opening_balance + total_credits - total_debits == closing_balance
+        3. Surfaces broken rows and discrepancy amounts without silently corrupting books.
+        """
+        if not rows:
+            return {
+                "valid": True,
+                "opening_balance": explicit_opening or Decimal('0.00'),
+                "closing_balance": explicit_closing or Decimal('0.00'),
+                "calculated_closing_balance": explicit_opening or Decimal('0.00'),
+                "total_credits": Decimal('0.00'),
+                "total_debits": Decimal('0.00'),
+                "discrepancy_amount": Decimal('0.00'),
+                "discrepancy_rows": []
+            }
+
+        total_credits = sum((r.get("credit") or Decimal('0.00')) for r in rows)
+        total_debits = sum((r.get("debit") or Decimal('0.00')) for r in rows)
+
+        # Infer opening balance if not explicitly provided
+        opening_balance = explicit_opening
+        first_row = rows[0]
+        if opening_balance is None and first_row.get("balance") is not None:
+            b1 = first_row["balance"]
+            c1 = first_row.get("credit") or Decimal('0.00')
+            d1 = first_row.get("debit") or Decimal('0.00')
+            opening_balance = b1 - c1 + d1
+
+        # Infer closing balance if not explicitly provided
+        closing_balance = explicit_closing
+        last_row = rows[-1]
+        if closing_balance is None and last_row.get("balance") is not None:
+            closing_balance = last_row["balance"]
+
+        discrepancy_rows = []
+        prev_balance = opening_balance
+
+        for idx, r in enumerate(rows):
+            cur_balance = r.get("balance")
+            deb = r.get("debit") or Decimal('0.00')
+            cred = r.get("credit") or Decimal('0.00')
+
+            if prev_balance is not None and cur_balance is not None:
+                expected_cur = prev_balance + cred - deb
+                diff = abs(cur_balance - expected_cur)
+                if diff > Decimal('0.05'):
+                    discrepancy_rows.append({
+                        "row_index": idx + 1,
+                        "date": str(r.get("date")),
+                        "description": r.get("description", "")[:40],
+                        "debit": float(deb),
+                        "credit": float(cred),
+                        "previous_balance": float(prev_balance),
+                        "expected_balance": float(expected_cur),
+                        "statement_balance": float(cur_balance),
+                        "difference": float(diff)
+                    })
+            if cur_balance is not None:
+                prev_balance = cur_balance
+            elif prev_balance is not None:
+                prev_balance = prev_balance + cred - deb
+
+        calculated_closing = (opening_balance or Decimal('0.00')) + total_credits - total_debits
+        statement_discrepancy = Decimal('0.00')
+        if closing_balance is not None and opening_balance is not None:
+            statement_discrepancy = abs(calculated_closing - closing_balance)
+
+        is_valid = (statement_discrepancy <= Decimal('0.05')) and (len(discrepancy_rows) == 0)
+
+        return {
+            "valid": is_valid,
+            "opening_balance": opening_balance,
+            "closing_balance": closing_balance,
+            "calculated_closing_balance": calculated_closing,
+            "total_credits": total_credits,
+            "total_debits": total_debits,
+            "discrepancy_amount": statement_discrepancy,
+            "discrepancy_rows": discrepancy_rows
+        }
+
+    @classmethod
     def parse_csv(cls, file_content: bytes) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Parses CSV bytes into raw row dicts, surviving partial row errors."""
+        """Parses CSV statement into normalized transactions with partial error survival."""
         text = None
         for enc in ['utf-8-sig', 'utf-8', 'latin1', 'cp1252']:
             try:
@@ -177,9 +356,9 @@ class BankStatementService:
             return [], []
 
         header_idx = 0
-        for i, line in enumerate(lines[:15]):
+        for i, line in enumerate(lines[:20]):
             l_lower = line.lower()
-            if ('date' in l_lower and ('debit' in l_lower or 'credit' in l_lower or 'particulars' in l_lower or 'narration' in l_lower or 'amount' in l_lower)):
+            if 'date' in l_lower and any(kw in l_lower for kw in ['debit', 'credit', 'particulars', 'narration', 'amount', 'withdrawal', 'deposit']):
                 header_idx = i
                 break
 
@@ -198,8 +377,13 @@ class BankStatementService:
             else:
                 raise ValidationError("CSV columns could not be mapped to bank transaction format.")
 
+        # Batch date format detection
+        sample_dates = [r[col_map['date']] for r in rows[1:30] if len(r) > col_map['date']]
+        batch_date_fmt = cls.detect_batch_date_format(sample_dates)
+
         valid_rows = []
         errors = []
+        prev_balance = None
 
         for row_num, row in enumerate(rows[1:], start=header_idx + 2):
             if not row or all(not str(c).strip() for c in row):
@@ -208,12 +392,12 @@ class BankStatementService:
                 d_idx = col_map.get('date')
                 if d_idx is None or d_idx >= len(row):
                     continue
-                date_val = cls.parse_date_str(row[d_idx])
+                date_val = cls.parse_date_str(row[d_idx], preferred_format=batch_date_fmt)
                 if not date_val:
                     errors.append({"row": row_num, "error": f"Invalid date: '{row[d_idx]}'", "raw": ",".join(row[:6])})
                     continue
 
-                val_date = cls.parse_date_str(row[col_map['value_date']]) if 'value_date' in col_map and col_map['value_date'] < len(row) else None
+                val_date = cls.parse_date_str(row[col_map['value_date']], preferred_format=batch_date_fmt) if 'value_date' in col_map and col_map['value_date'] < len(row) else None
                 desc = row[col_map['desc']].strip() if 'desc' in col_map and col_map['desc'] < len(row) else ""
                 ref = row[col_map['ref']].strip() if 'ref' in col_map and col_map['ref'] < len(row) else ""
 
@@ -225,16 +409,28 @@ class BankStatementService:
                 if 'credit' in col_map and col_map['credit'] < len(row):
                     credit = cls.clean_amount_str(row[col_map['credit']])
 
+                bal = cls.clean_amount_str(row[col_map['balance']]) if 'balance' in col_map and col_map['balance'] < len(row) and str(row[col_map['balance']]).strip() else None
+
+                # Handle single amount column with Type indicator or balance delta
                 if debit == 0 and credit == 0 and 'amount' in col_map and col_map['amount'] < len(row):
                     amt = cls.clean_amount_str(row[col_map['amount']])
                     typ = str(row[col_map['type']]).strip().upper() if 'type' in col_map and col_map['type'] < len(row) else ""
                     raw_amt_str = str(row[col_map['amount']]).upper()
                     if 'DR' in typ or '-' in raw_amt_str or 'DR' in raw_amt_str:
                         debit = amt
+                    elif 'CR' in typ or 'CR' in raw_amt_str:
+                        credit = amt
+                    elif prev_balance is not None and bal is not None:
+                        delta = bal - prev_balance
+                        if delta < 0:
+                            debit = abs(delta)
+                        else:
+                            credit = delta
                     else:
                         credit = amt
 
-                bal = cls.clean_amount_str(row[col_map['balance']]) if 'balance' in col_map and col_map['balance'] < len(row) else None
+                if bal is not None:
+                    prev_balance = bal
 
                 if debit == 0 and credit == 0:
                     errors.append({"row": row_num, "error": "Both Debit and Credit are zero", "raw": ",".join(row[:6])})
@@ -242,9 +438,9 @@ class BankStatementService:
 
                 valid_rows.append({
                     "date": date_val,
-                    "value_date": val_date,
+                    "value_date": val_date or date_val,
                     "description": desc,
-                    "reference": ref,
+                    "reference": cls.extract_reference_number(desc, ref),
                     "debit": debit,
                     "credit": credit,
                     "balance": bal,
@@ -268,9 +464,9 @@ class BankStatementService:
             return [], []
 
         header_idx = 0
-        for i, row in enumerate(rows[:20]):
+        for i, row in enumerate(rows[:25]):
             r_str = " ".join(str(c).lower() for c in row if c is not None)
-            if 'date' in r_str and ('debit' in r_str or 'credit' in r_str or 'particulars' in r_str or 'narration' in r_str or 'amount' in r_str):
+            if 'date' in r_str and any(kw in r_str for kw in ['debit', 'credit', 'particulars', 'narration', 'amount', 'withdrawal', 'deposit']):
                 header_idx = i
                 break
 
@@ -282,8 +478,12 @@ class BankStatementService:
             else:
                 raise ValidationError("Excel statement columns could not be mapped automatically.")
 
+        sample_dates = [str(r[col_map['date']]) for r in rows[header_idx + 1:header_idx + 30] if len(r) > col_map['date'] and r[col_map['date']] is not None]
+        batch_date_fmt = cls.detect_batch_date_format(sample_dates)
+
         valid_rows = []
         errors = []
+        prev_balance = None
 
         for row_num, row in enumerate(rows[header_idx + 1:], start=header_idx + 2):
             if not row or all(c is None or str(c).strip() == '' for c in row):
@@ -292,17 +492,18 @@ class BankStatementService:
                 d_idx = col_map.get('date')
                 if d_idx is None or d_idx >= len(row):
                     continue
-                date_val = cls.parse_date_str(row[d_idx])
+                date_val = cls.parse_date_str(row[d_idx], preferred_format=batch_date_fmt)
                 if not date_val:
                     errors.append({"row": row_num, "error": f"Invalid date: '{row[d_idx]}'", "raw": str(row[:5])})
                     continue
 
-                val_date = cls.parse_date_str(row[col_map['value_date']]) if 'value_date' in col_map and col_map['value_date'] < len(row) else None
+                val_date = cls.parse_date_str(row[col_map['value_date']], preferred_format=batch_date_fmt) if 'value_date' in col_map and col_map['value_date'] < len(row) else None
                 desc = str(row[col_map['desc']]).strip() if 'desc' in col_map and col_map['desc'] < len(row) and row[col_map['desc']] is not None else ""
                 ref = str(row[col_map['ref']]).strip() if 'ref' in col_map and col_map['ref'] < len(row) and row[col_map['ref']] is not None else ""
 
                 debit = cls.clean_amount_str(row[col_map['debit']]) if 'debit' in col_map and col_map['debit'] < len(row) else Decimal('0.00')
                 credit = cls.clean_amount_str(row[col_map['credit']]) if 'credit' in col_map and col_map['credit'] < len(row) else Decimal('0.00')
+                bal = cls.clean_amount_str(row[col_map['balance']]) if 'balance' in col_map and col_map['balance'] < len(row) and row[col_map['balance']] is not None and str(row[col_map['balance']]).strip() else None
 
                 if debit == 0 and credit == 0 and 'amount' in col_map and col_map['amount'] < len(row):
                     amt = cls.clean_amount_str(row[col_map['amount']])
@@ -310,10 +511,19 @@ class BankStatementService:
                     raw_str = str(row[col_map['amount']]).upper()
                     if 'DR' in typ or '-' in raw_str or 'DR' in raw_str:
                         debit = amt
+                    elif 'CR' in typ or 'CR' in raw_str:
+                        credit = amt
+                    elif prev_balance is not None and bal is not None:
+                        delta = bal - prev_balance
+                        if delta < 0:
+                            debit = abs(delta)
+                        else:
+                            credit = delta
                     else:
                         credit = amt
 
-                bal = cls.clean_amount_str(row[col_map['balance']]) if 'balance' in col_map and col_map['balance'] < len(row) else None
+                if bal is not None:
+                    prev_balance = bal
 
                 if debit == 0 and credit == 0:
                     errors.append({"row": row_num, "error": "Both Debit and Credit are zero", "raw": str(row[:5])})
@@ -321,9 +531,9 @@ class BankStatementService:
 
                 valid_rows.append({
                     "date": date_val,
-                    "value_date": val_date,
+                    "value_date": val_date or date_val,
                     "description": desc,
-                    "reference": ref,
+                    "reference": cls.extract_reference_number(desc, ref),
                     "debit": debit,
                     "credit": credit,
                     "balance": bal,
@@ -338,69 +548,284 @@ class BankStatementService:
     @classmethod
     def parse_pdf(cls, file_content: bytes) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
-        Extracts tabular bank transactions from digital vector PDF via pypdf.
+        Extracts tabular transactions from digital vector PDF with:
+        1. PyMuPDF structured table extraction where available.
+        2. Multi-line narration stitching for SBI, HDFC, ICICI, Axis, Kotak.
+        3. Deterministic balance delta direction resolution.
         """
-        import pypdf
-        reader = pypdf.PdfReader(io.BytesIO(file_content))
         valid_rows = []
         errors = []
 
-        line_pattern = re.compile(
-            r'^(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(.+?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(?:\s+([\d,]+\.\d{2}))?$'
-        )
-        single_amt_pattern = re.compile(
-            r'^(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(.+?)\s+([\d,]+\.\d{2})\s*(CR|DR)(?:\s+([\d,]+\.\d{2}))?$',
+        import pymupdf
+        doc = pymupdf.open(stream=file_content, filetype="pdf")
+
+        # Check total extracted text to determine if digital vector PDF or scanned
+        total_text_chars = sum(len(page.get_text("text").strip()) for page in doc)
+        if total_text_chars < 80:
+            return [], [{"row": 0, "error": "Scanned or image-only PDF detected. Initiating Vision OCR.", "raw": ""}]
+
+        # Strategy A: Try pymupdf find_tables()
+        for page_idx, page in enumerate(doc):
+            try:
+                tables = page.find_tables()
+                for table in tables:
+                    extracted = table.extract()
+                    if not extracted or len(extracted) < 2:
+                        continue
+                    header = [str(c or '').strip() for c in extracted[0]]
+                    col_map = cls.detect_columns(header)
+                    if 'date' in col_map and ('debit' in col_map or 'credit' in col_map or 'amount' in col_map):
+                        for r_idx, row in enumerate(extracted[1:]):
+                            if not row or all(not str(c).strip() for c in row):
+                                continue
+                            try:
+                                d_str = str(row[col_map['date']]).strip()
+                                dt = cls.parse_date_str(d_str)
+                                if not dt:
+                                    continue
+                                desc = str(row[col_map['desc']]).strip() if 'desc' in col_map and col_map['desc'] < len(row) else ""
+                                ref = str(row[col_map['ref']]).strip() if 'ref' in col_map and col_map['ref'] < len(row) else ""
+                                deb = cls.clean_amount_str(row[col_map['debit']]) if 'debit' in col_map and col_map['debit'] < len(row) else Decimal('0.00')
+                                cred = cls.clean_amount_str(row[col_map['credit']]) if 'credit' in col_map and col_map['credit'] < len(row) else Decimal('0.00')
+                                bal = cls.clean_amount_str(row[col_map['balance']]) if 'balance' in col_map and col_map['balance'] < len(row) and str(row[col_map['balance']]).strip() else None
+
+                                if deb > 0 or cred > 0:
+                                    valid_rows.append({
+                                        "date": dt,
+                                        "value_date": dt,
+                                        "description": desc,
+                                        "reference": cls.extract_reference_number(desc, ref),
+                                        "debit": deb,
+                                        "credit": cred,
+                                        "balance": bal,
+                                        "confidence": 0.98,
+                                        "source_page": page_idx + 1
+                                    })
+                            except Exception:
+                                continue
+            except Exception:
+                pass
+
+        if len(valid_rows) > 0:
+            return valid_rows, errors
+
+        # Strategy B: Multi-line narration stitching line tokenizer
+        date_start_re = re.compile(
+            r'^(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{1,2}[\s\-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s\-]\d{2,4})',
             re.IGNORECASE
         )
+        amt_finder_re = re.compile(r'(\b\d{1,3}(?:,\d{2,3})*\.\d{2}\b|\b\d+\.\d{2}\b)')
 
-        for page_idx, page in enumerate(reader.pages):
-            text = page.extract_text() or ""
-            lines = text.splitlines()
-            for line_no, line in enumerate(lines):
-                line_str = line.strip()
-                if not line_str:
-                    continue
+        all_lines = []
+        for page_idx, page in enumerate(doc):
+            txt = page.get_text("text") or ""
+            for line in txt.splitlines():
+                l_str = line.strip()
+                if l_str:
+                    all_lines.append((page_idx + 1, l_str))
 
-                m = line_pattern.match(line_str)
-                if m:
-                    dt = cls.parse_date_str(m.group(1))
-                    if dt:
-                        desc = m.group(2).strip()
-                        val1 = cls.clean_amount_str(m.group(3))
-                        val2 = cls.clean_amount_str(m.group(4))
-                        bal = cls.clean_amount_str(m.group(5)) if m.group(5) else None
-                        valid_rows.append({
-                            "date": dt,
-                            "value_date": dt,
-                            "description": desc,
-                            "reference": cls.extract_reference_number(desc),
-                            "debit": val1,
-                            "credit": val2,
-                            "balance": bal,
-                            "confidence": 0.95,
-                            "source_page": page_idx + 1
-                        })
+        pending_blocks = []
+        current_block = None
+
+        for page_no, l_str in all_lines:
+            m = date_start_re.match(l_str)
+            if m:
+                if current_block:
+                    pending_blocks.append(current_block)
+                current_block = {
+                    "date_str": m.group(1),
+                    "page": page_no,
+                    "lines": [l_str]
+                }
+            elif current_block:
+                current_block["lines"].append(l_str)
+
+        if current_block:
+            pending_blocks.append(current_block)
+
+        prev_balance = None
+        for block in pending_blocks:
+            dt = cls.parse_date_str(block["date_str"])
+            if not dt:
+                continue
+
+            full_block_text = " ".join(block["lines"])
+            amts = amt_finder_re.findall(full_block_text)
+
+            if not amts:
+                continue
+
+            cleaned_narration = full_block_text
+            for a in amts:
+                cleaned_narration = cleaned_narration.replace(a, " ")
+            cleaned_narration = date_start_re.sub("", cleaned_narration).strip()
+            norm_desc = cls.normalize_narration(cleaned_narration)
+            ref_no = cls.extract_reference_number(full_block_text)
+
+            debit = Decimal('0.00')
+            credit = Decimal('0.00')
+            bal = None
+
+            if len(amts) >= 3:
+                debit = cls.clean_amount_str(amts[0])
+                credit = cls.clean_amount_str(amts[1])
+                bal = cls.clean_amount_str(amts[2])
+            elif len(amts) == 2:
+                amt_val = cls.clean_amount_str(amts[0])
+                bal = cls.clean_amount_str(amts[1])
+
+                upper_block = full_block_text.upper()
+                if re.search(r'\b(DR|WITHDRAWAL|TRANSFER TO|TO TRANSFER|PAID TO)\b', upper_block):
+                    debit = amt_val
+                elif re.search(r'\b(CR|DEPOSIT|BY TRANSFER|NEFT CR|RTGS CR|IMPS CR|BY CLEARING)\b', upper_block):
+                    credit = amt_val
+                elif prev_balance is not None and bal is not None:
+                    delta = bal - prev_balance
+                    if abs(delta + amt_val) < Decimal('0.05') or delta < 0:
+                        debit = amt_val
+                    else:
+                        credit = amt_val
+                else:
+                    credit = amt_val
+            elif len(amts) == 1:
+                amt_val = cls.clean_amount_str(amts[0])
+                upper_block = full_block_text.upper()
+                if re.search(r'\b(DR|WITHDRAWAL|TRANSFER TO|TO TRANSFER)\b', upper_block):
+                    debit = amt_val
+                else:
+                    credit = amt_val
+
+            if bal is not None:
+                prev_balance = bal
+
+            if debit > 0 or credit > 0:
+                valid_rows.append({
+                    "date": dt,
+                    "value_date": dt,
+                    "description": norm_desc,
+                    "reference": ref_no,
+                    "debit": debit,
+                    "credit": credit,
+                    "balance": bal,
+                    "confidence": 0.95,
+                    "source_page": block["page"]
+                })
+
+        return valid_rows, errors
+
+    @classmethod
+    def parse_scanned_pdf_or_image(
+        cls,
+        file_bytes: bytes,
+        filename: str,
+        mime_type: str = "image/png",
+        custom_api_key: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Processes scanned PDFs or document photos using Pillow image preprocessing
+        and Google Gemini Vision AI. Returns normalized transactions.
+        """
+        import os
+        import json
+        from PIL import Image
+
+        valid_rows = []
+        errors = []
+
+        is_pdf = "pdf" in mime_type.lower() or file_bytes[:4] == b'%PDF'
+        pages_to_process = []
+
+        if is_pdf:
+            import pymupdf
+            doc = pymupdf.open(stream=file_bytes, filetype="pdf")
+            max_pages = min(5, len(doc))
+            for p_idx in range(max_pages):
+                pix = doc[p_idx].get_pixmap(dpi=200)
+                pages_to_process.append((p_idx + 1, pix.tobytes("png"), "image/png"))
+        else:
+            pages_to_process.append((1, file_bytes, mime_type))
+
+        active_key = (custom_api_key or "").strip() or os.environ.get("GEMINI_API_KEY")
+        if not active_key:
+            errors.append({
+                "row": 0,
+                "error": "Scanned document detected. Configure a Gemini Vision API Key in Settings or pass X-Gemini-Key to extract.",
+                "raw": ""
+            })
+            return [], errors
+
+        prompt = (
+            "You are an expert Indian banking OCR assistant. "
+            "Extract every transaction from this bank statement page image. "
+            "For each transaction extract: "
+            "1. date in YYYY-MM-DD format "
+            "2. value_date in YYYY-MM-DD format if present "
+            "3. description: complete cleaned narration, including beneficiary/remitter name, UPI handle, or account "
+            "4. reference: cheque number, UTR number, or transaction ID "
+            "5. debit: withdrawal amount as positive float (0.0 if deposit) "
+            "6. credit: deposit amount as positive float (0.0 if withdrawal) "
+            "7. balance: closing balance after transaction if visible. "
+            "Also extract opening_balance and closing_balance if present on the page header/footer. "
+            "Output strict JSON following the schema."
+        )
+
+        try:
+            from google import genai
+            from google.genai import types
+            client = genai.Client(api_key=active_key)
+
+            for page_no, img_bytes, img_mime in pages_to_process:
+                try:
+                    pil_img = Image.open(io.BytesIO(img_bytes))
+                    if pil_img.mode in ("RGBA", "P"):
+                        pil_img = pil_img.convert("RGB")
+                    if max(pil_img.size) > 2000:
+                        pil_img.thumbnail((2000, 2000), Image.Resampling.LANCZOS)
+                    out_buf = io.BytesIO()
+                    pil_img.save(out_buf, format="JPEG", quality=85)
+                    proc_bytes = out_buf.getvalue()
+                    proc_mime = "image/jpeg"
+                except Exception:
+                    proc_bytes = img_bytes
+                    proc_mime = img_mime
+
+                response = client.models.generate_content(
+                    model="gemini-3.1-flash-lite",
+                    contents=[
+                        types.Part.from_bytes(data=proc_bytes, mime_type=proc_mime),
+                        prompt
+                    ],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=BankStatementExtractionSchema,
+                        temperature=0.1
+                    )
+                )
+                res_dict = json.loads(response.text)
+                txs = res_dict.get("transactions", [])
+                for t in txs:
+                    dt = cls.parse_date_str(t.get("date"))
+                    if not dt:
                         continue
+                    deb = Decimal(str(t.get("debit", 0.0) or 0.0))
+                    cred = Decimal(str(t.get("credit", 0.0) or 0.0))
+                    bal_val = t.get("balance")
+                    bal = Decimal(str(bal_val)) if bal_val is not None else None
 
-                m2 = single_amt_pattern.match(line_str)
-                if m2:
-                    dt = cls.parse_date_str(m2.group(1))
-                    if dt:
-                        desc = m2.group(2).strip()
-                        amt = cls.clean_amount_str(m2.group(3))
-                        typ = m2.group(4).upper()
-                        bal = cls.clean_amount_str(m2.group(5)) if m2.group(5) else None
+                    if deb > 0 or cred > 0:
                         valid_rows.append({
                             "date": dt,
-                            "value_date": dt,
-                            "description": desc,
-                            "reference": cls.extract_reference_number(desc),
-                            "debit": amt if typ == 'DR' else Decimal('0.00'),
-                            "credit": amt if typ == 'CR' else Decimal('0.00'),
+                            "value_date": cls.parse_date_str(t.get("value_date")) or dt,
+                            "description": cls.normalize_narration(t.get("description", "")),
+                            "reference": t.get("reference") or None,
+                            "debit": deb,
+                            "credit": cred,
                             "balance": bal,
-                            "confidence": 0.95,
-                            "source_page": page_idx + 1
+                            "confidence": 0.92,
+                            "source_page": page_no
                         })
+        except Exception as e:
+            errors.append({"row": 0, "error": f"AI Vision OCR error: {str(e)}", "raw": ""})
 
         return valid_rows, errors
 
@@ -411,13 +836,49 @@ class BankStatementService:
         bank_ledger: Ledger,
         file_bytes: bytes,
         filename: str,
-        user=None
+        user=None,
+        custom_api_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Primary entry point for bank statement ingestion.
-        Normalizes rows, records BankStatementImport, identifies duplicates,
-        persists BankTransaction entries, and runs initial party matching.
+        1. Computes SHA-256 file_hash to prevent duplicate uploads immediately.
+        2. Routes to appropriate engine (CSV, Excel, Native PDF, or Scanned Vision OCR).
+        3. Executes mandatory balance chain validation.
+        4. Deduplicates overlapping statements via deterministic SHA-256 transaction fingerprints.
+        5. Matches party intelligence and persists BankStatementImport and BankTransaction.
         """
+        file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+        existing_import = BankStatementImport.objects.filter(
+            company=company,
+            bank_ledger=bank_ledger,
+            file_hash=file_hash,
+            status__in=['COMPLETED', 'PARTIAL']
+        ).first()
+
+        if existing_import:
+            return {
+                "import_id": str(existing_import.id),
+                "source_file": existing_import.source_file_name,
+                "file_format": existing_import.file_format,
+                "file_hash": file_hash,
+                "status": existing_import.status,
+                "is_duplicate_file": True,
+                "message": f"This exact statement was already imported on {existing_import.created_at.strftime('%d-%b-%Y %H:%M')}.",
+                "total_detected": existing_import.total_rows,
+                "successful_rows": existing_import.successful_rows,
+                "imported_count": 0,
+                "auto_matched_count": 0,
+                "suggested_count": 0,
+                "needs_review_count": 0,
+                "unresolved_rows": 0,
+                "failed_rows": existing_import.failed_rows,
+                "duplicates_detected": existing_import.successful_rows,
+                "balance_chain_valid": existing_import.balance_chain_valid,
+                "discrepancy_amount": float(existing_import.discrepancy_amount),
+                "errors": existing_import.error_summary[:10]
+            }
+
         filename_lower = filename.lower()
         file_format = 'CSV'
         valid_rows = []
@@ -436,14 +897,41 @@ class BankStatementService:
             file_format = 'PDF'
             valid_rows, errors = cls.parse_pdf(file_bytes)
             if len(valid_rows) == 0:
-                errors.append({"row": 0, "error": "No digital table rows detected. Scanned PDF fallback initiated.", "raw": ""})
+                scanned_rows, scanned_errs = cls.parse_scanned_pdf_or_image(
+                    file_bytes, filename, mime_type="application/pdf", custom_api_key=custom_api_key
+                )
+                if len(scanned_rows) > 0:
+                    valid_rows = scanned_rows
+                    errors = scanned_errs
+                else:
+                    errors += scanned_errs
         else:
             file_format = 'IMAGE'
-            errors.append({"row": 0, "error": f"Unsupported or scanned image format '{filename}'.", "raw": ""})
+            mime = "image/png"
+            if filename_lower.endswith(('.jpg', '.jpeg')):
+                mime = "image/jpeg"
+            elif filename_lower.endswith('.webp'):
+                mime = "image/webp"
+            valid_rows, errors = cls.parse_scanned_pdf_or_image(
+                file_bytes, filename, mime_type=mime, custom_api_key=custom_api_key
+            )
+
+        valid_rows.sort(key=lambda r: r.get("date") or datetime.date.min)
+
+        chain_report = cls.validate_balance_chain(valid_rows)
+        balance_valid = chain_report["valid"]
+        discrepancy_amt = chain_report["discrepancy_amount"]
+
+        if not balance_valid:
+            errors.append({
+                "row": 0,
+                "error": f"Balance chain discrepancy detected: Statement difference of ₹{discrepancy_amt:.2f}.",
+                "details": chain_report["discrepancy_rows"][:5]
+            })
 
         total_detected = len(valid_rows) + len(errors)
         status = 'COMPLETED'
-        if len(errors) > 0 and len(valid_rows) > 0:
+        if not balance_valid or (len(errors) > 0 and len(valid_rows) > 0):
             status = 'PARTIAL'
         elif len(valid_rows) == 0 and len(errors) > 0:
             status = 'FAILED'
@@ -455,12 +943,18 @@ class BankStatementService:
                 company=company,
                 bank_ledger=bank_ledger,
                 source_file_name=filename,
+                file_hash=file_hash,
                 file_format=file_format,
                 status=status,
                 total_rows=total_detected,
                 successful_rows=len(valid_rows),
                 failed_rows=len(errors),
                 error_summary=errors[:50],
+                opening_balance=chain_report["opening_balance"],
+                closing_balance=chain_report["closing_balance"],
+                calculated_closing_balance=chain_report["calculated_closing_balance"],
+                balance_chain_valid=balance_valid,
+                discrepancy_amount=discrepancy_amt,
                 created_by=user
             )
 
@@ -477,11 +971,9 @@ class BankStatementService:
                 cred_amt = row.get('credit', Decimal('0.00'))
                 tx_date = row.get('date')
 
-                # Compute deterministic fingerprint
                 primary_id = ref_no if ref_no else norm_desc
                 fprint = cls.compute_transaction_fingerprint(company.id, bank_ledger.id, tx_date, deb_amt, cred_amt, primary_id)
 
-                # Check if this transaction already exists
                 dup_qs = BankTransaction.objects.filter(
                     company=company,
                     bank_ledger=bank_ledger
@@ -492,10 +984,8 @@ class BankStatementService:
 
                 if dup_qs.exists():
                     duplicate_count += 1
-                    # Invariant: Never create duplicate records for already imported transactions
                     continue
 
-                # Multi-signal matching
                 match_res = PartyIntelligenceService.match_transaction(
                     company=company,
                     narration=norm_desc,
@@ -546,6 +1036,7 @@ class BankStatementService:
             return {
                 "import_id": str(import_record.id),
                 "source_file": filename,
+                "file_hash": file_hash,
                 "file_format": file_format,
                 "status": status,
                 "total_detected": total_detected,
@@ -557,5 +1048,11 @@ class BankStatementService:
                 "unresolved_rows": max(0, unresolved_count),
                 "failed_rows": len(errors),
                 "duplicates_detected": duplicate_count,
+                "balance_chain_valid": balance_valid,
+                "opening_balance": float(chain_report["opening_balance"]) if chain_report["opening_balance"] is not None else None,
+                "closing_balance": float(chain_report["closing_balance"]) if chain_report["closing_balance"] is not None else None,
+                "calculated_closing_balance": float(chain_report["calculated_closing_balance"]),
+                "discrepancy_amount": float(discrepancy_amt),
+                "discrepancy_rows": chain_report["discrepancy_rows"][:5],
                 "errors": errors[:10]
             }

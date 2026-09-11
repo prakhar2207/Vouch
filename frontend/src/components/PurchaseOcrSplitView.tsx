@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
@@ -18,6 +18,19 @@ interface LineItem {
   discount_percent: number;
   amount: number;
   gst_rate: number;
+}
+
+interface ValidationReport {
+  math_valid: boolean;
+  difference: number;
+  discrepancy_message?: string | null;
+  calculated_subtotal: number;
+  expected_total: number;
+  gstin_valid: boolean;
+  tax_warnings?: string[];
+  risk_level: 'HIGH_CONFIDENCE' | 'NEEDS_REVIEW' | 'HIGH_RISK';
+  confidence: number;
+  field_confidence?: Record<string, number>;
 }
 
 interface ExtractedInvoice {
@@ -40,6 +53,7 @@ interface ExtractedInvoice {
   source?: string;
   model_used?: string;
   scan_mode?: string;
+  validation?: ValidationReport;
 }
 
 interface PurchaseOcrSplitViewProps {
@@ -165,7 +179,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       setError(null);
       setAutoFilled(false);
 
-      // Create native Blob URL for 100% reliable PDF / Image rendering
+      // Create native Blob URL for reliable PDF / Image rendering
       const newBlobUrl = URL.createObjectURL(file);
       setBlobUrl(newBlobUrl);
 
@@ -232,6 +246,15 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       }
     } catch (cacheErr) {
       console.warn("[PWA Cache] OCR cache error:", cacheErr);
+    }
+
+    // Phase 23: Offline Guard for new OCR document processing
+    if (typeof window !== "undefined" && !navigator.onLine) {
+      setLoading(false);
+      setScanStatusToast(null);
+      setError("Internet connection required to process new AI OCR documents. Cached documents remain available offline.");
+      toast.error("Offline", "Internet connection required to process new documents.");
+      return;
     }
 
     const maxRetries = 3;
@@ -658,6 +681,26 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       {/* Split-Screen Review Workspace */}
       {fileBase64 && invoice && !loading && (
         <div className="space-y-4">
+          {/* Phase 10 & 11 Mathematical Discrepancy Warning */}
+          {invoice.validation && !invoice.validation.math_valid && (
+            <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <span className="text-base">⚠️</span>
+                <div>
+                  <div className="font-bold">
+                    {invoice.validation.discrepancy_message || `Vouch found a ₹${invoice.validation.difference.toFixed(2)} difference in extracted totals.`}
+                  </div>
+                  <div className="text-[11px] text-amber-400/90 mt-0.5">
+                    Calculated line items total ₹{invoice.validation.expected_total.toFixed(2)}, but document states ₹{invoice.total_amount.toFixed(2)}. Please verify rates and quantities in the form before posting.
+                  </div>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 whitespace-nowrap">
+                Review Required
+              </span>
+            </div>
+          )}
+
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-muted/50 p-4 rounded-xl border border-border">
             <div className="flex items-center gap-3">
               <span className="text-xl">📑</span>
@@ -681,12 +724,23 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                   )}
                   {invoice.source === "RAPID_OCR_VISION" && (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                      ⚡ Native Vision OCR
+                      ⚡ Vision OCR
                     </span>
                   )}
                   {invoice.source === "PDF_TEXT_STREAM" && (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      📄 PDF Text Stream
+                      📄 Digital PDF Table
+                    </span>
+                  )}
+                  {invoice.validation && (
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
+                      invoice.validation.risk_level === 'HIGH_CONFIDENCE'
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                        : invoice.validation.risk_level === 'NEEDS_REVIEW'
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                        : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                    }`}>
+                      {invoice.validation.risk_level === 'HIGH_CONFIDENCE' ? '✓ Verified' : invoice.validation.risk_level === 'NEEDS_REVIEW' ? '⚠️ Needs Review' : '⛔ High Risk'}
                     </span>
                   )}
 

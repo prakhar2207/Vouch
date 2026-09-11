@@ -193,7 +193,8 @@ class InvoiceOCRService:
                                     cleaned_desc = strip_category_prefix(desc, item_cat)
                                     if cleaned_desc:
                                         it["description"] = cleaned_desc
-                                return result
+                            result["validation"] = InvoiceOCRService.validate_invoice_math(result)
+                            return result
                         except Exception as gemini_err:
                             last_gemini_error = str(gemini_err)
                             err_str = str(gemini_err).lower()
@@ -217,6 +218,7 @@ class InvoiceOCRService:
             if pdf_parsed_data and (pdf_parsed_data.get("invoice_number") or pdf_parsed_data.get("supplier_name")):
                 pdf_parsed_data["source"] = "PDF_TEXT_STREAM"
                 pdf_parsed_data["is_mock"] = False
+                pdf_parsed_data["validation"] = InvoiceOCRService.validate_invoice_math(pdf_parsed_data)
                 return pdf_parsed_data
 
         if last_gemini_error:
@@ -519,9 +521,95 @@ class InvoiceOCRService:
         }
 
     @staticmethod
-    def _fallback_mock(error: Optional[str] = None) -> dict:
-        """Returns clean empty structure marked as mock with clear reason."""
+    def validate_gstin(gstin: str) -> bool:
+        """Validates standard Indian 15-character GSTIN format and state code."""
+        if not gstin:
+            return False
+        pat = r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$'
+        clean = str(gstin).strip().upper()
+        if not re.match(pat, clean):
+            return False
+        try:
+            state_code_int = int(clean[:2])
+            if not (1 <= state_code_int <= 38 or state_code_int in [97, 99]):
+                return False
+        except ValueError:
+            return False
+        return True
+
+    @staticmethod
+    def validate_invoice_math(data: dict) -> dict:
+        """
+        Deterministic mathematical reconciliation & GST validation for invoices (Phases 10 & 11).
+        1. Reconciles: sum(items.amount) == subtotal
+        2. Reconciles: subtotal + cgst + sgst + igst == grand_total
+        3. Validates 15-char GSTIN format and state code.
+        4. Calculates field confidence scores and overall risk tier.
+        """
+        items = data.get("line_items", [])
+        calc_sub = round(sum(float(i.get("amount", 0.0) or 0.0) for i in items), 2)
+        ext_sub = round(float(data.get("subtotal", 0.0) or 0.0), 2)
+        cgst = round(float(data.get("cgst_amount", 0.0) or 0.0), 2)
+        sgst = round(float(data.get("sgst_amount", 0.0) or 0.0), 2)
+        igst = round(float(data.get("igst_amount", 0.0) or 0.0), 2)
+        ext_total = round(float(data.get("total_amount", 0.0) or 0.0), 2)
+
+        subtotal_base = calc_sub if calc_sub > 0 else ext_sub
+        expected_total = round(subtotal_base + cgst + sgst + igst, 2)
+        diff = round(abs(expected_total - ext_total), 2)
+        math_valid = (diff <= 1.0) and (ext_total > 0 or expected_total > 0)
+
+        gstin = (data.get("supplier_gstin") or "").strip().upper()
+        gstin_valid = InvoiceOCRService.validate_gstin(gstin)
+        inv_num = (data.get("invoice_number") or "").strip()
+        inv_date = (data.get("invoice_date") or "").strip()
+
+        conf = {}
+        conf["invoice_number"] = 98 if inv_num else 30
+        conf["invoice_date"] = 95 if inv_date else 40
+        conf["supplier_gstin"] = 99 if gstin_valid else (60 if gstin else 10)
+        conf["totals"] = 99 if math_valid else (60 if diff <= 5.0 else 25)
+
+        overall_conf = round(sum(conf.values()) / len(conf), 1)
+
+        if math_valid and gstin_valid and inv_num:
+            risk = "HIGH_CONFIDENCE"
+        elif diff <= 5.0 and inv_num:
+            risk = "NEEDS_REVIEW"
+        else:
+            risk = "HIGH_RISK"
+
+        msg = None
+        if not math_valid and (ext_total > 0 or expected_total > 0):
+            msg = f"Vouch found a ₹{diff:.2f} difference in the extracted totals."
+
+        tax_warnings = []
+        if cgst > 0 and sgst > 0:
+            if abs(cgst - sgst) > 1.0:
+                tax_warnings.append(f"CGST (₹{cgst:.2f}) and SGST (₹{sgst:.2f}) should be equal for intra-state supply.")
+            if igst > 0:
+                tax_warnings.append("Invoice contains both CGST/SGST and IGST.")
+        elif igst > 0:
+            if cgst > 0 or sgst > 0:
+                tax_warnings.append("Invoice contains both CGST/SGST and IGST.")
+
         return {
+            "math_valid": math_valid,
+            "difference": diff,
+            "discrepancy_message": msg,
+            "calculated_subtotal": calc_sub,
+            "expected_total": expected_total,
+            "gstin_valid": gstin_valid,
+            "tax_warnings": tax_warnings,
+            "risk_level": risk,
+            "confidence": overall_conf,
+            "field_confidence": conf
+        }
+
+    @staticmethod
+    def _fallback_mock(error: Optional[str] = None) -> dict:
+        """Returns clean empty structure marked as mock with clear reason and validation status."""
+        base = {
             "supplier_name": "",
             "supplier_gstin": "",
             "invoice_number": "",
@@ -539,3 +627,5 @@ class InvoiceOCRService:
             "is_mock": True,
             "mock_reason": error or "Could not extract readable invoice data from this file."
         }
+        base["validation"] = InvoiceOCRService.validate_invoice_math(base)
+        return base

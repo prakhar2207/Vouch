@@ -44,15 +44,19 @@ class BankStatementUploadAPIView(APIView):
         else:
             return Response({"error": "No file uploaded. Provide 'file' multipart or 'file_base64'."}, status=status.HTTP_400_BAD_REQUEST)
 
+        custom_api_key = request.headers.get('X-Gemini-Key') or request.data.get('gemini_api_key')
+
         try:
             summary = BankStatementService.parse_statement(
                 company=company,
                 bank_ledger=bank_ledger,
                 file_bytes=file_bytes,
                 filename=filename,
-                user=request.user
+                user=request.user,
+                custom_api_key=custom_api_key
             )
-            return Response(summary, status=status.HTTP_201_CREATED)
+            res_status = status.HTTP_200_OK if summary.get("is_duplicate_file") else status.HTTP_201_CREATED
+            return Response(summary, status=res_status)
         except ValidationError as e:
             return Response({"error": str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:

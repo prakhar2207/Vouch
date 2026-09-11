@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
 import axios from "axios";
@@ -281,7 +281,7 @@ export default function PriceListImportModal({
         }
 
         let res;
-        // If file <= 15MB, use Base64 JSON for 100% reliable cross-origin parsing (identical to Purchase OCR)
+        // If file <= 15MB, use Base64 JSON for resilient cross-origin parsing (identical to Purchase OCR)
         if (selectedFile.size <= 15 * 1024 * 1024) {
           headers["Content-Type"] = "application/json";
           const base64Data = await new Promise<string>((resolve, reject) => {

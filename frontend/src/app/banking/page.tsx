@@ -287,9 +287,18 @@ export default function BankingPage() {
       return;
     }
 
+    if (typeof window !== "undefined" && !navigator.onLine) {
+      toast.error("Offline", "Internet connection required to upload and parse new bank statements.");
+      return;
+    }
+
     setIsUploading(true);
     try {
-      const headers = getHeaders();
+      const headers: Record<string, string> = { ...getHeaders() };
+      const geminiKey = typeof window !== "undefined" ? localStorage.getItem("vouch_gemini_key") : null;
+      if (geminiKey) {
+        headers["X-Gemini-Key"] = geminiKey;
+      }
       const formData = new FormData();
       formData.append("file", uploadFile);
       formData.append("bank_ledger_id", selectedBankId);
@@ -300,10 +309,17 @@ export default function BankingPage() {
       });
 
       setUploadResult(res.data);
-      toast.success(
-        "Statement ingested successfully",
-        `Parsed ${res.data.total_rows} rows: ${res.data.auto_matched_count} auto-matched, ${res.data.needs_review_count} suggestions.`
-      );
+      if (res.data.is_duplicate_file) {
+        toast.info(
+          "Statement already imported",
+          res.data.message || "This exact statement was already uploaded previously."
+        );
+      } else {
+        toast.success(
+          "Statement ingested successfully",
+          `Parsed ${res.data.total_detected || res.data.total_rows} rows: ${res.data.auto_matched_count} verified matches, ${res.data.needs_review_count} suggestions.`
+        );
+      }
       fetchTransactionsAndSummary();
     } catch (err: any) {
       console.error(err);
@@ -803,15 +819,15 @@ export default function BankingPage() {
                               Suggested Party: {tx.matched_party.name}
                             </span>
                             <span
-                              className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded ${
+                              className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${
                                 tx.match_confidence >= 80
-                                  ? "bg-emerald-500/20 text-emerald-400"
+                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
                                   : tx.match_confidence >= 50
-                                  ? "bg-amber-500/20 text-amber-400"
-                                  : "bg-muted text-muted-foreground"
+                                  ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                                  : "bg-muted text-muted-foreground border-border"
                               }`}
                             >
-                              {tx.match_confidence}% Match
+                              {tx.match_confidence >= 80 ? "Verified Match" : tx.match_confidence >= 50 ? "Suggested Match" : "Needs Review"}
                             </span>
                           </div>
                           <p className="text-[11px] text-muted-foreground">{tx.match_notes}</p>
@@ -980,12 +996,34 @@ export default function BankingPage() {
 
                 {/* Upload Feedback */}
                 {uploadResult && (
-                  <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs space-y-1 text-foreground">
-                    <div className="font-bold text-emerald-400">Statement Processed:</div>
-                    <div>• Total detected rows: {uploadResult.total_rows}</div>
-                    <div>• Auto-matched with high confidence: {uploadResult.auto_matched_count}</div>
+                  <div className={`p-3.5 rounded-xl border text-xs space-y-1.5 text-foreground ${
+                    uploadResult.is_duplicate_file
+                      ? "bg-blue-500/10 border-blue-500/30"
+                      : uploadResult.balance_chain_valid
+                      ? "bg-emerald-500/10 border-emerald-500/20"
+                      : "bg-amber-500/10 border-amber-500/30"
+                  }`}>
+                    <div className="font-bold flex items-center justify-between">
+                      <span className={uploadResult.is_duplicate_file ? "text-blue-400" : uploadResult.balance_chain_valid ? "text-emerald-400" : "text-amber-400"}>
+                        {uploadResult.is_duplicate_file ? "Duplicate Statement Detected" : "Statement Ingestion Summary"}
+                      </span>
+                      {uploadResult.balance_chain_valid ? (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400">
+                          ✓ Balance Chain Verified
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400">
+                          ⚠️ Balance Discrepancy (₹{uploadResult.discrepancy_amount?.toFixed(2)})
+                        </span>
+                      )}
+                    </div>
+                    {uploadResult.message && (
+                      <div className="text-[11px] text-muted-foreground">{uploadResult.message}</div>
+                    )}
+                    <div>• Total detected rows: {uploadResult.total_detected || uploadResult.total_rows}</div>
+                    <div>• Verified automatic matches: {uploadResult.auto_matched_count}</div>
                     <div>• Suggestions for review: {uploadResult.needs_review_count}</div>
-                    <div>• Duplicates skipped: {uploadResult.duplicate_count}</div>
+                    <div>• Duplicates skipped: {uploadResult.duplicates_detected ?? uploadResult.duplicate_count ?? 0}</div>
                   </div>
                 )}
 
