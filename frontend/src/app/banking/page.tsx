@@ -70,7 +70,7 @@ interface BankTransactionItem {
     voucher_number: string;
   } | null;
   match_confidence: number;
-  match_notes: string;
+  match_notes?: string | { signals?: string[]; ignore_reason?: string; reason?: string; [key: string]: any } | null;
 }
 
 interface ReconciliationSummary {
@@ -861,7 +861,21 @@ export default function BankingPage() {
                               {tx.match_confidence >= 80 ? "Verified Match" : tx.match_confidence >= 50 ? "Suggested Match" : "Needs Review"}
                             </span>
                           </div>
-                          <p className="text-[11px] text-muted-foreground">{tx.match_notes}</p>
+                          {(() => {
+                            if (!tx.match_notes) return null;
+                            if (typeof tx.match_notes === "string") {
+                              return <p className="text-[11px] text-muted-foreground">{tx.match_notes}</p>;
+                            }
+                            if (typeof tx.match_notes === "object") {
+                              const signals = Array.isArray(tx.match_notes.signals) ? tx.match_notes.signals.filter(Boolean) : [];
+                              const reason = tx.match_notes.ignore_reason || tx.match_notes.reason;
+                              const parts = [...signals, ...(reason ? [String(reason)] : [])];
+                              if (parts.length > 0) {
+                                return <p className="text-[11px] text-muted-foreground">{parts.join(" · ")}</p>;
+                              }
+                            }
+                            return null;
+                          })()}
                         </div>
                       </div>
 

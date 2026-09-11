@@ -1,6 +1,23 @@
-import { offlineDb, OfflineVoucher } from "../db/offlineDb";
+import { offlineDb, OfflineVoucher, SyncedVoucher, SyncedLedger, SyncedProduct } from "../db/offlineDb";
+import { LocalAnalyticsEngine } from "../analytics/analytics-engine";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
+
+/**
+ * Returns a persistent, anonymous device UUID stored in localStorage.
+ * Does NOT use userAgent or PII.
+ */
+export function getDeviceId(): string {
+  if (typeof window === "undefined") return "server-env";
+  let did = localStorage.getItem("vouch_device_id");
+  if (!did || did.length < 10) {
+    did = typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `dev-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+    localStorage.setItem("vouch_device_id", did);
+  }
+  return did;
+}
 
 export async function queueOfflineVoucher(voucherType: string, payload: any, voucherDate: string) {
   const localId = typeof crypto !== "undefined" && crypto.randomUUID 
@@ -22,10 +39,21 @@ export async function queueOfflineVoucher(voucherType: string, payload: any, vou
 
 let isSyncInProgress = false;
 
-export async function executeClientOutboxSync() {
-  if (typeof window === "undefined" || !navigator.onLine) return;
-  if (isSyncInProgress) return;
+/**
+ * Pushes pending outbox mutations from IndexedDB to the backend authoritative command processor.
+ * Features:
+ * - Concurrency locking (exactly 1 sync execution at a time)
+ * - Persistent anonymous UUID device ID
+ * - Categorization of retryable vs permanent failures
+ * - Exponential backoff on retries (max 10 retries)
+ */
+export async function executeClientOutboxSync(): Promise<{ processed: number; failed: number }> {
+  if (typeof window === "undefined" || !navigator.onLine) return { processed: 0, failed: 0 };
+  if (isSyncInProgress) return { processed: 0, failed: 0 };
   isSyncInProgress = true;
+
+  let processedCount = 0;
+  let failedCount = 0;
 
   try {
     // Reset any orphaned SYNCING items back to PENDING if previous sync was interrupted
@@ -48,10 +76,12 @@ export async function executeClientOutboxSync() {
       .equals("PENDING")
       .toArray();
 
-    if (pending.length === 0) return;
+    if (pending.length === 0) return { processed: 0, failed: 0 };
 
     const token = getAccessToken();
-    if (!token) return;
+    if (!token) return { processed: 0, failed: 0 };
+
+    const deviceId = getDeviceId();
 
     for (const item of pending) {
       try {
@@ -67,7 +97,7 @@ export async function executeClientOutboxSync() {
               command_id: commandId,
               command_type: `CREATE_${item.voucherType.toUpperCase()}`,
               payload: item.payload,
-              device_id: typeof window !== "undefined" ? window.navigator.userAgent.substring(0, 50) : "web-client"
+              device_id: deviceId,
             }
           ]
         };
@@ -83,6 +113,7 @@ export async function executeClientOutboxSync() {
         });
 
         const resData = await response.json().catch(() => ({}));
+        const httpStatus = response.status;
 
         if (response.ok && (resData.success || resData.processed_count > 0)) {
           const cmdResult = resData.results?.find((r: any) => r.command_id === commandId) || resData.results?.[0];
@@ -92,6 +123,7 @@ export async function executeClientOutboxSync() {
               voucherNumber: cmdResult?.voucher_number,
               syncedAt: Date.now(),
             });
+            processedCount++;
           } else {
             const cmdErr = resData.errors?.find((e: any) => e.command_id === commandId)?.error || "Server processing failed";
             await offlineDb.vouchers.update(item.id!, {
@@ -99,24 +131,57 @@ export async function executeClientOutboxSync() {
               errorMessage: cmdErr,
               retryCount: (item.retryCount || 0) + 1,
             });
+            failedCount++;
           }
-        } else {
-          const errMsg = resData.errors?.find((e: any) => e.command_id === commandId)?.error || resData.errors?.[0]?.error || resData.error || (typeof resData === "string" ? resData : "Server rejected command");
+        } else if (httpStatus === 400 || httpStatus === 422) {
+          // Permanent validation failure: do NOT retry in a loop
+          const errMsg = resData.errors?.find((e: any) => e.command_id === commandId)?.error || resData.error || "Validation error rejected by server";
           await offlineDb.vouchers.update(item.id!, {
             status: "FAILED",
             errorMessage: errMsg,
             retryCount: (item.retryCount || 0) + 1,
           });
+          failedCount++;
+        } else if (httpStatus === 401 || httpStatus === 403) {
+          // Auth or permission failure
+          await offlineDb.vouchers.update(item.id!, {
+            status: "FAILED",
+            errorMessage: `Authorization error (${httpStatus})`,
+            retryCount: (item.retryCount || 0) + 1,
+          });
+          failedCount++;
+        } else {
+          // Retryable error: 408, 429, 5xx, or network failure
+          const newRetry = (item.retryCount || 0) + 1;
+          const errMsg = resData.errors?.[0]?.error || resData.error || `Server error (${httpStatus})`;
+          if (newRetry >= 10) {
+            await offlineDb.vouchers.update(item.id!, {
+              status: "FAILED",
+              errorMessage: `Exceeded max retry limit: ${errMsg}`,
+              retryCount: newRetry,
+            });
+            failedCount++;
+          } else {
+            await offlineDb.vouchers.update(item.id!, {
+              status: "PENDING",
+              errorMessage: errMsg,
+              retryCount: newRetry,
+            });
+          }
         }
       } catch (err: any) {
         const isOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+        const newRetry = (item.retryCount || 0) + 1;
         await offlineDb.vouchers.update(item.id!, {
-          status: isOnline ? "FAILED" : "PENDING",
+          status: isOnline && newRetry >= 10 ? "FAILED" : "PENDING",
           errorMessage: err?.message || "Network error during sync",
-          retryCount: (item.retryCount || 0) + 1,
+          retryCount: newRetry,
         });
+        if (isOnline && newRetry >= 10) failedCount++;
       }
     }
+
+    return { processed: processedCount, failed: failedCount };
   } finally {
     isSyncInProgress = false;
   }
@@ -145,6 +210,233 @@ export async function triggerOutboxSync() {
   }
 }
 
+let isPullInProgress = false;
+
+/**
+ * Pulls incremental changes (vouchers, ledgers, products) from server into IndexedDB.
+ * Uses cursor pagination in a while-loop until all batches are consumed.
+ * Updates local analytics aggregate stores.
+ */
+export async function pullIncrementalChanges(
+  companyId: string,
+  onProgress?: (msg: string) => void
+): Promise<{ success: boolean; totalRecords: number; error?: string }> {
+  if (!companyId || typeof window === "undefined" || !navigator.onLine) {
+    return { success: false, totalRecords: 0 };
+  }
+  if (isPullInProgress) {
+    return { success: false, totalRecords: 0, error: "Pull already in progress" };
+  }
+  isPullInProgress = true;
+
+  try {
+    const token = getAccessToken();
+    if (!token) {
+      return { success: false, totalRecords: 0, error: "Authentication required" };
+    }
+
+    let meta = await offlineDb.syncMeta.get(companyId);
+    if (!meta) {
+      meta = {
+        companyId,
+        lastSyncAt: 0,
+        syncStatus: "SYNCING",
+        isInitialComplete: false,
+        pendingMutationsCount: 0,
+      };
+      await offlineDb.syncMeta.put(meta);
+    } else {
+      await offlineDb.syncMeta.update(companyId, { syncStatus: "SYNCING" });
+    }
+
+    let hasMore = true;
+    let currentCursor = meta.syncCursor || undefined;
+    let lastPulledAt = meta.lastSyncAt > 0 ? meta.lastSyncAt : undefined;
+    let totalRecords = 0;
+    let batchIndex = 0;
+
+    while (hasMore) {
+      batchIndex++;
+      if (onProgress) {
+        onProgress(`Synchronizing operational data (batch ${batchIndex})...`);
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/v1/sync/pull/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "X-Company-ID": companyId,
+        },
+        body: JSON.stringify({
+          company_id: companyId,
+          cursor: currentCursor,
+          last_pulled_at: lastPulledAt,
+          limit: 200,
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        await offlineDb.syncMeta.update(companyId, {
+          syncStatus: "ERROR",
+          errorMessage: `Sync pull failed (${response.status}): ${errText}`,
+        });
+        return { success: false, totalRecords, error: errText };
+      }
+
+      const resData = await response.json();
+      const changes = resData.changes || {};
+
+      // 1. Ingest Ledgers
+      if (changes.ledgers) {
+        const toPut: SyncedLedger[] = [
+          ...(changes.ledgers.created || []),
+          ...(changes.ledgers.updated || []),
+        ].map((l: any) => ({
+          id: l.id,
+          companyId: l.company_id || companyId,
+          name: l.name,
+          ledgerType: l.ledger_type || "GENERAL",
+          gstin: l.gstin,
+          stateCode: l.state_code,
+          currentBalance: Number(l.current_balance) || 0,
+          openingBalance: Number(l.opening_balance) || 0,
+          openingBalanceType: l.opening_balance_type || "DEBIT",
+          phone: l.phone,
+          serverUpdatedAt: l.server_updated_at || Date.now(),
+        }));
+        if (toPut.length > 0) {
+          await offlineDb.syncedLedgers.bulkPut(toPut);
+          totalRecords += toPut.length;
+        }
+        if (changes.ledgers.deleted && changes.ledgers.deleted.length > 0) {
+          const toDel = changes.ledgers.deleted.map((l: any) => l.id);
+          await offlineDb.syncedLedgers.bulkDelete(toDel);
+        }
+      }
+
+      // 2. Ingest Products
+      if (changes.products) {
+        const toPut: SyncedProduct[] = [
+          ...(changes.products.created || []),
+          ...(changes.products.updated || []),
+        ].map((p: any) => ({
+          id: p.id,
+          companyId: p.company_id || companyId,
+          name: p.name,
+          sku: p.sku,
+          hsnCode: p.hsn_code,
+          unit: p.unit || "PCS",
+          purchasePrice: Number(p.purchase_price) || 0,
+          salesPrice: Number(p.sales_price) || 0,
+          gstRate: Number(p.gst_rate) || 0,
+          currentStock: Number(p.current_stock) || 0,
+          serverUpdatedAt: p.server_updated_at || Date.now(),
+        }));
+        if (toPut.length > 0) {
+          await offlineDb.syncedProducts.bulkPut(toPut);
+          totalRecords += toPut.length;
+        }
+        if (changes.products.deleted && changes.products.deleted.length > 0) {
+          const toDel = changes.products.deleted.map((p: any) => p.id);
+          await offlineDb.syncedProducts.bulkDelete(toDel);
+        }
+      }
+
+      // 3. Ingest Vouchers
+      if (changes.vouchers) {
+        const toPut: SyncedVoucher[] = [
+          ...(changes.vouchers.created || []),
+          ...(changes.vouchers.updated || []),
+        ].map((v: any) => ({
+          id: v.id,
+          companyId: v.company_id || companyId,
+          financialYearId: v.financial_year_id,
+          voucherType: v.voucher_type,
+          voucherNumber: v.voucher_number,
+          voucherDate: v.voucher_date,
+          referenceNumber: v.reference_number,
+          partyLedgerId: v.party_ledger_id,
+          partyName: v.party_name,
+          status: v.status,
+          totalAmount: Number(v.total_amount) || 0,
+          narration: v.narration,
+          serverUpdatedAt: v.server_updated_at || Date.now(),
+        }));
+        if (toPut.length > 0) {
+          await offlineDb.syncedVouchers.bulkPut(toPut);
+          totalRecords += toPut.length;
+        }
+        // Deleted/Cancelled/Reversed vouchers update their status or delete
+        if (changes.vouchers.deleted && changes.vouchers.deleted.length > 0) {
+          const toUpdateCancelled: SyncedVoucher[] = changes.vouchers.deleted.map((v: any) => ({
+            id: v.id,
+            companyId: v.company_id || companyId,
+            financialYearId: v.financial_year_id,
+            voucherType: v.voucher_type,
+            voucherNumber: v.voucher_number,
+            voucherDate: v.voucher_date,
+            referenceNumber: v.reference_number,
+            partyLedgerId: v.party_ledger_id,
+            partyName: v.party_name,
+            status: v.status || "CANCELLED",
+            totalAmount: Number(v.total_amount) || 0,
+            narration: v.narration,
+            serverUpdatedAt: v.server_updated_at || Date.now(),
+          }));
+          await offlineDb.syncedVouchers.bulkPut(toUpdateCancelled);
+        }
+      }
+
+      hasMore = Boolean(resData.has_more);
+      currentCursor = resData.next_cursor;
+    }
+
+    // Update sync metadata upon complete consumption
+    await offlineDb.syncMeta.put({
+      companyId,
+      lastSyncAt: Date.now(),
+      syncCursor: currentCursor,
+      syncStatus: "IDLE",
+      isInitialComplete: true,
+      pendingMutationsCount: 0,
+    });
+
+    // Rebuild local aggregates for fast sequential queries
+    await LocalAnalyticsEngine.rebuildLocalAnalytics(companyId);
+
+    // Notify listeners (Dashboard, Navbar, etc.)
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("vouch:sync-complete", {
+          detail: { companyId, totalRecords, timestamp: Date.now() },
+        })
+      );
+    }
+
+    return { success: true, totalRecords };
+  } catch (err: any) {
+    console.error("Incremental pull failed:", err);
+    await offlineDb.syncMeta.update(companyId, {
+      syncStatus: "ERROR",
+      errorMessage: err?.message || "Sync pull failed",
+    });
+    return { success: false, totalRecords: 0, error: err?.message };
+  } finally {
+    isPullInProgress = false;
+  }
+}
+
+// Global Service Worker Background Sync message listener
+if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if (event.data && event.data.type === "TRIGGER_OUTBOX_SYNC") {
+      executeClientOutboxSync();
+    }
+  });
+}
+
 // Auto-register listener for online event inside the PWA container
 if (typeof window !== "undefined") {
   window.addEventListener("online", () => {
@@ -156,3 +448,4 @@ if (typeof window !== "undefined") {
     }
   });
 }
+

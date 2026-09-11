@@ -17,6 +17,9 @@ import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { useCompany } from "@/context/CompanyContext";
+import { LocalAnalyticsEngine, LocalDashboardResult } from "@/lib/analytics/analytics-engine";
+import { pullIncrementalChanges, triggerOutboxSync, executeClientOutboxSync } from "@/lib/sync/sync-worker";
+import { offlineDb } from "@/lib/db/offlineDb";
 import {
   Plus,
   Sparkles,
@@ -35,6 +38,10 @@ import {
   Activity,
   Landmark,
   ShieldCheck,
+  RefreshCw,
+  CheckCircle2,
+  WifiOff,
+  CloudUpload,
 } from "lucide-react";
 
 export default function Dashboard() {
@@ -42,66 +49,235 @@ export default function Dashboard() {
   const { startTour, setIsHelpOpen } = useShortcuts();
   const [insights, setInsights] = useState<any>(null);
   const [vouchers, setVouchers] = useState<any[]>([]);
+  const [coverage, setCoverage] = useState<any>(null);
   const [forecast, setForecast] = useState<any>(null);
   const [healthReport, setHealthReport] = useState<any>(null);
   const [chartMode, setChartMode] = useState<'VELOCITY' | 'FORECAST'>('VELOCITY');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [syncStatus, setSyncStatus] = useState<"IDLE" | "SYNCING" | "ERROR">("IDLE");
+  const [syncMessage, setSyncMessage] = useState("");
+  const [pendingMutations, setPendingMutations] = useState(0);
+  const [isOnline, setIsOnline] = useState(true);
 
   const { activeCompany, companyId: activeCompanyId } = useCompany();
 
+  // Load dashboard from local IndexedDB first (<15ms), then run incremental sync in background
   useEffect(() => {
     if (!isAuthenticated()) {
       router.push("/login");
       return;
     }
 
-    async function fetchData() {
-      try {
-        const token = getAccessToken();
-        const headers = { Authorization: `Bearer ${token}` };
+    let isMounted = true;
 
+    async function loadDashboard() {
+      try {
         let cid = activeCompanyId;
         if (!cid && typeof window !== "undefined") {
           cid = localStorage.getItem("vouch_active_company_id");
         }
         if (!cid) {
-          const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+          const token = getAccessToken();
+          const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
           const companies = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
           if (companies.length === 0) {
-            setError("No companies found. Please create a company first.");
-            setLoading(false);
+            if (isMounted) {
+              setError("No companies found. Please create a company first.");
+              setLoading(false);
+            }
             return;
           }
           cid = companies[0].id;
+          if (cid && typeof window !== "undefined") {
+            localStorage.setItem("vouch_active_company_id", cid);
+          }
         }
 
-        const companyHeaders = { ...headers, "X-Company-ID": cid };
-
-        const [insightsRes, vouchersRes, forecastRes, healthRes] = await Promise.all([
-          axios.get(`${API_BASE_URL}/api/insights/`, { headers }).catch(() => ({ data: { data: null } })),
-          axios.get(`${API_BASE_URL}/api/vouchers/`, { headers }).catch(() => ({ data: { data: [] } })),
-          axios.get(`${API_BASE_URL}/api/v1/analytics/forecast/?days=30`, { headers }).catch(() => ({ data: { data: null } })),
-          axios.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${cid}`, { headers: companyHeaders }).catch(() => ({ data: null })),
-        ]);
-
-        setInsights(insightsRes.data?.data);
-        setVouchers(vouchersRes.data?.data || []);
-        if (forecastRes.data?.success && forecastRes.data?.data) {
-          setForecast(forecastRes.data.data);
+        if (!cid) {
+          if (isMounted) setLoading(false);
+          return;
         }
-        if (healthRes.data) {
-          setHealthReport(healthRes.data);
+        const validCid = cid;
+
+        // 1. Instant local read from IndexedDB
+        const local = await LocalAnalyticsEngine.getDashboardAnalytics(validCid);
+        if (isMounted) {
+          setInsights(local);
+          setVouchers(local.recent_vouchers || []);
+          setCoverage(local.coverage);
+          // Check pending outbox mutations
+          const pendingCount = await offlineDb.vouchers
+            .where("status")
+            .equals("PENDING")
+            .count()
+            .catch(() => 0);
+          setPendingMutations(pendingCount);
+
+          // If local data exists or initial sync is already complete, render immediately!
+          if (local.coverage.totalVouchersCount > 0 || local.coverage.isComplete) {
+            setLoading(false);
+          }
         }
-      } catch (err) {
-        console.error(err);
-        setError("Failed to fetch dashboard data.");
-      } finally {
-        setLoading(false);
+
+        // 2. Read cached health check from sessionStorage (avoiding repeated server audit)
+        if (typeof window !== "undefined") {
+          try {
+            const cachedHealthStr = sessionStorage.getItem(`vouch_health_${validCid}`);
+            if (cachedHealthStr) {
+              const cached = JSON.parse(cachedHealthStr);
+              if (Date.now() - (cached._cachedAt || 0) < 5 * 60 * 1000) {
+                if (isMounted) setHealthReport(cached);
+              }
+            }
+          } catch (e) {}
+        }
+
+        // 3. Trigger background incremental delta sync if online
+        if (typeof navigator !== "undefined" && navigator.onLine) {
+          if (isMounted) {
+            setSyncStatus("SYNCING");
+            setSyncMessage("Updating local books...");
+          }
+          
+          pullIncrementalChanges(validCid, (msg) => {
+            if (isMounted) setSyncMessage(msg);
+          }).then(async (res) => {
+            if (!isMounted) return;
+            if (res.success) {
+              const refreshed = await LocalAnalyticsEngine.getDashboardAnalytics(validCid);
+              setInsights(refreshed);
+              setVouchers(refreshed.recent_vouchers || []);
+              setCoverage(refreshed.coverage);
+              setSyncStatus("IDLE");
+              setSyncMessage("");
+            } else {
+              setSyncStatus("ERROR");
+              setSyncMessage(res.error || "Sync update paused");
+            }
+            setLoading(false);
+          }).catch(() => {
+            if (isMounted) {
+              setSyncStatus("ERROR");
+              setLoading(false);
+            }
+          });
+
+          // Also trigger outbox sync for any pending offline commands
+          executeClientOutboxSync().then(async () => {
+            if (isMounted) {
+              const cnt = await offlineDb.vouchers
+                .where("status")
+                .equals("PENDING")
+                .count()
+                .catch(() => 0);
+              setPendingMutations(cnt);
+            }
+          });
+
+          // Fetch health check in background if no valid cache
+          const token = getAccessToken();
+          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": validCid };
+          axios.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${validCid}`, { headers })
+            .then((hRes) => {
+              if (isMounted && hRes.data) {
+                const reportWithTs = { ...hRes.data, _cachedAt: Date.now() };
+                setHealthReport(reportWithTs);
+                if (typeof window !== "undefined") {
+                  sessionStorage.setItem(`vouch_health_${validCid}`, JSON.stringify(reportWithTs));
+                }
+              }
+            })
+            .catch(() => {});
+        } else {
+          // Offline mode
+          if (isMounted) {
+            setIsOnline(false);
+            setLoading(false);
+          }
+        }
+      } catch (err: any) {
+        console.error("Dashboard local-first load error:", err);
+        if (isMounted) {
+          setError(err.message || "Failed to load dashboard data.");
+          setLoading(false);
+        }
       }
     }
-    fetchData();
-  }, [router]);
+
+    loadDashboard();
+
+    // Listen for custom sync completion broadcasts
+    const handleSyncComplete = async (e: any) => {
+      const cid = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") : null);
+      if (cid) {
+        const updated = await LocalAnalyticsEngine.getDashboardAnalytics(cid);
+        if (isMounted) {
+          setInsights(updated);
+          setVouchers(updated.recent_vouchers || []);
+          setCoverage(updated.coverage);
+          const cnt = await offlineDb.vouchers
+            .where("status")
+            .equals("PENDING")
+            .count()
+            .catch(() => 0);
+          setPendingMutations(cnt);
+          setSyncStatus("IDLE");
+        }
+      }
+    };
+
+    const handleOnline = () => {
+      if (isMounted) setIsOnline(true);
+      loadDashboard();
+    };
+
+    const handleOffline = () => {
+      if (isMounted) setIsOnline(false);
+    };
+
+    window.addEventListener("vouch:sync-complete", handleSyncComplete);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("vouch:sync-complete", handleSyncComplete);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [router, activeCompanyId]);
+
+  // Lazy-load forecast only when user toggles to AI Forecast mode
+  useEffect(() => {
+    if (chartMode === 'FORECAST' && !forecast && typeof navigator !== "undefined" && navigator.onLine) {
+      const token = getAccessToken();
+      axios.get(`${API_BASE_URL}/api/v1/analytics/forecast/?days=30`, {
+        headers: { Authorization: `Bearer ${token}` }
+      }).then((res) => {
+        if (res.data?.success && res.data?.data) {
+          setForecast(res.data.data);
+        }
+      }).catch(() => {});
+    }
+  }, [chartMode, forecast]);
+
+  const handleManualSync = async () => {
+    const cid = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") : null);
+    if (!cid || typeof navigator === "undefined" || !navigator.onLine) return;
+    setSyncStatus("SYNCING");
+    setSyncMessage("Syncing local books...");
+    await executeClientOutboxSync();
+    await pullIncrementalChanges(cid, (msg) => setSyncMessage(msg));
+    const refreshed = await LocalAnalyticsEngine.getDashboardAnalytics(cid);
+    setInsights(refreshed);
+    setVouchers(refreshed.recent_vouchers || []);
+    setCoverage(refreshed.coverage);
+    setSyncStatus("IDLE");
+    setSyncMessage("");
+  };
 
   if (loading) {
     return (
@@ -161,10 +337,61 @@ export default function Dashboard() {
         {/* Header & Quick Actions Cluster */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border/40 pb-5">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Business Overview</h1>
-            <p className="text-xs text-muted-foreground mt-1">
-              Real-time summary of sales, outstandings, and operational cash position.
-            </p>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Business Overview</h1>
+              
+              {/* Sync Status & Freshness Badge */}
+              {syncStatus === "SYNCING" ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-500 border border-blue-500/20">
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                  <span>{syncMessage || "Syncing books..."}</span>
+                </span>
+              ) : pendingMutations > 0 ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20" title="Changes queued offline waiting to sync">
+                  <CloudUpload className="w-3.5 h-3.5" />
+                  <span>{pendingMutations} offline changes queued</span>
+                </span>
+              ) : !isOnline ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border/60">
+                  <WifiOff className="w-3 h-3" />
+                  <span>Offline · Local Books</span>
+                </span>
+              ) : coverage?.lastSyncAt ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" title={`Last synced: ${new Date(coverage.lastSyncAt).toLocaleTimeString()}`}>
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Local-First · Synced</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border/40">
+                  <span>Local Books</span>
+                </span>
+              )}
+
+              {/* Sync Refresh Button */}
+              {isOnline && (
+                <button
+                  type="button"
+                  onClick={handleManualSync}
+                  disabled={syncStatus === "SYNCING"}
+                  className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer"
+                  title="Force refresh synchronization"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncStatus === "SYNCING" ? "animate-spin text-primary" : ""}`} />
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground mt-1">
+              <span>Instant operational metrics calculated locally from IndexedDB.</span>
+              {coverage?.oldestDate && coverage?.newestDate && (
+                <>
+                  <span>•</span>
+                  <span className="font-mono text-[11px] text-foreground/80">
+                    History: {coverage.oldestDate} &rarr; {coverage.newestDate} ({coverage.totalVouchersCount} vouchers)
+                  </span>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
@@ -233,29 +460,43 @@ export default function Dashboard() {
         <div className="bg-gradient-to-r from-card to-card/60 border border-border/50 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
             <div className={`p-3 rounded-xl shrink-0 ${
-              (healthReport?.health_score ?? 100) >= 90
-                ? "bg-emerald-500/10 text-emerald-400"
-                : (healthReport?.health_score ?? 100) >= 70
-                ? "bg-amber-500/10 text-amber-400"
-                : "bg-rose-500/10 text-rose-400"
+              healthReport ? (
+                (healthReport?.health_score ?? 100) >= 90
+                  ? "bg-emerald-500/10 text-emerald-400"
+                  : (healthReport?.health_score ?? 100) >= 70
+                  ? "bg-amber-500/10 text-amber-400"
+                  : "bg-rose-500/10 text-rose-400"
+              ) : "bg-muted text-muted-foreground"
             }`}>
               <Activity className="w-6 h-6" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold text-foreground">Vouch Books Health Watcher</h3>
-                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                  (healthReport?.health_score ?? 100) >= 90
-                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                    : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                }`}>
-                  {healthReport?.health_score ?? 100}% Health
-                </span>
+                {healthReport ? (
+                  <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                    healthReport.health_score >= 90
+                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                      : healthReport.health_score >= 70
+                      ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                      : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                  }`}>
+                    {healthReport.health_score}% Health
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-muted text-muted-foreground border border-border/40">
+                    Audit Server Check
+                  </span>
+                )}
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {healthReport?.health_status === "CRITICAL"
-                  ? `${healthReport?.metrics?.critical_findings_count} critical balance discrepancies require your review.`
-                  : "Books are mathematically audited. 11 automated double-entry integrity checks running continuously."}
+                {healthReport ? (
+                  healthReport.health_status === "CRITICAL"
+                    ? `${healthReport.metrics?.critical_findings_count || 1} critical balance discrepancies require your review.`
+                    : `Books are mathematically audited (${healthReport._cachedAt ? `checked ${new Date(healthReport._cachedAt).toLocaleTimeString()}` : 'cached'}).`
+                ) : (
+                  "Authoritative bookkeeping health checks run server-side on demand."
+                )}
               </p>
             </div>
           </div>

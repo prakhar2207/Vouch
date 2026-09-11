@@ -18,34 +18,65 @@ from apps.accounts.permissions import get_authorized_company
 class SyncPullAPIView(APIView):
     """
     POST /api/v1/sync/pull/
-    Returns all changed ledgers, products, vouchers, voucher_items, and ledger_entries
-    since `last_pulled_at` timestamp for the given company.
+    Returns changed ledgers, products, vouchers, voucher_items, and ledger_entries
+    using a reliable cursor-based incremental protocol.
+    Supports multi-batch pagination (has_more, next_cursor) and categorizes changes
+    into created, updated, and deleted.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        from django.db.models import Q
         company = get_authorized_company(request, request.data.get('company_id'))
+        cursor = request.data.get('cursor')
         last_pulled_at = request.data.get('last_pulled_at')
+        
+        try:
+            limit = min(max(int(request.data.get('limit', 200)), 1), 500)
+        except (ValueError, TypeError):
+            limit = 200
 
         since_dt = None
-        if last_pulled_at:
+        cursor_dt = None
+        cursor_uuid = None
+
+        if cursor and isinstance(cursor, str) and '_' in cursor:
+            try:
+                parts = cursor.split('_', 1)
+                raw_cursor_time = parts[0]
+                cursor_uuid_str = parts[1] if parts[1] != 'latest' else None
+                if 'T' in raw_cursor_time:
+                    cursor_dt = datetime.datetime.fromisoformat(raw_cursor_time)
+                else:
+                    raw_ts = float(raw_cursor_time)
+                    cursor_ts = raw_ts / 1000.0 if raw_ts > 1e11 else raw_ts
+                    cursor_dt = datetime.datetime.fromtimestamp(cursor_ts, tz=datetime.timezone.utc)
+                if cursor_uuid_str:
+                    try:
+                        cursor_uuid = uuid.UUID(cursor_uuid_str)
+                    except Exception:
+                        cursor_uuid = cursor_uuid_str
+            except Exception:
+                cursor_dt = None
+                cursor_uuid = None
+        elif last_pulled_at:
             try:
                 raw_dt = datetime.datetime.fromtimestamp(float(last_pulled_at) / 1000.0, tz=datetime.timezone.utc)
-                # 5-second buffer against client-server clock skew
-                since_dt = raw_dt - datetime.timedelta(seconds=5)
+                # 2-second buffer against client-server clock skew
+                since_dt = raw_dt - datetime.timedelta(seconds=2)
             except Exception:
                 since_dt = None
 
         now_ts = int(timezone.now().timestamp() * 1000)
 
-        # 1. Ledgers
+        # 1. Ledgers (Incremental changes)
         ledger_qs = Ledger.objects.filter(company=company)
         if since_dt:
             ledger_qs = ledger_qs.filter(updated_at__gte=since_dt)
 
-        ledgers_data = []
+        ledgers_created, ledgers_updated, ledgers_deleted = [], [], []
         for l in ledger_qs:
-            ledgers_data.append({
+            item = {
                 'id': str(l.id),
                 'company_id': str(company.id),
                 'name': l.name,
@@ -57,16 +88,22 @@ class SyncPullAPIView(APIView):
                 'opening_balance_type': l.opening_balance_type or 'DEBIT',
                 'phone': l.phone or '',
                 'server_updated_at': int(l.updated_at.timestamp() * 1000) if l.updated_at else now_ts,
-            })
+            }
+            if l.is_archived or not l.is_active:
+                ledgers_deleted.append(item)
+            elif since_dt and l.created_at and l.created_at < since_dt:
+                ledgers_updated.append(item)
+            else:
+                ledgers_created.append(item)
 
-        # 2. Products
+        # 2. Products (Incremental changes)
         product_qs = Product.objects.filter(company=company)
         if since_dt:
             product_qs = product_qs.filter(updated_at__gte=since_dt)
 
-        products_data = []
+        products_created, products_updated, products_deleted = [], [], []
         for p in product_qs:
-            products_data.append({
+            item = {
                 'id': str(p.id),
                 'company_id': str(company.id),
                 'name': p.name,
@@ -78,19 +115,41 @@ class SyncPullAPIView(APIView):
                 'gst_rate': str(getattr(p, 'gst_rate', '0.00') or '0.00'),
                 'current_stock': str(getattr(p, 'stock_quantity', '0.00') or '0.00'),
                 'server_updated_at': int(p.updated_at.timestamp() * 1000) if p.updated_at else now_ts,
-            })
+            }
+            if getattr(p, 'is_active', True) is False:
+                products_deleted.append(item)
+            elif since_dt and p.created_at and p.created_at < since_dt:
+                products_updated.append(item)
+            else:
+                products_created.append(item)
 
-        # 3. Vouchers
+        # 3. Vouchers (Cursor-based pagination across large historical datasets)
         voucher_qs = Voucher.objects.filter(company=company).select_related('party_ledger')
         if since_dt:
             voucher_qs = voucher_qs.filter(updated_at__gte=since_dt)
 
-        vouchers = list(voucher_qs[:500])
-        vouchers_data = []
+        if cursor_uuid and cursor_dt:
+            voucher_qs = voucher_qs.filter(
+                Q(updated_at__gt=cursor_dt) | Q(updated_at=cursor_dt, id__gt=cursor_uuid)
+            )
+
+        # Order deterministically by updated_at and id
+        batch_raw = list(voucher_qs.order_by('updated_at', 'id')[:limit + 1])
+        has_more = len(batch_raw) > limit
+        vouchers = batch_raw[:limit]
+
+        if vouchers:
+            last_v = vouchers[-1]
+            last_v_time = last_v.updated_at.isoformat() if last_v.updated_at else datetime.datetime.now(datetime.timezone.utc).isoformat()
+            next_cursor = f"{last_v_time}_{str(last_v.id)}"
+        else:
+            next_cursor = f"{timezone.now().isoformat()}_latest"
+
+        vouchers_created, vouchers_updated, vouchers_deleted = [], [], []
         voucher_ids = [v.id for v in vouchers]
 
         for v in vouchers:
-            vouchers_data.append({
+            item = {
                 'id': str(v.id),
                 'company_id': str(company.id),
                 'financial_year_id': str(v.financial_year_id) if v.financial_year_id else None,
@@ -104,44 +163,54 @@ class SyncPullAPIView(APIView):
                 'total_amount': str(v.total_amount or '0.00'),
                 'narration': v.narration or '',
                 'server_updated_at': int(v.updated_at.timestamp() * 1000) if v.updated_at else now_ts,
-            })
+            }
+            if v.status in ['CANCELLED', 'REVERSED']:
+                vouchers_deleted.append(item)
+            elif since_dt and v.created_at and v.created_at < since_dt:
+                vouchers_updated.append(item)
+            else:
+                vouchers_created.append(item)
 
-        # 4. Voucher Items & Ledger Entries
+        # 4. Voucher Items & Ledger Entries for current batch
         items_data = []
-        for item in VoucherItem.objects.filter(voucher_id__in=voucher_ids).select_related('product'):
-            items_data.append({
-                'id': str(item.id),
-                'voucher_id': str(item.voucher_id),
-                'product_id': str(item.product_id),
-                'product_name': item.product.name if item.product else '',
-                'quantity': str(item.quantity or '0.00'),
-                'rate': str(item.rate or '0.00'),
-                'discount_percent': str(item.discount_percent or '0.00'),
-                'discount_amount': str(item.discount_amount or '0.00'),
-                'taxable_amount': str(item.taxable_amount or '0.00'),
-                'gst_rate': str(item.gst_rate or '0.00'),
-                'total_amount': str(item.total_amount or '0.00'),
-            })
+        if voucher_ids:
+            for item_obj in VoucherItem.objects.filter(voucher_id__in=voucher_ids).select_related('product'):
+                items_data.append({
+                    'id': str(item_obj.id),
+                    'voucher_id': str(item_obj.voucher_id),
+                    'product_id': str(item_obj.product_id),
+                    'product_name': item_obj.product.name if item_obj.product else '',
+                    'quantity': str(item_obj.quantity or '0.00'),
+                    'rate': str(item_obj.rate or '0.00'),
+                    'discount_percent': str(item_obj.discount_percent or '0.00'),
+                    'discount_amount': str(item_obj.discount_amount or '0.00'),
+                    'taxable_amount': str(item_obj.taxable_amount or '0.00'),
+                    'gst_rate': str(item_obj.gst_rate or '0.00'),
+                    'total_amount': str(item_obj.total_amount or '0.00'),
+                })
 
         entries_data = []
-        for entry in LedgerEntry.objects.filter(voucher_id__in=voucher_ids):
-            entries_data.append({
-                'id': str(entry.id),
-                'voucher_id': str(entry.voucher_id),
-                'ledger_id': str(entry.ledger_id),
-                'debit_amount': str(entry.debit_amount or '0.00'),
-                'credit_amount': str(entry.credit_amount or '0.00'),
-                'narration': entry.narration or '',
-            })
+        if voucher_ids:
+            for entry in LedgerEntry.objects.filter(voucher_id__in=voucher_ids):
+                entries_data.append({
+                    'id': str(entry.id),
+                    'voucher_id': str(entry.voucher_id),
+                    'ledger_id': str(entry.ledger_id),
+                    'debit_amount': str(entry.debit_amount or '0.00'),
+                    'credit_amount': str(entry.credit_amount or '0.00'),
+                    'narration': entry.narration or '',
+                })
 
         return Response({
             'changes': {
-                'ledgers': {'created': ledgers_data, 'updated': [], 'deleted': []},
-                'products': {'created': products_data, 'updated': [], 'deleted': []},
-                'vouchers': {'created': vouchers_data, 'updated': [], 'deleted': []},
+                'ledgers': {'created': ledgers_created, 'updated': ledgers_updated, 'deleted': ledgers_deleted},
+                'products': {'created': products_created, 'updated': products_updated, 'deleted': products_deleted},
+                'vouchers': {'created': vouchers_created, 'updated': vouchers_updated, 'deleted': vouchers_deleted},
                 'voucher_items': {'created': items_data, 'updated': [], 'deleted': []},
                 'ledger_entries': {'created': entries_data, 'updated': [], 'deleted': []},
             },
+            'has_more': has_more,
+            'next_cursor': next_cursor,
             'timestamp': now_ts,
         })
 

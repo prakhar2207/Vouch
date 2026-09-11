@@ -22,31 +22,48 @@ class AnalyticsEngine:
         """
         Calculates Recency, Frequency, Monetary (RFM) and clusters customers using KMeans from scikit-learn.
         """
-        vouchers = Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
+        from django.db.models import Max, Count, Sum
+        today = timezone.now().date()
         
-        if not vouchers.exists():
+        party_stats = list(
+            Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
+            .values('party_ledger__name')
+            .annotate(
+                last_purchase=Max('voucher_date'),
+                frequency=Count('id'),
+                monetary=Sum('total_amount'),
+            )
+        )
+        
+        if not party_stats:
             return []
             
-        data = list(vouchers.values('party_ledger__name', 'voucher_date', 'total_amount'))
-        df = pd.DataFrame(data)
-        df['total_amount'] = df['total_amount'].astype(float)
-        df['voucher_date'] = pd.to_datetime(df['voucher_date'])
+        rfm_data = []
+        for p in party_stats:
+            name = p['party_ledger__name'] or 'Unknown'
+            last_date = p['last_purchase']
+            recency = (today - last_date).days if last_date else 999
+            freq = int(p['frequency'] or 0)
+            mon = float(p['monetary'] or 0.0)
+            rfm_data.append({
+                'party_ledger__name': name,
+                'recency': max(0, recency),
+                'frequency': freq,
+                'monetary': round(mon, 2),
+            })
+            
+        rfm = pd.DataFrame(rfm_data)
         
-        today = pd.to_datetime(timezone.now().date())
-        
-        # Calculate RFM per customer
-        rfm = df.groupby('party_ledger__name').agg({
-            'voucher_date': lambda x: (today - x.max()).days, # Recency (days since last purchase)
-            'party_ledger__name': 'count',                    # Frequency (number of orders)
-            'total_amount': 'sum'                             # Monetary (total spend)
-        }).rename(columns={
-            'voucher_date': 'recency',
-            'party_ledger__name': 'frequency',
-            'total_amount': 'monetary'
-        }).reset_index()
-        
-        if len(rfm) < 3:
-            rfm['segment'] = 'Standard'
+        if len(rfm) < 3 or KMeans is None:
+            # Deterministic tiering when <3 records or scikit-learn is unavailable
+            mean_monetary = rfm['monetary'].mean()
+            def assign_tier(val):
+                if val >= mean_monetary * 1.5:
+                    return 'High Value / VIP'
+                elif val >= mean_monetary * 0.75:
+                    return 'Medium Value'
+                return 'Low Value'
+            rfm['segment'] = rfm['monetary'].apply(assign_tier)
             rfm['cluster'] = 0
             return rfm.to_dict(orient='records')
             
@@ -119,8 +136,15 @@ class AnalyticsEngine:
         X = np.arange(len(df)).reshape(-1, 1)
         y = df['daily_sales'].values
         
-        reg = LinearRegression().fit(X, y)
-        slope = float(reg.coef_[0])
+        if LinearRegression is not None:
+            reg = LinearRegression().fit(X, y)
+            slope = float(reg.coef_[0])
+        else:
+            x_flat = np.arange(len(df), dtype=float)
+            x_mean = float(np.mean(x_flat))
+            y_mean = float(np.mean(y))
+            denom = float(np.sum((x_flat - x_mean) ** 2))
+            slope = float(np.sum((x_flat - x_mean) * (y - y_mean)) / denom) if denom != 0 else 0.0
         
         avg_sales = float(y.mean()) if y.mean() > 0 else 1.0
         normalized_slope = (slope / avg_sales) * 100.0  # percentage change per day
