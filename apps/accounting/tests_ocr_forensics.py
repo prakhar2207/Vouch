@@ -7,8 +7,9 @@ from rest_framework.test import APIClient
 from apps.companies.models import Company
 from apps.accounts.models import User
 from apps.ledgers.models import Ledger, LedgerGroup
-from apps.accounting.models import BankStatementImport, BankTransaction
+from apps.accounting.models import BankStatementImport, BankTransaction, FinancialYear, Voucher
 from apps.accounting.services.bank_statement_service import BankStatementService
+from apps.accounting.services.bank_reconciliation_service import BankReconciliationService
 from apps.accounting.services.ocr_service import InvoiceOCRService
 
 
@@ -60,6 +61,42 @@ class OCRForensicsTestCase(TestCase):
             name="SBI Current Account",
             ledger_type="BANK",
             current_balance=Decimal("50000.00")
+        )
+
+        self.fy_a, _ = FinancialYear.objects.get_or_create(
+            company=self.company_a,
+            code="26-27",
+            defaults={
+                "name": "FY 2026-27",
+                "start_date": datetime.date(2026, 4, 1),
+                "end_date": datetime.date(2027, 3, 31)
+            }
+        )
+
+        debtor_group_a, _ = LedgerGroup.objects.get_or_create(
+            company=self.company_a,
+            name="Sundry Debtors",
+            defaults={"nature": "ASSET"}
+        )
+        self.customer_a = Ledger.objects.create(
+            company=self.company_a,
+            group=debtor_group_a,
+            name="Saksham Enterprises",
+            ledger_type="CUSTOMER",
+            current_balance=Decimal("50000.00")
+        )
+
+        creditor_group_a, _ = LedgerGroup.objects.get_or_create(
+            company=self.company_a,
+            name="Sundry Creditors",
+            defaults={"nature": "LIABILITY"}
+        )
+        self.supplier_a = Ledger.objects.create(
+            company=self.company_a,
+            group=creditor_group_a,
+            name="Apex Industrial Suppliers",
+            ledger_type="SUPPLIER",
+            current_balance=Decimal("25000.00")
         )
 
     # =========================================================================
@@ -384,3 +421,111 @@ class OCRForensicsTestCase(TestCase):
 
         imports_b = BankStatementImport.objects.filter(company=self.company_b)
         self.assertEqual(imports_b.count(), 0)
+
+    # =========================================================================
+    # 7. Indian Banking OCR Payment vs Receipt Direction & Closing Balance Guardrails
+    # =========================================================================
+    def test_ocr_direction_reclassification_credit_cues(self):
+        """
+        When OCR extracts an Indian bank statement (e.g. Canara Bank where Deposits column precedes Withdrawals),
+        any transaction with 'BY' / credit cues must be reclassified from Debit (Payment) to Credit (Receipt).
+        """
+        csv_bytes = (
+            "Date,Description,Debit,Credit,Balance\n"
+            "2026-04-21,BY CLG:DEL ACCTS-BANK OF BARODA (BOB) UNIQUE TRADERS,4870.00,0.00,104870.00\n"
+            "2026-04-21,CASH DEPOSIT SELF 9949_PANKIKA,5000.00,0.00,109870.00\n"
+            "2026-04-28,BY CLG:DEL ACCTS-STATE BANK OF INDIA SAKSHAM ENTERPRISES,15000.00,0.00,124870.00\n"
+            "2026-04-28,BY CLG:DEL ACCTS-STATE BANK OF INDIA BHAGWANTI FOOTWEAR,1481.00,0.00,126351.00\n"
+        ).encode('utf-8')
+
+        res = BankStatementService.parse_statement(
+            company=self.company_a,
+            bank_ledger=self.bank_ledger_a,
+            file_bytes=csv_bytes,
+            filename="canara_ocr_extracted.csv",
+            user=self.user
+        )
+
+        self.assertEqual(res["imported_count"], 4)
+        txs = BankTransaction.objects.filter(statement_import_id=res["import_id"]).order_by("transaction_date", "id")
+
+        for tx in txs:
+            self.assertEqual(tx.debit_amount, Decimal("0.00"), f"Failed for {tx.description}: debit should be 0.00")
+            self.assertGreater(tx.credit_amount, Decimal("0.00"), f"Failed for {tx.description}: credit should be > 0")
+
+    def test_ocr_direction_reclassification_debit_cues(self):
+        """
+        Transactions with 'TO' / debit cues (e.g. TO TRANSFER, SC NEFT, CASA DEBIT)
+        must strictly be classified as Debit (Withdrawal / Payment), not Credit.
+        """
+        csv_bytes = (
+            "Date,Description,Debit,Credit,Balance\n"
+            "2026-04-17,SC NEFT OTHER THAN SB IMB,0.00,6.00,99994.00\n"
+            "2026-04-23,MB NEFT DR CNRBH00127105797 PANCH MUKHI,0.00,2791.00,97203.00\n"
+            "2026-05-01,CASA DEBIT INTEREST CAPITALIZED,0.00,8105.00,89098.00\n"
+        ).encode('utf-8')
+
+        res = BankStatementService.parse_statement(
+            company=self.company_a,
+            bank_ledger=self.bank_ledger_a,
+            file_bytes=csv_bytes,
+            filename="canara_debits.csv",
+            user=self.user
+        )
+
+        self.assertEqual(res["imported_count"], 3)
+        txs = BankTransaction.objects.filter(statement_import_id=res["import_id"])
+
+        for tx in txs:
+            self.assertEqual(tx.credit_amount, Decimal("0.00"), f"Failed for {tx.description}: credit should be 0.00")
+            self.assertGreater(tx.debit_amount, Decimal("0.00"), f"Failed for {tx.description}: debit should be > 0")
+
+    def test_ocr_rejection_of_closing_balance_summary_rows(self):
+        """
+        Closing balance summary lines (e.g. 'Closing Balance as on...', 'Current Account Balance')
+        must NEVER be extracted or imported as financial transactions.
+        """
+        self.assertTrue(bool(BankStatementService.BOILERPLATE_REGEX.search("Current Account Balance as on 30-Apr-2026")))
+        self.assertTrue(bool(BankStatementService.BOILERPLATE_REGEX.search("CLOSING BALANCE: Rs. 1,42,100.00")))
+        self.assertTrue(bool(BankStatementService.BOILERPLATE_REGEX.search("TOTAL WITHDRAWALS: 50,000.00")))
+        self.assertTrue(bool(BankStatementService.BOILERPLATE_REGEX.search("TOTAL DEPOSITS: 80,000.00")))
+        self.assertTrue(bool(BankStatementService.BOILERPLATE_REGEX.search("STATEMENT SUMMARY")))
+
+    def test_reconciliation_customer_payment_to_receipt_guardrail(self):
+        """
+        Reconciling a transaction against a Customer must strictly create a RECEIPT voucher,
+        even if the transaction originally had debit_amount > 0 due to an OCR column flip.
+        """
+        # Create bank transaction with inverted debit amount
+        tx = BankTransaction.objects.create(
+            company=self.company_a,
+            bank_ledger=self.bank_ledger_a,
+            transaction_date=datetime.date(2026, 4, 28),
+            description="BY CLG:DEL ACCTS SAKSHAM ENTERPRISES",
+            normalized_narration="BY CLG DEL ACCTS SAKSHAM ENTERPRISES",
+            debit_amount=Decimal("15000.00"),
+            credit_amount=Decimal("0.00"),
+            status="UNRESOLVED"
+        )
+
+        # Resolve to customer
+        res = BankReconciliationService.resolve_transaction(
+            bank_tx=tx,
+            action_type="RECORD_PAYMENT",
+            payload={"party_id": str(self.customer_a.id)},
+            user=self.user
+        )
+
+        tx.refresh_from_db()
+        # Transaction amounts must be corrected
+        self.assertEqual(tx.credit_amount, Decimal("15000.00"))
+        self.assertEqual(tx.debit_amount, Decimal("0.00"))
+        self.assertEqual(tx.status, "RECONCILED")
+
+        # Voucher must be RECEIPT, not PAYMENT
+        voucher = tx.matched_voucher
+        self.assertIsNotNone(voucher)
+        self.assertEqual(voucher.voucher_type, "RECEIPT")
+        self.assertEqual(voucher.total_amount, Decimal("15000.00"))
+        self.assertEqual(voucher.party_ledger, self.customer_a)
+

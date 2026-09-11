@@ -70,6 +70,23 @@ class BankReconciliationService:
                 raise ValidationError("Party ID is required to match transaction.")
             party = Ledger.objects.get(id=party_id, company=company)
 
+            # Defensive double-entry guardrail:
+            # If transaction is linked to a Customer, ensure it is treated as a RECEIPT (money in)
+            # unless explicitly marked as a refund. If debit/credit amounts were previously flipped, fix them.
+            import re
+            if party.ledger_type == 'CUSTOMER' and not is_money_in:
+                if not re.search(r'\bREFUND\b', bank_tx.description, re.IGNORECASE):
+                    is_money_in = True
+                    bank_tx.credit_amount = amount
+                    bank_tx.debit_amount = Decimal('0.00')
+                    bank_tx.save(update_fields=['credit_amount', 'debit_amount'])
+            elif party.ledger_type == 'SUPPLIER' and is_money_in:
+                if not re.search(r'\bREFUND\b', bank_tx.description, re.IGNORECASE):
+                    is_money_in = False
+                    bank_tx.debit_amount = amount
+                    bank_tx.credit_amount = Decimal('0.00')
+                    bank_tx.save(update_fields=['credit_amount', 'debit_amount'])
+
             v_type = 'RECEIPT' if is_money_in else 'PAYMENT'
             v_num, _ = InvoiceSequenceService.get_next_number(company, v_type, bank_tx.transaction_date)
 

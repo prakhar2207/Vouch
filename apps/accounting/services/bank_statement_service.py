@@ -21,8 +21,8 @@ class BankTransactionSchema(BaseModel):
     value_date: Optional[str] = Field(default="", description="Value date in YYYY-MM-DD format if present")
     description: str = Field(description="Complete cleaned narration or particulars of the transaction")
     reference: Optional[str] = Field(default="", description="Cheque number, UTR, or bank reference number")
-    debit: float = Field(default=0.0, description="Withdrawal / debit amount as positive number")
-    credit: float = Field(default=0.0, description="Deposit / credit amount as positive number")
+    debit: float = Field(default=0.0, description="Withdrawal / debit / money out amount as positive number (0.0 if deposit). Narration starting with 'TO' or listed under Withdrawals/Dr column.")
+    credit: float = Field(default=0.0, description="Deposit / credit / money in amount as positive number (0.0 if withdrawal). Narration starting with 'BY' or listed under Deposits/Cr column.")
     balance: Optional[float] = Field(default=None, description="Closing balance after transaction")
 
 
@@ -44,6 +44,35 @@ class BankStatementService:
     4. Deterministic transaction fingerprinting (SHA-256) & file hash deduplication.
     5. Amount and date OCR confusion safety.
     """
+
+    BOILERPLATE_REGEX = re.compile(
+        r'(page\s+\d+|closing\s+balance|opening\s+balance|brought\s+forward|carried\s+forward|'
+        r'end\s+of\s+statement|disclaimer|details\s+of\s+ombudsman|ombudsman|do\s+not\s+share\s+atm|'
+        r'computer\s+output|does\s+not\s+require\s+signature|date\s+particulars|'
+        r'are\s+you\s+a\s+merchant|use\s+digital\s+payment|contact\s+branch|phishing\s+attacks|'
+        r'unless\s+the\s+constituent|current\s+balance|account\s+balance\s+as\s+on|'
+        r'total\s+withdrawals|total\s+deposits|statement\s+summary)',
+        re.IGNORECASE
+    )
+
+    IS_CREDIT_REGEX = re.compile(
+        r'(^BY\b|'
+        r'\bBY\s+(?:CLG|CLEARING|TRANSFER|TRF|CASH|CHEQUE|CHQ|NEFT|RTGS|IMPS|UPI|DEP|DEPOSIT)\b|'
+        r'\b(?:CR|DEPOSIT|DEPOSITS)\b|'
+        r'\b(?:NEFT\s+CR|RTGS\s+CR|IMPS\s+CR|UPI\/CR|\/CR\/|CR\-)\b|'
+        r'\b(?:CASH\s+DEPOSIT|SALARY|DIVIDEND|REFUND|INTEREST\s+CREDIT)\b)',
+        re.IGNORECASE
+    )
+
+    IS_DEBIT_REGEX = re.compile(
+        r'(^TO\b|'
+        r'\bTO\s+(?:CLG|CLEARING|TRANSFER|TRF|CASH|CHEQUE|CHQ|NEFT|RTGS|IMPS|UPI)\b|'
+        r'\b(?:DR|WITHDRAWAL|WITHDRAWALS)\b|'
+        r'\b(?:NEFT\s+DR|RTGS\s+DR|IMPS\s+DR|UPI\/DR|\/DR\/|DR\-)\b|'
+        r'\b(?:TRANSFER\s+TO|TO\s+TRANSFER|PAID\s+TO|PAYMENT\s+TO)\b|'
+        r'\b(?:CASA\s+DEBIT|DEBIT\s+INTEREST|SERVICE\s+CHARGE|CHG|CHARGES|\bSC\b|COMMISSION|TAX|TDS|GST|SMS\s+CHARGES)\b)',
+        re.IGNORECASE
+    )
 
     DATE_PATTERNS = [
         "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y",
@@ -650,33 +679,9 @@ class BankStatementService:
         )
         amt_finder_re = re.compile(r'(\b\d{1,3}(?:,\d{2,3})*\.\d{2}\b|\b\d+\.\d{2}\b)')
 
-        boilerplate_re = re.compile(
-            r'(page\s+\d+|closing\s+balance|opening\s+balance|brought\s+forward|carried\s+forward|'
-            r'end\s+of\s+statement|disclaimer|details\s+of\s+ombudsman|ombudsman|do\s+not\s+share\s+atm|'
-            r'computer\s+output|does\s+not\s+require\s+signature|date\s+particulars|'
-            r'are\s+you\s+a\s+merchant|use\s+digital\s+payment|contact\s+branch|phishing\s+attacks|'
-            r'unless\s+the\s+constituent)',
-            re.IGNORECASE
-        )
-
-        is_credit_re = re.compile(
-            r'(^BY\b|'
-            r'\bBY\s+(?:CLG|CLEARING|TRANSFER|TRF|CASH|CHEQUE|CHQ|NEFT|RTGS|IMPS|UPI|DEP|DEPOSIT)\b|'
-            r'\b(?:CR|DEPOSIT|DEPOSITS)\b|'
-            r'\b(?:NEFT\s+CR|RTGS\s+CR|IMPS\s+CR|UPI\/CR|\/CR\/|CR\-)\b|'
-            r'\b(?:CASH\s+DEPOSIT|SALARY|DIVIDEND|REFUND|INTEREST\s+CREDIT)\b)',
-            re.IGNORECASE
-        )
-
-        is_debit_re = re.compile(
-            r'(^TO\b|'
-            r'\bTO\s+(?:CLG|CLEARING|TRANSFER|TRF|CASH|CHEQUE|CHQ|NEFT|RTGS|IMPS|UPI)\b|'
-            r'\b(?:DR|WITHDRAWAL|WITHDRAWALS)\b|'
-            r'\b(?:NEFT\s+DR|RTGS\s+DR|IMPS\s+DR|UPI\/DR|\/DR\/|DR\-)\b|'
-            r'\b(?:TRANSFER\s+TO|TO\s+TRANSFER|PAID\s+TO|PAYMENT\s+TO)\b|'
-            r'\b(?:CASA\s+DEBIT|DEBIT\s+INTEREST|SERVICE\s+CHARGE|CHG|CHARGES|\bSC\b|COMMISSION|TAX|TDS|GST|SMS\s+CHARGES)\b)',
-            re.IGNORECASE
-        )
+        boilerplate_re = cls.BOILERPLATE_REGEX
+        is_credit_re = cls.IS_CREDIT_REGEX
+        is_debit_re = cls.IS_DEBIT_REGEX
 
         # Detect column order: Does 'Deposit' appear before 'Withdrawal' in any table header?
         deposit_col_first = False
@@ -848,18 +853,31 @@ class BankStatementService:
             return [], errors
 
         prompt = (
-            "You are an expert Indian banking OCR assistant. "
-            "Extract every transaction from this bank statement page image. "
-            "For each transaction extract: "
-            "1. date in YYYY-MM-DD format "
-            "2. value_date in YYYY-MM-DD format if present "
-            "3. description: complete cleaned narration, including beneficiary/remitter name, UPI handle, or account "
-            "4. reference: cheque number, UTR number, or transaction ID "
-            "5. debit: withdrawal amount as positive float (0.0 if deposit) "
-            "6. credit: deposit amount as positive float (0.0 if withdrawal) "
-            "7. balance: closing balance after transaction if visible. "
-            "Also extract opening_balance and closing_balance if present on the page header/footer. "
-            "Output strict JSON following the schema."
+            "You are an expert Indian banking OCR and forensic accounting assistant.\n"
+            "Extract every transaction from this bank statement page image into strict JSON adhering to the schema.\n\n"
+            "CRITICAL RULES FOR INDIAN BANK STATEMENTS:\n"
+            "1. COLUMN HEADERS & ORDER (CRITICAL):\n"
+            "   - Carefully inspect table column headers on the page. In many Indian banks (such as Canara Bank, Punjab National Bank, Central Bank), "
+            "     the DEPOSITS (Credit) column appears BEFORE the WITHDRAWALS (Debit) column (e.g., Date | Narration | Chq | Deposits | Withdrawals | Balance).\n"
+            "   - In other banks (SBI, HDFC, ICICI, Axis), Withdrawals appears before Deposits.\n"
+            "   - NEVER assume the column order. Map amounts strictly according to the column header text.\n\n"
+            "2. INDIAN BANKING DOUBLE-ENTRY CONVENTIONS (BY vs TO):\n"
+            "   - NARRATIONS STARTING WITH 'BY' (e.g. 'BY CLG', 'BY TRF', 'BY CASH', 'BY CLEARING', 'NEFT CR', 'RTGS CR', 'UPI/CR', 'IMPS CR', 'CASH DEPOSIT'): "
+            "     These are ALWAYS DEPOSITS / CREDITS (Money In / Receipts). For these, set credit > 0 and debit = 0.0.\n"
+            "   - NARRATIONS STARTING WITH 'TO' (e.g. 'TO CLG', 'TO TRF', 'TO CLEARING', 'TO TRANSFER', 'CHQ PAID', 'NEFT DR', 'RTGS DR', 'UPI/DR', 'CASA DEBIT', 'SERVICE CHARGE', 'SMS CHARGES'): "
+            "     These are ALWAYS WITHDRAWALS / DEBITS (Money Out / Payments). For these, set debit > 0 and credit = 0.0.\n\n"
+            "3. DO NOT EXTRACT SUMMARY OR BALANCE ROWS AS TRANSACTIONS:\n"
+            "   - NEVER extract statement summary rows, closing balance rows (e.g. 'Closing Balance as on...', 'Current Account Balance', 'Brought Forward', 'Carried Forward', 'Total Debits', 'Total Credits') as a transaction!\n"
+            "   - Only extract legitimate financial transaction line items that occurred on specific dates.\n\n"
+            "4. For each transaction extract:\n"
+            "   - date: YYYY-MM-DD\n"
+            "   - value_date: YYYY-MM-DD (if present, else empty)\n"
+            "   - description: full narration including party name, cheque number, or UPI handle\n"
+            "   - reference: cheque number, UTR number, or transaction ID\n"
+            "   - debit: withdrawal / money out amount as positive float (0.0 if deposit)\n"
+            "   - credit: deposit / money in amount as positive float (0.0 if withdrawal)\n"
+            "   - balance: running balance after transaction if visible\n\n"
+            "Also extract opening_balance and closing_balance if present in page header or footer."
         )
 
         try:
@@ -897,6 +915,15 @@ class BankStatementService:
                 res_dict = json.loads(response.text)
                 txs = res_dict.get("transactions", [])
                 for t in txs:
+                    raw_desc = (t.get("description") or "").strip()
+                    if not raw_desc:
+                        continue
+
+                    # 1. Reject summary, footer, or closing balance rows
+                    if cls.BOILERPLATE_REGEX.search(raw_desc):
+                        if re.search(r'\b(closing\s+balance|current\s+balance|account\s+balance\s+as\s+on|total\s+deposits|total\s+withdrawals|statement\s+summary|carried\s+forward|brought\s+forward)\b', raw_desc, re.IGNORECASE):
+                            continue
+
                     dt = cls.parse_date_str(t.get("date"))
                     if not dt:
                         continue
@@ -905,20 +932,53 @@ class BankStatementService:
                     bal_val = t.get("balance")
                     bal = Decimal(str(bal_val)) if bal_val is not None else None
 
+                    # 2. Deterministic Indian banking direction safety guardrails
+                    norm_desc = cls.normalize_narration(raw_desc)
+                    has_credit = bool(cls.IS_CREDIT_REGEX.search(norm_desc))
+                    has_debit = bool(cls.IS_DEBIT_REGEX.search(norm_desc))
+
+                    if has_credit and not has_debit:
+                        if deb > 0 and cred == 0:
+                            cred = deb
+                            deb = Decimal('0.00')
+                    elif has_debit and not has_credit:
+                        if cred > 0 and deb == 0:
+                            deb = cred
+                            cred = Decimal('0.00')
+
                     if deb > 0 or cred > 0:
                         valid_rows.append({
                             "date": dt,
                             "value_date": cls.parse_date_str(t.get("value_date")) or dt,
-                            "description": cls.normalize_narration(t.get("description", "")),
+                            "description": norm_desc,
                             "reference": t.get("reference") or None,
                             "debit": deb,
                             "credit": cred,
                             "balance": bal,
-                            "confidence": 0.92,
+                            "confidence": 0.95,
                             "source_page": page_no
                         })
         except Exception as e:
             errors.append({"row": 0, "error": f"AI Vision OCR error: {str(e)}", "raw": ""})
+
+        # Cross-row balance progression verification
+        for i in range(1, len(valid_rows)):
+            prev_row = valid_rows[i - 1]
+            curr_row = valid_rows[i]
+            prev_bal = prev_row.get("balance")
+            curr_bal = curr_row.get("balance")
+            if prev_bal is not None and curr_bal is not None:
+                diff = curr_bal - prev_bal
+                c_deb = curr_row["debit"]
+                c_cred = curr_row["credit"]
+                # Balance increased by approximately transaction amount -> must be credit (deposit)
+                if diff > 0 and c_deb > 0 and c_cred == 0 and abs(diff - c_deb) < Decimal('0.05'):
+                    curr_row["credit"] = c_deb
+                    curr_row["debit"] = Decimal('0.00')
+                # Balance decreased by approximately transaction amount -> must be debit (withdrawal)
+                elif diff < 0 and c_cred > 0 and c_deb == 0 and abs(abs(diff) - c_cred) < Decimal('0.05'):
+                    curr_row["debit"] = c_cred
+                    curr_row["credit"] = Decimal('0.00')
 
         return valid_rows, errors
 
@@ -1066,6 +1126,18 @@ class BankStatementService:
                 cred_amt = row.get('credit', Decimal('0.00'))
                 tx_date = row.get('date')
 
+                # Directional integrity check prior to party matching:
+                # In Indian banking, narrations starting with 'BY' (BY CLG, BY TRF, BY CASH, etc.) are strictly Deposits.
+                # Narrations starting with 'TO' (TO CLG, TO TRF, CHQ PAID, etc.) are strictly Withdrawals.
+                if cls.IS_CREDIT_REGEX.search(norm_desc) and not cls.IS_DEBIT_REGEX.search(norm_desc):
+                    if deb_amt > 0 and cred_amt == 0:
+                        cred_amt = deb_amt
+                        deb_amt = Decimal('0.00')
+                elif cls.IS_DEBIT_REGEX.search(norm_desc) and not cls.IS_CREDIT_REGEX.search(norm_desc):
+                    if cred_amt > 0 and deb_amt == 0:
+                        deb_amt = cred_amt
+                        cred_amt = Decimal('0.00')
+
                 primary_id = ref_no if ref_no else norm_desc
                 fprint = cls.compute_transaction_fingerprint(company.id, bank_ledger.id, tx_date, deb_amt, cred_amt, primary_id)
                 if fprint:
@@ -1097,7 +1169,7 @@ class BankStatementService:
                 mp = match_res.get('matched_party')
                 if mp and mp.ledger_type == 'CUSTOMER':
                     if deb_amt > 0 and cred_amt == 0:
-                        if re.search(r'(^BY\b|\bBY\s+CLG|\bCR\b|\bDEPOSIT)', norm_desc, re.IGNORECASE) or not re.search(r'(^TO\b|\bDR\b|\bWITHDRAWAL)', norm_desc, re.IGNORECASE):
+                        if not re.search(r'\bREFUND\b', norm_desc, re.IGNORECASE):
                             cred_amt = deb_amt
                             deb_amt = Decimal('0.00')
                             match_res.setdefault('signals', []).append(
@@ -1105,7 +1177,7 @@ class BankStatementService:
                             )
                 elif mp and mp.ledger_type == 'SUPPLIER':
                     if cred_amt > 0 and deb_amt == 0:
-                        if re.search(r'(^TO\b|\bDR\b|\bWITHDRAWAL|\bPAID\b)', norm_desc, re.IGNORECASE):
+                        if not re.search(r'\bREFUND\b', norm_desc, re.IGNORECASE):
                             deb_amt = cred_amt
                             cred_amt = Decimal('0.00')
                             match_res.setdefault('signals', []).append(
