@@ -268,14 +268,14 @@ class PartyIntelligenceService:
         Stores or updates confirmed party association for this company.
         Increments usage count and refreshes last_used timestamp.
         """
-        norm_pattern = cls.normalize_entity_name(pattern) if mapping_type == 'NARRATION' else pattern.upper().strip()
+        norm_pattern = (cls.normalize_entity_name(pattern) if mapping_type == 'NARRATION' else pattern.upper().strip())[:255]
         
         mapping, created = PartyMapping.objects.get_or_create(
             company=company,
             normalized_pattern=norm_pattern,
             mapping_type=mapping_type,
             defaults={
-                "pattern": pattern.strip(),
+                "pattern": pattern.strip()[:255],
                 "party": party,
                 "confirmed_by_user": confirmed_by_user,
                 "confidence": 1.0,

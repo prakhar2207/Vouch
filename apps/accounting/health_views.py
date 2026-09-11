@@ -11,6 +11,10 @@ from apps.accounting.services.integrity_engine import AccountingIntegrityEngine
 from apps.accounting.services.finding_fix_service import FindingFixService
 from apps.accounts.permissions import get_authorized_company
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 class AccountingHealthAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -18,9 +22,22 @@ class AccountingHealthAPIView(APIView):
         """
         Runs all 11 accounting integrity checks and returns a comprehensive health report.
         """
-        company = get_authorized_company(request)
-        report = AccountingIntegrityEngine.run_all_checks(company)
-        return Response(report, status=status.HTTP_200_OK)
+        try:
+            company = get_authorized_company(request)
+            report = AccountingIntegrityEngine.run_all_checks(company)
+            return Response(report, status=status.HTTP_200_OK)
+        except (ValidationError,) as e:
+            return Response({"error": str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            # Let DRF exceptions (e.g. PermissionDenied, NotFound) propagate or return 500
+            from rest_framework.exceptions import APIException
+            if isinstance(e, APIException):
+                raise e
+            logger.exception("Error executing accounting health audit: %s", e)
+            return Response(
+                {"error": f"Health audit calculation failed: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class DiagnoseBalanceAPIView(APIView):
@@ -30,9 +47,21 @@ class DiagnoseBalanceAPIView(APIView):
         """
         Specialized investigative diagnostic for 'Why is my balance not matching?'
         """
-        company = get_authorized_company(request)
-        diagnosis = AccountingIntegrityEngine.diagnose_balance_mismatch(company)
-        return Response(diagnosis, status=status.HTTP_200_OK)
+        try:
+            company = get_authorized_company(request)
+            diagnosis = AccountingIntegrityEngine.diagnose_balance_mismatch(company)
+            return Response(diagnosis, status=status.HTTP_200_OK)
+        except (ValidationError,) as e:
+            return Response({"error": str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            from rest_framework.exceptions import APIException
+            if isinstance(e, APIException):
+                raise e
+            logger.exception("Error executing balance diagnosis: %s", e)
+            return Response(
+                {"error": f"Balance diagnosis failed: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class FindingFixPreviewAPIView(APIView):

@@ -147,16 +147,19 @@ class BankStatementService:
         return "%d/%m/%Y"
 
     @classmethod
-    def normalize_narration(cls, text: str) -> str:
+    def normalize_narration(cls, text: str, max_length: int = 500) -> str:
         """
         Cleans bank narration, normalizes whitespace and standardizes
-        beneficiary identifiers for accurate matching.
+        beneficiary identifiers for accurate matching. Safely truncates to max_length (default 500).
         """
         if not text:
             return ""
         s = str(text).strip()
         s = re.sub(r'\s+', ' ', s)
-        return s.strip()
+        res = s.strip()
+        if max_length and len(res) > max_length:
+            return res[:max_length]
+        return res
 
     @classmethod
     def extract_upi_id(cls, text: str) -> Optional[str]:
@@ -172,15 +175,15 @@ class BankStatementService:
     def extract_reference_number(cls, text: str, ref_col_val: Optional[str] = None) -> Optional[str]:
         """Extracts Cheque number, UTR, or transaction reference from dedicated column or narration."""
         if ref_col_val and str(ref_col_val).strip() and str(ref_col_val).strip().lower() not in ['nan', 'none', '-', '']:
-            return str(ref_col_val).strip()
+            return str(ref_col_val).strip()[:100]
         if not text:
             return None
         utr_match = re.search(r'(?:UTR|REF|NO|CHQ|NEFT|RTGS|IMPS)[/:\s\-]+([A-Za-z0-9]{6,22})', text, re.IGNORECASE)
         if utr_match:
-            return utr_match.group(1).upper()
+            return utr_match.group(1).upper()[:100]
         rrn_match = re.search(r'\b(\d{12})\b', text)
         if rrn_match:
-            return rrn_match.group(1)
+            return rrn_match.group(1)[:100]
         return None
 
     @classmethod
@@ -976,10 +979,10 @@ class BankStatementService:
             import_record = BankStatementImport.objects.create(
                 company=company,
                 bank_ledger=bank_ledger,
-                source_file_name=filename,
-                file_hash=file_hash,
-                file_format=file_format,
-                status=status,
+                source_file_name=str(filename or "")[:255],
+                file_hash=str(file_hash or "")[:64],
+                file_format=str(file_format or "")[:20],
+                status=str(status or "")[:20],
                 total_rows=total_detected,
                 successful_rows=len(valid_rows),
                 failed_rows=len(errors),
@@ -998,15 +1001,19 @@ class BankStatementService:
             suggested_count = 0
 
             for row in valid_rows:
-                raw_desc = row.get('description', '')
-                norm_desc = cls.normalize_narration(raw_desc)
+                raw_desc = str(row.get('description', '') or '')
+                norm_desc = cls.normalize_narration(raw_desc, max_length=500)[:500]
                 ref_no = cls.extract_reference_number(raw_desc, row.get('reference'))
+                if ref_no:
+                    ref_no = str(ref_no).strip()[:100]
                 deb_amt = row.get('debit', Decimal('0.00'))
                 cred_amt = row.get('credit', Decimal('0.00'))
                 tx_date = row.get('date')
 
                 primary_id = ref_no if ref_no else norm_desc
                 fprint = cls.compute_transaction_fingerprint(company.id, bank_ledger.id, tx_date, deb_amt, cred_amt, primary_id)
+                if fprint:
+                    fprint = str(fprint)[:64]
 
                 dup_qs = BankTransaction.objects.filter(
                     company=company,
@@ -1044,13 +1051,13 @@ class BankStatementService:
                     transaction_date=tx_date,
                     value_date=row.get('value_date') or tx_date,
                     description=raw_desc,
-                    normalized_narration=norm_desc,
-                    reference_number=ref_no,
-                    fingerprint=fprint,
+                    normalized_narration=norm_desc[:500],
+                    reference_number=ref_no[:100] if ref_no else None,
+                    fingerprint=fprint[:64] if fprint else None,
                     debit_amount=deb_amt,
                     credit_amount=cred_amt,
                     balance=row.get('balance'),
-                    source_file=filename,
+                    source_file=str(filename or "")[:255],
                     source_page=row.get('source_page', 1),
                     extraction_confidence=row.get('confidence', 1.0),
                     status=initial_status,

@@ -39,9 +39,30 @@ class AccountingIntegrityEngine:
         # Calculate transparent Bookkeeping Health Score
         score_data = cls.calculate_health_score(company, findings)
 
+        unresolved_bank = BankTransaction.objects.filter(company=company, status='UNRESOLVED').count()
+        metrics = {
+            "total_checks": len(score_data["checks_summary"]),
+            "passed_checks": score_data["passed_count"],
+            "critical_findings_count": score_data["critical_count"],
+            "warning_findings_count": score_data["warning_count"],
+            "info_findings_count": score_data["info_count"],
+        }
+        score_breakdown = {
+            "base_score": 100,
+            "critical_deductions": score_data["critical_count"] * 15,
+            "warning_deductions": score_data["warning_count"] * 5,
+            "unresolved_bank_deductions": min(15, unresolved_bank * 1),
+            "formula": "Base (100) - Critical (15) - Warning (5) - Unresolved Bank (1)"
+        }
+
         return {
+            "timestamp": timezone.now().isoformat(),
             "health_score": score_data["score"],
+            "health_status": score_data["status"],
             "status": score_data["status"],
+            "score_breakdown": score_breakdown,
+            "metrics": metrics,
+            "checks": score_data["checks_summary"],
             "checks_summary": score_data["checks_summary"],
             "critical_count": score_data["critical_count"],
             "warning_count": score_data["warning_count"],
@@ -54,13 +75,17 @@ class AccountingIntegrityEngine:
                     "category": f.category,
                     "title": f.title,
                     "description": f.description,
-                    "evidence": f.evidence,
+                    "evidence": f.evidence or {},
                     "expected_state": f.expected_state,
                     "actual_state": f.actual_state,
                     "probable_cause": f.probable_cause,
                     "suggested_action": f.suggested_action,
+                    "suggested_fix": f.suggested_action,
                     "confidence": f.confidence,
                     "fix_action": f.fix_action,
+                    "fix_type": f.fix_action,
+                    "is_actionable": bool(f.fix_action),
+                    "status": "RESOLVED" if f.is_resolved else "UNRESOLVED",
                     "is_resolved": f.is_resolved,
                     "created_at": f.created_at.isoformat()
                 } for f in findings
@@ -188,6 +213,8 @@ class AccountingIntegrityEngine:
         allocs = PaymentAllocation.objects.filter(company=company).select_related('payment_voucher', 'invoice_voucher')
 
         for alloc in allocs:
+            if not alloc.payment_voucher or not alloc.invoice_voucher:
+                continue
             # Cross company check
             if alloc.payment_voucher.company_id != alloc.invoice_voucher.company_id:
                 finding, _ = AccountingFinding.objects.update_or_create(
@@ -212,7 +239,8 @@ class AccountingIntegrityEngine:
         invoices = Voucher.objects.filter(company=company, voucher_type__in=['SALES', 'PURCHASE', 'OPENING_INVOICE', 'OPENING_BILL'], status='POSTED')
         for inv in invoices:
             total_alloc = PaymentAllocation.objects.filter(invoice_voucher=inv).aggregate(s=Sum('allocated_amount'))['s'] or Decimal('0.00')
-            if total_alloc > inv.total_amount + Decimal('0.05'):
+            inv_total = Decimal(str(inv.total_amount or '0.00'))
+            if total_alloc > inv_total + Decimal('0.05'):
                 finding, _ = AccountingFinding.objects.update_or_create(
                     company=company,
                     category='PAYMENT',
@@ -357,8 +385,11 @@ class AccountingIntegrityEngine:
             is_intra = (company_state == buyer_state)
             items = v.items.all()
             for itm in items:
+                igst = Decimal(str(itm.igst_amount or '0.00'))
+                cgst = Decimal(str(itm.cgst_amount or '0.00'))
                 # Intra-state check: Should not have IGST
-                if is_intra and itm.igst_amount > Decimal('0.50') and itm.cgst_amount == Decimal('0.00'):
+                if is_intra and igst > Decimal('0.50') and cgst == Decimal('0.00'):
+                    half_tax = str(round(igst / Decimal('2.0'), 2))
                     finding, _ = AccountingFinding.objects.update_or_create(
                         company=company,
                         category='GST',
@@ -366,17 +397,17 @@ class AccountingIntegrityEngine:
                         is_resolved=False,
                         defaults={
                             "severity": "WARNING",
-                            "description": f"This transaction appears to be intra-state (State {company_state}), but IGST of ₹{itm.igst_amount} was applied instead of CGST + SGST.",
+                            "description": f"This transaction appears to be intra-state (State {company_state}), but IGST of ₹{igst} was applied instead of CGST + SGST.",
                             "evidence": {
                                 "voucher_number": v.voucher_number,
                                 "company_state": company_state,
                                 "buyer_state": buyer_state,
-                                "igst_amount": str(itm.igst_amount),
-                                "expected_cgst": str(itm.igst_amount / 2),
-                                "expected_sgst": str(itm.igst_amount / 2)
+                                "igst_amount": str(igst),
+                                "expected_cgst": half_tax,
+                                "expected_sgst": half_tax
                             },
-                            "expected_state": f"CGST: ₹{itm.igst_amount/2}, SGST: ₹{itm.igst_amount/2}.",
-                            "actual_state": f"IGST: ₹{itm.igst_amount}.",
+                            "expected_state": f"CGST: ₹{half_tax}, SGST: ₹{half_tax}.",
+                            "actual_state": f"IGST: ₹{igst}.",
                             "probable_cause": "Wrong tax type selected during invoice creation.",
                             "suggested_action": "Review invoice tax breakdown and correct.",
                             "confidence": 0.95
@@ -506,7 +537,7 @@ class AccountingIntegrityEngine:
         """10. Check: Opening balance equity offset reconciliation."""
         findings = []
         adj = Ledger.objects.filter(company=company, name__icontains="Opening Balance Adjustment").first()
-        if adj and abs(adj.current_balance) > Decimal('100.00'):
+        if adj and abs(Decimal(str(adj.current_balance or '0.00'))) > Decimal('100.00'):
             finding, _ = AccountingFinding.objects.update_or_create(
                 company=company,
                 category='OPENING_BALANCE',

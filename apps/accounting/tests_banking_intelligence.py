@@ -1,8 +1,8 @@
 import io
 import datetime
 from decimal import Decimal
-from django.test import TestCase
 from django.utils import timezone
+from rest_framework.test import APITestCase
 import openpyxl
 
 from apps.companies.models import Company, CompanySettings
@@ -20,7 +20,7 @@ from apps.accounting.services.finding_fix_service import FindingFixService
 from apps.accounting.services.voucher_service import VoucherService
 from apps.inventory.models import Product, Warehouse
 
-class BankIntelligenceAndAccountingHealthTests(TestCase):
+class BankIntelligenceAndAccountingHealthTests(APITestCase):
     def setUp(self):
         self.company = Company.objects.create(
             name="Vouch Test Retailers Pvt Ltd",
@@ -613,3 +613,50 @@ class BankIntelligenceAndAccountingHealthTests(TestCase):
         self.assertEqual(self.customer.current_balance, Decimal('0.00'))
         finding.refresh_from_db()
         self.assertTrue(finding.is_resolved)
+
+    def test_23_statement_upload_with_excessively_long_narration_and_reference(self):
+        """Scenario 23: Upload statement with narration > 500 chars and reference > 100 chars succeeds without DataError."""
+        long_narration = "UPI/PAYMENT TO CANARA BANK BENEFICIARY FOR INVOICE SETTLEMENT " + ("DETAILS " * 80)
+        long_reference = "REF_" + ("9876543210" * 15)
+        self.assertGreater(len(long_narration), 500)
+        self.assertGreater(len(long_reference), 100)
+
+        csv_content = f"Date,Description,Reference,Debit,Credit,Balance\n2026-04-10,{long_narration},{long_reference},1500.00,,48500.00\n"
+        
+        summary = BankStatementService.parse_statement(
+            company=self.company,
+            bank_ledger=self.bank_ledger,
+            file_bytes=csv_content.encode('utf-8'),
+            filename="long_narration_test.csv",
+            user=self.user
+        )
+
+        self.assertEqual(summary["status"], "COMPLETED")
+        self.assertEqual(summary["successful_rows"], 1)
+
+        tx = BankTransaction.objects.get(statement_import_id=summary["import_id"])
+        self.assertLessEqual(len(tx.normalized_narration), 500)
+        self.assertLessEqual(len(tx.reference_number), 100)
+        self.assertEqual(tx.description, long_narration.strip())
+        self.assertEqual(tx.debit_amount, Decimal('1500.00'))
+
+    def test_24_accounting_health_report_structure_and_null_safety(self):
+        """Scenario 24: Accounting health audit returns enriched data compatible with frontend."""
+        report = AccountingIntegrityEngine.run_all_checks(self.company)
+        self.assertIn("health_status", report)
+        self.assertIn("health_score", report)
+        self.assertIn("metrics", report)
+        self.assertIn("score_breakdown", report)
+        self.assertIn("checks", report)
+        self.assertIn("findings", report)
+        self.assertEqual(report["metrics"]["total_checks"], 11)
+
+        # Test health API view
+        from apps.companies.models import UserCompany
+        UserCompany.objects.get_or_create(user=self.user, company=self.company, defaults={"role": "OWNER"})
+        self.client.force_authenticate(user=self.user)
+        res = self.client.get(f"/api/v1/accounting/health/?company_id={self.company.id}")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("health_status", res.data)
+        self.assertIn("health_score", res.data)
+
