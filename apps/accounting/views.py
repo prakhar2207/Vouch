@@ -567,6 +567,8 @@ class VoucherDetailAPIView(APIView):
             from apps.accounting.services.allocation_service import PaymentAllocationService
             from apps.inventory.models import Product, ProductCategory
             from apps.gst.services.gst_calculator import GSTCalculator
+            from apps.ledgers.models import Ledger, LedgerGroup
+            from django.utils import timezone
             from decimal import Decimal
 
             voucher = Voucher.objects.select_related('company', 'party_ledger').get(
@@ -583,6 +585,131 @@ class VoucherDetailAPIView(APIView):
             data = request.data
 
             with transaction.atomic():
+                # 1. Resolve party change safely without ever mutating existing party ledger master!
+                target_party = voucher.party_ledger
+                if 'party_ledger_id' in data and data['party_ledger_id']:
+                    new_party = Ledger.objects.filter(id=data['party_ledger_id'], company=company).first()
+                    if new_party:
+                        target_party = new_party
+                elif 'party_name' in data and str(data['party_name']).strip():
+                    new_party_name = str(data['party_name']).strip()
+                    if not voucher.party_ledger or voucher.party_ledger.name.strip().upper() != new_party_name.upper():
+                        target_group_name = 'Sundry Debtors' if voucher.voucher_type == 'SALES' else 'Sundry Creditors'
+                        nature = 'ASSET' if voucher.voucher_type == 'SALES' else 'LIABILITY'
+                        grp, _ = LedgerGroup.objects.get_or_create(company=company, name=target_group_name, defaults={'nature': nature})
+                        target_party, _ = Ledger.objects.get_or_create(
+                            company=company,
+                            name=new_party_name,
+                            defaults={'group': grp, 'ledger_type': 'CUSTOMER' if voucher.voucher_type == 'SALES' else 'SUPPLIER'}
+                        )
+
+                # 2. If voucher is POSTED or VALIDATING, NEVER destroy original accounting state.
+                # Create an explicit auditable superseding revision.
+                if voucher.status in ['POSTED', 'VALIDATING']:
+                    from apps.accounting.services.sales_service import SalesInvoiceService
+                    from apps.accounting.services.purchase_service import PurchaseInvoiceService
+
+                    correction_reason = str(data.get('correction_reason') or data.get('reason') or "Voucher correction").strip()
+                    correction_type = str(data.get('correction_type') or "CLERICAL").strip()
+
+                    # Reverse original voucher via explicit Reversal voucher
+                    VoucherService.create_reversal_voucher(voucher, user=request.user, reason=f"Correction Reversal: {correction_reason}")
+
+                    # Prepare items data (use updated items if provided, otherwise preserve original items)
+                    if 'items' in data and isinstance(data['items'], list):
+                        items_payload = data['items']
+                    else:
+                        items_payload = [
+                            {
+                                "product_id": str(it.product_id) if it.product_id else None,
+                                "product_name": it.product.name if it.product else "",
+                                "description": it.product.description if it.product else "",
+                                "quantity": str(it.quantity),
+                                "rate": str(it.rate),
+                                "discount_percent": str(it.discount_percent),
+                                "hsn_code": it.hsn_code or (it.product.hsn_code if it.product else ""),
+                                "gst_rate": str(it.gst_rate),
+                                "unit": it.product.unit if it.product else "PCS",
+                                "category_id": str(it.product.category_id) if it.product and it.product.category_id else None,
+                                "brand": it.product.brand if it.product else "",
+                            }
+                            for it in voucher.items.select_related('product', 'product__category').all()
+                        ]
+
+                    # Generate new corrected voucher with updated party and items
+                    if voucher.voucher_type == 'SALES':
+                        new_v = SalesInvoiceService.generate_sales_invoice(
+                            company=company,
+                            user=request.user,
+                            party_ledger=target_party,
+                            items_data=items_payload,
+                            sales_ledger=None,
+                            cgst_ledger=None,
+                            sgst_ledger=None,
+                            igst_ledger=None,
+                            manual_voucher_date=data.get('voucher_date', voucher.voucher_date),
+                            buyer_name=data.get('buyer_name', target_party.name if target_party else voucher.buyer_name),
+                            buyer_address=data.get('buyer_address', voucher.buyer_address),
+                            buyer_gstin=data.get('buyer_gstin', voucher.buyer_gstin),
+                            buyer_state_code=data.get('buyer_state_code', voucher.buyer_state_code),
+                            buyer_phone=data.get('buyer_phone', voucher.buyer_phone),
+                            cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0))
+                        )
+                    elif voucher.voucher_type == 'PURCHASE':
+                        new_v = PurchaseInvoiceService.generate_purchase_invoice(
+                            company=company,
+                            user=request.user,
+                            party_ledger=target_party,
+                            items_data=items_payload,
+                            purchase_ledger=None,
+                            input_cgst_ledger=None,
+                            input_sgst_ledger=None,
+                            input_igst_ledger=None,
+                            supplier_invoice_number=data.get('voucher_number') or voucher.external_invoice_number,
+                            voucher_date=data.get('voucher_date', voucher.voucher_date),
+                            cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
+                            exclude_voucher_id=voucher.id
+                        )
+                    else:
+                        from rest_framework.exceptions import ValidationError
+                        raise ValidationError(f"Voucher type {voucher.voucher_type} correction not supported via item patch.")
+
+                    # Post the new corrected voucher
+                    VoucherService.post_voucher(new_v)
+
+                    # Link revision fields & update status
+                    voucher.status = 'SUPERSEDED'
+                    voucher.superseded_by = new_v
+                    voucher.corrects_voucher = new_v
+                    voucher.save(update_fields=['status', 'superseded_by', 'corrects_voucher'])
+
+                    new_v.revision_of = voucher
+                    new_v.corrects_voucher = voucher
+                    new_v.revision_number = (voucher.revision_number or 1) + 1
+                    new_v.correction_reason = correction_reason
+                    new_v.correction_type = correction_type
+                    new_v.corrected_by = request.user
+                    new_v.corrected_at = timezone.now()
+                    new_v.save(update_fields=['revision_of', 'corrects_voucher', 'revision_number', 'correction_reason', 'correction_type', 'corrected_by', 'corrected_at'])
+
+                    # Recalculate affected ledger balances
+                    if voucher.party_ledger:
+                        VoucherService.recalculate_ledger_balance(voucher.party_ledger)
+                    if target_party and target_party != voucher.party_ledger:
+                        VoucherService.recalculate_ledger_balance(target_party)
+
+                    return Response({
+                        "success": True,
+                        "message": f"Invoice #{voucher.voucher_number} superseded and corrected via #{new_v.voucher_number}.",
+                        "original_voucher_number": voucher.voucher_number,
+                        "new_voucher_id": str(new_v.id),
+                        "new_voucher_number": new_v.voucher_number,
+                        "status": new_v.status,
+                        "total_amount": str(new_v.total_amount),
+                        "party_name": target_party.name if target_party else ""
+                    })
+
+                # 3. For DRAFT vouchers, update in place safely
                 if 'voucher_number' in data and data['voucher_number']:
                     voucher.voucher_number = str(data['voucher_number']).strip()
                     voucher.reference_number = str(data['voucher_number']).strip()
@@ -590,81 +717,11 @@ class VoucherDetailAPIView(APIView):
                     voucher.voucher_date = data['voucher_date']
                 if 'narration' in data:
                     voucher.narration = data['narration']
+                if target_party != voucher.party_ledger:
+                    voucher.party_ledger = target_party
+                    voucher.save(update_fields=['party_ledger'])
 
-                # If party name changed
-                if 'party_name' in data and str(data['party_name']).strip() and voucher.party_ledger:
-                    new_party_name = str(data['party_name']).strip()
-                    if voucher.party_ledger.name != new_party_name:
-                        voucher.party_ledger.name = new_party_name
-                        voucher.party_ledger.save(update_fields=['name'])
-
-                # Full line items update
                 if 'items' in data and isinstance(data['items'], list):
-                    # P0-4: Posted transactions must be immutable!
-                    # If voucher was POSTED, do NOT mutate in place or delete items/ledger entries!
-                    if voucher.status in ['POSTED', 'VALIDATING']:
-                        from apps.accounting.services.sales_service import SalesInvoiceService
-                        from apps.accounting.services.purchase_service import PurchaseInvoiceService
-
-                        # 1. Reverse original voucher via explicit Reversal voucher
-                        VoucherService.create_reversal_voucher(voucher, user=request.user, reason="Correction Reversal")
-
-                        # 2. Generate new corrected voucher
-                        if voucher.voucher_type == 'SALES':
-                            new_v = SalesInvoiceService.generate_sales_invoice(
-                                company=company,
-                                user=request.user,
-                                party_ledger=voucher.party_ledger,
-                                items_data=data['items'],
-                                sales_ledger=None,
-                                cgst_ledger=None,
-                                sgst_ledger=None,
-                                igst_ledger=None,
-                                manual_voucher_date=data.get('voucher_date', voucher.voucher_date),
-                                buyer_name=data.get('buyer_name', voucher.buyer_name),
-                                buyer_address=data.get('buyer_address', voucher.buyer_address),
-                                buyer_gstin=data.get('buyer_gstin', voucher.buyer_gstin),
-                                buyer_state_code=data.get('buyer_state_code', voucher.buyer_state_code),
-                                buyer_phone=data.get('buyer_phone', voucher.buyer_phone),
-                                cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0))
-                            )
-                        elif voucher.voucher_type == 'PURCHASE':
-                            new_v = PurchaseInvoiceService.generate_purchase_invoice(
-                                company=company,
-                                user=request.user,
-                                party_ledger=voucher.party_ledger,
-                                items_data=data['items'],
-                                purchase_ledger=None,
-                                input_cgst_ledger=None,
-                                input_sgst_ledger=None,
-                                input_igst_ledger=None,
-                                supplier_invoice_number=data.get('voucher_number') or voucher.external_invoice_number,
-                                voucher_date=data.get('voucher_date', voucher.voucher_date),
-                                cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
-                                exclude_voucher_id=voucher.id
-                            )
-                        else:
-                            from rest_framework.exceptions import ValidationError
-                            raise ValidationError(f"Voucher type {voucher.voucher_type} correction not supported via item patch.")
-
-                        # 3. Post the new corrected voucher
-                        VoucherService.post_voucher(new_v)
-
-                        # 4. Link vouchers
-                        voucher.status = 'CORRECTED'
-                        voucher.corrects_voucher = new_v
-                        voucher.save(update_fields=['status', 'corrects_voucher'])
-
-                        return Response({
-                            "success": True,
-                            "message": f"Invoice #{voucher.voucher_number} reversed and corrected via #{new_v.voucher_number}.",
-                            "original_voucher_number": voucher.voucher_number,
-                            "new_voucher_id": str(new_v.id),
-                            "new_voucher_number": new_v.voucher_number,
-                            "status": new_v.status,
-                            "total_amount": new_v.total_amount
-                        })
-
                     # If DRAFT, safe to edit lines in place before initial posting
                     voucher.items.all().delete()
                     voucher.ledger_entries.all().delete()

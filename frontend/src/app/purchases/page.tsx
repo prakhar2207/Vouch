@@ -7,14 +7,17 @@ import Link from "next/link";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
+import { useCompany } from "@/context/CompanyContext";
 import EditPurchaseInvoiceModal from "@/components/modals/EditPurchaseInvoiceModal";
 import ConfirmModal from "@/components/modals/ConfirmModal";
-import { Edit2, Trash2, Eye, FileText, Plus, ChevronLeft, ChevronRight, AlertCircle, RefreshCw } from "lucide-react";
+import { Edit2, Trash2, Eye, FileText, Plus, ChevronLeft, ChevronRight, AlertCircle, RefreshCw, CheckCircle, AlertTriangle, CloudOff } from "lucide-react";
 import { offlineDb } from "@/lib/db/offlineDb";
+import { retryFailedVoucher } from "@/lib/sync/sync-worker";
 
 export default function PurchaseInvoiceList() {
   const router = useRouter();
   const { toast } = useToast();
+  const { companyId: activeCompanyId } = useCompany();
 
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,39 +42,81 @@ export default function PurchaseInvoiceList() {
       return;
     }
     fetchInvoices(1);
-  }, [router]);
+  }, [router, activeCompanyId]);
 
   const fetchInvoices = async (targetPage: number = page) => {
     setLoading(true);
     setFetchError(null);
 
-    // 1. Try reading from offline cache first
+    // 1. Fetch pending and failed offline purchase vouchers from Dexie
+    let offlineList: any[] = [];
     try {
-      const cached = await offlineDb.masters.get('cached_purchase_invoices');
-      if (cached?.data?.length && invoices.length === 0) {
-        setInvoices(cached.data);
-      }
-    } catch (e) {
-      // ignore
+      const localVouchers = await offlineDb.vouchers
+        .where("voucherType")
+        .equals("PURCHASE")
+        .toArray();
+
+      offlineList = localVouchers
+        .filter((v) => v.status !== "SYNCED")
+        .map((v) => {
+          const payload = v.payload || {};
+          const lineItems = payload.items || [];
+          const total = lineItems.reduce((sum: number, it: any) => {
+            const gross = Number(it.quantity || 0) * Number(it.rate || 0);
+            const disc = gross * (Number(it.discount_percent || 0) / 100);
+            const taxable = gross - disc;
+            return sum + taxable + taxable * (Number(it.gst_rate || 18) / 100);
+          }, 0);
+
+          return {
+            id: v.localId,
+            dexieId: v.id,
+            isOffline: true,
+            voucher_number: payload.voucher_number || payload.reference_number || v.localId.substring(0, 15).toUpperCase(),
+            date: v.voucherDate || payload.voucher_date,
+            party_name: payload.party_name || payload.supplier_name || "Offline Supplier",
+            total_amount: Math.round(total),
+            syncStatus: v.status === "FAILED" ? "SYNC_FAILED" : "OFFLINE_PENDING",
+            errorMessage: v.errorMessage,
+            status: v.status === "FAILED" ? "FAILED" : "PENDING_SYNC",
+          };
+        });
+    } catch (offlineErr) {
+      console.warn("Could not read offline purchase vouchers", offlineErr);
     }
 
     try {
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers, timeout: 8000 });
-      const companyId = compRes.data.data[0]?.id;
+      let companyId = activeCompanyId;
+      if (!companyId && typeof window !== "undefined") {
+        companyId = localStorage.getItem("vouch_active_company_id");
+      }
+      if (!companyId) {
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: 8000,
+        });
+        const list = Array.isArray(compRes.data) ? compRes.data : compRes.data?.data || [];
+        companyId = list[0]?.id;
+      }
+
       if (!companyId) {
         setFetchError("No company found for the current user.");
+        setInvoices(offlineList);
         return;
       }
 
+      const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
       const offset = (targetPage - 1) * pageSize;
       const res = await axios.get(
         `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?type=PURCHASE&limit=${pageSize}&offset=${offset}`,
         { headers, timeout: 8000 }
       );
-      const purchaseVouchers = (res.data.data || []).filter((v: any) => v.type === "PURCHASE");
-      setInvoices(purchaseVouchers);
+      const purchaseVouchers = (res.data.data || [])
+        .filter((v: any) => v.type === "PURCHASE")
+        .map((v: any) => ({ ...v, syncStatus: "SYNCED" }));
+
+      setInvoices([...offlineList, ...purchaseVouchers]);
       if (res.data.pagination) {
         setPagination(res.data.pagination);
       }
@@ -79,18 +124,22 @@ export default function PurchaseInvoiceList() {
       setFetchError(null);
 
       // Cache remote purchase invoices for offline viewing
-      offlineDb.masters.put({ key: 'cached_purchase_invoices', data: purchaseVouchers, updatedAt: Date.now() }).catch(() => {});
+      offlineDb.masters.put({ key: "cached_purchase_invoices", data: purchaseVouchers, updatedAt: Date.now() }).catch(() => {});
     } catch (err: any) {
       console.error("fetchInvoices error:", err);
       const errorMsg = err.response?.data?.error || err.response?.data?.message || err.message || "Failed to load purchase invoices";
-      
-      const cached = await offlineDb.masters.get('cached_purchase_invoices').catch(() => null);
+
+      const cached = await offlineDb.masters.get("cached_purchase_invoices").catch(() => null);
       if (cached?.data?.length) {
-        setInvoices(cached.data);
+        const cachedList = cached.data.map((v: any) => ({ ...v, syncStatus: "SYNCED" }));
+        setInvoices([...offlineList, ...cachedList]);
         toast.warning("Loaded purchase invoices from offline cache. Live server unreachable.");
       } else {
-        setFetchError(errorMsg);
-        toast.error("Failed to load invoices", errorMsg);
+        setInvoices(offlineList);
+        if (offlineList.length === 0) {
+          setFetchError(errorMsg);
+          toast.error("Failed to load invoices", errorMsg);
+        }
       }
     } finally {
       setLoading(false);
@@ -329,13 +378,38 @@ export default function PurchaseInvoiceList() {
                             UNPAID
                           </span>
                         )}
-                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
-                          inv.status === "POSTED"
-                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                            : "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                        }`}>
-                          {inv.status}
-                        </span>
+                        {inv.syncStatus === 'SYNC_FAILED' ? (
+                          <div className="flex items-center gap-1">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30" title={inv.errorMessage || "Action requires attention"}>
+                              <AlertTriangle className="w-2.5 h-2.5" />
+                              Sync failed
+                            </span>
+                            {inv.dexieId && (
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  await retryFailedVoucher(inv.dexieId);
+                                  fetchInvoices(page);
+                                }}
+                                className="p-0.5 hover:bg-rose-500/20 text-rose-400 rounded"
+                                title="Retry sync now"
+                              >
+                                <RefreshCw className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </div>
+                        ) : inv.syncStatus === 'OFFLINE_PENDING' || inv.isOffline || inv.status === 'PENDING_SYNC' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30" title="Saved locally on this device. Will sync automatically when connected.">
+                            <CloudOff className="w-2.5 h-2.5" />
+                            Saved offline — waiting to sync
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" title="Authoritatively synced and posted on server">
+                            <CheckCircle className="w-2.5 h-2.5" />
+                            Saved &amp; synced
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -450,13 +524,41 @@ export default function PurchaseInvoiceList() {
 
                       {/* Status */}
                       <td className="p-4 text-center">
-                        <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${
-                          inv.status === "POSTED"
-                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                            : "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                        }`}>
-                          {inv.status}
-                        </span>
+                        {inv.syncStatus === 'SYNC_FAILED' ? (
+                          <div className="flex items-center gap-1.5 justify-center">
+                            <span
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30"
+                              title={inv.errorMessage || "Action requires attention"}
+                            >
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                              Sync failed — action requires attention
+                            </span>
+                            {inv.dexieId && (
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  await retryFailedVoucher(inv.dexieId);
+                                  fetchInvoices(page);
+                                }}
+                                className="p-1 hover:bg-rose-500/20 text-rose-400 rounded transition-colors cursor-pointer"
+                                title="Retry sync now"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ) : inv.syncStatus === 'OFFLINE_PENDING' || inv.isOffline || inv.status === 'PENDING_SYNC' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30" title="Saved locally on this device. Will sync automatically when connected.">
+                            <CloudOff className="w-3.5 h-3.5" />
+                            Saved offline — waiting to sync
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" title="Authoritatively synced and posted on server">
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            Saved &amp; synced
+                          </span>
+                        )}
                       </td>
 
                       {/* Actions */}

@@ -9,8 +9,10 @@ import CommandPalette from "./CommandPalette";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { useFinancialYear } from "@/context/FinancialYearContext";
 import { useAccountingPeriod } from "@/context/PeriodContext";
+import { useCompany } from "@/context/CompanyContext";
 import {
   Calendar,
+  Building2,
   Search,
   HelpCircle,
   ChevronDown,
@@ -42,15 +44,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [isReportsDropdownOpen, setIsReportsDropdownOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isFYDropdownOpen, setIsFYDropdownOpen] = useState(false);
+  const [isCompanyDropdownOpen, setIsCompanyDropdownOpen] = useState(false);
 
   const vouchersRef = useRef<HTMLDivElement>(null);
   const reportsRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const fyRef = useRef<HTMLDivElement>(null);
+  const companyRef = useRef<HTMLDivElement>(null);
 
   const { setIsHelpOpen, setIsDateOpen, workingDate, startTour } = useShortcuts();
   const { activeFY, availableFYs, setActiveFY, isReadOnly, setIsClosingModalOpen } = useFinancialYear();
   const { displayPeriod, setIsPeriodModalOpen, setIsSplitModalOpen } = useAccountingPeriod();
+  const { activeCompany, availableCompanies, setActiveCompany } = useCompany();
 
   // Close dropdowns on route change
   useEffect(() => {
@@ -59,6 +64,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     setIsReportsDropdownOpen(false);
     setIsUserMenuOpen(false);
     setIsFYDropdownOpen(false);
+    setIsCompanyDropdownOpen(false);
   }, [pathname]);
 
   // Click away listener for dropdowns
@@ -75,6 +81,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       }
       if (fyRef.current && !fyRef.current.contains(e.target as Node)) {
         setIsFYDropdownOpen(false);
+      }
+      if (companyRef.current && !companyRef.current.contains(e.target as Node)) {
+        setIsCompanyDropdownOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -411,6 +420,66 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Right Section: Unified Context Pill, Search, Utilities & Profile */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Company Switcher Pill */}
+            <div ref={companyRef} className="relative hidden md:block">
+              <button
+                onClick={() => {
+                  setIsCompanyDropdownOpen(!isCompanyDropdownOpen);
+                  setIsFYDropdownOpen(false);
+                  setIsUserMenuOpen(false);
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px] max-w-[170px]"
+                title="Active Company"
+              >
+                <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <span className="font-medium text-foreground truncate">
+                  {activeCompany?.name || "Company"}
+                </span>
+                <ChevronDown className={`w-3 h-3 text-muted-foreground shrink-0 transition-transform duration-150 ${isCompanyDropdownOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              {isCompanyDropdownOpen && (
+                <div className="absolute left-0 mt-1.5 w-60 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-1.5 z-50 animate-in fade-in zoom-in-95">
+                  <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Active Company
+                  </div>
+                  {availableCompanies.length === 0 ? (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">No companies found</div>
+                  ) : (
+                    availableCompanies.map((comp) => (
+                      <button
+                        key={comp.id}
+                        onClick={() => {
+                          setActiveCompany(comp);
+                          setIsCompanyDropdownOpen(false);
+                          window.location.reload();
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between ${
+                          activeCompany?.id === comp.id
+                            ? "bg-primary/10 text-primary font-semibold"
+                            : "text-foreground hover:bg-muted"
+                        }`}
+                      >
+                        <span className="truncate">{comp.name}</span>
+                        {activeCompany?.id === comp.id && (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-primary shrink-0 ml-1" />
+                        )}
+                      </button>
+                    ))
+                  )}
+                  <div className="border-t border-border/40 my-1"></div>
+                  <Link
+                    href="/settings"
+                    onClick={() => setIsCompanyDropdownOpen(false)}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    <span>Company Settings</span>
+                  </Link>
+                </div>
+              )}
+            </div>
+
             {/* Unified Compact Context Pill: FY · Date · Alt+F2 */}
             <div ref={fyRef} className="relative hidden md:block">
               <button
@@ -542,6 +611,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 ✕
               </button>
             </div>
+
+            {/* Mobile Company Selector */}
+            {availableCompanies.length > 1 && (
+              <div className="py-2 border-b border-border/50">
+                <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">
+                  Company
+                </label>
+                <select
+                  value={activeCompany?.id || ""}
+                  onChange={(e) => {
+                    const found = availableCompanies.find(c => c.id === e.target.value);
+                    if (found) {
+                      setActiveCompany(found);
+                      window.location.reload();
+                    }
+                  }}
+                  className="w-full bg-muted border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground font-medium"
+                >
+                  {availableCompanies.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Mobile Context Pill */}
             <div className="py-3 flex items-center justify-between text-xs border-b border-border/50 gap-2">

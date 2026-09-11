@@ -7,14 +7,17 @@ import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useToast } from '@/context/ToastContext';
+import { useCompany } from '@/context/CompanyContext';
 import EditSalesInvoiceModal from '@/components/modals/EditSalesInvoiceModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
-import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight, CloudOff } from 'lucide-react';
+import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight, CloudOff, CheckCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import { offlineDb } from '@/lib/db/offlineDb';
+import { retryFailedVoucher } from '@/lib/sync/sync-worker';
 
 export default function SalesInvoiceList() {
   const router = useRouter();
   const { toast } = useToast();
+  const { companyId: activeCompanyId } = useCompany();
 
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,40 +36,44 @@ export default function SalesInvoiceList() {
       return;
     }
     fetchInvoices(1);
-  }, [router]);
+  }, [router, activeCompanyId]);
 
   const fetchInvoices = async (targetPage: number = page) => {
     setLoading(true);
     try {
-      // 1. Fetch pending offline vouchers from Dexie
+      // 1. Fetch pending/failed offline vouchers from Dexie
       let offlineList: any[] = [];
       try {
-        const pendingOffline = await offlineDb.vouchers
+        const localVouchers = await offlineDb.vouchers
           .where('voucherType')
           .equals('SALES')
-          .filter(v => v.status === 'PENDING' || v.status === 'SYNCING')
           .toArray();
 
-        offlineList = pendingOffline.map(v => {
-          const payload = v.payload || {};
-          const lineItems = payload.items || [];
-          const total = lineItems.reduce((sum: number, it: any) => {
-            const gross = Number(it.quantity || 0) * Number(it.rate || 0);
-            const disc = gross * (Number(it.discount_percent || 0) / 100);
-            const taxable = gross - disc;
-            return sum + taxable + (taxable * (Number(it.gst_rate || 18) / 100));
-          }, 0);
+        offlineList = localVouchers
+          .filter(v => v.status !== 'SYNCED')
+          .map(v => {
+            const payload = v.payload || {};
+            const lineItems = payload.items || [];
+            const total = lineItems.reduce((sum: number, it: any) => {
+              const gross = Number(it.quantity || 0) * Number(it.rate || 0);
+              const disc = gross * (Number(it.discount_percent || 0) / 100);
+              const taxable = gross - disc;
+              return sum + taxable + (taxable * (Number(it.gst_rate || 18) / 100));
+            }, 0);
 
-          return {
-            id: v.localId,
-            isOffline: true,
-            voucher_number: payload.voucher_number || v.localId.substring(0, 15).toUpperCase(),
-            date: v.voucherDate || payload.voucher_date,
-            party_name: payload.buyer_name || 'Offline Customer',
-            total_amount: Math.round(total),
-            status: 'PENDING_SYNC'
-          };
-        });
+            return {
+              id: v.localId,
+              dexieId: v.id,
+              isOffline: true,
+              voucher_number: payload.voucher_number || v.localId.substring(0, 15).toUpperCase(),
+              date: v.voucherDate || payload.voucher_date,
+              party_name: payload.buyer_name || 'Offline Customer',
+              total_amount: Math.round(total),
+              syncStatus: v.status === 'FAILED' ? 'SYNC_FAILED' : 'OFFLINE_PENDING',
+              errorMessage: v.errorMessage,
+              status: v.status === 'FAILED' ? 'FAILED' : 'PENDING_SYNC'
+            };
+          });
       } catch (offlineErr) {
         console.warn('Could not read offline vouchers', offlineErr);
       }
@@ -75,16 +82,28 @@ export default function SalesInvoiceList() {
       let remoteVouchers: any[] = [];
       try {
         const token = getAccessToken();
-        const headers = { Authorization: `Bearer ${token}` };
-        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-        const companyId = compRes.data.data[0]?.id;
+        let companyId = activeCompanyId;
+        if (!companyId && typeof window !== 'undefined') {
+          companyId = localStorage.getItem('vouch_active_company_id');
+        }
+        if (!companyId) {
+          const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
+          companyId = list[0]?.id;
+        }
+
         if (companyId) {
+          const headers = { Authorization: `Bearer ${token}`, 'X-Company-ID': companyId };
           const offset = (targetPage - 1) * pageSize;
           const res = await axios.get(
             `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?type=SALES&limit=${pageSize}&offset=${offset}`,
             { headers, timeout: 6000 }
           );
-          remoteVouchers = (res.data.data || []).filter((v: any) => v.type === 'SALES');
+          remoteVouchers = (res.data.data || [])
+            .filter((v: any) => v.type === 'SALES')
+            .map((v: any) => ({ ...v, syncStatus: 'SYNCED' }));
           if (res.data.pagination) {
             setPagination(res.data.pagination);
           }
@@ -95,11 +114,11 @@ export default function SalesInvoiceList() {
         console.warn('Backend unavailable, falling back to cached invoices', remoteErr);
         const cached = await offlineDb.masters.get('cached_sales_invoices');
         if (cached?.data?.length) {
-          remoteVouchers = cached.data;
+          remoteVouchers = cached.data.map((v: any) => ({ ...v, syncStatus: 'SYNCED' }));
         }
       }
 
-      // Merge: offline pending vouchers appear at the top!
+      // Merge: offline pending/failed vouchers appear at the top!
       setInvoices([...offlineList, ...remoteVouchers]);
       setPage(targetPage);
     } catch (err) {
@@ -264,14 +283,36 @@ export default function SalesInvoiceList() {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-bold text-foreground text-sm">{inv.voucher_number}</span>
-                        {inv.isOffline || inv.status === 'PENDING_SYNC' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                        {inv.syncStatus === 'SYNC_FAILED' ? (
+                          <div className="flex items-center gap-1">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30" title={inv.errorMessage || "Action requires attention"}>
+                              <AlertTriangle className="w-2.5 h-2.5" />
+                              Sync failed
+                            </span>
+                            {inv.dexieId && (
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  await retryFailedVoucher(inv.dexieId);
+                                  fetchInvoices(page);
+                                }}
+                                className="p-0.5 hover:bg-rose-500/20 text-rose-400 rounded"
+                                title="Retry sync now"
+                              >
+                                <RefreshCw className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </div>
+                        ) : inv.syncStatus === 'OFFLINE_PENDING' || inv.isOffline || inv.status === 'PENDING_SYNC' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30" title="Saved locally on this device. Will sync automatically when connected.">
                             <CloudOff className="w-2.5 h-2.5" />
-                            Pending Sync
+                            Saved offline — waiting to sync
                           </span>
                         ) : (
-                          <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${inv.status === 'POSTED' ? 'bg-green-500/10 text-green-500 border-green-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>
-                            {inv.status}
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" title="Authoritatively synced and posted on server">
+                            <CheckCircle className="w-2.5 h-2.5" />
+                            Saved &amp; synced
                           </span>
                         )}
                       </div>
@@ -364,14 +405,39 @@ export default function SalesInvoiceList() {
                           )}
                         </td>
                         <td className="p-4 text-center">
-                          {inv.isOffline || inv.status === 'PENDING_SYNC' ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                          {inv.syncStatus === 'SYNC_FAILED' ? (
+                            <div className="flex items-center gap-1.5 justify-center">
+                              <span
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30"
+                                title={inv.errorMessage || "Action requires attention"}
+                              >
+                                <AlertTriangle className="w-3.5 h-3.5" />
+                                Sync failed — action requires attention
+                              </span>
+                              {inv.dexieId && (
+                                <button
+                                  type="button"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    await retryFailedVoucher(inv.dexieId);
+                                    fetchInvoices(page);
+                                  }}
+                                  className="p-1 hover:bg-rose-500/20 text-rose-400 rounded transition-colors cursor-pointer"
+                                  title="Retry sync now"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          ) : inv.syncStatus === 'OFFLINE_PENDING' || inv.isOffline || inv.status === 'PENDING_SYNC' ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30" title="Saved locally on this device. Will sync automatically when connected.">
                               <CloudOff className="w-3.5 h-3.5" />
-                              Pending Sync
+                              Saved offline — waiting to sync
                             </span>
                           ) : (
-                            <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${inv.status === 'POSTED' ? 'bg-green-500/10 text-green-500 border-green-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>
-                              {inv.status}
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" title="Authoritatively synced and posted on server">
+                              <CheckCircle className="w-3.5 h-3.5" />
+                              Saved &amp; synced
                             </span>
                           )}
                         </td>

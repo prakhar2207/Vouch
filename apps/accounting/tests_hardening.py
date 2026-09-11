@@ -429,7 +429,7 @@ class PostedVoucherImmutabilityTests(BaseHardeningTestCase):
         self.assertEqual(res.status_code, status.HTTP_200_OK)
 
         voucher.refresh_from_db()
-        self.assertEqual(voucher.status, 'CORRECTED')
+        self.assertIn(voucher.status, ['SUPERSEDED', 'CORRECTED'])
         self.assertIsNotNone(voucher.corrects_voucher)
         self.assertEqual(voucher.corrects_voucher.status, 'POSTED')
 

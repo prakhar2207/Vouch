@@ -47,6 +47,13 @@ class BankReconciliationService:
         is_money_in = bank_tx.credit_amount > Decimal('0.00')
         bank_ledger = bank_tx.bank_ledger
 
+        if bank_tx.status == 'RECONCILED':
+            v_num = bank_tx.matched_voucher.voucher_number if bank_tx.matched_voucher else 'unknown'
+            raise ValidationError(
+                f"Bank transaction '{bank_tx.description}' has already been reconciled into voucher #{v_num}. "
+                f"One bank transaction can produce only one accounting outcome."
+            )
+
         fy = InvoiceSequenceService.get_or_create_active_fy(company, bank_tx.transaction_date)
 
         if action_type == 'IGNORE':

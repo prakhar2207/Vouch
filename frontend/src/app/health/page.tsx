@@ -7,6 +7,7 @@ import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
+import { useCompany } from "@/context/CompanyContext";
 import {
   Activity,
   ShieldCheck,
@@ -101,9 +102,11 @@ export default function HealthPage() {
   const router = useRouter();
   const { toast } = useToast();
 
-  const [companyId, setCompanyId] = useState<string>("");
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const [companyId, setCompanyId] = useState<string>(activeCompanyId || "");
   const [report, setReport] = useState<HealthReport | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<"ALL" | "CRITICAL" | "WARNING" | "ACTIONABLE">("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -125,7 +128,14 @@ export default function HealthPage() {
       return;
     }
     initializeData();
-  }, [router]);
+  }, [router, activeCompanyId]);
+
+  useEffect(() => {
+    if (activeCompanyId && activeCompanyId !== companyId) {
+      setCompanyId(activeCompanyId);
+      fetchHealthReport(activeCompanyId);
+    }
+  }, [activeCompanyId]);
 
   const getHeaders = () => {
     const token = getAccessToken();
@@ -137,14 +147,22 @@ export default function HealthPage() {
 
   const initializeData = async () => {
     setLoading(true);
+    setError(null);
     try {
       const token = getAccessToken();
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const cid = compRes.data.data?.[0]?.id;
+      let cid = activeCompanyId;
+      if (!cid && typeof window !== "undefined") {
+        cid = localStorage.getItem("vouch_active_company_id");
+      }
       if (!cid) {
-        toast.error("No active company found", "Please create or select a company first.");
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
+        cid = list[0]?.id;
+      }
+      if (!cid) {
+        setError("No active company found. Please create or select a company first.");
         setLoading(false);
         return;
       }
@@ -152,7 +170,7 @@ export default function HealthPage() {
       await fetchHealthReport(cid);
     } catch (err: any) {
       console.error(err);
-      toast.error("Failed to initialize health audit", err.message || "Network error");
+      setError(err.message || "Failed to initialize health audit");
     } finally {
       setLoading(false);
     }
@@ -162,6 +180,7 @@ export default function HealthPage() {
     const targetCid = cid || companyId;
     if (!targetCid) return;
     setRefreshing(true);
+    setError(null);
     try {
       const token = getAccessToken();
       const headers = {
@@ -172,6 +191,7 @@ export default function HealthPage() {
       setReport(res.data);
     } catch (err: any) {
       console.error(err);
+      setError(err.response?.data?.error || err.message || "Could not complete accounting checks.");
       toast.error("Audit error", err.message || "Could not complete accounting checks.");
     } finally {
       setRefreshing(false);
@@ -271,16 +291,15 @@ export default function HealthPage() {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border/40 pb-5">
           <div>
             <div className="flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-primary/10 text-primary">
-                <Activity className="w-5 h-5" />
-              </div>
+              <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider bg-primary/10 text-primary border border-primary/20 rounded-md">
+                VOUCH CHECK
+              </span>
               <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                Bookkeeping Health & Integrity Assistant
+                Accounting Health & Integrity
               </h1>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              "Other accounting software helps you enter books. Vouch watches your books." Continuous mathematical &
-              double-entry integrity audits.
+              Vouch checked your books for things that may need attention. Continuous mathematical & double-entry integrity audits.
             </p>
           </div>
 
@@ -290,7 +309,7 @@ export default function HealthPage() {
               className="px-3.5 py-2 rounded-xl border border-border/60 bg-card hover:bg-muted text-foreground text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-2xs transition-all"
             >
               <Scale className="w-3.5 h-3.5 text-blue-400" />
-              <span>Why is my balance not matching?</span>
+              <span>Why don't my books match?</span>
             </button>
 
             <button
@@ -321,14 +340,14 @@ export default function HealthPage() {
                 />
                 <circle
                   className={
-                    (report?.health_score ?? 100) >= 90
+                    (report?.health_score ?? 0) >= 90
                       ? "text-emerald-500"
-                      : (report?.health_score ?? 100) >= 70
+                      : (report?.health_score ?? 0) >= 70
                       ? "text-amber-500"
                       : "text-rose-500"
                   }
                   strokeWidth="8"
-                  strokeDasharray={`${2.51 * (report?.health_score ?? 100)} 251`}
+                  strokeDasharray={`${2.51 * (report?.health_score ?? 0)} 251`}
                   strokeLinecap="round"
                   stroke="currentColor"
                   fill="transparent"
@@ -339,7 +358,7 @@ export default function HealthPage() {
               </svg>
               <div className="absolute flex flex-col items-center justify-center">
                 <span className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-foreground">
-                  {report ? report.health_score : "--"}%
+                  {report ? `${report.health_score}%` : "--"}
                 </span>
               </div>
             </div>
@@ -418,7 +437,7 @@ export default function HealthPage() {
                 Passed Checks
               </div>
               <div className="text-2xl font-black font-mono text-foreground">
-                {report?.metrics?.passed_checks ?? 11}/{report?.metrics?.total_checks ?? 11}
+                {report ? `${report.metrics?.passed_checks}/${report.metrics?.total_checks}` : "--"}
               </div>
               <div className="text-[10px] text-muted-foreground">Checks in equilibrium</div>
             </div>
@@ -577,7 +596,7 @@ export default function HealthPage() {
               </p>
             </div>
             <span className="text-xs font-mono font-bold text-muted-foreground">
-              {report?.checks?.filter((c) => c.status === "PASSED").length || 11}/11 Passing
+              {report?.checks ? `${report.checks.filter((c) => c.status === "PASSED").length}/${report.checks.length} Passing` : "--"}
             </span>
           </div>
 
@@ -695,10 +714,13 @@ export default function HealthPage() {
               <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
                 <CheckCircle2 className="w-6 h-6" />
               </div>
-              <h3 className="text-base font-bold text-foreground">Clean Books! No Findings Detected</h3>
+              <h3 className="text-base font-bold text-foreground">
+                {activeTab === "ALL" ? "All Checks In Balance!" : `No ${activeTab.toLowerCase()} findings detected`}
+              </h3>
               <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                All 11 accounting health checks passed with 100% mathematical integrity. Keep running your business with
-                confidence.
+                {activeTab === "ALL"
+                  ? "All deterministic accounting health checks passed with full double-entry mathematical integrity."
+                  : `There are currently no items flagged under ${activeTab.toLowerCase()}.`}
               </p>
             </div>
           ) : (

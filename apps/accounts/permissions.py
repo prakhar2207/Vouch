@@ -1,5 +1,42 @@
 from rest_framework.permissions import BasePermission
+from rest_framework.exceptions import PermissionDenied, NotFound
 from apps.companies.models import UserCompany
+
+def get_authorized_company(request, company_id=None):
+    """
+    Strict multi-tenant security barrier:
+    Resolves company from explicit argument, X-Company-ID header, request body, or query params.
+    Validates that request.user is authenticated and is a verified member of the target company
+    via UserCompany (or is a Django superuser).
+    Raises PermissionDenied (403) or NotFound (404) if unauthorized or nonexistent.
+    """
+    from apps.companies.models import Company, UserCompany
+
+    if not request.user or not request.user.is_authenticated:
+        raise PermissionDenied("Authentication credentials were not provided.")
+
+    target_id = company_id
+    if not target_id and hasattr(request, 'headers'):
+        target_id = request.headers.get('X-Company-ID')
+    if not target_id and hasattr(request, 'data') and isinstance(request.data, dict):
+        target_id = request.data.get('company_id')
+    if not target_id and hasattr(request, 'query_params'):
+        target_id = request.query_params.get('company_id')
+
+    if not target_id:
+        raise PermissionDenied("X-Company-ID header or company_id parameter is required.")
+
+    company = Company.objects.filter(id=target_id).first()
+    if not company:
+        raise NotFound(f"Company with ID '{target_id}' not found.")
+
+    if getattr(request.user, 'is_superuser', False):
+        return company
+
+    if not UserCompany.objects.filter(user=request.user, company=company).exists():
+        raise PermissionDenied("Access denied: You are not authorized to view or modify this company's books.")
+
+    return company
 
 def get_user_company_role(user, company):
     """
@@ -24,7 +61,15 @@ class BaseCompanyPermission(BasePermission):
     allowed_roles = ['OWNER', 'ADMIN', 'ACCOUNTANT', 'SALES', 'PURCHASE', 'VIEWER']
 
     def resolve_company(self, request, view):
-        # 1. From view kwargs
+        # 1. From X-Company-ID header
+        if hasattr(request, 'headers') and request.headers.get('X-Company-ID'):
+            from apps.companies.models import Company
+            try:
+                return Company.objects.get(id=request.headers.get('X-Company-ID'))
+            except Exception:
+                pass
+
+        # 2. From view kwargs
         company_id = view.kwargs.get('company_id') or view.kwargs.get('pk')
         if company_id:
             from apps.companies.models import Company
@@ -32,7 +77,7 @@ class BaseCompanyPermission(BasePermission):
                 return Company.objects.get(id=company_id)
             except Exception:
                 pass
-        # 2. From related IDs in view kwargs
+        # 3. From related IDs in view kwargs
         voucher_id = view.kwargs.get('voucher_id')
         if voucher_id:
             from apps.accounting.models import Voucher
@@ -52,7 +97,7 @@ class BaseCompanyPermission(BasePermission):
             if l:
                 return l.company
 
-        # 3. From request data or query params
+        # 4. From request data or query params
         if hasattr(request, 'data') and isinstance(request.data, dict):
             company_id = request.data.get('company_id')
             if company_id:

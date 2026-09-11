@@ -109,6 +109,8 @@ class LedgerListView(APIView):
                     "nature": l.group.nature if l.group else "ASSET",
                     "ledger_type": l.ledger_type,
                     "canonical_role": l.canonical_role,
+                    "balance_state": l.balance_state,
+                    "display_amount": float(l.display_amount),
                     "gstin": l.gstin or "",
                     "state_code": l.state_code or "",
                     "phone": l.phone or "",
@@ -136,8 +138,13 @@ class LedgerListView(APIView):
             
             name = str(data.get('name') or '').strip()
             gstin = str(data.get('gstin') or '').strip().upper()
-            group_name = str(data.get('group_name') or 'Sundry Creditors').strip()
             requested_type = str(data.get('ledger_type') or 'GENERAL').strip().upper()
+            group_name = str(data.get('group_name') or '').strip()
+            if not group_name:
+                if requested_type == 'CUSTOMER':
+                    group_name = 'Sundry Debtors'
+                else:
+                    group_name = 'Sundry Creditors'
             role_action = str(data.get('role_action') or '').strip().upper() # 'CREATE_SEPARATE', 'UPGRADE_TO_BOTH'
             
             if not name:
@@ -152,7 +159,19 @@ class LedgerListView(APIView):
 
             if existing:
                 existing_role = existing.canonical_role
-                requested_role = 'CUSTOMER' if requested_type == 'CUSTOMER' or 'debtor' in group_name.lower() else ('SUPPLIER' if requested_type == 'SUPPLIER' or 'creditor' in group_name.lower() else 'OTHER')
+                if requested_type == 'BOTH':
+                    requested_role = 'BOTH'
+                elif requested_type == 'CUSTOMER' or 'debtor' in group_name.lower():
+                    requested_role = 'CUSTOMER'
+                elif requested_type == 'SUPPLIER' or 'creditor' in group_name.lower():
+                    requested_role = 'SUPPLIER'
+                else:
+                    requested_role = 'OTHER'
+
+                if requested_type == 'BOTH' and existing_role != 'BOTH':
+                    existing.ledger_type = 'BOTH'
+                    existing.save(update_fields=['ledger_type'])
+                    existing_role = 'BOTH'
                 
                 # Check if role conflicts (e.g. existing is SUPPLIER, requested is CUSTOMER)
                 if requested_role in ['CUSTOMER', 'SUPPLIER'] and existing_role in ['CUSTOMER', 'SUPPLIER'] and existing_role != requested_role:
@@ -337,6 +356,8 @@ class LedgerListView(APIView):
                     "nature": ledger.group.nature if ledger.group else "ASSET",
                     "ledger_type": ledger.ledger_type,
                     "canonical_role": ledger.canonical_role,
+                    "balance_state": ledger.balance_state,
+                    "display_amount": float(ledger.display_amount),
                     "gstin": ledger.gstin or "",
                     "discount_percent": float(ledger.discount_percent or 0),
                     "credit_limit": float(ledger.credit_limit) if ledger.credit_limit else None,
@@ -369,6 +390,8 @@ class LedgerDetailView(APIView):
                 "nature": l.group.nature if l.group else "ASSET",
                 "ledger_type": l.ledger_type,
                 "canonical_role": l.canonical_role,
+                "balance_state": l.balance_state,
+                "display_amount": float(l.display_amount),
                 "gstin": l.gstin or "",
                 "state_code": l.state_code or "",
                 "phone": l.phone or "",
@@ -449,6 +472,8 @@ class LedgerDetailView(APIView):
                     "nature": ledger.group.nature if ledger.group else "ASSET",
                     "ledger_type": ledger.ledger_type,
                     "canonical_role": ledger.canonical_role,
+                    "balance_state": ledger.balance_state,
+                    "display_amount": float(ledger.display_amount),
                     "current_balance": float(ledger.current_balance or 0),
                     "opening_balance": float(ledger.opening_balance or 0),
                     "opening_balance_type": ledger.opening_balance_type,

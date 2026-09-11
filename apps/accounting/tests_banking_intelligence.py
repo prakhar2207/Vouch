@@ -184,7 +184,7 @@ class BankIntelligenceAndAccountingHealthTests(TestCase):
         self.assertEqual(BankTransaction.objects.filter(company=self.company).count(), 2)
 
     def test_05_duplicate_transaction_detection(self):
-        """Scenario 5: Uploading identical statement twice detects duplicates and marks as IGNORED."""
+        """Scenario 5: Uploading identical statement twice detects duplicates idempotently without creating duplicate DB records."""
         csv_data = (
             "Date,Particulars,Ref,Debit,Credit\n"
             "10/09/2026,Unique Deposit,DUPREF1,0.00,5000.00\n"
@@ -193,14 +193,16 @@ class BankIntelligenceAndAccountingHealthTests(TestCase):
         # First upload
         s1 = BankStatementService.parse_statement(self.company, self.bank_ledger, csv_data, "upload1.csv", self.user)
         self.assertEqual(s1['duplicates_detected'], 0)
+        self.assertEqual(s1['imported_count'], 1)
 
         # Second upload
         s2 = BankStatementService.parse_statement(self.company, self.bank_ledger, csv_data, "upload2.csv", self.user)
         self.assertEqual(s2['duplicates_detected'], 1)
+        self.assertEqual(s2['imported_count'], 0)
         txs = BankTransaction.objects.filter(reference_number="DUPREF1")
-        self.assertEqual(txs.count(), 2)
-        self.assertEqual(txs.order_by('created_at').last().status, 'IGNORED')
-        self.assertEqual(txs.order_by('created_at').first().status, 'UNRESOLVED')
+        # Strict idempotency: Database must NOT contain duplicate transaction records
+        self.assertEqual(txs.count(), 1)
+        self.assertEqual(txs.first().status, 'UNRESOLVED')
 
     # -------------------------------------------------------------
     # 2. Party Intelligence & Learned Mappings Tests

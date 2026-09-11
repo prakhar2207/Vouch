@@ -414,6 +414,7 @@ class BankTransaction(models.Model):
     description = models.TextField()
     normalized_narration = models.CharField(max_length=500, db_index=True)
     reference_number = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    fingerprint = models.CharField(max_length=64, null=True, blank=True, db_index=True)
     debit_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     credit_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     balance = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
@@ -436,6 +437,7 @@ class BankTransaction(models.Model):
             models.Index(fields=['company', 'status']),
             models.Index(fields=['company', 'reference_number']),
             models.Index(fields=['company', 'bank_ledger']),
+            models.Index(fields=['company', 'fingerprint']),
         ]
 
     def __str__(self):

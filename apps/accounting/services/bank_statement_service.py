@@ -3,9 +3,11 @@ import re
 import csv
 import uuid
 import datetime
+import hashlib
 from decimal import Decimal
 from typing import List, Dict, Any, Tuple, Optional
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from apps.accounting.models import BankStatementImport, BankTransaction
@@ -100,6 +102,15 @@ class BankStatementService:
         if rrn_match:
             return rrn_match.group(1)
         return None
+
+    @classmethod
+    def compute_transaction_fingerprint(cls, company_id: Any, bank_ledger_id: Any, tx_date: Any, debit: Decimal, credit: Decimal, identifier: str) -> str:
+        """
+        Deterministic SHA-256 fingerprint ensuring strict bank transaction idempotency.
+        Combines company, account, date, debit, credit, and reference/cleaned narration.
+        """
+        raw_key = f"{company_id}:{bank_ledger_id}:{tx_date}:{debit:.2f}:{credit:.2f}:{(identifier or '').strip().upper()}"
+        return hashlib.sha256(raw_key.encode('utf-8')).hexdigest()
 
     @classmethod
     def detect_columns(cls, header_row: List[str]) -> Dict[str, int]:
@@ -249,9 +260,10 @@ class BankStatementService:
     def parse_excel(cls, file_content: bytes) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Parses XLSX/XLS statement using openpyxl."""
         import openpyxl
-        wb = openpyxl.load_workbook(filename=io.BytesIO(file_content), data_only=True)
+        wb = openpyxl.load_workbook(filename=io.BytesIO(file_content), read_only=True, data_only=True)
         sheet = wb.active
         rows = list(sheet.iter_rows(values_only=True))
+        wb.close()
         if not rows:
             return [], []
 
@@ -465,22 +477,23 @@ class BankStatementService:
                 cred_amt = row.get('credit', Decimal('0.00'))
                 tx_date = row.get('date')
 
-                is_duplicate = False
+                # Compute deterministic fingerprint
+                primary_id = ref_no if ref_no else norm_desc
+                fprint = cls.compute_transaction_fingerprint(company.id, bank_ledger.id, tx_date, deb_amt, cred_amt, primary_id)
+
+                # Check if this transaction already exists
                 dup_qs = BankTransaction.objects.filter(
                     company=company,
-                    bank_ledger=bank_ledger,
-                    transaction_date=tx_date,
-                    debit_amount=deb_amt,
-                    credit_amount=cred_amt
+                    bank_ledger=bank_ledger
+                ).filter(
+                    Q(fingerprint=fprint) |
+                    (Q(transaction_date=tx_date, debit_amount=deb_amt, credit_amount=cred_amt) & (Q(reference_number=ref_no) if ref_no else Q(normalized_narration=norm_desc)))
                 )
-                if ref_no:
-                    dup_qs = dup_qs.filter(reference_number=ref_no)
-                else:
-                    dup_qs = dup_qs.filter(normalized_narration=norm_desc)
 
                 if dup_qs.exists():
-                    is_duplicate = True
                     duplicate_count += 1
+                    # Invariant: Never create duplicate records for already imported transactions
+                    continue
 
                 # Multi-signal matching
                 match_res = PartyIntelligenceService.match_transaction(
@@ -493,9 +506,7 @@ class BankStatementService:
                 )
 
                 initial_status = 'UNRESOLVED'
-                if is_duplicate:
-                    initial_status = 'IGNORED'
-                elif match_res['confidence'] >= 0.95:
+                if match_res['confidence'] >= 0.95:
                     initial_status = 'MATCHED_AUTO'
                     auto_matched_count += 1
                 elif match_res['confidence'] >= 0.75:
@@ -511,6 +522,7 @@ class BankStatementService:
                     description=raw_desc,
                     normalized_narration=norm_desc,
                     reference_number=ref_no,
+                    fingerprint=fprint,
                     debit_amount=deb_amt,
                     credit_amount=cred_amt,
                     balance=row.get('balance'),
@@ -522,26 +534,28 @@ class BankStatementService:
                     matched_invoice=match_res.get('matched_invoice'),
                     match_confidence=match_res.get('confidence', 0.0),
                     match_notes={
-                        "is_duplicate": is_duplicate,
+                        "is_duplicate": False,
                         "signals": match_res.get('signals', []),
                         "suggested_matches": match_res.get('suggested_matches', [])
                     }
                 )
                 created_transactions.append(tx)
 
-        unresolved_count = len(created_transactions) - duplicate_count - auto_matched_count - suggested_count
+            unresolved_count = len(created_transactions) - auto_matched_count - suggested_count
 
-        return {
-            "import_id": str(import_record.id),
-            "source_file": filename,
-            "file_format": file_format,
-            "status": status,
-            "total_detected": total_detected,
-            "successful_rows": len(valid_rows),
-            "auto_matched": auto_matched_count,
-            "suggested": suggested_count,
-            "unresolved_rows": max(0, unresolved_count),
-            "failed_rows": len(errors),
-            "duplicates_detected": duplicate_count,
-            "errors": errors[:10]
-        }
+            return {
+                "import_id": str(import_record.id),
+                "source_file": filename,
+                "file_format": file_format,
+                "status": status,
+                "total_detected": total_detected,
+                "successful_rows": len(valid_rows),
+                "imported_count": len(created_transactions),
+                "auto_matched_count": auto_matched_count,
+                "suggested_count": suggested_count,
+                "needs_review_count": suggested_count + max(0, unresolved_count),
+                "unresolved_rows": max(0, unresolved_count),
+                "failed_rows": len(errors),
+                "duplicates_detected": duplicate_count,
+                "errors": errors[:10]
+            }

@@ -8,6 +8,7 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 import { useToast } from '@/context/ToastContext';
+import { useCompany } from '@/context/CompanyContext';
 import { 
   Search, 
   Trash2, 
@@ -29,7 +30,8 @@ export default function PartiesPage() {
   const [parties, setParties] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [companyId, setCompanyId] = useState('');
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const [companyId, setCompanyId] = useState(activeCompanyId || '');
 
   // Filtering: 'ALL' | 'SUPPLIER' | 'CUSTOMER'
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'SUPPLIER' | 'CUSTOMER'>('ALL');
@@ -47,7 +49,13 @@ export default function PartiesPage() {
       return;
     }
     fetchParties();
-  }, [router]);
+  }, [router, activeCompanyId]);
+
+  useEffect(() => {
+    if (activeCompanyId && activeCompanyId !== companyId) {
+      setCompanyId(activeCompanyId);
+    }
+  }, [activeCompanyId]);
 
   const fetchParties = async () => {
     setLoading(true);
@@ -55,8 +63,15 @@ export default function PartiesPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const cid = compRes.data.data[0]?.id;
+      let cid = activeCompanyId;
+      if (!cid && typeof window !== 'undefined') {
+        cid = localStorage.getItem('vouch_active_company_id');
+      }
+      if (!cid) {
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+        const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
+        cid = list[0]?.id;
+      }
       if (!cid) return;
       setCompanyId(cid);
 
@@ -70,11 +85,11 @@ export default function PartiesPage() {
         l.ledger_type === 'CUSTOMER' ||
         l.ledger_type === 'SUPPLIER' ||
         l.ledger_type === 'BOTH' ||
-        l.group.includes('Debtor') || 
-        l.group.includes('Creditor')
+        (l.group && l.group.includes('Debtor')) || 
+        (l.group && l.group.includes('Creditor'))
       ).map((l: any) => {
-        const isCust = l.canonical_role === 'CUSTOMER' || l.ledger_type === 'CUSTOMER' || l.group.includes('Debtor');
-        const isSupp = l.canonical_role === 'SUPPLIER' || l.ledger_type === 'SUPPLIER' || l.group.includes('Creditor');
+        const isCust = l.canonical_role === 'CUSTOMER' || l.ledger_type === 'CUSTOMER' || (l.group && l.group.includes('Debtor'));
+        const isSupp = l.canonical_role === 'SUPPLIER' || l.ledger_type === 'SUPPLIER' || (l.group && l.group.includes('Creditor'));
         const isBoth = l.canonical_role === 'BOTH' || l.ledger_type === 'BOTH' || (isCust && isSupp);
         return {
           ...l,
@@ -132,8 +147,8 @@ export default function PartiesPage() {
 
   // Counts for tabs
   const counts = useMemo(() => {
-    const suppliers = parties.filter(p => p.type === 'Supplier').length;
-    const customers = parties.filter(p => p.type === 'Customer').length;
+    const suppliers = parties.filter(p => p.role === 'SUPPLIER' || p.role === 'BOTH').length;
+    const customers = parties.filter(p => p.role === 'CUSTOMER' || p.role === 'BOTH').length;
     return { all: parties.length, suppliers, customers };
   }, [parties]);
 
@@ -141,8 +156,8 @@ export default function PartiesPage() {
   const filteredParties = useMemo(() => {
     return parties.filter(p => {
       // 1. Filter tab
-      if (activeFilter === 'SUPPLIER' && p.type !== 'Supplier') return false;
-      if (activeFilter === 'CUSTOMER' && p.type !== 'Customer') return false;
+      if (activeFilter === 'SUPPLIER' && p.role !== 'SUPPLIER' && p.role !== 'BOTH') return false;
+      if (activeFilter === 'CUSTOMER' && p.role !== 'CUSTOMER' && p.role !== 'BOTH') return false;
 
       // 2. Search query
       if (searchTerm.trim()) {
@@ -499,8 +514,10 @@ export default function PartiesPage() {
                   {/* Card Details */}
                   <div className="space-y-2.5 flex-1 text-xs">
                     <div className="flex justify-between items-center text-muted-foreground">
-                      <span>Ledger Group</span>
-                      <span className="text-foreground font-medium font-mono">{party.group}</span>
+                      <span>Business Role</span>
+                      <span className="text-foreground font-semibold">
+                        {party.role === 'BOTH' ? 'Customer & Supplier' : party.role === 'CUSTOMER' ? 'Customer' : 'Supplier'}
+                      </span>
                     </div>
 
                     {party.phone && (
@@ -514,22 +531,40 @@ export default function PartiesPage() {
                       <span className="text-muted-foreground text-xs font-medium">Balance</span>
                       <div className="text-right">
                         <span className={`font-bold text-base font-mono tabular-nums ${
-                          hasZeroBalance 
+                          (party.balance_state === 'SETTLED' || hasZeroBalance)
                             ? 'text-muted-foreground' 
-                            : (isCustomer && balanceNum > 0) || (!isCustomer && balanceNum < 0)
+                            : (party.balance_state === 'TO_COLLECT' || party.balance_state === 'ADVANCE_PAID' || (isCustomer && balanceNum > 0) || (!isCustomer && balanceNum < 0))
                             ? 'text-emerald-400' 
                             : 'text-rose-400'
                         }`}>
-                          ₹{Math.abs(balanceNum).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          ₹{Math.abs(party.display_amount ?? balanceNum).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </span>
                         <span className={`text-xs ml-1.5 font-bold px-2 py-0.5 rounded-full ${
-                          hasZeroBalance
+                          (party.balance_state === 'SETTLED' || hasZeroBalance)
                             ? 'text-muted-foreground bg-muted/60'
+                            : party.balance_state === 'TO_COLLECT'
+                            ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                            : party.balance_state === 'TO_PAY'
+                            ? 'text-rose-400 bg-rose-500/10 border border-rose-500/20'
+                            : party.balance_state === 'ADVANCE_RECEIVED'
+                            ? 'text-blue-400 bg-blue-500/10 border border-blue-500/20'
+                            : party.balance_state === 'ADVANCE_PAID'
+                            ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
                             : isCustomer
                             ? (balanceNum > 0 ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20' : 'text-blue-400 bg-blue-500/10 border border-blue-500/20')
                             : (balanceNum > 0 ? 'text-rose-400 bg-rose-500/10 border border-rose-500/20' : 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20')
                         }`}>
-                          {hasZeroBalance 
+                          {party.balance_state === 'SETTLED'
+                            ? 'Settled'
+                            : party.balance_state === 'TO_COLLECT'
+                            ? 'To Collect'
+                            : party.balance_state === 'TO_PAY'
+                            ? 'To Pay'
+                            : party.balance_state === 'ADVANCE_RECEIVED'
+                            ? 'Advance'
+                            : party.balance_state === 'ADVANCE_PAID'
+                            ? 'Advance Paid'
+                            : hasZeroBalance 
                             ? 'Settled' 
                             : isCustomer 
                             ? (balanceNum > 0 ? 'To Collect' : 'Advance') 

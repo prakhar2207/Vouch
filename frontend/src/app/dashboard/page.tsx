@@ -16,6 +16,7 @@ import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useShortcuts } from "@/context/ShortcutContext";
+import { useCompany } from "@/context/CompanyContext";
 import {
   Plus,
   Sparkles,
@@ -47,6 +48,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
+
   useEffect(() => {
     if (!isAuthenticated()) {
       router.push("/login");
@@ -58,15 +61,21 @@ export default function Dashboard() {
         const token = getAccessToken();
         const headers = { Authorization: `Bearer ${token}` };
 
-        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-        const companies = compRes.data.data || [];
-        if (companies.length === 0) {
-          setError("No companies found. Please create a company first.");
-          setLoading(false);
-          return;
+        let cid = activeCompanyId;
+        if (!cid && typeof window !== "undefined") {
+          cid = localStorage.getItem("vouch_active_company_id");
+        }
+        if (!cid) {
+          const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+          const companies = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
+          if (companies.length === 0) {
+            setError("No companies found. Please create a company first.");
+            setLoading(false);
+            return;
+          }
+          cid = companies[0].id;
         }
 
-        const cid = companies[0].id;
         const companyHeaders = { ...headers, "X-Company-ID": cid };
 
         const [insightsRes, vouchersRes, forecastRes, healthRes] = await Promise.all([

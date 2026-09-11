@@ -13,6 +13,7 @@ from apps.inventory.models import Product
 from apps.accounting.models import Voucher, VoucherItem, LedgerEntry, FinancialYear, OfflineCommand
 from apps.common.tenant import get_company_product, get_company_ledger
 from apps.common.money import to_decimal, quantize_money
+from apps.accounts.permissions import get_authorized_company
 
 class SyncPullAPIView(APIView):
     """
@@ -23,21 +24,15 @@ class SyncPullAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        company_id = request.data.get('company_id')
+        company = get_authorized_company(request, request.data.get('company_id'))
         last_pulled_at = request.data.get('last_pulled_at')
-
-        if not company_id:
-            return Response({'error': 'company_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            company = Company.objects.get(id=company_id, users__user=request.user, is_active=True)
-        except Company.DoesNotExist:
-            return Response({'error': 'Company not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
 
         since_dt = None
         if last_pulled_at:
             try:
-                since_dt = datetime.datetime.fromtimestamp(float(last_pulled_at) / 1000.0, tz=datetime.timezone.utc)
+                raw_dt = datetime.datetime.fromtimestamp(float(last_pulled_at) / 1000.0, tz=datetime.timezone.utc)
+                # 5-second buffer against client-server clock skew
+                since_dt = raw_dt - datetime.timedelta(seconds=5)
             except Exception:
                 since_dt = None
 
@@ -169,10 +164,7 @@ class SyncPushAPIView(APIView):
         if not company_id:
             return Response({'error': 'company_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            company = Company.objects.get(id=company_id, users__user=request.user, is_active=True)
-        except Company.DoesNotExist:
-            return Response({'error': 'Company not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+        company = get_authorized_company(request, company_id)
 
         # Normalize incoming payload: support explicit commands array or legacy changes payload
         raw_items = []

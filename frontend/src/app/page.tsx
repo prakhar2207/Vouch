@@ -122,7 +122,7 @@ export default function LandingPage() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="max-w-2xl mx-auto text-base sm:text-lg text-muted-foreground text-balance leading-relaxed"
           >
-            The modern double-entry ERP built for fast-moving businesses. Zero data entry with AI bill scanning, instant GST compliance, and 100% keyboard-first navigation.
+            The modern double-entry ERP built for fast-moving businesses. Zero data entry with AI bill scanning, instant GST compliance, and keyboard-first navigation.
           </motion.p>
 
           {/* CTAs */}
@@ -287,7 +287,12 @@ export default function LandingPage() {
                 <div className="space-y-4">
                   <div className="flex justify-between items-start border-b border-border pb-3">
                     <div>
-                      <div className="text-xs font-bold text-foreground font-mono">TAX INVOICE</div>
+                      <div className="text-xs font-bold text-foreground font-mono flex items-center gap-1.5">
+                        <span>TAX INVOICE</span>
+                        <span className="text-[10px] font-sans font-semibold px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border/60">
+                          Demo Invoice
+                        </span>
+                      </div>
                       <div className="text-[11px] text-gray-600 dark:text-gray-400">Apex Industrial Supplies Pvt Ltd</div>
                     </div>
                     <div className="text-right">
@@ -339,7 +344,7 @@ export default function LandingPage() {
                       <span className="text-xs font-bold text-foreground">AI OCR Extracted Data</span>
                     </div>
                     <span className="px-2 py-0.5 bg-green-500/10 text-green-400 rounded text-[10px] font-bold border border-green-500/20">
-                      100% Match
+                      High-confidence matching
                     </span>
                   </div>
 

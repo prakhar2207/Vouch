@@ -23,6 +23,21 @@ export async function queueOfflineVoucher(voucherType: string, payload: any, vou
 export async function executeClientOutboxSync() {
   if (typeof window === "undefined" || !navigator.onLine) return;
 
+  // Reset any orphaned SYNCING items back to PENDING if previous sync was interrupted
+  try {
+    const orphaned = await offlineDb.vouchers
+      .where("status")
+      .equals("SYNCING")
+      .toArray();
+    for (const orphan of orphaned) {
+      if (orphan.id) {
+        await offlineDb.vouchers.update(orphan.id, { status: "PENDING" });
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to reset orphaned syncing vouchers:", e);
+  }
+
   const pending = await offlineDb.vouchers
     .where("status")
     .equals("PENDING")
@@ -52,16 +67,17 @@ export async function executeClientOutboxSync() {
         ]
       };
 
-      const response = await fetch(`${API_BASE_URL}/api/v1/accounting/sync/push/`, {
+      const response = await fetch(`${API_BASE_URL}/api/v1/sync/push/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
+          "X-Company-ID": companyId || "",
         },
         body: JSON.stringify(pushPayload),
       });
 
-      const resData = await response.json();
+      const resData = await response.json().catch(() => ({}));
 
       if (response.ok && (resData.success || resData.processed_count > 0)) {
         const cmdResult = resData.results?.[0];
@@ -71,7 +87,7 @@ export async function executeClientOutboxSync() {
           syncedAt: Date.now(),
         });
       } else {
-        const errMsg = resData.errors?.[0]?.error || (typeof resData === "string" ? resData : JSON.stringify(resData));
+        const errMsg = resData.errors?.[0]?.error || resData.error || (typeof resData === "string" ? resData : "Server rejected command");
         await offlineDb.vouchers.update(item.id!, {
           status: "FAILED",
           errorMessage: errMsg,
@@ -79,13 +95,19 @@ export async function executeClientOutboxSync() {
         });
       }
     } catch (err: any) {
+      const isOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
       await offlineDb.vouchers.update(item.id!, {
-        status: "PENDING",
+        status: isOnline ? "FAILED" : "PENDING",
         errorMessage: err?.message || "Network error during sync",
         retryCount: (item.retryCount || 0) + 1,
       });
     }
   }
+}
+
+export async function retryFailedVoucher(id: number) {
+  await offlineDb.vouchers.update(id, { status: "PENDING", errorMessage: undefined });
+  await triggerOutboxSync();
 }
 
 export async function triggerOutboxSync() {
@@ -110,5 +132,10 @@ export async function triggerOutboxSync() {
 if (typeof window !== "undefined") {
   window.addEventListener("online", () => {
     triggerOutboxSync();
+  });
+  window.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      triggerOutboxSync();
+    }
   });
 }

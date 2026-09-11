@@ -36,11 +36,23 @@ import apps.accounting.period_views
 import apps.accounting.sync_views
 
 def root_health_view(request):
+    import os
+    commit_sha = os.environ.get('RENDER_GIT_COMMIT') or os.environ.get('GIT_COMMIT') or os.environ.get('VERCEL_GIT_COMMIT_SHA')
+    if not commit_sha:
+        try:
+            import subprocess
+            commit_sha = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], stderr=subprocess.DEVNULL).decode('ascii').strip()
+        except Exception:
+            commit_sha = "dfec534"
+    else:
+        commit_sha = commit_sha[:7]
+
     return JsonResponse({
         "status": "healthy",
         "service": "Vouch ERP Backend API",
-        "version": "1.0.1",
-        "commit": "dfec534",
+        "version": "1.0.2",
+        "commit": commit_sha,
+        "environment": "production" if not settings.DEBUG else "development",
         "endpoints": {
             "auth": "/api/v1/auth/",
             "companies": "/api/v1/companies/",

@@ -3,12 +3,9 @@ import { defaultCache } from "@serwist/next/worker";
 import type { PrecacheEntry } from "@serwist/precaching";
 import { installSerwist } from "@serwist/sw";
 import {
-  BackgroundSyncPlugin,
   CacheFirst,
   ExpirationPlugin,
   NetworkFirst,
-  NetworkOnly,
-  StaleWhileRevalidate,
   type RuntimeCaching,
 } from "serwist";
 
@@ -19,11 +16,6 @@ declare global {
 }
 
 declare const self: ServiceWorkerGlobalScope;
-
-// Background Sync Plugin for queued voucher mutations
-const bgSyncPlugin = new BackgroundSyncPlugin("vouch-outbox-sync", {
-  maxRetentionTime: 24 * 60, // Retry for max of 24 Hours (in minutes)
-});
 
 // Fallback plugin for navigation requests when offline
 const documentFallbackPlugin = {
@@ -36,11 +28,26 @@ const documentFallbackPlugin = {
   },
 };
 
+// Filter defaultCache so catch-all matchers do NOT intercept backend API or cross-origin calls
+const safeDefaultCache = defaultCache.filter((entry) => {
+  if (entry.matcher instanceof RegExp && entry.matcher.toString() === "/.*/i") {
+    return false;
+  }
+  return true;
+});
+
 // Accounting custom runtime caching strategies
+// RULE: Service Worker must NEVER intercept, cache, or modify authenticated accounting API requests
+// (e.g., /api/v1/companies/, /api/v1/sync/, onrender.com backend, etc.)
+// All offline financial data is managed authoritatively via IndexedDB (Dexie).
 const accountingCustomCaching: RuntimeCaching[] = [
   // 0. Navigation / Documents (NetworkFirst with 3s timeout and offline fallback)
   {
-    matcher: ({ request }: any) => request.mode === "navigate" || request.destination === "document",
+    matcher: ({ request, url }: any) => {
+      // Never intercept API calls or backend endpoints
+      if (url.pathname.startsWith("/api/")) return false;
+      return request.mode === "navigate" || request.destination === "document";
+    },
     handler: new NetworkFirst({
       cacheName: "vouch-pages-cache",
       networkTimeoutSeconds: 3,
@@ -79,30 +86,6 @@ const accountingCustomCaching: RuntimeCaching[] = [
       ],
     }),
   },
-
-  // 2. Masters Data Routes (StaleWhileRevalidate)
-  // Covers master sync, ledgers list, companies profile, and product inventory catalog
-  {
-    matcher: /\/api\/(?:v1\/)?(?:sync\/masters|ledgers|companies|inventory)(?:\/.*)?$/i,
-    handler: new StaleWhileRevalidate({
-      cacheName: "vouch-masters-cache",
-      plugins: [
-        new ExpirationPlugin({
-          maxEntries: 50,
-          maxAgeSeconds: 7 * 24 * 60 * 60, // 7 days
-        }),
-      ],
-    }),
-  },
-
-  // 3. Voucher Mutation Routes (NetworkOnly with Background Sync outbox fallback)
-  {
-    matcher: /\/api\/(?:v1\/)?(?:vouchers\/sync|attachments\/upload|vouchers\/?)$/i,
-    method: "POST",
-    handler: new NetworkOnly({
-      plugins: [bgSyncPlugin],
-    }),
-  },
 ];
 
 installSerwist({
@@ -110,7 +93,7 @@ installSerwist({
   skipWaiting: true,
   clientsClaim: true,
   navigationPreload: false,
-  runtimeCaching: [...accountingCustomCaching, ...defaultCache],
+  runtimeCaching: [...accountingCustomCaching, ...safeDefaultCache],
   fallbacks: {
     entries: [
       {
@@ -121,6 +104,19 @@ installSerwist({
       } as any,
     ],
   },
+});
+
+// Cache cleanup: Wipe obsolete vouch-masters-cache from any existing clients
+self.addEventListener("activate", (event: any) => {
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames
+          .filter((cacheName) => cacheName.includes("vouch-masters-cache"))
+          .map((cacheName) => caches.delete(cacheName))
+      );
+    })
+  );
 });
 
 // Service Worker Background Sync Event Listener

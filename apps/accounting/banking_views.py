@@ -11,6 +11,7 @@ from apps.ledgers.models import Ledger
 from apps.accounting.models import BankStatementImport, BankTransaction, PartyMapping
 from apps.accounting.services.bank_statement_service import BankStatementService
 from apps.accounting.services.bank_reconciliation_service import BankReconciliationService
+from apps.accounts.permissions import get_authorized_company
 
 class BankStatementUploadAPIView(APIView):
     permission_classes = [IsAuthenticated]
@@ -20,10 +21,7 @@ class BankStatementUploadAPIView(APIView):
         Uploads and parses a bank statement (CSV, XLSX, XLS, PDF, Image).
         Accepts multipart/form-data 'file' or JSON 'file_base64' + 'filename'.
         """
-        company_id = request.headers.get('X-Company-ID') or request.data.get('company_id')
-        if not company_id:
-            return Response({"error": "X-Company-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
-        company = get_object_or_404(Company, id=company_id)
+        company = get_authorized_company(request)
 
         bank_ledger_id = request.data.get('bank_ledger_id')
         if not bank_ledger_id:
@@ -58,17 +56,14 @@ class BankStatementUploadAPIView(APIView):
         except ValidationError as e:
             return Response({"error": str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": f"Statement parsing failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": f"Statement parsing failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class BankTransactionListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        company_id = request.headers.get('X-Company-ID') or request.query_params.get('company_id')
-        if not company_id:
-            return Response({"error": "X-Company-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
-        company = get_object_or_404(Company, id=company_id)
+        company = get_authorized_company(request)
 
         qs = BankTransaction.objects.filter(company=company).select_related('bank_ledger', 'matched_party', 'matched_voucher')
 
@@ -146,11 +141,7 @@ class BankTransactionResolveAPIView(APIView):
         Executes an action to reconcile/resolve a bank transaction.
         Action types: MATCH_PARTY, RECORD_PAYMENT, RECORD_EXPENSE, RECORD_TRANSFER, OWNER_DRAWING, IGNORE.
         """
-        company_id = request.headers.get('X-Company-ID') or request.data.get('company_id')
-        if not company_id:
-            return Response({"error": "X-Company-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
-        company = get_object_or_404(Company, id=company_id)
-
+        company = get_authorized_company(request)
         tx = get_object_or_404(BankTransaction, id=pk, company=company)
         action = request.data.get('action')
         payload = request.data.get('payload', {})
@@ -176,10 +167,7 @@ class PartyMappingListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        company_id = request.headers.get('X-Company-ID') or request.query_params.get('company_id')
-        if not company_id:
-            return Response({"error": "X-Company-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
-        company = get_object_or_404(Company, id=company_id)
+        company = get_authorized_company(request)
 
         mappings = PartyMapping.objects.filter(company=company).select_related('party').order_by('-usage_count', '-last_used')
         data = [
@@ -202,8 +190,7 @@ class PartyMappingListAPIView(APIView):
         return Response(data, status=status.HTTP_200_OK)
 
     def delete(self, request, pk, *args, **kwargs):
-        company_id = request.headers.get('X-Company-ID') or request.query_params.get('company_id')
-        company = get_object_or_404(Company, id=company_id)
+        company = get_authorized_company(request)
         mapping = get_object_or_404(PartyMapping, id=pk, company=company)
         mapping.delete()
         return Response({"status": "SUCCESS", "message": "Learned mapping deleted."}, status=status.HTTP_200_OK)
@@ -213,10 +200,7 @@ class BankSummaryAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        company_id = request.headers.get('X-Company-ID') or request.query_params.get('company_id')
-        if not company_id:
-            return Response({"error": "X-Company-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
-        company = get_object_or_404(Company, id=company_id)
+        company = get_authorized_company(request)
 
         bank_ledger_id = request.query_params.get('bank_ledger_id')
         summary = BankReconciliationService.get_reconciliation_summary(company, bank_ledger_id)

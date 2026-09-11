@@ -187,21 +187,29 @@ from corsheaders.defaults import default_headers, default_methods
 # Cross-Origin Resource Sharing (CORS) & CSRF
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = env.bool('CORS_ALLOW_ALL_ORIGINS', default=True)
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^https://.*\.vercel\.app$",
+        r"^https://.*\.onrender\.com$",
+        r"^http://localhost:[0-9]+$",
+        r"^http://127\.0\.0\.1:[0-9]+$",
+    ]
 else:
     CORS_ALLOW_ALL_ORIGINS = env.bool('CORS_ALLOW_ALL_ORIGINS', default=False)
+    CORS_ALLOWED_ORIGIN_REGEXES = []
 
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
+
+# Parse and normalize CORS origins (strip whitespace and trailing slashes)
+_raw_cors_origins = env.list('CORS_ALLOWED_ORIGINS', default=[
     'https://vouch-pi-one.vercel.app',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
 ])
-CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^https://.*\.vercel\.app$",
-    r"^https://.*\.onrender\.com$",
-    r"^http://localhost:[0-9]+$",
-    r"^http://127\.0\.0\.1:[0-9]+$",
-]
+CORS_ALLOWED_ORIGINS = [o.strip().rstrip('/') for o in _raw_cors_origins if o.strip()]
+# Guarantee the primary production Vercel origin is always authorized
+if 'https://vouch-pi-one.vercel.app' not in CORS_ALLOWED_ORIGINS:
+    CORS_ALLOWED_ORIGINS.append('https://vouch-pi-one.vercel.app')
+
 CORS_ALLOW_METHODS = list(default_methods)
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'x-company-id',

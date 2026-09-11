@@ -8,6 +8,7 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { usePeriod } from '@/context/PeriodContext';
 import { useToast } from '@/context/ToastContext';
+import { useCompany } from '@/context/CompanyContext';
 import {
   Printer,
   Download,
@@ -50,7 +51,8 @@ export default function TrialBalancePage() {
   const { toast } = useToast();
   const { fromDate, toDate, displayPeriod, setIsPeriodModalOpen } = usePeriod();
 
-  const [company, setCompany] = useState<any>(null);
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const [company, setCompany] = useState<any>(activeCompany || null);
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<TrialBalanceRow[]>([]);
   const [totals, setTotals] = useState<TrialBalanceTotals | null>(null);
@@ -63,7 +65,13 @@ export default function TrialBalancePage() {
       return;
     }
     loadData();
-  }, [fromDate, toDate, router]);
+  }, [fromDate, toDate, router, activeCompanyId]);
+
+  useEffect(() => {
+    if (activeCompany) {
+      setCompany(activeCompany);
+    }
+  }, [activeCompany]);
 
   const loadData = async () => {
     setLoading(true);
@@ -71,10 +79,17 @@ export default function TrialBalancePage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
 
-      let activeComp = company;
-      if (!activeComp) {
+      let activeComp = activeCompany || company;
+      if (!activeComp?.id && typeof window !== 'undefined') {
+        const savedId = localStorage.getItem('vouch_active_company_id');
+        if (savedId) {
+          activeComp = { id: savedId };
+        }
+      }
+      if (!activeComp?.id) {
         const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-        activeComp = compRes.data?.data?.[0];
+        const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+        activeComp = list[0];
         setCompany(activeComp);
       }
 

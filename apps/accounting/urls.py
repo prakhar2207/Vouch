@@ -60,5 +60,9 @@ urlpatterns = [
     path('health/diagnose-balance/', apps.accounting.health_views.DiagnoseBalanceAPIView.as_view(), name='diagnose_balance'),
     path('health/findings/<uuid:pk>/preview/', apps.accounting.health_views.FindingFixPreviewAPIView.as_view(), name='finding_fix_preview'),
     path('health/findings/<uuid:pk>/fix/', apps.accounting.health_views.FindingFixExecuteAPIView.as_view(), name='finding_fix_execute'),
+
+    # Offline-First Batch Sync (Accounting Namespace)
+    path('sync/pull/', apps.accounting.sync_views.SyncPullAPIView.as_view(), name='accounting_sync_pull'),
+    path('sync/push/', apps.accounting.sync_views.SyncPushAPIView.as_view(), name='accounting_sync_push'),
 ]
 

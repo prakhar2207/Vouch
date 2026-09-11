@@ -9,6 +9,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { Boxes, Tag, Layers, TrendingUp, Plus } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
 import { offlineDb } from '@/lib/db/offlineDb';
+import { useCompany } from '@/context/CompanyContext';
 
 export default function InventoryPage() {
   const router = useRouter();
@@ -16,7 +17,8 @@ export default function InventoryPage() {
   const [categories, setCategories] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [companyId, setCompanyId] = useState('');
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const [companyId, setCompanyId] = useState(activeCompanyId || '');
 
   const [editingCategory, setEditingCategory] = useState<any>(null);
   const [deletingCategory, setDeletingCategory] = useState<any>(null);
@@ -27,7 +29,13 @@ export default function InventoryPage() {
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
     fetchCategories();
-  }, [router]);
+  }, [router, activeCompanyId]);
+
+  useEffect(() => {
+    if (activeCompanyId && activeCompanyId !== companyId) {
+      setCompanyId(activeCompanyId);
+    }
+  }, [activeCompanyId]);
 
   const fetchCategories = async () => {
     setLoading(true);
@@ -50,12 +58,19 @@ export default function InventoryPage() {
 
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const comp = compRes.data.data[0];
-      const cid = comp?.id;
+      
+      let cid = activeCompanyId;
+      if (!cid && typeof window !== 'undefined') {
+        cid = localStorage.getItem('vouch_active_company_id');
+      }
+      if (!cid) {
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+        const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
+        cid = list[0]?.id;
+      }
       if (!cid) return;
       setCompanyId(cid);
-      offlineDb.masters.put({ key: 'company', data: comp, updatedAt: Date.now() }).catch(() => {});
+      offlineDb.masters.put({ key: 'company', data: activeCompany || { id: cid }, updatedAt: Date.now() }).catch(() => {});
 
       const res = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cid}/`, { headers });
       const catList = res.data.data || [];

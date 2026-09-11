@@ -7,6 +7,7 @@ import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
+import { useCompany } from "@/context/CompanyContext";
 import {
   Landmark,
   UploadCloud,
@@ -107,7 +108,8 @@ export default function BankingPage() {
   const router = useRouter();
   const { toast } = useToast();
 
-  const [companyId, setCompanyId] = useState<string>("");
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const [companyId, setCompanyId] = useState<string>(activeCompanyId || "");
   const [bankLedgers, setBankLedgers] = useState<BankLedger[]>([]);
   const [selectedBankId, setSelectedBankId] = useState<string>("");
   const [allLedgers, setAllLedgers] = useState<any[]>([]);
@@ -147,7 +149,13 @@ export default function BankingPage() {
       return;
     }
     initializeData();
-  }, [router]);
+  }, [router, activeCompanyId]);
+
+  useEffect(() => {
+    if (activeCompanyId && activeCompanyId !== companyId) {
+      setCompanyId(activeCompanyId);
+    }
+  }, [activeCompanyId]);
 
   useEffect(() => {
     if (companyId) {
@@ -167,10 +175,17 @@ export default function BankingPage() {
     setLoading(true);
     try {
       const token = getAccessToken();
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const cid = compRes.data.data?.[0]?.id;
+      let cid = activeCompanyId;
+      if (!cid && typeof window !== "undefined") {
+        cid = localStorage.getItem("vouch_active_company_id");
+      }
+      if (!cid) {
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
+        cid = list[0]?.id;
+      }
       if (!cid) {
         toast.error("No company found", "Please create or select an active company first.");
         setLoading(false);
@@ -281,10 +296,7 @@ export default function BankingPage() {
       formData.append("company_id", companyId);
 
       const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/banking/upload/`, formData, {
-        headers: {
-          ...headers,
-          "Content-Type": "multipart/form-data",
-        },
+        headers,
       });
 
       setUploadResult(res.data);
@@ -380,7 +392,7 @@ export default function BankingPage() {
       toast.success(
         "Transaction Resolved",
         res.data.voucher_number
-          ? `Balanced Voucher ${res.data.voucher_number} created with FIFO allocations.`
+          ? `Balanced Voucher ${res.data.voucher_number} created and applied to oldest unpaid invoices.`
           : res.data.message || "Updated successfully."
       );
 
@@ -402,15 +414,23 @@ export default function BankingPage() {
     const q = searchQuery.toLowerCase();
     return transactions.filter(
       (tx) =>
-        tx.description.toLowerCase().includes(q) ||
-        tx.normalized_narration.toLowerCase().includes(q) ||
-        (tx.reference_number && tx.reference_number.toLowerCase().includes(q)) ||
-        (tx.matched_party && tx.matched_party.name.toLowerCase().includes(q))
+        (tx.description ?? "").toLowerCase().includes(q) ||
+        (tx.normalized_narration ?? "").toLowerCase().includes(q) ||
+        ((tx.reference_number ?? "").toLowerCase().includes(q)) ||
+        (tx.matched_party?.name ? tx.matched_party.name.toLowerCase().includes(q) : false)
     );
   }, [transactions, searchQuery]);
 
   const customerAndSupplierLedgers = useMemo(() => {
-    return allLedgers.filter((l) => l.ledger_type === "CUSTOMER" || l.ledger_type === "SUPPLIER");
+    return allLedgers.filter(
+      (l) =>
+        l.ledger_type === "CUSTOMER" ||
+        l.ledger_type === "SUPPLIER" ||
+        l.ledger_type === "BOTH" ||
+        l.canonical_role === "CUSTOMER" ||
+        l.canonical_role === "SUPPLIER" ||
+        l.canonical_role === "BOTH"
+    );
   }, [allLedgers]);
 
   const expenseLedgers = useMemo(() => {
@@ -1115,7 +1135,7 @@ export default function BankingPage() {
                     </select>
                     {actionType === "RECORD_PAYMENT" && (
                       <p className="text-[11px] text-muted-foreground mt-1.5">
-                        FIFO allocation will automatically apply this payment to the oldest outstanding invoices.
+                        Payment will be automatically applied to the oldest unpaid invoices.
                       </p>
                     )}
                   </div>

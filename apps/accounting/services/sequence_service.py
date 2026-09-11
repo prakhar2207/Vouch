@@ -56,11 +56,11 @@ class InvoiceSequenceService:
     @staticmethod
     def resync_sequence(company: Company, financial_year: FinancialYear, voucher_type: str, prefix: str = None) -> int:
         """
-        Inspects all existing vouchers for the given company, financial year, and voucher_type.
-        Finds the highest trailing sequence number among them (or 0 if no vouchers exist).
-        Updates VoucherSequence.last_number to match this max value so deleted invoices roll back
-        the sequence counter cleanly, preventing sequence gaps.
-        Returns the resynced last_number.
+        Inspects existing vouchers for the given company, financial year, and voucher_type.
+        Finds the highest trailing sequence number among them.
+        Advances VoucherSequence.last_number if a higher sequence number exists (e.g. after bulk import).
+        Enforces monotonicity: retired or deleted invoice numbers are never reused or rolled backward.
+        Returns the updated last_number.
         """
         import re
         from apps.accounting.models import Voucher
@@ -172,10 +172,7 @@ class InvoiceSequenceService:
                 }
             )
 
-            # Auto-resync: if last_number differs from highest existing voucher
-            InvoiceSequenceService.resync_sequence(company, fy, voucher_type, prefix)
-            seq.refresh_from_db()
-
+            # Strictly monotonic: advance counter by 1
             seq.last_number += 1
             formatted = f"{seq.prefix}/{fy.code}/{seq.last_number:04d}"
 
@@ -189,9 +186,36 @@ class InvoiceSequenceService:
             return formatted, fy
 
     @staticmethod
+    def advance_sequence_if_higher(company: Company, financial_year: FinancialYear, voucher_type: str, number: int, prefix: str = None):
+        """
+        Ensures that if an external or imported voucher is created with a higher number,
+        the sequence counter is advanced forward so future auto-generated numbers never clash.
+        Never decrements the counter.
+        """
+        if not company or not financial_year or number <= 0:
+            return
+        v_type = voucher_type.upper()
+        pfx = (prefix or DEFAULT_PREFIXES.get(v_type, 'VCH')).strip().upper()
+
+        with transaction.atomic():
+            seq, _ = VoucherSequence.objects.select_for_update().get_or_create(
+                company=company,
+                financial_year=financial_year,
+                voucher_type=v_type,
+                defaults={
+                    'prefix': pfx,
+                    'last_number': number
+                }
+            )
+            if number > seq.last_number:
+                seq.last_number = number
+                seq.save(update_fields=['last_number', 'updated_at'])
+
+    @staticmethod
     def preview_next_number(company: Company, voucher_type: str, voucher_date=None, custom_prefix=None):
         """
         Non-locking read-only preview of the upcoming serial number for frontend display.
+        Strictly monotonic based on current sequence counter.
         """
         voucher_type = voucher_type.upper()
         if not voucher_date:
@@ -209,9 +233,6 @@ class InvoiceSequenceService:
             fy = InvoiceSequenceService.get_or_create_active_fy(company, voucher_date)
 
         prefix = (custom_prefix or DEFAULT_PREFIXES.get(voucher_type, 'VCH')).strip().upper()
-
-        # Resync before preview to reflect any deleted invoices immediately
-        InvoiceSequenceService.resync_sequence(company, fy, voucher_type, prefix)
 
         seq = VoucherSequence.objects.filter(
             company=company,
