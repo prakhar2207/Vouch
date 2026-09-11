@@ -137,6 +137,13 @@ export default function BankingPage() {
   const [mappings, setMappings] = useState<PartyMappingItem[]>([]);
   const [loadingMappings, setLoadingMappings] = useState<boolean>(false);
 
+  // Statement History Modal State
+  const [isStatementsModalOpen, setIsStatementsModalOpen] = useState<boolean>(false);
+  const [statementsList, setStatementsList] = useState<any[]>([]);
+  const [loadingStatements, setLoadingStatements] = useState<boolean>(false);
+  const [deletingStatementId, setDeletingStatementId] = useState<string | null>(null);
+  const [deletingTxId, setDeletingTxId] = useState<string | null>(null);
+
   // Action Modal State (for Match Party / Record Payment / Expense / Transfer)
   const [selectedTx, setSelectedTx] = useState<BankTransactionItem | null>(null);
   const [actionType, setActionType] = useState<"MATCH_PARTY" | "RECORD_PAYMENT" | "RECORD_EXPENSE" | "RECORD_TRANSFER" | "OWNER_DRAWING" | "IGNORE" | null>(null);
@@ -307,6 +314,68 @@ export default function BankingPage() {
     }
   };
 
+  const fetchStatementsList = async () => {
+    if (!isValidId(companyId)) return;
+    setLoadingStatements(true);
+    try {
+      const headers = getHeaders();
+      const params: any = { company_id: companyId };
+      if (isValidId(selectedBankId)) {
+        params.bank_ledger_id = selectedBankId;
+      }
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/banking/statements/`, { headers, params });
+      setStatementsList(Array.isArray(res.data) ? res.data : []);
+    } catch (err: any) {
+      console.error("Failed to load statements:", err);
+      toast.error("Failed to load statements", err.response?.data?.error || err.message);
+    } finally {
+      setLoadingStatements(false);
+    }
+  };
+
+  const handleDeleteStatement = async (statement: any) => {
+    if (
+      !window.confirm(
+        `Delete Statement: This will permanently remove '${statement.source_file_name}' and all ${statement.successful_rows || ""} imported transactions from the server. Are you sure?`
+      )
+    ) {
+      return;
+    }
+    setDeletingStatementId(statement.id);
+    try {
+      const headers = getHeaders();
+      const res = await axios.delete(`${API_BASE_URL}/api/v1/accounting/banking/statements/${statement.id}/`, { headers });
+      toast.success("Statement Deleted", res.data?.message || `Statement '${statement.source_file_name}' was removed from server.`);
+      await fetchStatementsList();
+      await fetchTransactionsAndSummary();
+    } catch (err: any) {
+      toast.error("Delete Failed", err.response?.data?.error || err.message || "Failed to delete statement");
+    } finally {
+      setDeletingStatementId(null);
+    }
+  };
+
+  const handleDeleteTransaction = async (tx: BankTransactionItem) => {
+    if (
+      !window.confirm(
+        `Delete Transaction: Are you sure you want to remove this transaction from the server?\n\n"${tx.description}"\nDate: ${tx.transaction_date}\nAmount: ₹${parseFloat(tx.credit_amount) > 0 ? tx.credit_amount : tx.debit_amount}`
+      )
+    ) {
+      return;
+    }
+    setDeletingTxId(tx.id);
+    try {
+      const headers = getHeaders();
+      await axios.delete(`${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/`, { headers });
+      toast.success("Transaction Deleted", "The transaction was deleted from the server.");
+      await fetchTransactionsAndSummary();
+    } catch (err: any) {
+      toast.error("Delete Failed", err.response?.data?.error || err.message || "Failed to delete transaction");
+    } finally {
+      setDeletingTxId(null);
+    }
+  };
+
   const handleFileUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!uploadFile) {
@@ -422,6 +491,7 @@ export default function BankingPage() {
           setActionLoading(false);
           return;
         }
+        payload.target_ledger_id = actionTransferLedgerId;
         payload.transfer_ledger_id = actionTransferLedgerId;
         payload.narration = actionRemarks || selectedTx.description;
       } else if (actionType === "OWNER_DRAWING") {
@@ -474,6 +544,8 @@ export default function BankingPage() {
         l.ledger_type === "CUSTOMER" ||
         l.ledger_type === "SUPPLIER" ||
         l.ledger_type === "BOTH" ||
+        l.ledger_type === "CASH" ||
+        (l.name && l.name.toLowerCase().includes("cash")) ||
         l.canonical_role === "CUSTOMER" ||
         l.canonical_role === "SUPPLIER" ||
         l.canonical_role === "BOTH"
@@ -526,6 +598,17 @@ export default function BankingPage() {
             >
               <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
               <span>Learned Rules ({mappings.length})</span>
+            </button>
+
+            <button
+              onClick={() => {
+                fetchStatementsList();
+                setIsStatementsModalOpen(true);
+              }}
+              className="px-3.5 py-2 rounded-xl border border-border/60 bg-card hover:bg-muted text-foreground text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-2xs transition-all"
+            >
+              <Layers className="w-3.5 h-3.5 text-blue-400" />
+              <span>Statement History</span>
             </button>
 
             <button
@@ -885,7 +968,7 @@ export default function BankingPage() {
                             onClick={() => openActionModal(tx, "RECORD_PAYMENT")}
                             className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold transition-colors cursor-pointer w-full sm:w-auto text-center"
                           >
-                            {isCredit ? "Record Receipt" : "Record Payment"}
+                            {isCredit || tx.matched_party?.ledger_type === "CUSTOMER" ? "Record Receipt" : "Record Payment"}
                           </button>
                           <button
                             onClick={() => openActionModal(tx, "MATCH_PARTY")}
@@ -902,12 +985,23 @@ export default function BankingPage() {
                   {tx.matched_voucher && (
                     <div className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg flex items-center justify-between font-mono">
                       <span>✓ Reconciled to Voucher: {tx.matched_voucher.voucher_number}</span>
-                      <button
-                        onClick={() => router.push(`/vouchers`)}
-                        className="hover:underline text-[11px] cursor-pointer"
-                      >
-                        View Voucher →
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => router.push(`/vouchers`)}
+                          className="hover:underline text-[11px] cursor-pointer"
+                        >
+                          View Voucher →
+                        </button>
+                        <button
+                          onClick={() => handleDeleteTransaction(tx)}
+                          disabled={deletingTxId === tx.id}
+                          className="text-rose-400/80 hover:text-rose-300 hover:underline text-[11px] cursor-pointer flex items-center gap-1 ml-2"
+                          title="Delete transaction from server and reverse voucher"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -927,7 +1021,7 @@ export default function BankingPage() {
                         onClick={() => openActionModal(tx, "RECORD_PAYMENT")}
                         className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-muted hover:bg-muted/80 text-foreground border border-border/40 transition-colors cursor-pointer"
                       >
-                        {isCredit ? "Customer Receipt" : "Supplier Payment"}
+                        {isCredit || tx.matched_party?.ledger_type === "CUSTOMER" ? "Customer Receipt" : "Supplier Payment"}
                       </button>
 
                       {!isCredit && (
@@ -960,6 +1054,16 @@ export default function BankingPage() {
                         className="px-2.5 py-1 rounded-lg text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer ml-auto"
                       >
                         Ignore
+                      </button>
+
+                      <button
+                        onClick={() => handleDeleteTransaction(tx)}
+                        disabled={deletingTxId === tx.id}
+                        className="px-2.5 py-1 rounded-lg text-xs font-semibold text-rose-500 hover:text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition-colors cursor-pointer flex items-center gap-1"
+                        title="Delete this transaction from server"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Delete</span>
                       </button>
                     </div>
                   )}
@@ -1306,6 +1410,115 @@ export default function BankingPage() {
                     )}
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* STATEMENT HISTORY & DELETE MODAL */}
+        {isStatementsModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-card border border-border/60 rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+              <div className="px-6 py-4 border-b border-border/40 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400">
+                    <Layers className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-foreground">Statement History & Management</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Delete previously uploaded statements to remove wrongly taken transactions from the server.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsStatementsModalOpen(false)}
+                  className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto space-y-3 flex-1">
+                {loadingStatements ? (
+                  <div className="py-12 flex flex-col items-center justify-center space-y-3">
+                    <RefreshCw className="w-6 h-6 animate-spin text-primary" />
+                    <span className="text-xs text-muted-foreground">Loading statement history...</span>
+                  </div>
+                ) : statementsList.length === 0 ? (
+                  <div className="py-12 text-center text-muted-foreground text-xs">
+                    No statements uploaded yet for this bank account.
+                  </div>
+                ) : (
+                  statementsList.map((stmt) => (
+                    <div
+                      key={stmt.id}
+                      className="bg-muted/30 border border-border/40 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-border/60 transition-all"
+                    >
+                      <div className="space-y-1 min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-foreground truncate max-w-xs">
+                            {stmt.source_file_name}
+                          </span>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-primary/10 text-primary border border-primary/20">
+                            {stmt.file_format}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                              stmt.status === "COMPLETED"
+                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                            }`}
+                          >
+                            {stmt.status}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
+                          <span>Bank: <strong className="text-foreground">{stmt.bank_ledger?.name}</strong></span>
+                          <span>•</span>
+                          <span>Uploaded: {new Date(stmt.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                          <span>•</span>
+                          <span>Rows: <strong className="text-foreground">{stmt.successful_rows}/{stmt.total_rows}</strong></span>
+                        </div>
+
+                        {(stmt.opening_balance || stmt.closing_balance) && (
+                          <div className="text-[11px] font-mono text-muted-foreground">
+                            Bal: ₹{parseFloat(stmt.opening_balance || "0").toLocaleString("en-IN", { minimumFractionDigits: 2 })} → ₹{parseFloat(stmt.closing_balance || "0").toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => handleDeleteStatement(stmt)}
+                        disabled={deletingStatementId === stmt.id}
+                        className="px-3 py-2 rounded-xl text-xs font-bold text-rose-500 hover:text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition-all cursor-pointer flex items-center gap-1.5 w-full sm:w-auto justify-center disabled:opacity-50"
+                        title="Permanently remove statement and all its imported transactions from server"
+                      >
+                        {deletingStatementId === stmt.id ? (
+                          <>
+                            <div className="w-3.5 h-3.5 border-2 border-rose-500 border-t-transparent rounded-full animate-spin"></div>
+                            <span>Deleting...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete Statement</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="px-6 py-3.5 border-t border-border/40 bg-muted/20 flex justify-end">
+                <button
+                  onClick={() => setIsStatementsModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-foreground bg-muted hover:bg-muted/80 transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>

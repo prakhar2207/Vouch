@@ -650,12 +650,66 @@ class BankStatementService:
         )
         amt_finder_re = re.compile(r'(\b\d{1,3}(?:,\d{2,3})*\.\d{2}\b|\b\d+\.\d{2}\b)')
 
+        boilerplate_re = re.compile(
+            r'(page\s+\d+|closing\s+balance|opening\s+balance|brought\s+forward|carried\s+forward|'
+            r'end\s+of\s+statement|disclaimer|details\s+of\s+ombudsman|ombudsman|do\s+not\s+share\s+atm|'
+            r'computer\s+output|does\s+not\s+require\s+signature|date\s+particulars|'
+            r'are\s+you\s+a\s+merchant|use\s+digital\s+payment|contact\s+branch|phishing\s+attacks|'
+            r'unless\s+the\s+constituent)',
+            re.IGNORECASE
+        )
+
+        is_credit_re = re.compile(
+            r'(^BY\b|'
+            r'\bBY\s+(?:CLG|CLEARING|TRANSFER|TRF|CASH|CHEQUE|CHQ|NEFT|RTGS|IMPS|UPI|DEP|DEPOSIT)\b|'
+            r'\b(?:CR|DEPOSIT|DEPOSITS)\b|'
+            r'\b(?:NEFT\s+CR|RTGS\s+CR|IMPS\s+CR|UPI\/CR|\/CR\/|CR\-)\b|'
+            r'\b(?:CASH\s+DEPOSIT|SALARY|DIVIDEND|REFUND|INTEREST\s+CREDIT)\b)',
+            re.IGNORECASE
+        )
+
+        is_debit_re = re.compile(
+            r'(^TO\b|'
+            r'\bTO\s+(?:CLG|CLEARING|TRANSFER|TRF|CASH|CHEQUE|CHQ|NEFT|RTGS|IMPS|UPI)\b|'
+            r'\b(?:DR|WITHDRAWAL|WITHDRAWALS)\b|'
+            r'\b(?:NEFT\s+DR|RTGS\s+DR|IMPS\s+DR|UPI\/DR|\/DR\/|DR\-)\b|'
+            r'\b(?:TRANSFER\s+TO|TO\s+TRANSFER|PAID\s+TO|PAYMENT\s+TO)\b|'
+            r'\b(?:CASA\s+DEBIT|DEBIT\s+INTEREST|SERVICE\s+CHARGE|CHG|CHARGES|\bSC\b|COMMISSION|TAX|TDS|GST|SMS\s+CHARGES)\b)',
+            re.IGNORECASE
+        )
+
+        # Detect column order: Does 'Deposit' appear before 'Withdrawal' in any table header?
+        deposit_col_first = False
+        for page_idx, txt in pages_text:
+            for line in txt.splitlines():
+                l_lower = line.lower()
+                if ('deposit' in l_lower or 'credit' in l_lower) and ('withdrawal' in l_lower or 'debit' in l_lower):
+                    dep_pos = min(l_lower.find('deposit') if 'deposit' in l_lower else 9999, l_lower.find('credit') if 'credit' in l_lower else 9999)
+                    wdr_pos = min(l_lower.find('withdrawal') if 'withdrawal' in l_lower else 9999, l_lower.find('debit') if 'debit' in l_lower else 9999)
+                    if dep_pos < wdr_pos:
+                        deposit_col_first = True
+                        break
+                    elif wdr_pos < dep_pos:
+                        deposit_col_first = False
+                        break
+            if deposit_col_first:
+                break
+
         all_lines = []
         for page_idx, txt in pages_text:
             for line in txt.splitlines():
                 l_str = line.strip()
-                if l_str:
-                    all_lines.append((page_idx, l_str))
+                if not l_str:
+                    continue
+                # If standalone boilerplate line (e.g. disclaimer or closing balance line), ignore
+                if boilerplate_re.search(l_str) and not date_start_re.match(l_str):
+                    continue
+                # If transaction line contains closing balance / footer at end, strip it
+                if date_start_re.match(l_str):
+                    cutoff = re.search(r'\b(Closing\s+Balance|page\s+\d+|END\s+OF\s+STATEMENT|DISCLAIMER)\b', l_str, re.IGNORECASE)
+                    if cutoff:
+                        l_str = l_str[:cutoff.start()].strip()
+                all_lines.append((page_idx, l_str))
 
         pending_blocks = []
         current_block = None
@@ -699,31 +753,33 @@ class BankStatementService:
             credit = Decimal('0.00')
             bal = None
 
+            upper_block = full_block_text.upper()
+            has_credit = bool(is_credit_re.search(upper_block))
+            has_debit = bool(is_debit_re.search(upper_block))
+
             if len(amts) >= 3:
-                debit = cls.clean_amount_str(amts[0])
-                credit = cls.clean_amount_str(amts[1])
+                if deposit_col_first:
+                    credit = cls.clean_amount_str(amts[0])
+                    debit = cls.clean_amount_str(amts[1])
+                else:
+                    debit = cls.clean_amount_str(amts[0])
+                    credit = cls.clean_amount_str(amts[1])
                 bal = cls.clean_amount_str(amts[2])
             elif len(amts) == 2:
                 amt_val = cls.clean_amount_str(amts[0])
                 bal = cls.clean_amount_str(amts[1])
 
-                upper_block = full_block_text.upper()
-                if re.search(r'\b(DR|WITHDRAWAL|TRANSFER TO|TO TRANSFER|PAID TO)\b', upper_block):
+                if has_credit and not has_debit:
+                    credit = amt_val
+                elif has_debit and not has_credit:
                     debit = amt_val
-                elif re.search(r'\b(CR|DEPOSIT|BY TRANSFER|NEFT CR|RTGS CR|IMPS CR|BY CLEARING)\b', upper_block):
+                elif deposit_col_first:
                     credit = amt_val
-                elif prev_balance is not None and bal is not None:
-                    delta = bal - prev_balance
-                    if abs(delta + amt_val) < Decimal('0.05') or delta < 0:
-                        debit = amt_val
-                    else:
-                        credit = amt_val
                 else:
-                    credit = amt_val
+                    debit = amt_val
             elif len(amts) == 1:
                 amt_val = cls.clean_amount_str(amts[0])
-                upper_block = full_block_text.upper()
-                if re.search(r'\b(DR|WITHDRAWAL|TRANSFER TO|TO TRANSFER)\b', upper_block):
+                if has_debit and not has_credit:
                     debit = amt_val
                 else:
                     credit = amt_val
@@ -1036,6 +1092,26 @@ class BankStatementService:
                     tx_date=tx_date
                 )
 
+                # Accounting integrity guardrail:
+                # A customer paying by cheque / clearing is a Deposit (Credit), NOT a Payment.
+                mp = match_res.get('matched_party')
+                if mp and mp.ledger_type == 'CUSTOMER':
+                    if deb_amt > 0 and cred_amt == 0:
+                        if re.search(r'(^BY\b|\bBY\s+CLG|\bCR\b|\bDEPOSIT)', norm_desc, re.IGNORECASE) or not re.search(r'(^TO\b|\bDR\b|\bWITHDRAWAL)', norm_desc, re.IGNORECASE):
+                            cred_amt = deb_amt
+                            deb_amt = Decimal('0.00')
+                            match_res.setdefault('signals', []).append(
+                                "Reclassified to Deposit (Credit) for Customer party"
+                            )
+                elif mp and mp.ledger_type == 'SUPPLIER':
+                    if cred_amt > 0 and deb_amt == 0:
+                        if re.search(r'(^TO\b|\bDR\b|\bWITHDRAWAL|\bPAID\b)', norm_desc, re.IGNORECASE):
+                            deb_amt = cred_amt
+                            cred_amt = Decimal('0.00')
+                            match_res.setdefault('signals', []).append(
+                                "Reclassified to Withdrawal (Debit) for Supplier party"
+                            )
+
                 initial_status = 'UNRESOLVED'
                 if match_res['confidence'] >= 0.95:
                     initial_status = 'MATCHED_AUTO'
@@ -1070,6 +1146,24 @@ class BankStatementService:
                         "suggested_matches": match_res.get('suggested_matches', [])
                     }
                 )
+
+                # Auto-reconcile cash deposit as cash invoice receipt
+                if match_res.get('is_cash_deposit') and cred_amt > Decimal('0.00') and match_res.get('matched_party'):
+                    from apps.accounting.services.bank_reconciliation_service import BankReconciliationService
+                    try:
+                        BankReconciliationService.resolve_transaction(
+                            bank_tx=tx,
+                            action_type='RECORD_PAYMENT',
+                            payload={
+                                'party_id': str(match_res['matched_party'].id),
+                                'narration': f"Cash Deposit: {norm_desc}"
+                            },
+                            user=user
+                        )
+                        auto_matched_count += 1
+                    except Exception as ex:
+                        logger.warning(f"Auto-reconciliation for cash deposit {tx.id} skipped: {ex}")
+
                 created_transactions.append(tx)
 
             unresolved_count = len(created_transactions) - auto_matched_count - suggested_count

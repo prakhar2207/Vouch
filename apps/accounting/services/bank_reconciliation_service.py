@@ -238,7 +238,7 @@ class BankReconciliationService:
             }
 
         elif action_type == 'RECORD_TRANSFER':
-            target_ledger_id = payload.get('target_ledger_id')
+            target_ledger_id = payload.get('target_ledger_id') or payload.get('transfer_ledger_id')
             if not target_ledger_id:
                 raise ValidationError("Target Bank or Cash account is required for transfer.")
             target_ledger = Ledger.objects.get(id=target_ledger_id, company=company)
@@ -414,3 +414,35 @@ class BankReconciliationService:
             "reconciliation_gap": reconciliation_gap or "0.00",
             "is_balanced": is_balanced
         }
+
+    @classmethod
+    @transaction.atomic
+    def delete_transaction(cls, bank_tx: BankTransaction) -> None:
+        """
+        Deletes a bank transaction from the server.
+        If it generated an automated reconciliation voucher, rolls back and deletes that voucher.
+        """
+        if bank_tx.matched_voucher:
+            vch = bank_tx.matched_voucher
+            # Only delete if it's an auto-generated bank voucher
+            if vch.voucher_type in ['RECEIPT', 'PAYMENT', 'CONTRA']:
+                entries = list(vch.ledger_entries.select_related('ledger'))
+                ledgers_to_recalc = set(e.ledger for e in entries)
+                vch.delete()
+                for l in ledgers_to_recalc:
+                    VoucherService.recalculate_ledger_balance(l)
+        bank_tx.delete()
+
+    @classmethod
+    @transaction.atomic
+    def delete_statement_import(cls, statement_import: BankStatementImport) -> int:
+        """
+        Deletes a statement import and all of its associated transactions.
+        Safely rolls back any generated reconciliation vouchers.
+        """
+        txs = list(statement_import.transactions.select_related('matched_voucher'))
+        deleted_count = len(txs)
+        for tx in txs:
+            cls.delete_transaction(tx)
+        statement_import.delete()
+        return deleted_count

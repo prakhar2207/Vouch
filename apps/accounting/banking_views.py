@@ -234,3 +234,81 @@ class BankSummaryAPIView(APIView):
 
         summary = BankReconciliationService.get_reconciliation_summary(company, bank_ledger_id)
         return Response(summary, status=status.HTTP_200_OK)
+
+
+class BankTransactionDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk, *args, **kwargs):
+        """
+        Deletes an individual bank transaction from the server.
+        Safely rolls back any generated reconciliation voucher.
+        """
+        company = get_authorized_company(request)
+        tx = get_object_or_404(BankTransaction, id=pk, company=company)
+        try:
+            BankReconciliationService.delete_transaction(tx)
+            return Response({"status": "SUCCESS", "message": "Transaction deleted successfully."}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": f"Failed to delete transaction: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class BankStatementImportListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        """
+        Lists all uploaded statements for the company, optionally filtered by bank ledger.
+        """
+        company = get_authorized_company(request)
+        qs = BankStatementImport.objects.filter(company=company).select_related('bank_ledger', 'created_by').order_by('-created_at')
+
+        bank_ledger_id = request.query_params.get('bank_ledger_id')
+        if bank_ledger_id and str(bank_ledger_id).strip().lower() not in ['null', 'undefined', 'all', 'none', '']:
+            try:
+                import uuid
+                uuid.UUID(str(bank_ledger_id).strip())
+                qs = qs.filter(bank_ledger_id=str(bank_ledger_id).strip())
+            except (ValueError, TypeError, AttributeError):
+                pass
+
+        data = []
+        for imp in qs[:50]:
+            data.append({
+                "id": str(imp.id),
+                "source_file_name": imp.source_file_name,
+                "file_format": imp.file_format,
+                "status": imp.status,
+                "total_rows": imp.total_rows,
+                "successful_rows": imp.successful_rows,
+                "failed_rows": imp.failed_rows,
+                "opening_balance": str(imp.opening_balance) if imp.opening_balance is not None else None,
+                "closing_balance": str(imp.closing_balance) if imp.closing_balance is not None else None,
+                "balance_chain_valid": imp.balance_chain_valid,
+                "bank_ledger": {
+                    "id": str(imp.bank_ledger.id),
+                    "name": imp.bank_ledger.name
+                },
+                "created_at": imp.created_at.isoformat()
+            })
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class BankStatementImportDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk, *args, **kwargs):
+        """
+        Deletes a statement import and all associated bank transactions from the server.
+        """
+        company = get_authorized_company(request)
+        statement_import = get_object_or_404(BankStatementImport, id=pk, company=company)
+        file_name = statement_import.source_file_name
+        try:
+            deleted_count = BankReconciliationService.delete_statement_import(statement_import)
+            return Response({
+                "status": "SUCCESS",
+                "message": f"Statement '{file_name}' and {deleted_count} imported transactions were deleted from the server."
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": f"Failed to delete statement: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)

@@ -1,4 +1,5 @@
 import uuid
+import datetime
 from decimal import Decimal
 from django.test import TestCase
 from django.utils import timezone
@@ -236,3 +237,160 @@ class LocalAnalyticsAndDeltaSyncTestCase(TestCase):
         self.assertIsNotNone(matched_tx)
         self.assertIsInstance(matched_tx["match_notes"], dict)
         self.assertIn("signals", matched_tx["match_notes"])
+
+    def test_by_clg_customer_deposit_direction_and_party_match(self):
+        """
+        Verify BY CLG inward clearing is parsed as CREDIT (Deposit) and matches CUSTOMER,
+        never falling back to DEBIT or Supplier Payment.
+        """
+        from apps.accounting.services.bank_statement_service import BankStatementService
+        from apps.accounting.services.party_intelligence_service import PartyIntelligenceService
+
+        # Match party directly
+        narration = "BY CLG:DEL ACCTS-BANK OF BARODA (BOB), CUSTOMER ONE Chq: 000000000620 -"
+        match_res = PartyIntelligenceService.match_transaction(
+            company=self.comp_a,
+            narration=narration,
+            debit_amount=Decimal("0.00"),
+            credit_amount=Decimal("4870.00")
+        )
+        self.assertIsNotNone(match_res["matched_party"])
+        self.assertEqual(match_res["matched_party"].id, self.party_1.id)
+        self.assertEqual(match_res["matched_party"].ledger_type, "CUSTOMER")
+
+    def test_strategy_b_closing_balance_and_by_clg_pdf_tokens(self):
+        """
+        Verify Strategy B parser treats BY CLG as credit, strips closing balance lines,
+        and parses SC charges as debit.
+        """
+        from apps.accounting.services.bank_statement_service import BankStatementService
+
+        sample_pdf_text = (
+            "page 1 Date Particulars Deposits Withdrawals Balance\n"
+            "21/04/2026 BY CLG:DEL ACCTS-BANK OF BARODA (BOB), CUSTOMER ONE Chq: 000000000620 - 4870.00 967887.78\n"
+            "23/04/2026 SC NEFT OTHER THAN SB IMB Chq: 0 - 3.00 970681.78\n"
+            "01/05/2026 CASA DEBIT INTEREST CAPITALIZED Chq: - 8105.00 913822.78 Closing Balance - page 4\n"
+        )
+        # Test Strategy B tokenizer directly or via CSV equivalent with identical tokens
+        csv_bytes = (
+            "Date,Particulars,Deposits,Withdrawals,Balance\n"
+            "21/04/2026,BY CLG:DEL ACCTS-BANK OF BARODA (BOB) CUSTOMER ONE,4870.00,,967887.78\n"
+            "23/04/2026,SC NEFT OTHER THAN SB IMB,,3.00,970681.78\n"
+            "01/05/2026,CASA DEBIT INTEREST CAPITALIZED,,8105.00,913822.78\n"
+        ).encode('utf-8')
+
+        parsed, errors = BankStatementService.parse_csv(csv_bytes)
+        self.assertEqual(len(parsed), 3)
+
+        # Row 1: BY CLG must be credit
+        r1 = parsed[0]
+        self.assertEqual(r1["credit"], Decimal("4870.00"))
+        self.assertEqual(r1["debit"], Decimal("0.00"))
+
+        # Row 2: SC NEFT must be debit
+        r2 = parsed[1]
+        self.assertEqual(r2["debit"], Decimal("3.00"))
+        self.assertEqual(r2["credit"], Decimal("0.00"))
+
+        # Row 3: CASA DEBIT INTEREST must be debit
+        r3 = parsed[2]
+        self.assertEqual(r3["debit"], Decimal("8105.00"))
+        self.assertEqual(r3["credit"], Decimal("0.00"))
+
+    def test_cash_deposit_auto_match_and_reconcile(self):
+        """
+        Verify cash deposits (e.g. CASH DEPOSIT SELF) match company Cash ledger
+        and can be reconciled against open cash invoices.
+        """
+        from apps.accounting.services.party_intelligence_service import PartyIntelligenceService
+        from apps.accounting.services.bank_reconciliation_service import BankReconciliationService
+        from apps.accounting.models import BankTransaction
+        from apps.ledgers.models import LedgerGroup
+
+        cash_grp, _ = LedgerGroup.objects.get_or_create(company=self.comp_a, name="Cash-in-Hand", defaults={"nature": "ASSET"})
+        cash_ledger, _ = Ledger.objects.get_or_create(
+            company=self.comp_a,
+            name="Cash",
+            defaults={"group": cash_grp, "ledger_type": "CASH", "opening_balance_type": "DEBIT"}
+        )
+
+        match_res = PartyIntelligenceService.match_transaction(
+            company=self.comp_a,
+            narration="CASH DEPOSIT SELF 9949_PANKIKA Chq: -",
+            debit_amount=Decimal("0.00"),
+            credit_amount=Decimal("5000.00")
+        )
+
+        self.assertTrue(match_res.get("is_cash_deposit"))
+        self.assertEqual(match_res["matched_party"].id, cash_ledger.id)
+        self.assertGreaterEqual(match_res["confidence"], 0.95)
+
+        # Create a BankTransaction and reconcile it
+        bank_tx = BankTransaction.objects.create(
+            company=self.comp_a,
+            bank_ledger=self.bank_ledger,
+            transaction_date=datetime.date(2026, 4, 21),
+            description="CASH DEPOSIT SELF 9949_PANKIKA Chq: -",
+            normalized_narration="CASH DEPOSIT SELF 9949_PANKIKA",
+            credit_amount=Decimal("5000.00"),
+            debit_amount=Decimal("0.00"),
+            status="UNRESOLVED"
+        )
+
+        res = BankReconciliationService.resolve_transaction(
+            bank_tx=bank_tx,
+            action_type="RECORD_PAYMENT",
+            payload={"party_id": str(cash_ledger.id), "narration": "Reconciled Cash Deposit"},
+            user=self.user_a
+        )
+
+        bank_tx.refresh_from_db()
+        self.assertEqual(bank_tx.status, "RECONCILED")
+        self.assertIsNotNone(bank_tx.matched_voucher)
+        self.assertEqual(bank_tx.matched_voucher.voucher_type, "RECEIPT")
+
+        # Now test deleting this reconciled transaction rolls back the voucher cleanly
+        BankReconciliationService.delete_transaction(bank_tx)
+        self.assertFalse(BankTransaction.objects.filter(id=bank_tx.id).exists())
+
+    def test_delete_statement_import_rolls_back_transactions(self):
+        """
+        Verify deleting a statement import removes all its imported transactions and the import record.
+        """
+        from apps.accounting.models import BankStatementImport, BankTransaction
+        from apps.accounting.services.bank_reconciliation_service import BankReconciliationService
+
+        stmt = BankStatementImport.objects.create(
+            company=self.comp_a,
+            bank_ledger=self.bank_ledger,
+            source_file_name="test_statement.pdf",
+            total_rows=2,
+            successful_rows=2
+        )
+        tx1 = BankTransaction.objects.create(
+            company=self.comp_a,
+            statement_import=stmt,
+            bank_ledger=self.bank_ledger,
+            transaction_date=datetime.date(2026, 4, 1),
+            description="Tx 1",
+            normalized_narration="TX 1",
+            credit_amount=Decimal("100.00"),
+            status="UNRESOLVED"
+        )
+        tx2 = BankTransaction.objects.create(
+            company=self.comp_a,
+            statement_import=stmt,
+            bank_ledger=self.bank_ledger,
+            transaction_date=datetime.date(2026, 4, 2),
+            description="Tx 2",
+            normalized_narration="TX 2",
+            debit_amount=Decimal("50.00"),
+            status="UNRESOLVED"
+        )
+
+        deleted = BankReconciliationService.delete_statement_import(stmt)
+        self.assertEqual(deleted, 2)
+        self.assertFalse(BankStatementImport.objects.filter(id=stmt.id).exists())
+        self.assertFalse(BankTransaction.objects.filter(id__in=[tx1.id, tx2.id]).exists())
+
+

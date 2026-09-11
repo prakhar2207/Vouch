@@ -49,7 +49,10 @@ urlpatterns = [
 
     # Bank Intelligence & Reconciliation
     path('banking/upload/', apps.accounting.banking_views.BankStatementUploadAPIView.as_view(), name='banking_upload'),
+    path('banking/statements/', apps.accounting.banking_views.BankStatementImportListAPIView.as_view(), name='banking_statements'),
+    path('banking/statements/<uuid:pk>/', apps.accounting.banking_views.BankStatementImportDetailAPIView.as_view(), name='banking_statement_detail'),
     path('banking/transactions/', apps.accounting.banking_views.BankTransactionListAPIView.as_view(), name='banking_transactions'),
+    path('banking/transactions/<uuid:pk>/', apps.accounting.banking_views.BankTransactionDetailAPIView.as_view(), name='banking_transaction_detail'),
     path('banking/transactions/<uuid:pk>/resolve/', apps.accounting.banking_views.BankTransactionResolveAPIView.as_view(), name='banking_transaction_resolve'),
     path('banking/mappings/', apps.accounting.banking_views.PartyMappingListAPIView.as_view(), name='banking_mappings'),
     path('banking/mappings/<uuid:pk>/', apps.accounting.banking_views.PartyMappingListAPIView.as_view(), name='banking_mapping_detail'),

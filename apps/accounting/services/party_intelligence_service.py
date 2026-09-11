@@ -78,11 +78,14 @@ class PartyIntelligenceService:
         Evaluates 10 distinct signals in descending priority order to identify the associated party.
         Enforces strict company isolation.
         """
+        from apps.accounting.services.allocation_service import PaymentAllocationService
+
+        norm_narration = narration.upper().strip() if narration else ""
         amount = credit_amount if credit_amount > Decimal('0.00') else debit_amount
-        is_receipt = credit_amount > Decimal('0.00')
+        has_credit_cues = bool(re.search(r'(^BY\b|\bBY\s+(?:CLG|CLEARING|TRF|TRANSFER|CASH|CHEQUE|CHQ|NEFT|RTGS|IMPS|UPI)|\bCR\b|\bDEPOSIT)', norm_narration))
+        is_receipt = (credit_amount > Decimal('0.00')) or has_credit_cues
         target_role = 'CUSTOMER' if is_receipt else 'SUPPLIER'
         
-        norm_narration = narration.upper().strip() if narration else ""
         signals_triggered = []
         candidates: List[Dict[str, Any]] = []
 
@@ -120,6 +123,42 @@ class PartyIntelligenceService:
                     "suggested_matches": []
                 }
 
+        # Check for Cash Deposit / Cash Invoices Settlement
+        is_cash_deposit = bool(re.search(
+            r'\b(CASH\s*DEP(?:OSIT)?|BY\s+CASH|CDM\s+CASH|CDM/|SELF\s+DEPOSIT|CASH\s+MACHINE|CASH\s+REC(?:EIPT)?)\b',
+            norm_narration
+        ))
+        if is_cash_deposit and (credit_amount > Decimal('0.00') or has_credit_cues):
+            cash_ledger = Ledger.objects.filter(
+                company=company,
+                ledger_type='CASH',
+                is_archived=False
+            ).first()
+            if not cash_ledger:
+                cash_ledger = Ledger.objects.filter(
+                    company=company,
+                    name__iexact='Cash',
+                    is_archived=False
+                ).first()
+            if cash_ledger:
+                signals_triggered.append("Detected Cash Deposit / Self Cash deposit into bank")
+                from apps.accounting.services.allocation_service import PaymentAllocationService
+                try:
+                    unpaid_cash = PaymentAllocationService.get_unpaid_invoices_for_party(company, cash_ledger)
+                    if unpaid_cash:
+                        signals_triggered.append(f"Auto-settles against {len(unpaid_cash)} open cash sales invoices")
+                except Exception:
+                    pass
+
+                return {
+                    "matched_party": cash_ledger,
+                    "matched_invoice": None,
+                    "confidence": 0.98,
+                    "signals": signals_triggered,
+                    "suggested_matches": [],
+                    "is_cash_deposit": True
+                }
+
         # Fetch active party ledgers for the company
         parties = list(Ledger.objects.filter(
             company=company,
@@ -130,6 +169,8 @@ class PartyIntelligenceService:
         gstin_in_text = cls.extract_gstin(norm_narration)
         phone_in_text = cls.extract_phone(norm_narration)
         acc_in_text = cls.extract_account_number(norm_narration)
+        clearing_match = re.search(r'BY\s+CLG:[^,]+,\s*([^,]+?)(?:\s+Chq|\s*$)', norm_narration, re.IGNORECASE)
+        clearing_entity = clearing_match.group(1).strip().upper() if clearing_match else ""
 
         # Iterate through parties and score
         for party in parties:
@@ -167,19 +208,45 @@ class PartyIntelligenceService:
                 score = max(score, 0.90)
                 reasons.append(f"Normalized entity name '{p_norm_name}' found in narration")
 
+            # 6b. Inward Clearing Drawer match (e.g. BY CLG:DEL ACCTS-..., DRAWER Chq: ...)
+            elif clearing_entity and len(clearing_entity) >= 3:
+                if (clearing_entity in p_name or p_name.startswith(clearing_entity) or
+                    clearing_entity in p_norm_name or p_norm_name.startswith(clearing_entity) or
+                    difflib.SequenceMatcher(None, clearing_entity, p_norm_name.split()[0] if p_norm_name.split() else p_norm_name).ratio() >= 0.80):
+                    score = max(score, 0.95)
+                    reasons.append(f"Inward clearing drawer '{clearing_entity}' matched party '{party.name}'")
+
+            # 6c. Primary token word match (e.g. KHAWAJA in 'Khawaja Eng. Works')
+            if score < 0.90:
+                p_tokens = [w for w in p_norm_name.split() if len(w) >= 4 and w not in ('ENTERPRISES', 'INDUSTRIES', 'TRADERS', 'COMPANY', 'CORP', 'LIMITED', 'WORKS', 'PRODUCTS', 'STORE', 'AGENCY')]
+                for tok in p_tokens:
+                    if re.search(r'\b' + re.escape(tok) + r'\b', norm_narration):
+                        score = max(score, 0.90)
+                        reasons.append(f"Entity keyword '{tok}' found in narration")
+                        break
+                    elif clearing_entity and (difflib.SequenceMatcher(None, clearing_entity, tok).ratio() >= 0.80 or tok.startswith(clearing_entity)):
+                        score = max(score, 0.92)
+                        reasons.append(f"Clearing token '{clearing_entity}' matched '{tok}' for '{party.name}'")
+                        break
+
             # 7. Phone number match
             if p_phone and phone_in_text and p_phone == phone_in_text:
                 score = max(score, 0.90)
                 reasons.append(f"Phone number match ({p_phone})")
 
-            # 8. Fuzzy name similarity
-            similarity = difflib.SequenceMatcher(None, p_norm_name, norm_narration[:len(p_norm_name) + 10]).ratio()
-            if similarity >= 0.75:
-                fuzzy_score = 0.75 + (similarity - 0.75) * 0.6
-                score = max(score, fuzzy_score)
-                reasons.append(f"High name similarity ({int(similarity*100)}%)")
+            # 8. Fuzzy name similarity across tokens
+            if score < 0.75:
+                for text_word in norm_narration.split():
+                    if len(text_word) >= 4:
+                        sim = difflib.SequenceMatcher(None, p_norm_name.split()[0] if p_norm_name.split() else p_norm_name, text_word).ratio()
+                        if sim >= 0.80:
+                            score = max(score, 0.80)
+                            reasons.append(f"High token similarity ({text_word} ~ {party.name})")
+                            break
 
             if score > 0.0:
+                if party.ledger_type == target_role:
+                    score = min(1.0, score + 0.05)
                 candidates.append({
                     "party": party,
                     "score": score,
