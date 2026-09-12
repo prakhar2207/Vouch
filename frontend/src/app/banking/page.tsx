@@ -696,11 +696,11 @@ export default function BankingPage() {
                 <Landmark className="w-5 h-5" />
               </div>
               <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                Bank Intelligence & Reconciliation
+                Banking
               </h1>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Ingest statements, multi-signal party learning, and continuous audit reconciliation without manual data entry.
+              Upload bank statements and match transactions
             </p>
           </div>
 
@@ -713,7 +713,7 @@ export default function BankingPage() {
               className="px-3.5 py-2 rounded-xl border border-border/60 bg-card hover:bg-muted text-foreground text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-2xs transition-all"
             >
               <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Learned Rules ({mappings.length})</span>
+              <span>Auto-match Rules ({mappings.length})</span>
             </button>
 
             <button
@@ -724,7 +724,7 @@ export default function BankingPage() {
               className="px-3.5 py-2 rounded-xl border border-border/60 bg-card hover:bg-muted text-foreground text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-2xs transition-all"
             >
               <Layers className="w-3.5 h-3.5 text-blue-400" />
-              <span>Statement History</span>
+              <span>Upload History</span>
             </button>
 
             <button
@@ -782,7 +782,7 @@ export default function BankingPage() {
           <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                Book vs Bank Equilibrium
+                BOOK VS BANK
               </span>
               {summary?.is_balanced ? (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
@@ -827,7 +827,7 @@ export default function BankingPage() {
               <div className="text-2xl font-black font-mono text-foreground">
                 {summary?.needs_review_count || 0}
               </div>
-              <div className="text-[10px] text-muted-foreground">AI match candidate</div>
+              <div className="text-[10px] text-muted-foreground">Suggested match</div>
             </div>
 
             <div className="p-3 bg-rose-500/5 rounded-xl border border-rose-500/20 space-y-1">
@@ -1326,8 +1326,8 @@ export default function BankingPage() {
                 <div className="flex items-center gap-2">
                   <BookOpen className="w-5 h-5 text-indigo-400" />
                   <div>
-                    <h3 className="text-base font-bold text-foreground">Learned Party Rules</h3>
-                    <p className="text-xs text-muted-foreground">Isolated to your company</p>
+                    <h3 className="text-base font-bold text-foreground">Auto-match Rules</h3>
+                    <p className="text-xs text-muted-foreground">Rules for your business</p>
                   </div>
                 </div>
                 <button
@@ -1524,9 +1524,9 @@ export default function BankingPage() {
                     <Layers className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-foreground">Statement History & Management</h3>
+                    <h3 className="text-base font-bold text-foreground">Upload History</h3>
                     <p className="text-xs text-muted-foreground">
-                      Delete previously uploaded statements to remove wrongly taken transactions from the server.
+                      Manage previously uploaded statements
                     </p>
                   </div>
                 </div>

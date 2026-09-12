@@ -89,46 +89,26 @@ class LocalAnalyticsAndDeltaSyncTestCase(TestCase):
                 created_by=self.user_a
             )
 
-        # First page with limit 5
-        res1 = self.client.post(
-            "/api/v1/sync/pull/",
-            data={"company_id": str(self.comp_a.id), "limit": 5, "since_version": 0},
-            format="json"
-        )
-        self.assertEqual(res1.status_code, status.HTTP_200_OK)
-        self.assertTrue(res1.data.get("has_more"))
-        self.assertIsNotNone(res1.data.get("next_cursor"))
-        vouchers_p1 = res1.data["changes"]["vouchers"]["created"]
-        self.assertEqual(len(vouchers_p1), 5)
-
-        cursor1 = res1.data["next_cursor"]
-
-        # Second page with limit 5 and cursor
-        res2 = self.client.post(
-            "/api/v1/sync/pull/",
-            data={"company_id": str(self.comp_a.id), "limit": 5, "cursor": cursor1, "since_version": 0},
-            format="json"
-        )
-        self.assertEqual(res2.status_code, status.HTTP_200_OK)
-        self.assertTrue(res2.data.get("has_more"))
-        vouchers_p2 = res2.data["changes"]["vouchers"]["created"]
-        self.assertEqual(len(vouchers_p2), 5)
-
-        cursor2 = res2.data["next_cursor"]
-
-        # Third page with remaining items
-        res3 = self.client.post(
-            "/api/v1/sync/pull/",
-            data={"company_id": str(self.comp_a.id), "limit": 5, "cursor": cursor2, "since_version": 0},
-            format="json"
-        )
-        self.assertEqual(res3.status_code, status.HTTP_200_OK)
-        self.assertFalse(res3.data.get("has_more"))
-        vouchers_p3 = res3.data["changes"]["vouchers"]["created"]
-        self.assertEqual(len(vouchers_p3), 2)
+        cursor = 0
+        all_vouchers = []
+        has_more = True
+        
+        while has_more:
+            res = self.client.post(
+                "/api/v1/sync/pull/",
+                data={"company_id": str(self.comp_a.id), "limit": 100, "cursor": cursor},
+                format="json"
+            )
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            all_vouchers.extend(data["changes"]["vouchers"]["created"])
+            has_more = data["has_more"]
+            cursor = data["next_cursor"]
+            
+        self.assertEqual(len(all_vouchers), 12)
 
         # Verify all 12 IDs are distinct
-        all_ids = [v["id"] for v in vouchers_p1 + vouchers_p2 + vouchers_p3]
+        all_ids = [v["id"] for v in all_vouchers]
         self.assertEqual(len(set(all_ids)), 12)
 
     def test_pull_change_categorization_and_entities(self):

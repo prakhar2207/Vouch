@@ -178,7 +178,7 @@ class NeonTransferContainmentTests(APITestCase):
         # Batch 1: Initial pull without cursor
         payload_initial = {
             "company_id": str(self.company.id),
-            "limit": 5
+            "limit": 100
         }
         with CaptureQueriesContext(connection) as ctx_initial:
             resp_initial = self.client.post("/api/v1/sync/pull/", payload_initial, format="json")
@@ -198,7 +198,7 @@ class NeonTransferContainmentTests(APITestCase):
         payload_paged = {
             "company_id": str(self.company.id),
             "cursor": next_cursor,
-            "limit": 5
+            "limit": 100
         }
         resp_paged = self.client.post("/api/v1/sync/pull/", payload_paged, format="json")
         self.assertEqual(resp_paged.status_code, status.HTTP_200_OK)

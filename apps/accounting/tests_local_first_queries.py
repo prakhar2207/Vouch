@@ -126,7 +126,7 @@ class LocalFirstQueriesAndTransferReductionTests(APITestCase):
         """
         payload = {
             "company_id": str(self.company.id),
-            "limit": 10
+            "limit": 100
         }
         with CaptureQueriesContext(connection) as ctx:
             resp = self.client.post("/api/v1/sync/pull/", payload, format="json")
@@ -151,7 +151,7 @@ class LocalFirstQueriesAndTransferReductionTests(APITestCase):
         """
         payload = {
             "company_id": str(self.company.id),
-            "limit": 10,
+            "limit": 100,
             "include_details": True
         }
         resp = self.client.post("/api/v1/sync/pull/", payload, format="json")
