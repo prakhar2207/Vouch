@@ -172,6 +172,9 @@ export default function Dashboard() {
           setInsights(local);
           setVouchers(local.recent_vouchers || []);
           setCoverage(local.coverage);
+          if (local.forecast) {
+            setForecast(local.forecast);
+          }
           // Check pending outbox mutations
           const pendingCount = await offlineDb.vouchers
             .where("status")
@@ -222,6 +225,9 @@ export default function Dashboard() {
                 setInsights(refreshed);
                 setVouchers(refreshed.recent_vouchers || []);
                 setCoverage(refreshed.coverage);
+                if (refreshed.forecast) {
+                  setForecast(refreshed.forecast);
+                }
                 setSyncStatus("IDLE");
                 setSyncMessage("");
               } else {
@@ -292,6 +298,9 @@ export default function Dashboard() {
           setInsights(updated);
           setVouchers(updated.recent_vouchers || []);
           setCoverage(updated.coverage);
+          if (updated.forecast) {
+            setForecast(updated.forecast);
+          }
           const cnt = await offlineDb.vouchers
             .where("status")
             .equals("PENDING")
@@ -324,19 +333,28 @@ export default function Dashboard() {
     };
   }, [router, activeCompanyId]);
 
-  // Lazy-load forecast only when user toggles to AI Forecast mode
+  // Lazy-load forecast when user toggles to AI Forecast mode or company changes
   useEffect(() => {
-    if (chartMode === 'FORECAST' && !forecast && typeof navigator !== "undefined" && navigator.onLine) {
+    const cid = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") : null);
+    if (!cid) return;
+
+    if (chartMode === 'FORECAST' && (!forecast || !forecast.daily_forecast?.length) && typeof navigator !== "undefined" && navigator.onLine) {
       const token = getAccessToken();
-      axios.get(`${API_BASE_URL}/api/v1/analytics/forecast/?days=30`, {
-        headers: { Authorization: `Bearer ${token}` }
+      const headers: Record<string, string> = {
+        "X-Company-ID": cid,
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      axios.get(`${API_BASE_URL}/api/v1/analytics/forecast/${cid}/?days=30&company_id=${cid}`, {
+        headers,
       }).then((res) => {
         if (res.data?.success && res.data?.data) {
           setForecast(res.data.data);
         }
       }).catch(() => {});
     }
-  }, [chartMode, forecast]);
+  }, [chartMode, forecast, activeCompanyId]);
 
   const handleManualSync = async () => {
     const cid = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") : null);
@@ -349,6 +367,9 @@ export default function Dashboard() {
     setInsights(refreshed);
     setVouchers(refreshed.recent_vouchers || []);
     setCoverage(refreshed.coverage);
+    if (refreshed.forecast) {
+      setForecast(refreshed.forecast);
+    }
 
     // On explicit user sync, also refresh server health audit
     const token = getAccessToken();

@@ -57,10 +57,28 @@ export interface ActionableAlert {
   message: string;
 }
 
+export interface SalesForecastResult {
+  forecast_days: number;
+  projected_total: number;
+  projected_daily_average: number;
+  trend_status: "Booming" | "Constant" | "Declining" | "Insufficient Data";
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  sample_size_days: number;
+  trend_summary: string;
+  daily_forecast: Array<{
+    date: string;
+    projected_sales: number;
+    lower_bound: number;
+    upper_bound: number;
+  }>;
+  historical_daily_average: number;
+}
+
 export interface LocalDashboardResult {
   business_health: string;
   trend_summary: string;
   trend_details: TrendDetails;
+  forecast?: SalesForecastResult;
   rfm_clusters: RfmCluster[];
   actionable_alerts: ActionableAlert[];
   kpis: DashboardKpis;
@@ -339,7 +357,10 @@ export class LocalAnalyticsEngine {
     }
 
     // --- E. Sales Velocity Trend (Linear Regression) ---
-    const trendDetails = this.calculateSalesTrend(salesByDate);
+    const trendDetails = this.calculateSalesTrend(salesByDate, todayStr);
+
+    // --- E2. Sales Forecast Projection ---
+    const forecastData = this.calculateForecast(salesByDate, trendDetails, todayStr, 30);
 
     // --- F. RFM Segmentation ---
     const rfmClusters = this.calculateRfmClusters(salesByParty, todayStr);
@@ -377,6 +398,7 @@ export class LocalAnalyticsEngine {
       business_health: trendDetails.status,
       trend_summary: trendDetails.summary,
       trend_details: trendDetails,
+      forecast: forecastData,
       rfm_clusters: rfmClusters,
       actionable_alerts: alerts,
       kpis: {
@@ -408,11 +430,14 @@ export class LocalAnalyticsEngine {
 
   /**
    * Deterministic Linear Regression on chronological daily sales.
+   * Anchors to the most recent sales window (last 30 days) leading up to today or latest recorded sale.
    */
-  private static calculateSalesTrend(salesByDate: Record<string, number>): TrendDetails {
-    const dates = Object.keys(salesByDate).sort();
+  private static calculateSalesTrend(salesByDate: Record<string, number>, referenceDateStr?: string): TrendDetails {
+    const positiveDates = Object.keys(salesByDate)
+      .filter((d) => (salesByDate[d] || 0) > 0)
+      .sort();
 
-    if (dates.length === 0) {
+    if (positiveDates.length === 0) {
       return {
         status: "Constant",
         slope: 0.0,
@@ -424,17 +449,27 @@ export class LocalAnalyticsEngine {
       };
     }
 
-    // Fill continuous calendar date series between minDate and maxDate (up to 30 days)
-    const dailyTrend: Array<{ date: string; sales: number }> = [];
-    const minD = new Date(dates[0]);
-    const maxD = new Date(dates[dates.length - 1]);
-    const diffDays = Math.min(Math.round((maxD.getTime() - minD.getTime()) / (24 * 60 * 60 * 1000)), 60);
+    const lastActiveDate = positiveDates[positiveDates.length - 1];
+    let anchorDate = new Date(lastActiveDate);
 
-    const seriesDates: string[] = [];
-    for (let i = 0; i <= diffDays; i++) {
-      const cur = new Date(minD.getTime() + i * 24 * 60 * 60 * 1000);
+    // If referenceDateStr (today) is within 60 days of the last recorded sale, anchor to it
+    if (referenceDateStr) {
+      const refD = new Date(referenceDateStr);
+      const diffDays = (refD.getTime() - anchorDate.getTime()) / (24 * 60 * 60 * 1000);
+      if (diffDays >= 0 && diffDays <= 60) {
+        anchorDate = refD;
+      }
+    }
+
+    // Determine recent window span (up to 30 days, or at least 7 days for early businesses)
+    const firstActiveDate = positiveDates[0];
+    const totalDaysSpan = Math.round((anchorDate.getTime() - new Date(firstActiveDate).getTime()) / (24 * 60 * 60 * 1000)) + 1;
+    const windowDays = Math.max(Math.min(totalDaysSpan, 30), 7);
+
+    const dailyTrend: Array<{ date: string; sales: number }> = [];
+    for (let i = windowDays - 1; i >= 0; i--) {
+      const cur = new Date(anchorDate.getTime() - i * 24 * 60 * 60 * 1000);
       const dStr = cur.toISOString().slice(0, 10);
-      seriesDates.push(dStr);
       dailyTrend.push({
         date: dStr,
         sales: Math.round((salesByDate[dStr] || 0) * 100) / 100,
@@ -474,8 +509,8 @@ export class LocalAnalyticsEngine {
     }
 
     const slope = denominator !== 0 ? numerator / denominator : 0.0;
-    const avgSales = meanY > 0 ? meanY : 1.0;
-    const normalizedSlope = (slope / avgSales) * 100.0;
+    const avgSales = meanY > 0 ? meanY : 0.0;
+    const normalizedSlope = avgSales > 0 ? (slope / avgSales) * 100.0 : 0.0;
     const growthRatePct = Math.round(normalizedSlope * 10) / 10;
 
     let status: "Booming" | "Constant" | "Declining" = "Constant";
@@ -497,6 +532,95 @@ export class LocalAnalyticsEngine {
       average_daily_sales: Math.round(avgSales * 100) / 100,
       daily_trend: dailyTrend,
       summary,
+    };
+  }
+
+  /**
+   * Deterministic local sales forecast projection for offline-first resilience.
+   */
+  static calculateForecast(
+    salesByDate: Record<string, number>,
+    trend: TrendDetails,
+    referenceDateStr: string,
+    days: number = 30
+  ): SalesForecastResult {
+    const positiveDates = Object.keys(salesByDate)
+      .filter((d) => (salesByDate[d] || 0) > 0)
+      .sort();
+    const sampleSize = positiveDates.length;
+
+    if (sampleSize === 0) {
+      return {
+        forecast_days: days,
+        projected_total: 0.0,
+        projected_daily_average: 0.0,
+        trend_status: "Insufficient Data",
+        confidence: "LOW",
+        sample_size_days: 0,
+        trend_summary: "No sales data available for projection.",
+        daily_forecast: [],
+        historical_daily_average: 0.0,
+      };
+    }
+
+    const confidence: "HIGH" | "MEDIUM" | "LOW" = sampleSize >= 30 ? "HIGH" : sampleSize >= 7 ? "MEDIUM" : "LOW";
+    const avgSales = trend.average_daily_sales || 0;
+    const slope = trend.slope || 0;
+    const status = trend.status || "Constant";
+
+    const lastActiveDate = positiveDates[positiveDates.length - 1];
+    let anchorDate = new Date(lastActiveDate);
+    if (referenceDateStr) {
+      const refD = new Date(referenceDateStr);
+      const diff = (refD.getTime() - anchorDate.getTime()) / (24 * 60 * 60 * 1000);
+      if (diff >= 0 && diff <= 60) {
+        anchorDate = refD;
+      }
+    }
+
+    const forecastList: Array<{
+      date: string;
+      projected_sales: number;
+      lower_bound: number;
+      upper_bound: number;
+    }> = [];
+
+    let projectedTotal = 0;
+    const spreadPct = confidence === "HIGH" ? 0.10 : confidence === "MEDIUM" ? 0.20 : 0.35;
+
+    for (let i = 1; i <= days; i++) {
+      const futureD = new Date(anchorDate.getTime() + i * 24 * 60 * 60 * 1000);
+      const dStr = futureD.toISOString().slice(0, 10);
+      const baseProj = Math.max(0, avgSales + slope * (i / 10.0));
+      const spread = Math.round(baseProj * spreadPct * 100) / 100;
+      const lower = Math.max(0, Math.round((baseProj - spread) * 100) / 100);
+      const upper = Math.round((baseProj + spread) * 100) / 100;
+      const proj = Math.round(baseProj * 100) / 100;
+      projectedTotal += proj;
+
+      forecastList.push({
+        date: dStr,
+        projected_sales: proj,
+        lower_bound: lower,
+        upper_bound: upper,
+      });
+    }
+
+    const projectedDailyAvg = Math.round((projectedTotal / Math.max(1, days)) * 100) / 100;
+    const summary = sampleSize < 7
+      ? `Preliminary projection based on early history (${sampleSize} active selling days recorded).`
+      : `${trend.summary} Confidence: ${confidence} based on ${sampleSize} days of history.`;
+
+    return {
+      forecast_days: days,
+      projected_total: Math.round(projectedTotal * 100) / 100,
+      projected_daily_average: projectedDailyAvg,
+      trend_status: status,
+      confidence,
+      sample_size_days: sampleSize,
+      trend_summary: summary,
+      daily_forecast: forecastList,
+      historical_daily_average: avgSales,
     };
   }
 

@@ -9,10 +9,11 @@ class InsightsAPIView(APIView):
 
     def get(self, request, company_id=None):
         try:
-            if not company_id:
+            target_cid = company_id or request.query_params.get('company_id') or request.headers.get('X-Company-ID')
+            if not target_cid:
                 company = Company.objects.filter(users__user=request.user).first()
             else:
-                company = Company.objects.get(id=company_id, users__user=request.user)
+                company = Company.objects.get(id=target_cid, users__user=request.user)
 
             if not company:
                 return Response({"success": False, "error": "Company not found"}, status=404)
@@ -38,10 +39,11 @@ class SalesForecastView(APIView):
 
     def get(self, request, company_id=None):
         try:
-            if not company_id:
+            target_cid = company_id or request.query_params.get('company_id') or request.headers.get('X-Company-ID')
+            if not target_cid:
                 company = Company.objects.filter(users__user=request.user).first()
             else:
-                company = Company.objects.get(id=company_id, users__user=request.user)
+                company = Company.objects.get(id=target_cid, users__user=request.user)
 
             if not company:
                 return Response({"success": False, "error": "Company not found"}, status=404)

@@ -172,7 +172,6 @@ class AnalyticsEngine:
     def forecast_sales(company: Company, days: int = 30):
         """
         P1-15: Honest sales forecasting.
-        Requires at least 7 distinct active selling days for statistical validity.
         Communicates uncertainty via confidence tiers (HIGH/MEDIUM/LOW).
         Avoids fabricated ±15% fixed margins.
         """
@@ -180,15 +179,15 @@ class AnalyticsEngine:
         vouchers = Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
         distinct_days = vouchers.values('voucher_date').distinct().count()
 
-        if distinct_days < 7:
+        if distinct_days == 0:
             return {
                 "forecast_days": days,
                 "projected_total": 0.0,
                 "projected_daily_average": 0.0,
                 "trend_status": "Insufficient Data",
                 "confidence": "LOW",
-                "sample_size_days": distinct_days,
-                "trend_summary": f"Not enough sales history for a reliable forecast ({distinct_days}/7 active selling days recorded).",
+                "sample_size_days": 0,
+                "trend_summary": "No sales history recorded for projection.",
                 "daily_forecast": [],
                 "historical_daily_average": 0.0
             }
@@ -198,16 +197,27 @@ class AnalyticsEngine:
         slope = float(trend_info.get("slope", 0.0))
         status = trend_info.get("status", "Constant")
 
-        confidence = "HIGH" if distinct_days >= 30 else "MEDIUM"
+        confidence = "HIGH" if distinct_days >= 30 else ("MEDIUM" if distinct_days >= 7 else "LOW")
 
+        latest_voucher = vouchers.order_by('voucher_date').last()
         today = datetime.date.today()
+        if latest_voucher and latest_voucher.voucher_date:
+            last_date = latest_voucher.voucher_date
+            if today >= last_date and (today - last_date).days <= 60:
+                anchor_date = today
+            else:
+                anchor_date = last_date
+        else:
+            anchor_date = today
+
         forecast_list = []
         projected_total = 0.0
+        spread_pct = 0.10 if confidence == "HIGH" else (0.20 if confidence == "MEDIUM" else 0.35)
 
         for i in range(1, days + 1):
-            future_date = today + datetime.timedelta(days=i)
+            future_date = anchor_date + datetime.timedelta(days=i)
             base_proj = max(0.0, avg_sales + (slope * (i / 10.0)))
-            spread = round(base_proj * 0.10 if confidence == "HIGH" else base_proj * 0.20, 2)
+            spread = round(base_proj * spread_pct, 2)
             lower = max(0.0, round(base_proj - spread, 2))
             upper = round(base_proj + spread, 2)
             proj = round(base_proj, 2)
@@ -220,6 +230,11 @@ class AnalyticsEngine:
                 "upper_bound": upper
             })
 
+        if distinct_days < 7:
+            trend_summary = f"Preliminary projection based on early history ({distinct_days} active selling days recorded)."
+        else:
+            trend_summary = f"{trend_info.get('summary', '')} Confidence: {confidence} based on {distinct_days} days of history."
+
         return {
             "forecast_days": days,
             "projected_total": round(projected_total, 2),
@@ -227,7 +242,7 @@ class AnalyticsEngine:
             "trend_status": status,
             "confidence": confidence,
             "sample_size_days": distinct_days,
-            "trend_summary": f"{trend_info.get('summary', '')} Confidence: {confidence} based on {distinct_days} days of history.",
+            "trend_summary": trend_summary,
             "daily_forecast": forecast_list,
             "historical_daily_average": avg_sales
         }
