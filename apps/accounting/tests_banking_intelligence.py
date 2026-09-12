@@ -660,3 +660,101 @@ class BankIntelligenceAndAccountingHealthTests(APITestCase):
         self.assertIn("health_status", res.data)
         self.assertIn("health_score", res.data)
 
+    def test_25_guidelines_and_disclaimers_ignored_in_statement_parsing(self):
+        """Scenario 25: Guidelines, phishing warnings, ombudsman details, and closing balance lines are never ingested as transactions."""
+        csv_data = (
+            "Txn Date,Particulars,Chq/Ref No,Debit,Credit,Balance\n"
+            "28/01/2026,CASA DEBIT INTEREST CAPITALIZED,REF001,150.00,0.00,450000.00\n"
+            "28/01/2026,DISCLAIMER UNLESS THE CONSTITUENT NOTIFIES THE BANK IMMEDIATELY,,,,\n"
+            "28/01/2026,CODE OR COULD BE AN ATTEMPT TO PHISH STEAL YOUR CREDENTIALS,,,,\n"
+            "28/01/2026,ALWAYS LOGIN THROUGH HTTPS://NETBANKING.CANARABANK.IN,,,,\n"
+            "28/01/2026,DO NOT SHARE ATM PIN / OTP / PASSWORD WITH ANYONE,,,,\n"
+            "28/01/2026,Details of Banking Ombudsman: Office of Ombudsman,,,,\n"
+            "28/01/2026,Closing Balance : 866663.78,,,866663.78\n"
+            "29/01/2026,UPI/rajesh@okhdfcbank/INV25,UPI999,0.00,5000.00,455000.00\n"
+        ).encode('utf-8')
+
+        summary = BankStatementService.parse_statement(
+            company=self.company,
+            bank_ledger=self.bank_ledger,
+            file_bytes=csv_data,
+            filename="canara_statement.csv",
+            user=self.user
+        )
+
+        self.assertEqual(summary["status"], "COMPLETED")
+        # Exactly 2 genuine transactions must be imported, NOT 7!
+        self.assertEqual(summary["successful_rows"], 2)
+        txs = BankTransaction.objects.filter(company=self.company, statement_import_id=summary["import_id"])
+        self.assertEqual(txs.count(), 2)
+
+        descriptions = [t.normalized_narration for t in txs]
+        self.assertTrue(any("CASA DEBIT INTEREST CAPITALIZED" in d.upper() for d in descriptions))
+        self.assertTrue(any("RAJESH@OKHDFCBANK" in d.upper() for d in descriptions))
+        # Verify no disclaimer or closing balance lines made it into the DB
+        for d in descriptions:
+            self.assertNotIn("DISCLAIMER", d)
+            self.assertNotIn("PHISH", d)
+            self.assertNotIn("OMBUDSMAN", d)
+            self.assertNotIn("CLOSING BALANCE", d)
+
+    def test_26_running_balance_delta_identifies_receipt_vs_payment(self):
+        """Scenario 26: Customer deposit without 'BY' keyword is correctly classified as Credit (Receipt) via balance delta."""
+        saksham = Ledger.objects.create(
+            company=self.company,
+            group=self.debtor_grp,
+            name="Saksham Enterprises",
+            ledger_type="CUSTOMER"
+        )
+        csv_data = (
+            "Txn Date,Particulars,Chq/Ref No,Debit,Credit,Balance\n"
+            "15/01/2026,Opening Balance,,,100000.00\n"
+            "16/01/2026,CLG CHQ SAKSHAM ENTERPRISES,CHQ111,12500.00,0.00,112500.00\n"
+        ).encode('utf-8')
+
+        summary = BankStatementService.parse_statement(
+            company=self.company,
+            bank_ledger=self.bank_ledger,
+            file_bytes=csv_data,
+            filename="saksham_test.csv",
+            user=self.user
+        )
+
+        tx = BankTransaction.objects.filter(company=self.company, statement_import_id=summary["import_id"]).first()
+        self.assertIsNotNone(tx)
+        # Because balance increased from 100,000 to 112,500, it MUST be Credit (Receipt), NOT Debit (Payment)!
+        self.assertEqual(tx.credit_amount, Decimal('12500.00'))
+        self.assertEqual(tx.debit_amount, Decimal('0.00'))
+
+    def test_27_reference_number_blacklist(self):
+        """Scenario 27: Reference extractor never returns words like CLOSING, BALANCE, DISCLAIMER, or STATEMENT."""
+        self.assertIsNone(BankStatementService.extract_reference_number("Ref: CLOSING BALANCE"))
+        self.assertIsNone(BankStatementService.extract_reference_number("CHQ: STATEMENT"))
+        self.assertIsNone(BankStatementService.extract_reference_number("NO: DISCLAIMER"))
+        self.assertIsNone(BankStatementService.extract_reference_number("UTR: PAGE"))
+        # Genuine references work
+        self.assertEqual(BankStatementService.extract_reference_number("REF: UTR12345678"), "UTR12345678")
+
+    def test_28_delete_statement_import_rolls_back_cleanly(self):
+        """Scenario 28: BankReconciliationService.delete_statement_import executes without NameError and rolls back vouchers."""
+        csv_data = (
+            "Txn Date,Particulars,Chq/Ref No,Debit,Credit,Balance\n"
+            "10/01/2026,UPI/rajesh@okhdfcbank/INV1,UPI001,0.00,2000.00,52000.00\n"
+        ).encode('utf-8')
+
+        summary = BankStatementService.parse_statement(
+            company=self.company,
+            bank_ledger=self.bank_ledger,
+            file_bytes=csv_data,
+            filename="stmt_to_delete.csv",
+            user=self.user
+        )
+        import_record = BankStatementImport.objects.get(id=summary["import_id"])
+        self.assertEqual(import_record.transactions.count(), 1)
+
+        # Deleting statement must not throw NameError: name 'BankStatementImport' is not defined
+        deleted_count = BankReconciliationService.delete_statement_import(import_record)
+        self.assertEqual(deleted_count, 1)
+        self.assertFalse(BankStatementImport.objects.filter(id=summary["import_id"]).exists())
+        self.assertFalse(BankTransaction.objects.filter(statement_import_id=summary["import_id"]).exists())
+

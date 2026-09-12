@@ -82,8 +82,26 @@ class PartyIntelligenceService:
 
         norm_narration = narration.upper().strip() if narration else ""
         amount = credit_amount if credit_amount > Decimal('0.00') else debit_amount
-        has_credit_cues = bool(re.search(r'(^BY\b|\bBY\s+(?:CLG|CLEARING|TRF|TRANSFER|CASH|CHEQUE|CHQ|NEFT|RTGS|IMPS|UPI)|\bCR\b|\bDEPOSIT)', norm_narration))
-        is_receipt = (credit_amount > Decimal('0.00')) or has_credit_cues
+        has_credit_cues = bool(re.search(
+            r'(^BY\b|\bBY\s+(?:CLG|CLEARING|TRF|TRANSFER|CASH|CHEQUE|CHQ|NEFT|RTGS|IMPS|UPI)|'
+            r'\b(?:CR|DEPOSIT|DEPOSITS|CREDIT|INWARD|INW|CTS|CHQ\s+DEP)\b)',
+            norm_narration
+        ))
+        has_debit_cues = bool(re.search(
+            r'(^TO\b|\bTO\s+(?:CLG|CLEARING|TRF|TRANSFER|CASH|CHEQUE|CHQ|NEFT|RTGS|IMPS|UPI)|'
+            r'\b(?:DR|WITHDRAWAL|WITHDRAWALS|DEBIT|OUTWARD|OUT|ATM|POS|CHQ\s+PAID)\b)',
+            norm_narration
+        ))
+        if credit_amount > Decimal('0.00'):
+            is_receipt = True
+        elif debit_amount > Decimal('0.00'):
+            is_receipt = False
+        elif has_credit_cues and not has_debit_cues:
+            is_receipt = True
+        elif has_debit_cues and not has_credit_cues:
+            is_receipt = False
+        else:
+            is_receipt = True
         target_role = 'CUSTOMER' if is_receipt else 'SUPPLIER'
         
         signals_triggered = []

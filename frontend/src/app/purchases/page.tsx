@@ -154,7 +154,19 @@ export default function PurchaseInvoiceList() {
       const headers = { Authorization: `Bearer ${token}` };
       const res = await axios.get(`${API_BASE_URL}/api/vouchers/${voucherId}/`, { headers });
       if (res.data.success) {
-        setSelectedVoucher(res.data.data);
+        const vData = res.data.data;
+        if (vData.has_attachment && !vData.attachment_data) {
+          try {
+            const attRes = await axios.get(`${API_BASE_URL}/api/vouchers/${voucherId}/attachment/`, { headers });
+            if (attRes.data?.success && attRes.data?.attachment_data) {
+              vData.attachment_data = attRes.data.attachment_data;
+              vData.attachment_mime = attRes.data.attachment_mime || vData.attachment_mime;
+            }
+          } catch (attErr) {
+            console.warn("Could not load on-demand attachment:", attErr);
+          }
+        }
+        setSelectedVoucher(vData);
       }
     } catch (err) {
       console.error("Failed to load voucher detail:", err);

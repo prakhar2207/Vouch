@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     CreateSalesInvoiceAPIView, CreatePurchaseInvoiceAPIView, TrialBalanceAPIView, 
-    ListVouchersAPIView, VoucherDetailAPIView, LedgerStatementAPIView, 
+    ListVouchersAPIView, VoucherDetailAPIView, VoucherAttachmentAPIView, LedgerStatementAPIView, 
     CreatePaymentReceiptAPIView, ListPaymentReceiptAPIView, UniversalVoucherAPIView,
     SyncTaxLedgersAPIView, PartyRatesAPIView, RebuildBalancesAPIView
 )
@@ -24,6 +24,7 @@ urlpatterns = [
     path('reports/trial-balance/<uuid:company_id>/', TrialBalanceAPIView.as_view(), name='trial_balance'),
     path('vouchers/detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='voucher_detail'),
     path('voucher-detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='voucher_detail_alias'),
+    path('vouchers/<uuid:voucher_id>/attachment/', VoucherAttachmentAPIView.as_view(), name='voucher_attachment'),
     path('reports/ledger-statement/<uuid:company_id>/<uuid:ledger_id>/', LedgerStatementAPIView.as_view(), name='ledger_statement'),
     
     # B2B EDI Network

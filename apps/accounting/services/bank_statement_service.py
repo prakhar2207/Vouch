@@ -46,12 +46,22 @@ class BankStatementService:
     """
 
     BOILERPLATE_REGEX = re.compile(
-        r'(page\s+\d+|closing\s+balance|opening\s+balance|brought\s+forward|carried\s+forward|'
-        r'end\s+of\s+statement|disclaimer|details\s+of\s+ombudsman|ombudsman|do\s+not\s+share\s+atm|'
-        r'computer\s+output|does\s+not\s+require\s+signature|date\s+particulars|'
-        r'are\s+you\s+a\s+merchant|use\s+digital\s+payment|contact\s+branch|phishing\s+attacks|'
-        r'unless\s+the\s+constituent|current\s+balance|account\s+balance\s+as\s+on|'
-        r'total\s+withdrawals|total\s+deposits|statement\s+summary)',
+        r'('
+        r'\bpage\s+\d+(\s+of\s+\d+)?\b|'
+        r'\bclosing\s+balance\b|\bopening\s+balance\b|\bbrought\s+forward\b|\bcarried\s+forward\b|\bb\/f\b|\bc\/f\b|'
+        r'\bend\s+of\s+statement\b|\bstatement\s+summary\b|\bstatement\s+of\s+account\b|'
+        r'\bdisclaimer\b|\bunless\s+the\s+constituent\b|\bif\s+any\s+discrepancy\s+found\b|'
+        r'\bconstituent\b|\bdetails\s+of\s+(?:banking\s+)?ombudsman\b|\bbanking\s+ombudsman\b|\bombudsman\b|'
+        r'\bdo\s+not\s+share\s+atm\b|\bnever\s+share\s+(?:your\s+)?(?:otp|cvv|pin|password)\b|'
+        r'\bcode\s+or\s+could\s+be\s+an\s+attempt\b|\balways\s+login\s+through\b|'
+        r'\bplease\s*beware\b|\bbeware\s+of\b|\bfake\s+website\b|'
+        r'\bphishing\b|\bvishing\b|\bsmishing\b|\bphish\b|\bsteal\s+your\s+personal\b|'
+        r'\bchange\s+in\s+(?:the\s+)?address\b|\bare\s+you\s+a\s+merchant\b|\buse\s+digital\s+payment\b|'
+        r'\bimb\s+users\b|\bcyber\s+crime\b|\btoll\s+free\b|\bcustomer\s+care\b|\bhelpline\b|\bcontact\s+branch\b|'
+        r'\bcomputer\s+(?:generated|output)\b|\bdoes\s+not\s+require\s+(?:any\s+)?signature\b|'
+        r'\bdate\s+particulars\b|\baccount\s+balance\s+as\s+on\b|\bcurrent\s+balance\b|'
+        r'\btotal\s+withdrawals\b|\btotal\s+deposits\b'
+        r')',
         re.IGNORECASE
     )
 
@@ -176,14 +186,48 @@ class BankStatementService:
         return "%d/%m/%Y"
 
     @classmethod
+    def clean_boilerplate_from_narration(cls, text: str) -> str:
+        """Strips guidelines, disclaimers, phishing warnings, and balance footers from narration."""
+        if not text:
+            return ""
+        m = cls.BOILERPLATE_REGEX.search(text)
+        if m:
+            clean_part = text[:m.start()].strip()
+            clean_part = re.sub(r'[\s\-\:\.\,\/\\\|]+$', '', clean_part).strip()
+            return clean_part
+        return text.strip()
+
+    @classmethod
+    def is_boilerplate_line(cls, text: str) -> bool:
+        """Determines if a line is purely a disclaimer, guideline, footer, or balance line."""
+        if not text:
+            return True
+        t_clean = text.strip()
+        if cls.BOILERPLATE_REGEX.search(t_clean):
+            cleaned = cls.BOILERPLATE_REGEX.sub("", t_clean)
+            residual = re.sub(r'[\d\s\-\:\.\,\/\\\|\(\)\"\']+', '', cleaned)
+            if len(residual) < 4:
+                return True
+            lower_t = t_clean.lower()
+            if any(lower_t.startswith(prefix) for prefix in [
+                'disclaimer', 'page ', '- page', 'details of', 'ombudsman',
+                'closing balance', 'opening balance', 'brought forward',
+                'carried forward', 'code or could', 'always login',
+                'do not share', 'please beware', 'change in the address',
+                'are you a merchant', 'imb users', 'end of statement'
+            ]):
+                return True
+        return False
+
+    @classmethod
     def normalize_narration(cls, text: str, max_length: int = 500) -> str:
         """
-        Cleans bank narration, normalizes whitespace and standardizes
+        Cleans bank narration, normalizes whitespace, strips boilerplate guidelines, and standardizes
         beneficiary identifiers for accurate matching. Safely truncates to max_length (default 500).
         """
         if not text:
             return ""
-        s = str(text).strip()
+        s = cls.clean_boilerplate_from_narration(str(text))
         s = re.sub(r'\s+', ' ', s)
         res = s.strip()
         if max_length and len(res) > max_length:
@@ -203,16 +247,27 @@ class BankStatementService:
     @classmethod
     def extract_reference_number(cls, text: str, ref_col_val: Optional[str] = None) -> Optional[str]:
         """Extracts Cheque number, UTR, or transaction reference from dedicated column or narration."""
+        blacklist = {
+            'CLOSING', 'BALANCE', 'STATEMENT', 'DISCLAIMER', 'PAGE', 'TOTAL',
+            'OPENING', 'CANARA', 'CUSTOMER', 'CHEQUE', 'ACCOUNT', 'PARTICULARS',
+            'AMOUNT', 'DEPOSIT', 'WITHDRAWAL', 'CREDIT', 'DEBIT', 'SUMMARY', 'BRANCH'
+        }
         if ref_col_val and str(ref_col_val).strip() and str(ref_col_val).strip().lower() not in ['nan', 'none', '-', '']:
-            return str(ref_col_val).strip()[:100]
+            cand = str(ref_col_val).strip()[:100]
+            if cand.upper() not in blacklist and not re.match(r'^(?:0+|nan|none|-+)$', cand, re.IGNORECASE):
+                return cand
         if not text:
             return None
         utr_match = re.search(r'(?:UTR|REF|NO|CHQ|NEFT|RTGS|IMPS)[/:\s\-]+([A-Za-z0-9]{6,22})', text, re.IGNORECASE)
         if utr_match:
-            return utr_match.group(1).upper()[:100]
+            val = utr_match.group(1).upper()[:100]
+            if val not in blacklist:
+                return val
         rrn_match = re.search(r'\b(\d{12})\b', text)
         if rrn_match:
-            return rrn_match.group(1)[:100]
+            val = rrn_match.group(1)[:100]
+            if val not in blacklist:
+                return val
         return None
 
     @classmethod
@@ -431,6 +486,11 @@ class BankStatementService:
 
                 val_date = cls.parse_date_str(row[col_map['value_date']], preferred_format=batch_date_fmt) if 'value_date' in col_map and col_map['value_date'] < len(row) else None
                 desc = row[col_map['desc']].strip() if 'desc' in col_map and col_map['desc'] < len(row) else ""
+                if cls.is_boilerplate_line(desc):
+                    continue
+                desc = cls.clean_boilerplate_from_narration(desc)
+                if not desc or cls.is_boilerplate_line(desc):
+                    continue
                 ref = row[col_map['ref']].strip() if 'ref' in col_map and col_map['ref'] < len(row) else ""
 
                 debit = Decimal('0.00')
@@ -442,6 +502,16 @@ class BankStatementService:
                     credit = cls.clean_amount_str(row[col_map['credit']])
 
                 bal = cls.clean_amount_str(row[col_map['balance']]) if 'balance' in col_map and col_map['balance'] < len(row) and str(row[col_map['balance']]).strip() else None
+
+                # Directional check via running balance delta if both balances are known
+                if prev_balance is not None and bal is not None:
+                    delta = bal - prev_balance
+                    if delta > Decimal('0.01') and debit > 0 and credit == 0 and abs(delta - debit) < Decimal('0.05'):
+                        credit = debit
+                        debit = Decimal('0.00')
+                    elif delta < -Decimal('0.01') and credit > 0 and debit == 0 and abs(abs(delta) - credit) < Decimal('0.05'):
+                        debit = credit
+                        credit = Decimal('0.00')
 
                 # Handle single amount column with Type indicator or balance delta
                 if debit == 0 and credit == 0 and 'amount' in col_map and col_map['amount'] < len(row):
@@ -531,11 +601,26 @@ class BankStatementService:
 
                 val_date = cls.parse_date_str(row[col_map['value_date']], preferred_format=batch_date_fmt) if 'value_date' in col_map and col_map['value_date'] < len(row) else None
                 desc = str(row[col_map['desc']]).strip() if 'desc' in col_map and col_map['desc'] < len(row) and row[col_map['desc']] is not None else ""
+                if cls.is_boilerplate_line(desc):
+                    continue
+                desc = cls.clean_boilerplate_from_narration(desc)
+                if not desc or cls.is_boilerplate_line(desc):
+                    continue
                 ref = str(row[col_map['ref']]).strip() if 'ref' in col_map and col_map['ref'] < len(row) and row[col_map['ref']] is not None else ""
 
                 debit = cls.clean_amount_str(row[col_map['debit']]) if 'debit' in col_map and col_map['debit'] < len(row) else Decimal('0.00')
                 credit = cls.clean_amount_str(row[col_map['credit']]) if 'credit' in col_map and col_map['credit'] < len(row) else Decimal('0.00')
                 bal = cls.clean_amount_str(row[col_map['balance']]) if 'balance' in col_map and col_map['balance'] < len(row) and row[col_map['balance']] is not None and str(row[col_map['balance']]).strip() else None
+
+                # Directional check via running balance delta if both balances are known
+                if prev_balance is not None and bal is not None:
+                    delta = bal - prev_balance
+                    if delta > Decimal('0.01') and debit > 0 and credit == 0 and abs(delta - debit) < Decimal('0.05'):
+                        credit = debit
+                        debit = Decimal('0.00')
+                    elif delta < -Decimal('0.01') and credit > 0 and debit == 0 and abs(abs(delta) - credit) < Decimal('0.05'):
+                        debit = credit
+                        credit = Decimal('0.00')
 
                 if debit == 0 and credit == 0 and 'amount' in col_map and col_map['amount'] < len(row):
                     amt = cls.clean_amount_str(row[col_map['amount']])
@@ -607,6 +692,7 @@ class BankStatementService:
                 return [], [{"row": 0, "error": "Scanned or image-only PDF detected. Initiating Vision OCR.", "raw": ""}]
 
             # Strategy A: Try pymupdf find_tables()
+            prev_balance = None
             for page_idx, page in enumerate(doc):
                 try:
                     tables = page.find_tables()
@@ -626,10 +712,27 @@ class BankStatementService:
                                     if not dt:
                                         continue
                                     desc = str(row[col_map['desc']]).strip() if 'desc' in col_map and col_map['desc'] < len(row) else ""
+                                    if cls.is_boilerplate_line(desc):
+                                        continue
+                                    desc = cls.clean_boilerplate_from_narration(desc)
+                                    if not desc or cls.is_boilerplate_line(desc):
+                                        continue
                                     ref = str(row[col_map['ref']]).strip() if 'ref' in col_map and col_map['ref'] < len(row) else ""
                                     deb = cls.clean_amount_str(row[col_map['debit']]) if 'debit' in col_map and col_map['debit'] < len(row) else Decimal('0.00')
                                     cred = cls.clean_amount_str(row[col_map['credit']]) if 'credit' in col_map and col_map['credit'] < len(row) else Decimal('0.00')
                                     bal = cls.clean_amount_str(row[col_map['balance']]) if 'balance' in col_map and col_map['balance'] < len(row) and str(row[col_map['balance']]).strip() else None
+
+                                    # Running balance delta direction correction
+                                    if prev_balance is not None and bal is not None:
+                                        delta = bal - prev_balance
+                                        if delta > Decimal('0.01') and deb > 0 and cred == 0 and abs(delta - deb) < Decimal('0.05'):
+                                            cred = deb
+                                            deb = Decimal('0.00')
+                                        elif delta < -Decimal('0.01') and cred > 0 and deb == 0 and abs(abs(delta) - cred) < Decimal('0.05'):
+                                            deb = cred
+                                            cred = Decimal('0.00')
+                                    if bal is not None:
+                                        prev_balance = bal
 
                                     if deb > 0 or cred > 0:
                                         valid_rows.append({
@@ -707,13 +810,17 @@ class BankStatementService:
                 if not l_str:
                     continue
                 # If standalone boilerplate line (e.g. disclaimer or closing balance line), ignore
-                if boilerplate_re.search(l_str) and not date_start_re.match(l_str):
+                if cls.is_boilerplate_line(l_str) and not date_start_re.match(l_str):
                     continue
                 # If transaction line contains closing balance / footer at end, strip it
                 if date_start_re.match(l_str):
-                    cutoff = re.search(r'\b(Closing\s+Balance|page\s+\d+|END\s+OF\s+STATEMENT|DISCLAIMER)\b', l_str, re.IGNORECASE)
+                    if cls.is_boilerplate_line(l_str):
+                        continue
+                    cutoff = cls.BOILERPLATE_REGEX.search(l_str)
                     if cutoff:
                         l_str = l_str[:cutoff.start()].strip()
+                        if cls.is_boilerplate_line(l_str):
+                            continue
                 all_lines.append((page_idx, l_str))
 
         pending_blocks = []
@@ -722,6 +829,21 @@ class BankStatementService:
         for page_no, l_str in all_lines:
             m = date_start_re.match(l_str)
             if m:
+                if cls.is_boilerplate_line(l_str):
+                    if current_block:
+                        pending_blocks.append(current_block)
+                        current_block = None
+                    continue
+                cutoff = cls.BOILERPLATE_REGEX.search(l_str)
+                if cutoff:
+                    before_c = l_str[:cutoff.start()].strip()
+                    if cls.is_boilerplate_line(before_c):
+                        if current_block:
+                            pending_blocks.append(current_block)
+                            current_block = None
+                        continue
+                    l_str = before_c
+
                 if current_block:
                     pending_blocks.append(current_block)
                 current_block = {
@@ -730,6 +852,14 @@ class BankStatementService:
                     "lines": [l_str]
                 }
             elif current_block:
+                if cls.is_boilerplate_line(l_str):
+                    continue
+                cutoff = cls.BOILERPLATE_REGEX.search(l_str)
+                if cutoff:
+                    clean_part = l_str[:cutoff.start()].strip()
+                    if clean_part and not cls.is_boilerplate_line(clean_part):
+                        current_block["lines"].append(clean_part)
+                    continue
                 current_block["lines"].append(l_str)
 
         if current_block:
@@ -742,8 +872,11 @@ class BankStatementService:
                 continue
 
             full_block_text = " ".join(block["lines"])
-            amts = amt_finder_re.findall(full_block_text)
+            full_block_text = cls.clean_boilerplate_from_narration(full_block_text)
+            if not full_block_text or cls.is_boilerplate_line(full_block_text):
+                continue
 
+            amts = amt_finder_re.findall(full_block_text)
             if not amts:
                 continue
 
@@ -752,6 +885,9 @@ class BankStatementService:
                 cleaned_narration = cleaned_narration.replace(a, " ")
             cleaned_narration = date_start_re.sub("", cleaned_narration).strip()
             norm_desc = cls.normalize_narration(cleaned_narration)
+            if not norm_desc or cls.is_boilerplate_line(norm_desc):
+                continue
+
             ref_no = cls.extract_reference_number(full_block_text)
 
             debit = Decimal('0.00')
@@ -774,7 +910,21 @@ class BankStatementService:
                 amt_val = cls.clean_amount_str(amts[0])
                 bal = cls.clean_amount_str(amts[1])
 
-                if has_credit and not has_debit:
+                if prev_balance is not None and bal is not None:
+                    delta = bal - prev_balance
+                    if abs(delta - amt_val) <= Decimal('0.05') or delta > Decimal('0.01'):
+                        credit = amt_val
+                    elif abs(delta - (-amt_val)) <= Decimal('0.05') or delta < -Decimal('0.01'):
+                        debit = amt_val
+                    elif has_credit and not has_debit:
+                        credit = amt_val
+                    elif has_debit and not has_credit:
+                        debit = amt_val
+                    elif deposit_col_first:
+                        credit = amt_val
+                    else:
+                        debit = amt_val
+                elif has_credit and not has_debit:
                     credit = amt_val
                 elif has_debit and not has_credit:
                     debit = amt_val
@@ -784,6 +934,8 @@ class BankStatementService:
                     debit = amt_val
             elif len(amts) == 1:
                 amt_val = cls.clean_amount_str(amts[0])
+                if prev_balance is not None and abs(amt_val - prev_balance) <= Decimal('0.05') and cls.BOILERPLATE_REGEX.search(full_block_text):
+                    continue
                 if has_debit and not has_credit:
                     debit = amt_val
                 else:
@@ -866,7 +1018,9 @@ class BankStatementService:
             "     These are ALWAYS DEPOSITS / CREDITS (Money In / Receipts). For these, set credit > 0 and debit = 0.0.\n"
             "   - NARRATIONS STARTING WITH 'TO' (e.g. 'TO CLG', 'TO TRF', 'TO CLEARING', 'TO TRANSFER', 'CHQ PAID', 'NEFT DR', 'RTGS DR', 'UPI/DR', 'CASA DEBIT', 'SERVICE CHARGE', 'SMS CHARGES'): "
             "     These are ALWAYS WITHDRAWALS / DEBITS (Money Out / Payments). For these, set debit > 0 and credit = 0.0.\n\n"
-            "3. DO NOT EXTRACT SUMMARY OR BALANCE ROWS AS TRANSACTIONS:\n"
+            "3. DO NOT EXTRACT SUMMARY, BALANCE, GUIDELINES, OR DISCLAIMERS AS TRANSACTIONS:\n"
+            "   - NEVER extract general guidelines, constituent disclaimers, phishing notices, cyber security tips, or ombudsman contact details as transactions!\n"
+            "   - Ignore text such as 'DISCLAIMER UNLESS THE CONSTITUENT...', 'CODE OR COULD BE AN ATTEMPT TO PHISH', 'ALWAYS LOGIN THROUGH...', 'DO NOT SHARE ATM PIN', 'Details of Banking Ombudsman', 'ARE YOU A MERCHANT', 'IMB USERS'.\n"
             "   - NEVER extract statement summary rows, closing balance rows (e.g. 'Closing Balance as on...', 'Current Account Balance', 'Brought Forward', 'Carried Forward', 'Total Debits', 'Total Credits') as a transaction!\n"
             "   - Only extract legitimate financial transaction line items that occurred on specific dates.\n\n"
             "4. For each transaction extract:\n"
@@ -919,10 +1073,13 @@ class BankStatementService:
                     if not raw_desc:
                         continue
 
-                    # 1. Reject summary, footer, or closing balance rows
-                    if cls.BOILERPLATE_REGEX.search(raw_desc):
-                        if re.search(r'\b(closing\s+balance|current\s+balance|account\s+balance\s+as\s+on|total\s+deposits|total\s+withdrawals|statement\s+summary|carried\s+forward|brought\s+forward)\b', raw_desc, re.IGNORECASE):
-                            continue
+                    # 1. Reject summary, footer, guidelines, or closing balance rows
+                    if cls.is_boilerplate_line(raw_desc):
+                        continue
+                    cleaned_desc = cls.clean_boilerplate_from_narration(raw_desc)
+                    if not cleaned_desc or cls.is_boilerplate_line(cleaned_desc):
+                        continue
+                    raw_desc = cleaned_desc
 
                     dt = cls.parse_date_str(t.get("date"))
                     if not dt:
@@ -1069,7 +1226,39 @@ class BankStatementService:
                 file_bytes, filename, mime_type=mime, custom_api_key=custom_api_key
             )
 
+        # Filter out boilerplate / guideline rows and strip trailing disclaimers
+        filtered_rows = []
+        for r in valid_rows:
+            raw_d = str(r.get('description', '') or '')
+            if cls.is_boilerplate_line(raw_d):
+                continue
+            cleaned_d = cls.clean_boilerplate_from_narration(raw_d)
+            if not cleaned_d or cls.is_boilerplate_line(cleaned_d):
+                continue
+            r['description'] = cleaned_d
+            filtered_rows.append(r)
+        valid_rows = filtered_rows
+
         valid_rows.sort(key=lambda r: r.get("date") or datetime.date.min)
+
+        # Cross-row balance progression verification for ALL statement formats (PDF, CSV, Excel, Image):
+        for i in range(1, len(valid_rows)):
+            prev_row = valid_rows[i - 1]
+            curr_row = valid_rows[i]
+            prev_bal = prev_row.get("balance")
+            curr_bal = curr_row.get("balance")
+            if prev_bal is not None and curr_bal is not None:
+                diff = curr_bal - prev_bal
+                c_deb = curr_row.get("debit") or Decimal('0.00')
+                c_cred = curr_row.get("credit") or Decimal('0.00')
+                # Balance increased by approximately transaction amount -> must be credit (deposit / receipt)
+                if diff > Decimal('0.01') and c_deb > 0 and c_cred == 0 and abs(diff - c_deb) < Decimal('0.05'):
+                    curr_row["credit"] = c_deb
+                    curr_row["debit"] = Decimal('0.00')
+                # Balance decreased by approximately transaction amount -> must be debit (withdrawal / payment)
+                elif diff < -Decimal('0.01') and c_cred > 0 and c_deb == 0 and abs(abs(diff) - c_cred) < Decimal('0.05'):
+                    curr_row["debit"] = c_cred
+                    curr_row["credit"] = Decimal('0.00')
 
         chain_report = cls.validate_balance_chain(valid_rows)
         balance_valid = chain_report["valid"]

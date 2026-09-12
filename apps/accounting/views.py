@@ -277,7 +277,7 @@ class ListVouchersAPIView(APIView):
 
             vouchers = vouchers.annotate(
                 has_attachment_flag=Case(
-                    When(attachment_data__gt='', then=Value(True)),
+                    When(attachment_mime__gt='', then=Value(True)),
                     default=Value(False),
                     output_field=BooleanField()
                 )
@@ -356,7 +356,11 @@ class VoucherDetailAPIView(APIView):
     def get(self, request, voucher_id):
         try:
             from apps.accounting.models import Voucher, VoucherItem
-            voucher = Voucher.objects.select_related('company', 'party_ledger').get(id=voucher_id, company__users__user=request.user)
+            include_attachment = request.query_params.get('include_attachment', 'false').lower() == 'true'
+            voucher_qs = Voucher.objects.select_related('company', 'party_ledger')
+            if not include_attachment:
+                voucher_qs = voucher_qs.defer('attachment_data')
+            voucher = voucher_qs.get(id=voucher_id, company__users__user=request.user)
             items = VoucherItem.objects.filter(voucher=voucher).select_related('product', 'product__category')
             
             items_data = []
@@ -482,7 +486,8 @@ class VoucherDetailAPIView(APIView):
                     "state_code": voucher.buyer_state_code if voucher.buyer_state_code else (voucher.party_ledger.state_code if voucher.party_ledger else ""),
                     "phone": voucher.buyer_phone if voucher.buyer_phone else (voucher.party_ledger.phone if voucher.party_ledger else ""),
                 } if voucher.party_ledger else None,
-                "attachment_data": voucher.attachment_data,
+                "has_attachment": bool(voucher.attachment_mime or (hasattr(voucher, 'attachment_data') and voucher.attachment_data)),
+                "attachment_data": voucher.attachment_data if include_attachment else None,
                 "attachment_mime": voucher.attachment_mime,
                 "items": items_data
             }
@@ -1128,6 +1133,31 @@ class VoucherDetailAPIView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+class VoucherAttachmentAPIView(APIView):
+    """
+    Dedicated endpoint for on-demand attachment fetching.
+    Prevents large Base64 blobs from bloating standard voucher queries and list endpoints.
+    """
+    def get_permissions(self):
+        return [IsAuthenticated(), IsCompanyMember()]
+
+    def get(self, request, voucher_id):
+        try:
+            from apps.accounting.models import Voucher
+            voucher = Voucher.objects.only('id', 'attachment_data', 'attachment_mime').get(
+                id=voucher_id, company__users__user=request.user
+            )
+            return Response({
+                "success": True,
+                "has_attachment": bool(voucher.attachment_data),
+                "attachment_data": voucher.attachment_data,
+                "attachment_mime": voucher.attachment_mime,
+            })
+        except Voucher.DoesNotExist:
+            return Response({"success": False, "error": "Voucher not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 class LedgerStatementAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
     
@@ -1636,7 +1666,7 @@ class UniversalVoucherAPIView(APIView):
 
             qs = qs.annotate(
                 has_attachment_flag=Case(
-                    When(attachment_data__gt='', then=Value(True)),
+                    When(attachment_mime__gt='', then=Value(True)),
                     default=Value(False),
                     output_field=BooleanField()
                 )

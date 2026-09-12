@@ -47,6 +47,8 @@ let isSyncInProgress = false;
  * - Categorization of retryable vs permanent failures
  * - Exponential backoff on retries (max 10 retries)
  */
+const BACKOFF_DELAYS = [2000, 5000, 15000, 30000, 60000];
+
 export async function executeClientOutboxSync(): Promise<{ processed: number; failed: number }> {
   if (typeof window === "undefined" || !navigator.onLine) return { processed: 0, failed: 0 };
   if (isSyncInProgress) return { processed: 0, failed: 0 };
@@ -71,10 +73,14 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
       console.warn("Failed to reset orphaned syncing vouchers:", e);
     }
 
-    const pending = await offlineDb.vouchers
+    const allPending = await offlineDb.vouchers
       .where("status")
       .equals("PENDING")
       .toArray();
+
+    const now = Date.now();
+    // Only pick up items whose exponential backoff delay has elapsed
+    const pending = allPending.filter((item) => !item.nextRetryAt || item.nextRetryAt <= now);
 
     if (pending.length === 0) return { processed: 0, failed: 0 };
 
@@ -122,6 +128,7 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
               status: "SYNCED",
               voucherNumber: cmdResult?.voucher_number,
               syncedAt: Date.now(),
+              nextRetryAt: undefined,
             });
             processedCount++;
           } else {
@@ -133,51 +140,67 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
             });
             failedCount++;
           }
-        } else if (httpStatus === 400 || httpStatus === 422) {
-          // Permanent validation failure: do NOT retry in a loop
-          const errMsg = resData.errors?.find((e: any) => e.command_id === commandId)?.error || resData.error || "Validation error rejected by server";
+        } else if (httpStatus === 400 || httpStatus === 422 || httpStatus === 409) {
+          // Permanent validation or conflict failure: do NOT retry in a loop
+          const errMsg = resData.errors?.find((e: any) => e.command_id === commandId)?.error || resData.error || `Rejected by server (${httpStatus})`;
           await offlineDb.vouchers.update(item.id!, {
             status: "FAILED",
             errorMessage: errMsg,
             retryCount: (item.retryCount || 0) + 1,
+            nextRetryAt: undefined,
           });
           failedCount++;
         } else if (httpStatus === 401 || httpStatus === 403) {
-          // Auth or permission failure
+          // Auth or permission failure: requires user login / role fix
           await offlineDb.vouchers.update(item.id!, {
             status: "FAILED",
             errorMessage: `Authorization error (${httpStatus})`,
             retryCount: (item.retryCount || 0) + 1,
+            nextRetryAt: undefined,
           });
           failedCount++;
         } else {
-          // Retryable error: 408, 429, 5xx, or network failure
+          // Retryable error: 408, 429, 500, 502, 503, 504, or network failure
           const newRetry = (item.retryCount || 0) + 1;
           const errMsg = resData.errors?.[0]?.error || resData.error || `Server error (${httpStatus})`;
-          if (newRetry >= 10) {
+          if (newRetry >= 5) {
             await offlineDb.vouchers.update(item.id!, {
               status: "FAILED",
-              errorMessage: `Exceeded max retry limit: ${errMsg}`,
+              errorMessage: `Exceeded max retry limit (5): ${errMsg}`,
               retryCount: newRetry,
+              nextRetryAt: undefined,
             });
             failedCount++;
           } else {
+            const delay = BACKOFF_DELAYS[newRetry - 1] || 60000;
             await offlineDb.vouchers.update(item.id!, {
               status: "PENDING",
               errorMessage: errMsg,
               retryCount: newRetry,
+              nextRetryAt: Date.now() + delay,
             });
           }
         }
       } catch (err: any) {
         const isOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
         const newRetry = (item.retryCount || 0) + 1;
-        await offlineDb.vouchers.update(item.id!, {
-          status: isOnline && newRetry >= 10 ? "FAILED" : "PENDING",
-          errorMessage: err?.message || "Network error during sync",
-          retryCount: newRetry,
-        });
-        if (isOnline && newRetry >= 10) failedCount++;
+        if (isOnline && newRetry >= 5) {
+          await offlineDb.vouchers.update(item.id!, {
+            status: "FAILED",
+            errorMessage: err?.message || "Exceeded max network retry limit",
+            retryCount: newRetry,
+            nextRetryAt: undefined,
+          });
+          failedCount++;
+        } else {
+          const delay = BACKOFF_DELAYS[Math.min(newRetry - 1, BACKOFF_DELAYS.length - 1)];
+          await offlineDb.vouchers.update(item.id!, {
+            status: "PENDING",
+            errorMessage: err?.message || "Network error during sync",
+            retryCount: newRetry,
+            nextRetryAt: Date.now() + delay,
+          });
+        }
       }
     }
 
@@ -188,12 +211,23 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
 }
 
 export async function retryFailedVoucher(id: number) {
-  await offlineDb.vouchers.update(id, { status: "PENDING", errorMessage: undefined });
+  await offlineDb.vouchers.update(id, { status: "PENDING", errorMessage: undefined, nextRetryAt: undefined, retryCount: 0 });
   await triggerOutboxSync();
 }
 
 export async function triggerOutboxSync() {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || !navigator.onLine) return;
+
+  // Verify there are actually eligible pending items before registering or executing sync
+  const now = Date.now();
+  const eligiblePending = await offlineDb.vouchers
+    .where("status")
+    .equals("PENDING")
+    .filter((v) => !v.nextRetryAt || v.nextRetryAt <= now)
+    .count()
+    .catch(() => 0);
+
+  if (eligiblePending === 0) return;
 
   if ("serviceWorker" in navigator && "SyncManager" in window) {
     try {
@@ -437,14 +471,19 @@ if (typeof window !== "undefined" && "serviceWorker" in navigator) {
   });
 }
 
-// Auto-register listener for online event inside the PWA container
+// Auto-register listener for online event inside the PWA container with 30s debounce
+let lastVisibilitySyncTime = 0;
 if (typeof window !== "undefined") {
   window.addEventListener("online", () => {
     triggerOutboxSync();
   });
   window.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
-      triggerOutboxSync();
+      const now = Date.now();
+      if (now - lastVisibilitySyncTime > 30000) {
+        lastVisibilitySyncTime = now;
+        triggerOutboxSync();
+      }
     }
   });
 }

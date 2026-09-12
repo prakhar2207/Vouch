@@ -8,7 +8,7 @@ from django.core.exceptions import ValidationError
 
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger, LedgerGroup
-from apps.accounting.models import Voucher, LedgerEntry, BankTransaction, PartyMapping
+from apps.accounting.models import Voucher, LedgerEntry, BankTransaction, PartyMapping, BankStatementImport
 from apps.accounting.services.voucher_service import VoucherService
 from apps.accounting.services.sequence_service import InvoiceSequenceService
 from apps.accounting.services.allocation_service import PaymentAllocationService

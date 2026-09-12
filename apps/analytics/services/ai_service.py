@@ -316,7 +316,7 @@ class AnalyticsEngine:
         overdue_invoices = Voucher.objects.filter(
             company=company, voucher_type='SALES', status='POSTED',
             voucher_date__lt=today - datetime.timedelta(days=30)
-        ).select_related('party_ledger')[:3]
+        ).select_related('party_ledger').defer('attachment_data', 'attachment_mime')[:3]
         for oi in overdue_invoices:
             alerts.append({
                 "type": "OVERDUE_INVOICE",

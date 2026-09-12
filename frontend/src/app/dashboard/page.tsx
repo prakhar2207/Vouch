@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import axios from "axios";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -61,6 +61,7 @@ export default function Dashboard() {
   const [isOnline, setIsOnline] = useState(true);
 
   const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const loadedCompanyRef = useRef<string | null>(null);
 
   // Load dashboard from local IndexedDB first (<15ms), then run incremental sync in background
   useEffect(() => {
@@ -122,7 +123,8 @@ export default function Dashboard() {
           }
         }
 
-        // 2. Read cached health check from sessionStorage (avoiding repeated server audit)
+        // 2. Read cached health check from sessionStorage (strictly avoiding repeated server audits)
+        let hasValidHealthCache = false;
         if (typeof window !== "undefined") {
           try {
             const cachedHealthStr = sessionStorage.getItem(`vouch_health_${validCid}`);
@@ -130,67 +132,76 @@ export default function Dashboard() {
               const cached = JSON.parse(cachedHealthStr);
               if (Date.now() - (cached._cachedAt || 0) < 5 * 60 * 1000) {
                 if (isMounted) setHealthReport(cached);
+                hasValidHealthCache = true;
               }
             }
           } catch (e) {}
         }
 
+        // Avoid repeated network dispatch if this exact company was already loaded on this component instance
+        const isInitialCompanyLoad = loadedCompanyRef.current !== validCid;
+        loadedCompanyRef.current = validCid;
+
         // 3. Trigger background incremental delta sync if online
         if (typeof navigator !== "undefined" && navigator.onLine) {
-          if (isMounted) {
-            setSyncStatus("SYNCING");
-            setSyncMessage("Updating local books...");
-          }
-          
-          pullIncrementalChanges(validCid, (msg) => {
-            if (isMounted) setSyncMessage(msg);
-          }).then(async (res) => {
-            if (!isMounted) return;
-            if (res.success) {
-              const refreshed = await LocalAnalyticsEngine.getDashboardAnalytics(validCid);
-              setInsights(refreshed);
-              setVouchers(refreshed.recent_vouchers || []);
-              setCoverage(refreshed.coverage);
-              setSyncStatus("IDLE");
-              setSyncMessage("");
-            } else {
-              setSyncStatus("ERROR");
-              setSyncMessage(res.error || "Sync update paused");
-            }
-            setLoading(false);
-          }).catch(() => {
+          if (isInitialCompanyLoad) {
             if (isMounted) {
-              setSyncStatus("ERROR");
-              setLoading(false);
+              setSyncStatus("SYNCING");
+              setSyncMessage("Updating local books...");
             }
-          });
-
-          // Also trigger outbox sync for any pending offline commands
-          executeClientOutboxSync().then(async () => {
-            if (isMounted) {
-              const cnt = await offlineDb.vouchers
-                .where("status")
-                .equals("PENDING")
-                .count()
-                .catch(() => 0);
-              setPendingMutations(cnt);
-            }
-          });
-
-          // Fetch health check in background if no valid cache
-          const token = getAccessToken();
-          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": validCid };
-          axios.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${validCid}`, { headers })
-            .then((hRes) => {
-              if (isMounted && hRes.data) {
-                const reportWithTs = { ...hRes.data, _cachedAt: Date.now() };
-                setHealthReport(reportWithTs);
-                if (typeof window !== "undefined") {
-                  sessionStorage.setItem(`vouch_health_${validCid}`, JSON.stringify(reportWithTs));
-                }
+            
+            pullIncrementalChanges(validCid, (msg) => {
+              if (isMounted) setSyncMessage(msg);
+            }).then(async (res) => {
+              if (!isMounted) return;
+              if (res.success) {
+                const refreshed = await LocalAnalyticsEngine.getDashboardAnalytics(validCid);
+                setInsights(refreshed);
+                setVouchers(refreshed.recent_vouchers || []);
+                setCoverage(refreshed.coverage);
+                setSyncStatus("IDLE");
+                setSyncMessage("");
+              } else {
+                setSyncStatus("ERROR");
+                setSyncMessage(res.error || "Sync update paused");
               }
-            })
-            .catch(() => {});
+              setLoading(false);
+            }).catch(() => {
+              if (isMounted) {
+                setSyncStatus("ERROR");
+                setLoading(false);
+              }
+            });
+
+            // Also trigger outbox sync for any pending offline commands
+            executeClientOutboxSync().then(async () => {
+              if (isMounted) {
+                const cnt = await offlineDb.vouchers
+                  .where("status")
+                  .equals("PENDING")
+                  .count()
+                  .catch(() => 0);
+                setPendingMutations(cnt);
+              }
+            });
+          }
+
+          // Fetch health check ONLY IF no valid cache exists
+          if (!hasValidHealthCache) {
+            const token = getAccessToken();
+            const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": validCid };
+            axios.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${validCid}`, { headers })
+              .then((hRes) => {
+                if (isMounted && hRes.data) {
+                  const reportWithTs = { ...hRes.data, _cachedAt: Date.now() };
+                  setHealthReport(reportWithTs);
+                  if (typeof window !== "undefined") {
+                    sessionStorage.setItem(`vouch_health_${validCid}`, JSON.stringify(reportWithTs));
+                  }
+                }
+              })
+              .catch(() => {});
+          }
         } else {
           // Offline mode
           if (isMounted) {
@@ -275,6 +286,22 @@ export default function Dashboard() {
     setInsights(refreshed);
     setVouchers(refreshed.recent_vouchers || []);
     setCoverage(refreshed.coverage);
+
+    // On explicit user sync, also refresh server health audit
+    const token = getAccessToken();
+    const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": cid };
+    axios.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${cid}`, { headers })
+      .then((hRes) => {
+        if (hRes.data) {
+          const reportWithTs = { ...hRes.data, _cachedAt: Date.now() };
+          setHealthReport(reportWithTs);
+          if (typeof window !== "undefined") {
+            sessionStorage.setItem(`vouch_health_${cid}`, JSON.stringify(reportWithTs));
+          }
+        }
+      })
+      .catch(() => {});
+
     setSyncStatus("IDLE");
     setSyncMessage("");
   };

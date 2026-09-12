@@ -36,10 +36,10 @@ class AccountingIntegrityEngine:
         findings.extend(cls.check_opening_balances(company))
         findings.extend(cls.check_document_numbering(company))
 
-        # Calculate transparent Bookkeeping Health Score
-        score_data = cls.calculate_health_score(company, findings)
-
         unresolved_bank = BankTransaction.objects.filter(company=company, status='UNRESOLVED').count()
+
+        # Calculate transparent Bookkeeping Health Score
+        score_data = cls.calculate_health_score(company, findings, unresolved_bank=unresolved_bank)
         metrics = {
             "total_checks": len(score_data["checks_summary"]),
             "passed_checks": score_data["passed_count"],
@@ -106,15 +106,23 @@ class AccountingIntegrityEngine:
 
         diff = abs(total_dr - total_cr)
         if diff > Decimal('0.01'):
-            # Investigate root cause
+            # Investigate root cause with single grouped query instead of N+1 voucher loop
             unbalanced_vouchers = []
-            vouchers = Voucher.objects.filter(company=company, status='POSTED')
-            for v in vouchers:
-                v_totals = v.ledger_entries.aggregate(dr=Sum('debit_amount'), cr=Sum('credit_amount'))
-                v_dr = Decimal(str(v_totals['dr'] or '0.00'))
-                v_cr = Decimal(str(v_totals['cr'] or '0.00'))
+            entry_totals = LedgerEntry.objects.filter(
+                company=company, voucher__status='POSTED'
+            ).values('voucher_id', 'voucher__voucher_number').annotate(
+                dr=Sum('debit_amount'), cr=Sum('credit_amount')
+            )
+            for et in entry_totals:
+                v_dr = Decimal(str(et['dr'] or '0.00'))
+                v_cr = Decimal(str(et['cr'] or '0.00'))
                 if abs(v_dr - v_cr) > Decimal('0.01'):
-                    unbalanced_vouchers.append({"voucher_number": v.voucher_number, "dr": str(v_dr), "cr": str(v_cr), "diff": str(abs(v_dr - v_cr))})
+                    unbalanced_vouchers.append({
+                        "voucher_number": et['voucher__voucher_number'],
+                        "dr": str(v_dr),
+                        "cr": str(v_cr),
+                        "diff": str(abs(v_dr - v_cr))
+                    })
 
             cause = f"Trial Balance has an imbalance of ₹{diff}."
             if unbalanced_vouchers:
@@ -154,21 +162,49 @@ class AccountingIntegrityEngine:
     def check_party_balances(cls, company: Company) -> List[AccountingFinding]:
         """2. Check: Cached current_balance matches derived sum of entries for all parties."""
         findings = []
-        parties = Ledger.objects.filter(company=company, ledger_type__in=['CUSTOMER', 'SUPPLIER'], is_archived=False)
+        parties = list(Ledger.objects.filter(company=company, ledger_type__in=['CUSTOMER', 'SUPPLIER'], is_archived=False))
+        if not parties:
+            return findings
+
+        party_ids = [p.id for p in parties]
+
+        # Batch 1: Find all party ledgers that have double-entry opening vouchers (1 single query)
+        ledgers_with_opening = set(
+            LedgerEntry.objects.filter(
+                company=company,
+                ledger_id__in=party_ids,
+                voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED'],
+                voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
+            ).values_list('ledger_id', flat=True).distinct()
+        )
+
+        # Batch 2: Aggregate DR and CR sums grouped by ledger_id (1 single query)
+        entry_totals = LedgerEntry.objects.filter(
+            company=company,
+            ledger_id__in=party_ids,
+            voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED']
+        ).values('ledger_id').annotate(
+            dr=Sum('debit_amount'),
+            cr=Sum('credit_amount')
+        )
+        totals_map = {row['ledger_id']: row for row in entry_totals}
+
+        # Pre-fetch existing unresolved findings to avoid N SELECT queries in loop
+        existing_findings = {
+            f.title: f for f in AccountingFinding.objects.filter(
+                company=company,
+                category='WRONG_PARTY',
+                is_resolved=False
+            )
+        }
 
         for p in parties:
-            # Check if double-entry opening voucher exists
-            has_op = LedgerEntry.objects.filter(
-                ledger=p, voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED'],
-                voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
-            ).exists()
+            has_op = p.id in ledgers_with_opening
             op = Decimal('0.00') if has_op else Decimal(str(p.opening_balance or '0.00'))
 
-            totals = LedgerEntry.objects.filter(ledger=p, voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED']).aggregate(
-                dr=Sum('debit_amount'), cr=Sum('credit_amount')
-            )
-            dr = Decimal(str(totals['dr'] or '0.00'))
-            cr = Decimal(str(totals['cr'] or '0.00'))
+            t = totals_map.get(p.id)
+            dr = Decimal(str(t['dr'] or '0.00')) if t else Decimal('0.00')
+            cr = Decimal(str(t['cr'] or '0.00')) if t else Decimal('0.00')
 
             if p.opening_balance_type == 'DEBIT':
                 expected = op + dr - cr
@@ -179,29 +215,38 @@ class AccountingIntegrityEngine:
             diff = abs(expected - current)
 
             if diff > Decimal('0.01'):
-                finding, _ = AccountingFinding.objects.update_or_create(
-                    company=company,
-                    category='WRONG_PARTY',
-                    title=f"Ledger balance mismatch for {p.name}",
-                    is_resolved=False,
-                    defaults={
-                        "severity": "WARNING",
-                        "description": f"{p.name} shows recorded balance of ₹{current}, but sum of transactions equals ₹{expected}. Difference: ₹{diff}.",
-                        "evidence": {
-                            "ledger_id": str(p.id),
-                            "party_name": p.name,
-                            "recorded_balance": str(current),
-                            "expected_balance": str(expected),
-                            "difference": str(diff)
-                        },
-                        "expected_state": f"Recorded balance should equal ₹{expected}.",
-                        "actual_state": f"Recorded balance is currently ₹{current}.",
-                        "probable_cause": "Cached balance was not updated following an offline or concurrent transaction.",
-                        "suggested_action": f"Recalculate balance for {p.name} from source-of-truth entries.",
-                        "confidence": 0.99,
-                        "fix_action": "RECALCULATE_BALANCE"
-                    }
-                )
+                title = f"Ledger balance mismatch for {p.name}"
+                defaults = {
+                    "severity": "WARNING",
+                    "description": f"{p.name} shows recorded balance of ₹{current}, but sum of transactions equals ₹{expected}. Difference: ₹{diff}.",
+                    "evidence": {
+                        "ledger_id": str(p.id),
+                        "party_name": p.name,
+                        "recorded_balance": str(current),
+                        "expected_balance": str(expected),
+                        "difference": str(diff)
+                    },
+                    "expected_state": f"Recorded balance should equal ₹{expected}.",
+                    "actual_state": f"Recorded balance is currently ₹{current}.",
+                    "probable_cause": "Cached balance was not updated following an offline or concurrent transaction.",
+                    "suggested_action": f"Recalculate balance for {p.name} from source-of-truth entries.",
+                    "confidence": 0.99,
+                    "fix_action": "RECALCULATE_BALANCE"
+                }
+                finding = existing_findings.get(title)
+                if finding:
+                    for k, val in defaults.items():
+                        setattr(finding, k, val)
+                    finding.save()
+                else:
+                    finding = AccountingFinding.objects.create(
+                        company=company,
+                        category='WRONG_PARTY',
+                        title=title,
+                        is_resolved=False,
+                        **defaults
+                    )
+                    existing_findings[title] = finding
                 findings.append(finding)
 
         return findings
@@ -210,7 +255,12 @@ class AccountingIntegrityEngine:
     def check_payment_allocations(cls, company: Company) -> List[AccountingFinding]:
         """3. Check: Payment allocations do not exceed invoice total or cross company boundaries."""
         findings = []
-        allocs = PaymentAllocation.objects.filter(company=company).select_related('payment_voucher', 'invoice_voucher')
+        allocs = PaymentAllocation.objects.filter(company=company).select_related(
+            'payment_voucher', 'invoice_voucher'
+        ).defer(
+            'payment_voucher__attachment_data', 'payment_voucher__attachment_mime',
+            'invoice_voucher__attachment_data', 'invoice_voucher__attachment_mime'
+        )
 
         for alloc in allocs:
             if not alloc.payment_voucher or not alloc.invoice_voucher:
@@ -235,10 +285,22 @@ class AccountingIntegrityEngine:
                 )
                 findings.append(finding)
 
-        # Check for over-allocated invoices
-        invoices = Voucher.objects.filter(company=company, voucher_type__in=['SALES', 'PURCHASE', 'OPENING_INVOICE', 'OPENING_BILL'], status='POSTED')
+        # Check for over-allocated invoices (1 grouped query instead of N+1)
+        alloc_totals = PaymentAllocation.objects.filter(
+            company=company
+        ).values('invoice_voucher_id').annotate(
+            total=Sum('allocated_amount')
+        )
+        alloc_map = {row['invoice_voucher_id']: Decimal(str(row['total'] or '0.00')) for row in alloc_totals if row['invoice_voucher_id']}
+
+        invoices = Voucher.objects.filter(
+            company=company,
+            voucher_type__in=['SALES', 'PURCHASE', 'OPENING_INVOICE', 'OPENING_BILL'],
+            status='POSTED'
+        ).only('id', 'voucher_number', 'total_amount').defer('attachment_data', 'attachment_mime')
+
         for inv in invoices:
-            total_alloc = PaymentAllocation.objects.filter(invoice_voucher=inv).aggregate(s=Sum('allocated_amount'))['s'] or Decimal('0.00')
+            total_alloc = alloc_map.get(inv.id, Decimal('0.00'))
             inv_total = Decimal(str(inv.total_amount or '0.00'))
             if total_alloc > inv_total + Decimal('0.05'):
                 finding, _ = AccountingFinding.objects.update_or_create(
@@ -275,7 +337,7 @@ class AccountingIntegrityEngine:
             company=company,
             voucher_type__in=['SALES', 'PURCHASE'],
             status='POSTED'
-        ).select_related('party_ledger')[:50])
+        ).select_related('party_ledger').defer('attachment_data', 'attachment_mime')[:50])
 
         for v in recent_vouchers:
             if not v.party_ledger:
@@ -287,7 +349,7 @@ class AccountingIntegrityEngine:
                     company=company,
                     external_invoice_number=v.external_invoice_number,
                     status='POSTED'
-                ).exclude(party_ledger=v.party_ledger).select_related('party_ledger')
+                ).exclude(party_ledger=v.party_ledger).select_related('party_ledger').defer('attachment_data', 'attachment_mime')
 
                 for other_v in other_parties_with_same_bill:
                     if other_v.party_ledger and other_v.total_amount == v.total_amount:
@@ -342,7 +404,7 @@ class AccountingIntegrityEngine:
                 total_amount=item['total_amount'],
                 voucher_date=item['voucher_date'],
                 status='POSTED'
-            ))
+            ).defer('attachment_data', 'attachment_mime'))
 
             numbers = [d.voucher_number for d in dups]
             finding, _ = AccountingFinding.objects.update_or_create(
@@ -376,7 +438,12 @@ class AccountingIntegrityEngine:
         findings = []
         company_state = (company.state_code or "").strip()
 
-        recent_vouchers = Voucher.objects.filter(company=company, voucher_type__in=['SALES', 'PURCHASE'], status='POSTED')[:50]
+        recent_vouchers = Voucher.objects.filter(
+            company=company,
+            voucher_type__in=['SALES', 'PURCHASE'],
+            status='POSTED'
+        ).select_related('party_ledger').prefetch_related('items').defer('attachment_data', 'attachment_mime')[:50]
+
         for v in recent_vouchers:
             buyer_state = (v.buyer_state_code or (v.party_ledger.state_code if v.party_ledger else "") or "").strip()
             if not company_state or not buyer_state:
@@ -463,7 +530,7 @@ class AccountingIntegrityEngine:
                 voucher_type__in=['PAYMENT', 'RECEIPT'],
                 status='POSTED',
                 total_amount__gt=threshold
-            ).select_related('party_ledger')[:3]
+            ).select_related('party_ledger').defer('attachment_data', 'attachment_mime')[:3]
 
             for hv in huge_vouchers:
                 finding, _ = AccountingFinding.objects.update_or_create(
@@ -588,7 +655,7 @@ class AccountingIntegrityEngine:
         return findings
 
     @classmethod
-    def calculate_health_score(cls, company: Company, findings: List[AccountingFinding]) -> Dict[str, Any]:
+    def calculate_health_score(cls, company: Company, findings: List[AccountingFinding], unresolved_bank: Optional[int] = None) -> Dict[str, Any]:
         """
         Computes a transparent data-quality score:
         Base = 100%
@@ -601,7 +668,8 @@ class AccountingIntegrityEngine:
         warning_count = sum(1 for f in findings if f.severity == 'WARNING' and not f.is_resolved)
         info_count = sum(1 for f in findings if f.severity == 'INFO' and not f.is_resolved)
 
-        unresolved_bank = BankTransaction.objects.filter(company=company, status='UNRESOLVED').count()
+        if unresolved_bank is None:
+            unresolved_bank = BankTransaction.objects.filter(company=company, status='UNRESOLVED').count()
 
         penalty = (critical_count * 15) + (warning_count * 5) + min(15, unresolved_bank * 1)
         score = max(0, 100 - penalty)
@@ -663,40 +731,54 @@ class AccountingIntegrityEngine:
         # 2. Identify candidate causes
         causes = []
 
-        # Cause A: Unbalanced vouchers
-        vouchers = Voucher.objects.filter(company=company, status__in=['POSTED', 'REVERSED', 'CORRECTED'])
-        for v in vouchers:
-            v_tot = v.ledger_entries.aggregate(dr=Sum('debit_amount'), cr=Sum('credit_amount'))
-            v_dr = Decimal(str(v_tot['dr'] or '0.00'))
-            v_cr = Decimal(str(v_tot['cr'] or '0.00'))
+        # Cause A: Unbalanced vouchers (single grouped query)
+        entry_totals = LedgerEntry.objects.filter(
+            company=company,
+            voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED']
+        ).values('voucher_id', 'voucher__voucher_number').annotate(
+            dr=Sum('debit_amount'), cr=Sum('credit_amount')
+        )
+        for et in entry_totals:
+            v_dr = Decimal(str(et['dr'] or '0.00'))
+            v_cr = Decimal(str(et['cr'] or '0.00'))
             if abs(v_dr - v_cr) > Decimal('0.01'):
                 causes.append({
                     "type": "UNBALANCED_VOUCHER",
-                    "title": f"Unbalanced Voucher #{v.voucher_number}",
-                    "voucher_id": str(v.id),
+                    "title": f"Unbalanced Voucher #{et['voucher__voucher_number']}",
+                    "voucher_id": str(et['voucher_id']),
                     "difference": str(abs(v_dr - v_cr)),
-                    "evidence": f"Voucher #{v.voucher_number} has Dr ₹{v_dr} and Cr ₹{v_cr}",
+                    "evidence": f"Voucher #{et['voucher__voucher_number']} has Dr ₹{v_dr} and Cr ₹{v_cr}",
                     "confidence": 98,
-                    "suggested_fix": f"Re-post voucher #{v.voucher_number} with balancing line items."
+                    "suggested_fix": f"Re-post voucher #{et['voucher__voucher_number']} with balancing line items."
                 })
 
-        # Cause B: Party balance drift
-        parties = Ledger.objects.filter(company=company, ledger_type__in=['CUSTOMER', 'SUPPLIER'], is_archived=False)
-        for p in parties:
-            t = LedgerEntry.objects.filter(ledger=p, voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED']).aggregate(dr=Sum('debit_amount'), cr=Sum('credit_amount'))
-            p_dr = Decimal(str(t['dr'] or '0.00'))
-            p_cr = Decimal(str(t['cr'] or '0.00'))
-            expected = (p_dr - p_cr) if p.opening_balance_type == 'DEBIT' else (p_cr - p_dr)
-            if abs(expected - Decimal(str(p.current_balance or '0.00'))) == diff:
-                causes.append({
-                    "type": "PARTY_BALANCE_DRIFT",
-                    "title": f"Cached balance mismatch on {p.name}",
-                    "party_id": str(p.id),
-                    "difference": str(diff),
-                    "evidence": f"Expected balance ₹{expected}, recorded balance ₹{p.current_balance}. Exactly matches Trial Balance difference of ₹{diff}.",
-                    "confidence": 95,
-                    "suggested_fix": f"Recalculate {p.name}'s balance."
-                })
+        # Cause B: Party balance drift (single grouped query)
+        parties = list(Ledger.objects.filter(company=company, ledger_type__in=['CUSTOMER', 'SUPPLIER'], is_archived=False))
+        if parties:
+            party_ids = [p.id for p in parties]
+            party_entry_totals = LedgerEntry.objects.filter(
+                company=company,
+                ledger_id__in=party_ids,
+                voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED']
+            ).values('ledger_id').annotate(
+                dr=Sum('debit_amount'), cr=Sum('credit_amount')
+            )
+            p_map = {row['ledger_id']: row for row in party_entry_totals}
+            for p in parties:
+                t = p_map.get(p.id)
+                p_dr = Decimal(str(t['dr'] or '0.00')) if t else Decimal('0.00')
+                p_cr = Decimal(str(t['cr'] or '0.00')) if t else Decimal('0.00')
+                expected = (p_dr - p_cr) if p.opening_balance_type == 'DEBIT' else (p_cr - p_dr)
+                if abs(expected - Decimal(str(p.current_balance or '0.00'))) == diff:
+                    causes.append({
+                        "type": "PARTY_BALANCE_DRIFT",
+                        "title": f"Cached balance mismatch on {p.name}",
+                        "party_id": str(p.id),
+                        "difference": str(diff),
+                        "evidence": f"Expected balance ₹{expected}, recorded balance ₹{p.current_balance}. Exactly matches Trial Balance difference of ₹{diff}.",
+                        "confidence": 95,
+                        "suggested_fix": f"Recalculate {p.name}'s balance."
+                    })
 
         # Cause C: Opening balance equity offset
         adj = Ledger.objects.filter(company=company, name__icontains="Opening Balance Adjustment").first()

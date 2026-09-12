@@ -24,7 +24,7 @@ from django.urls import re_path
 from django.views.static import serve
 
 from django.http import JsonResponse
-from apps.accounting.views import UniversalVoucherAPIView, VoucherDetailAPIView
+from apps.accounting.views import UniversalVoucherAPIView, VoucherDetailAPIView, VoucherAttachmentAPIView
 from apps.accounting.ocr_views import OCRExtractAPIView
 from apps.analytics.views import InsightsAPIView
 from apps.accounting.b2b_views import (
@@ -71,6 +71,7 @@ urlpatterns = [
     # Top-Level Direct API Endpoints
     path('api/vouchers/', UniversalVoucherAPIView.as_view(), name='api_vouchers_root'),
     path('api/vouchers/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='api_voucher_detail_root'),
+    path('api/vouchers/<uuid:voucher_id>/attachment/', VoucherAttachmentAPIView.as_view(), name='api_voucher_attachment_root'),
     path('api/vouchers/detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='api_voucher_detail_nested_root'),
     path('api/voucher-detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='api_voucher_detail_alias_root'),
     path('api/ocr/extract/', OCRExtractAPIView.as_view(), name='api_ocr_extract_root'),

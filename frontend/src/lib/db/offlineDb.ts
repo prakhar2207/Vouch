@@ -12,6 +12,7 @@ export interface OfflineVoucher {
   retryCount: number;
   createdAt: number;
   syncedAt?: number;
+  nextRetryAt?: number;
 }
 
 export interface MasterCache {

@@ -1,3 +1,4 @@
+import uuid
 import datetime
 from decimal import Decimal
 from django.utils import timezone
@@ -69,62 +70,69 @@ class SyncPullAPIView(APIView):
 
         now_ts = int(timezone.now().timestamp() * 1000)
 
-        # 1. Ledgers (Incremental changes)
-        ledger_qs = Ledger.objects.filter(company=company)
-        if since_dt:
-            ledger_qs = ledger_qs.filter(updated_at__gte=since_dt)
+        # Master data (ledgers, products) is only returned on initial batch (cursor is empty/None),
+        # preventing redundant queries and transfer during multi-batch voucher pagination.
+        is_initial_batch = not bool(cursor)
 
         ledgers_created, ledgers_updated, ledgers_deleted = [], [], []
-        for l in ledger_qs:
-            item = {
-                'id': str(l.id),
-                'company_id': str(company.id),
-                'name': l.name,
-                'ledger_type': l.ledger_type or 'GENERAL',
-                'gstin': l.gstin or '',
-                'state_code': l.state_code or '',
-                'current_balance': str(l.current_balance or '0.00'),
-                'opening_balance': str(l.opening_balance or '0.00'),
-                'opening_balance_type': l.opening_balance_type or 'DEBIT',
-                'phone': l.phone or '',
-                'server_updated_at': int(l.updated_at.timestamp() * 1000) if l.updated_at else now_ts,
-            }
-            if l.is_archived or not l.is_active:
-                ledgers_deleted.append(item)
-            elif since_dt and l.created_at and l.created_at < since_dt:
-                ledgers_updated.append(item)
-            else:
-                ledgers_created.append(item)
+        if is_initial_batch:
+            # 1. Ledgers (Incremental changes)
+            ledger_qs = Ledger.objects.filter(company=company)
+            if since_dt:
+                ledger_qs = ledger_qs.filter(updated_at__gte=since_dt)
 
-        # 2. Products (Incremental changes)
-        product_qs = Product.objects.filter(company=company)
-        if since_dt:
-            product_qs = product_qs.filter(updated_at__gte=since_dt)
+            for l in ledger_qs:
+                item = {
+                    'id': str(l.id),
+                    'company_id': str(company.id),
+                    'name': l.name,
+                    'ledger_type': l.ledger_type or 'GENERAL',
+                    'gstin': l.gstin or '',
+                    'state_code': l.state_code or '',
+                    'current_balance': str(l.current_balance or '0.00'),
+                    'opening_balance': str(l.opening_balance or '0.00'),
+                    'opening_balance_type': l.opening_balance_type or 'DEBIT',
+                    'phone': l.phone or '',
+                    'server_updated_at': int(l.updated_at.timestamp() * 1000) if l.updated_at else now_ts,
+                }
+                if l.is_archived or not l.is_active:
+                    ledgers_deleted.append(item)
+                elif since_dt and l.created_at and l.created_at < since_dt:
+                    ledgers_updated.append(item)
+                else:
+                    ledgers_created.append(item)
 
         products_created, products_updated, products_deleted = [], [], []
-        for p in product_qs:
-            item = {
-                'id': str(p.id),
-                'company_id': str(company.id),
-                'name': p.name,
-                'sku': p.sku or '',
-                'hsn_code': getattr(p, 'hsn_code', '') or '',
-                'unit': getattr(p, 'unit', 'PCS') or 'PCS',
-                'purchase_price': str(getattr(p, 'purchase_price', '0.00') or '0.00'),
-                'sales_price': str(getattr(p, 'selling_price', '0.00') or '0.00'),
-                'gst_rate': str(getattr(p, 'gst_rate', '0.00') or '0.00'),
-                'current_stock': str(getattr(p, 'stock_quantity', '0.00') or '0.00'),
-                'server_updated_at': int(p.updated_at.timestamp() * 1000) if p.updated_at else now_ts,
-            }
-            if getattr(p, 'is_active', True) is False:
-                products_deleted.append(item)
-            elif since_dt and p.created_at and p.created_at < since_dt:
-                products_updated.append(item)
-            else:
-                products_created.append(item)
+        if is_initial_batch:
+            # 2. Products (Incremental changes)
+            product_qs = Product.objects.filter(company=company)
+            if since_dt:
+                product_qs = product_qs.filter(updated_at__gte=since_dt)
+
+            for p in product_qs:
+                item = {
+                    'id': str(p.id),
+                    'company_id': str(company.id),
+                    'name': p.name,
+                    'sku': p.sku or '',
+                    'hsn_code': getattr(p, 'hsn_code', '') or '',
+                    'unit': getattr(p, 'unit', 'PCS') or 'PCS',
+                    'purchase_price': str(getattr(p, 'purchase_price', '0.00') or '0.00'),
+                    'sales_price': str(getattr(p, 'selling_price', '0.00') or '0.00'),
+                    'gst_rate': str(getattr(p, 'gst_rate', '0.00') or '0.00'),
+                    'current_stock': str(getattr(p, 'stock_quantity', '0.00') or '0.00'),
+                    'server_updated_at': int(p.updated_at.timestamp() * 1000) if p.updated_at else now_ts,
+                }
+                if getattr(p, 'is_active', True) is False:
+                    products_deleted.append(item)
+                elif since_dt and p.created_at and p.created_at < since_dt:
+                    products_updated.append(item)
+                else:
+                    products_created.append(item)
 
         # 3. Vouchers (Cursor-based pagination across large historical datasets)
-        voucher_qs = Voucher.objects.filter(company=company).select_related('party_ledger')
+        # Strictly defer attachment_data to stop massive binary/base64 network egress from Neon
+        voucher_qs = Voucher.objects.filter(company=company).select_related('party_ledger').defer('attachment_data', 'attachment_mime')
         if since_dt:
             voucher_qs = voucher_qs.filter(updated_at__gte=since_dt)
 
