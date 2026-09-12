@@ -23,6 +23,7 @@ import {
   Building,
   Sliders,
   Database,
+  Upload,
   X
 } from 'lucide-react';
 
@@ -104,7 +105,15 @@ export default function SettingsPage() {
         setStateCode(comp.state_code || '');
         setProprietorName(comp.proprietor_name || '');
         setProprietorPhone(comp.proprietor_phone || '');
-        
+        if (comp.signature_data) {
+          setSignaturePreview(comp.signature_data);
+        } else if (comp.proprietor_signature) {
+          const base = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+          const cleanPath = comp.proprietor_signature.startsWith('/') ? comp.proprietor_signature : `/${comp.proprietor_signature}`;
+          setSignaturePreview(`${base}${cleanPath}`);
+        } else {
+          setSignaturePreview(null);
+        }
         setTagline(comp.tagline || '');
         setBankName(comp.bank_name || '');
         setBankAccountNumber(comp.bank_account_number || '');
@@ -182,6 +191,8 @@ export default function SettingsPage() {
       }
       if (signaturePreview) {
         formData.append('signature_data', signaturePreview);
+      } else {
+        formData.append('signature_data', '');
       }
       formData.append('tagline', tagline);
       formData.append('bank_name', bankName);
@@ -449,6 +460,132 @@ export default function SettingsPage() {
                 </div>
               </div>
 
+              {/* Signatory & Proprietor Details */}
+              <div className="pt-4 border-t border-border/40 space-y-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                      Authorized Signatory & Proprietor Details
+                    </h3>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                      REQUIRED FOR INVOICING
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Statutory seller information printed on invoice signature blocks and communication headers (GST Rule 46).
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-foreground mb-1">
+                      Proprietor / Signatory Name <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Rajesh Sharma"
+                      value={proprietorName}
+                      onChange={(e) => setProprietorName(e.target.value)}
+                      className="w-full bg-muted/40 border border-input text-foreground text-sm p-2.5 rounded-lg outline-none focus:ring-1 focus:ring-primary"
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Printed on invoice bottom right under &quot;Authorised Signatory&quot;.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-foreground mb-1">
+                      Proprietor / Contact Phone <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="tel"
+                      placeholder="e.g. +91 98765 43210"
+                      value={proprietorPhone}
+                      onChange={(e) => setProprietorPhone(e.target.value)}
+                      className="w-full bg-muted/40 border border-input text-foreground text-sm p-2.5 rounded-lg outline-none focus:ring-1 focus:ring-primary"
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Seller contact number displayed on invoice header.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Digital Signature (Strictly Optional) */}
+              <div className="pt-4 border-t border-border/40 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                        Digital Signature Image
+                      </h3>
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                        OPTIONAL
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Upload an image of your signature to print above &quot;Authorised Signatory&quot;. Not required to create or post sales bills.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-start gap-4 p-4 rounded-xl border border-border/40 bg-muted/20">
+                  {signaturePreview ? (
+                    <div className="space-y-2">
+                      <div className="w-48 h-24 border border-border/60 rounded-lg bg-card p-2 flex items-center justify-center overflow-hidden">
+                        <img
+                          src={signaturePreview}
+                          alt="Signature Preview"
+                          className="max-h-full max-w-full object-contain filter dark:invert"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-primary hover:underline cursor-pointer">
+                          <span>Change image</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleSignatureChange}
+                            className="hidden"
+                          />
+                        </label>
+                        <span className="text-muted-foreground">•</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSignature(null);
+                            setSignaturePreview(null);
+                          }}
+                          className="text-xs font-medium text-rose-400 hover:underline cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="flex flex-col items-center justify-center w-full sm:w-64 h-28 border-2 border-dashed border-border/60 hover:border-primary/50 rounded-xl cursor-pointer bg-muted/30 hover:bg-muted/50 transition-colors p-4 text-center">
+                      <Upload className="w-5 h-5 text-muted-foreground mb-1.5" />
+                      <span className="text-xs font-semibold text-foreground">Upload Signature Image</span>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">PNG, JPG up to 2MB (Optional)</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleSignatureChange}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+                  <div className="text-xs text-muted-foreground flex-1">
+                    <p className="font-semibold text-foreground mb-1">Optional e-signature tips:</p>
+                    <ul className="list-disc list-inside space-y-0.5 text-[11px]">
+                      <li>Sign on a clean sheet of white paper using a dark blue or black pen</li>
+                      <li>Crop the photo closely around your signature before uploading</li>
+                      <li>Invoices can always be signed physically by hand after printing</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
               {/* Banking Details */}
               <div className="pt-4 border-t border-border/40">
                 <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
@@ -574,21 +711,48 @@ export default function SettingsPage() {
                   </button>
                 </div>
 
-                {/* Manual Invoice Number */}
-                <div className="flex items-center justify-between bg-muted/30 p-3.5 rounded-xl border border-border/40">
-                  <div>
-                    <h3 className="text-foreground text-xs font-semibold">Manual Invoice Number & Date Override</h3>
-                    <p className="text-muted-foreground text-xs mt-0.5">
-                      Allow manually typing custom invoice numbers and backdating vouchers.
+                {/* Manual Invoice Number (Tally-Style Auto / Manual) */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-muted/30 p-4 rounded-xl border border-border/40 gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-foreground text-xs font-semibold">Sales Invoice Numbering Method</h3>
+                      <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+                        enableManualInvoice 
+                          ? 'bg-amber-500/15 text-amber-500 border-amber-500/30' 
+                          : 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                      }`}>
+                        {enableManualInvoice ? 'MANUAL (Custom Numbering)' : 'AUTO (GST Rule 46b Sequential)'}
+                      </span>
+                    </div>
+                    <p className="text-muted-foreground text-xs">
+                      Choose your default numbering mode. <strong>Auto</strong> generates consecutive serial numbers based on prefix and active financial year. <strong>Manual</strong> allows typing custom invoice numbers. Can also be toggled directly on the New Sales Invoice screen.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setEnableManualInvoice(!enableManualInvoice)}
-                    className={`w-11 h-6 rounded-full transition-all relative shrink-0 cursor-pointer ${enableManualInvoice ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-                  >
-                    <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${enableManualInvoice ? 'left-6' : 'left-1'}`}></div>
-                  </button>
+                  
+                  <div className="inline-flex items-center bg-muted/80 p-0.5 rounded-lg border border-border/60 text-xs shrink-0 self-start sm:self-center">
+                    <button
+                      type="button"
+                      onClick={() => setEnableManualInvoice(false)}
+                      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                        !enableManualInvoice
+                          ? 'bg-primary text-primary-foreground shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Auto
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEnableManualInvoice(true)}
+                      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                        enableManualInvoice
+                          ? 'bg-primary text-primary-foreground shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Manual
+                    </button>
+                  </div>
                 </div>
 
                 {/* Advanced Item Creation */}

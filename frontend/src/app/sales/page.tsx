@@ -13,6 +13,7 @@ import ConfirmModal from '@/components/modals/ConfirmModal';
 import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight, CloudOff, CheckCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import { offlineDb } from '@/lib/db/offlineDb';
 import { retryFailedVoucher } from '@/lib/sync/sync-worker';
+import { vouchersRepository } from '@/lib/data';
 
 export default function SalesInvoiceList() {
   const router = useRouter();
@@ -41,86 +42,33 @@ export default function SalesInvoiceList() {
   const fetchInvoices = async (targetPage: number = page) => {
     setLoading(true);
     try {
-      // 1. Fetch pending/failed offline vouchers from Dexie
-      let offlineList: any[] = [];
-      try {
-        const localVouchers = await offlineDb.vouchers
-          .where('voucherType')
-          .equals('SALES')
-          .toArray();
-
-        offlineList = localVouchers
-          .filter(v => v.status !== 'SYNCED')
-          .map(v => {
-            const payload = v.payload || {};
-            const lineItems = payload.items || [];
-            const total = lineItems.reduce((sum: number, it: any) => {
-              const gross = Number(it.quantity || 0) * Number(it.rate || 0);
-              const disc = gross * (Number(it.discount_percent || 0) / 100);
-              const taxable = gross - disc;
-              return sum + taxable + (taxable * (Number(it.gst_rate || 18) / 100));
-            }, 0);
-
-            return {
-              id: v.localId,
-              dexieId: v.id,
-              isOffline: true,
-              voucher_number: payload.voucher_number || v.localId.substring(0, 15).toUpperCase(),
-              date: v.voucherDate || payload.voucher_date,
-              party_name: payload.buyer_name || 'Offline Customer',
-              total_amount: Math.round(total),
-              syncStatus: v.status === 'FAILED' ? 'SYNC_FAILED' : 'OFFLINE_PENDING',
-              errorMessage: v.errorMessage,
-              status: v.status === 'FAILED' ? 'FAILED' : 'PENDING_SYNC'
-            };
-          });
-      } catch (offlineErr) {
-        console.warn('Could not read offline vouchers', offlineErr);
+      let companyId = activeCompanyId;
+      if (!companyId && typeof window !== 'undefined') {
+        companyId = localStorage.getItem('vouch_active_company_id');
       }
-
-      // 2. Fetch remote invoices if online
-      let remoteVouchers: any[] = [];
-      try {
+      if (!companyId) {
         const token = getAccessToken();
-        let companyId = activeCompanyId;
-        if (!companyId && typeof window !== 'undefined') {
-          companyId = localStorage.getItem('vouch_active_company_id');
-        }
-        if (!companyId) {
-          const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
-          companyId = list[0]?.id;
-        }
-
-        if (companyId) {
-          const headers = { Authorization: `Bearer ${token}`, 'X-Company-ID': companyId };
-          const offset = (targetPage - 1) * pageSize;
-          const res = await axios.get(
-            `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?type=SALES&limit=${pageSize}&offset=${offset}`,
-            { headers, timeout: 6000 }
-          );
-          remoteVouchers = (res.data.data || [])
-            .filter((v: any) => v.type === 'SALES')
-            .map((v: any) => ({ ...v, syncStatus: 'SYNCED' }));
-          if (res.data.pagination) {
-            setPagination(res.data.pagination);
-          }
-          // Cache remote invoices for offline viewing
-          offlineDb.masters.put({ key: 'cached_sales_invoices', data: remoteVouchers, updatedAt: Date.now() }).catch(() => {});
-        }
-      } catch (remoteErr) {
-        console.warn('Backend unavailable, falling back to cached invoices', remoteErr);
-        const cached = await offlineDb.masters.get('cached_sales_invoices');
-        if (cached?.data?.length) {
-          remoteVouchers = cached.data.map((v: any) => ({ ...v, syncStatus: 'SYNCED' }));
-        }
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
+        companyId = list[0]?.id;
       }
 
-      // Merge: offline pending/failed vouchers appear at the top!
-      setInvoices([...offlineList, ...remoteVouchers]);
-      setPage(targetPage);
+      if (companyId) {
+        const result = await vouchersRepository.getSalesInvoices(companyId, {
+          page: targetPage,
+          pageSize,
+        });
+        setInvoices(result.data);
+        setPagination({
+          page: result.page,
+          limit: result.pageSize,
+          total_count: result.totalCount,
+          total_pages: result.totalPages,
+        });
+        setPage(targetPage);
+      }
     } catch (err) {
       console.error(err);
     } finally {

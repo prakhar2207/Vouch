@@ -288,6 +288,7 @@ export async function pullIncrementalChanges(
     let lastPulledAt = meta.lastSyncAt > 0 ? meta.lastSyncAt : undefined;
     let totalRecords = 0;
     let batchIndex = 0;
+    const allChangedVouchers: SyncedVoucher[] = [];
 
     while (hasMore) {
       batchIndex++;
@@ -401,6 +402,7 @@ export async function pullIncrementalChanges(
         if (toPut.length > 0) {
           await offlineDb.syncedVouchers.bulkPut(toPut);
           totalRecords += toPut.length;
+          allChangedVouchers.push(...toPut);
         }
         // Deleted/Cancelled/Reversed vouchers update their status or delete
         if (changes.vouchers.deleted && changes.vouchers.deleted.length > 0) {
@@ -420,6 +422,7 @@ export async function pullIncrementalChanges(
             serverUpdatedAt: v.server_updated_at || Date.now(),
           }));
           await offlineDb.syncedVouchers.bulkPut(toUpdateCancelled);
+          allChangedVouchers.push(...toUpdateCancelled);
         }
       }
 
@@ -437,8 +440,13 @@ export async function pullIncrementalChanges(
       pendingMutationsCount: 0,
     });
 
-    // Rebuild local aggregates for fast sequential queries
-    await LocalAnalyticsEngine.rebuildLocalAnalytics(companyId);
+    // Incrementally update or rebuild local aggregates
+    const isInitial = !meta?.isInitialComplete;
+    if (isInitial || totalRecords > 200) {
+      await LocalAnalyticsEngine.rebuildLocalAnalytics(companyId);
+    } else if (allChangedVouchers.length > 0) {
+      await LocalAnalyticsEngine.updateIncrementalAnalytics(companyId, allChangedVouchers);
+    }
 
     // Notify listeners (Dashboard, Navbar, etc.)
     if (typeof window !== "undefined") {

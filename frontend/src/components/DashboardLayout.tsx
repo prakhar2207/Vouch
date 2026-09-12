@@ -31,6 +31,7 @@ import {
   Activity,
   Landmark,
 } from "lucide-react";
+import SyncStatusBadge from "./SyncStatusBadge";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -406,6 +407,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Right Section: Unified Context Pill, Search, Utilities & Profile */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Sync Status Badge */}
+            <SyncStatusBadge />
+
             {/* Company Switcher Pill */}
             <div ref={companyRef} className="relative hidden md:block">
               <button

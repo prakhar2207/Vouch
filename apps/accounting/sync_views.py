@@ -179,9 +179,11 @@ class SyncPullAPIView(APIView):
             else:
                 vouchers_created.append(item)
 
-        # 4. Voucher Items & Ledger Entries for current batch
+        # 4. Voucher Items & Ledger Entries (Only if explicitly requested to stop discarded transfer)
+        include_details = str(request.data.get('include_details', request.query_params.get('include_details', 'false'))).lower() in ['true', '1']
         items_data = []
-        if voucher_ids:
+        entries_data = []
+        if include_details and voucher_ids:
             for item_obj in VoucherItem.objects.filter(voucher_id__in=voucher_ids).select_related('product'):
                 items_data.append({
                     'id': str(item_obj.id),
@@ -197,8 +199,6 @@ class SyncPullAPIView(APIView):
                     'total_amount': str(item_obj.total_amount or '0.00'),
                 })
 
-        entries_data = []
-        if voucher_ids:
             for entry in LedgerEntry.objects.filter(voucher_id__in=voucher_ids):
                 entries_data.append({
                     'id': str(entry.id),

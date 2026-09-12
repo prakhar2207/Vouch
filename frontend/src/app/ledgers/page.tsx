@@ -30,6 +30,8 @@ import {
   ExternalLink,
   ArrowRight
 } from 'lucide-react';
+import { ledgersRepository } from '@/lib/data';
+import { offlineDb } from '@/lib/db/offlineDb';
 
 interface LedgerItem {
   id: string;
@@ -110,17 +112,26 @@ export default function LedgersPage() {
       const headers = { Authorization: `Bearer ${token}` };
 
       const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const cid = compRes.data.data[0]?.id;
+      const cid = compRes.data?.data?.[0]?.id || compRes.data?.[0]?.id;
       if (!cid) return;
       setCompanyId(cid);
 
-      const [ledgersRes, groupsRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers }),
-        axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/groups/`, { headers }).catch(() => ({ data: { data: [] } }))
-      ]);
+      // 1. Read ledgers locally via ledgersRepository
+      const { data: localLedgers } = await ledgersRepository.getLedgers(cid);
+      setLedgers(localLedgers as any[]);
 
-      setLedgers(ledgersRes.data.data || []);
-      setGroups(groupsRes.data?.data || []);
+      // 2. Read groups locally or fetch once
+      const cachedGroups = await offlineDb.masters.get('ledger_groups').catch(() => null);
+      if (cachedGroups?.data?.length) {
+        setGroups(cachedGroups.data);
+      } else {
+        const groupsRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/groups/`, { headers }).catch(() => ({ data: { data: [] } }));
+        const grpList = groupsRes.data?.data || [];
+        setGroups(grpList);
+        if (grpList.length > 0) {
+          offlineDb.masters.put({ key: 'ledger_groups', data: grpList, updatedAt: Date.now() }).catch(() => {});
+        }
+      }
     } catch (err: any) {
       console.error(err);
       toast.error('Failed to load accounts', err.message);

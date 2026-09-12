@@ -10,6 +10,7 @@ import { useToast } from "@/context/ToastContext";
 import { useCompany } from "@/context/CompanyContext";
 import ConfirmModal from "@/components/modals/ConfirmModal";
 import SearchableSelect, { SearchableOption } from "@/components/SearchableSelect";
+import { bankTransactionsRepository, ledgersRepository } from "@/lib/data";
 import {
   Landmark,
   UploadCloud,
@@ -231,14 +232,11 @@ export default function BankingPage() {
         localStorage.setItem("vouch_active_company_id", cid);
       }
 
-      const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, {
-        headers: { Authorization: `Bearer ${token}`, "X-Company-ID": cid },
-      });
-      const rawLedgers: any[] = ledgersRes.data?.data || (Array.isArray(ledgersRes.data) ? ledgersRes.data : []);
-      setAllLedgers(rawLedgers);
+      const { data: rawLedgers } = await ledgersRepository.getLedgers(cid);
+      setAllLedgers(rawLedgers as any[]);
 
-      const banks = rawLedgers.filter(
-        (l) => l.ledger_type === "BANK" || (l.group && l.group.toLowerCase().includes("bank"))
+      const banks = (rawLedgers as any[]).filter(
+        (l) => l.ledger_type === "BANK" || l.ledgerType === "BANK" || (l.group && l.group.toLowerCase().includes("bank"))
       );
       setBankLedgers(banks);
 
@@ -253,7 +251,7 @@ export default function BankingPage() {
     }
   };
 
-  const fetchTransactionsAndSummary = async () => {
+  const fetchTransactionsAndSummary = async (forceRefresh: boolean = false) => {
     if (!isValidId(companyId)) return;
     setRefreshing(true);
     try {
@@ -271,16 +269,19 @@ export default function BankingPage() {
         params.status = "MATCHED_AUTO,RECONCILED";
       }
 
-      const [txRes, summaryRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/api/v1/accounting/banking/transactions/`, { headers, params }),
+      const [txResult, summaryRes] = await Promise.all([
+        bankTransactionsRepository.getTransactions(companyId, {
+          bankLedgerId: selectedBankId,
+          status: params.status,
+          forceRefresh,
+        }),
         axios.get(`${API_BASE_URL}/api/v1/accounting/banking/summary/`, {
           headers,
           params: { company_id: companyId, ...(isValidId(selectedBankId) ? { bank_ledger_id: selectedBankId } : {}) },
         }),
       ]);
 
-      const txList = txRes.data?.results || (Array.isArray(txRes.data) ? txRes.data : []);
-      setTransactions(txList);
+      setTransactions(txResult.data);
 
       const sData = summaryRes.data || null;
       if (sData) {
@@ -739,7 +740,7 @@ export default function BankingPage() {
             </button>
 
             <button
-              onClick={fetchTransactionsAndSummary}
+              onClick={() => fetchTransactionsAndSummary(true)}
               disabled={refreshing}
               className="p-2 rounded-xl border border-border/60 bg-card hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
               title="Refresh Transactions"

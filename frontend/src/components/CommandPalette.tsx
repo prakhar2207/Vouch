@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 import { getAccessToken } from "@/utils/auth";
+import { ledgersRepository, productsRepository } from "@/lib/data";
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -29,19 +30,22 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
 
   const fetchQuickData = async () => {
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const cid = compRes.data.data?.[0]?.id;
+      let cid = typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null;
+      if (!cid) {
+        const token = getAccessToken();
+        const headers = { Authorization: `Bearer ${token}` };
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+        cid = compRes.data.data?.[0]?.id;
+      }
       if (!cid) return;
 
       const [ledgersRes, productsRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers }).catch(() => ({ data: { data: [] } })),
-        axios.get(`${API_BASE_URL}/api/v1/inventory/products/${cid}/`, { headers }).catch(() => ({ data: { data: [] } })),
+        ledgersRepository.getLedgers(cid),
+        productsRepository.getProducts(cid),
       ]);
 
-      setLedgers(ledgersRes.data?.data || []);
-      setProducts(productsRes.data?.data || []);
+      setLedgers(ledgersRes.data || []);
+      setProducts(productsRes.data || []);
     } catch (e) {
       console.error(e);
     }

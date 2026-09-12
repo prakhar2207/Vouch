@@ -414,7 +414,12 @@ class VoucherDetailAPIView(APIView):
             allocations_data = []
             paid_amount_total = Decimal('0.00')
             if voucher.voucher_type in ['SALES', 'PURCHASE']:
-                for alloc in PaymentAllocation.objects.filter(invoice_voucher=voucher).select_related('payment_voucher'):
+                alloc_qs = PaymentAllocation.objects.filter(invoice_voucher=voucher).select_related('payment_voucher').only(
+                    'id', 'allocated_amount', 'payment_voucher_id',
+                    'payment_voucher__id', 'payment_voucher__voucher_number',
+                    'payment_voucher__voucher_type', 'payment_voucher__voucher_date'
+                )
+                for alloc in alloc_qs:
                     paid_amount_total += alloc.allocated_amount
                     allocations_data.append({
                         "id": str(alloc.id),
@@ -425,7 +430,12 @@ class VoucherDetailAPIView(APIView):
                         "allocated_amount": float(alloc.allocated_amount)
                     })
             elif voucher.voucher_type in ['PAYMENT', 'RECEIPT']:
-                for alloc in PaymentAllocation.objects.filter(payment_voucher=voucher).select_related('invoice_voucher'):
+                alloc_qs = PaymentAllocation.objects.filter(payment_voucher=voucher).select_related('invoice_voucher').only(
+                    'id', 'allocated_amount', 'invoice_voucher_id',
+                    'invoice_voucher__id', 'invoice_voucher__voucher_number',
+                    'invoice_voucher__voucher_type', 'invoice_voucher__voucher_date'
+                )
+                for alloc in alloc_qs:
                     paid_amount_total += alloc.allocated_amount
                     allocations_data.append({
                         "id": str(alloc.id),

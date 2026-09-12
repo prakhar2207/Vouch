@@ -111,6 +111,30 @@ export interface AnalyticsParty {
   outstanding: number;
 }
 
+export interface SyncedBankTransaction {
+  id: string; // bank transaction UUID
+  companyId: string;
+  bankLedgerId: string;
+  bankLedgerName?: string;
+  transactionDate: string; // YYYY-MM-DD
+  valueDate?: string | null;
+  description: string;
+  normalizedNarration: string;
+  referenceNumber: string;
+  debitAmount: number;
+  creditAmount: number;
+  balance?: number | null;
+  status: string; // UNRESOLVED, MATCHED_SUGGESTED, MATCHED_AUTO, RECONCILED, NEEDS_REVIEW, etc.
+  matchedPartyId?: string | null;
+  matchedPartyName?: string | null;
+  matchedPartyType?: string | null;
+  matchedVoucherId?: string | null;
+  matchedVoucherNumber?: string | null;
+  matchConfidence?: number;
+  matchNotes?: string;
+  serverUpdatedAt: number;
+}
+
 export class VouchOfflineDB extends Dexie {
   vouchers!: Table<OfflineVoucher, number>;
   masters!: Table<MasterCache, string>;
@@ -121,6 +145,7 @@ export class VouchOfflineDB extends Dexie {
   syncMeta!: Table<SyncMeta, string>;
   analyticsDaily!: Table<AnalyticsDaily, string>;
   analyticsParty!: Table<AnalyticsParty, string>;
+  syncedBankTransactions!: Table<SyncedBankTransaction, string>;
 
   constructor() {
     super("VouchOfflineDB");
@@ -143,6 +168,18 @@ export class VouchOfflineDB extends Dexie {
       syncMeta: "companyId, lastSyncAt, syncStatus",
       analyticsDaily: "id, companyId, date, [companyId+date]",
       analyticsParty: "id, companyId, partyId, [companyId+partyId]",
+    });
+    this.version(4).stores({
+      vouchers: "++id, localId, voucherType, status, createdAt",
+      masters: "key, updatedAt",
+      ocrCache: "fileHash, cachedAt",
+      syncedVouchers: "id, companyId, voucherType, voucherDate, status, partyLedgerId, serverUpdatedAt, [companyId+voucherDate], [companyId+status], [companyId+voucherType]",
+      syncedLedgers: "id, companyId, ledgerType, name, [companyId+ledgerType]",
+      syncedProducts: "id, companyId, sku, [companyId+currentStock]",
+      syncMeta: "companyId, lastSyncAt, syncStatus",
+      analyticsDaily: "id, companyId, date, [companyId+date]",
+      analyticsParty: "id, companyId, partyId, [companyId+partyId]",
+      syncedBankTransactions: "id, companyId, bankLedgerId, status, transactionDate, serverUpdatedAt, [companyId+status], [companyId+bankLedgerId]",
     });
   }
 }

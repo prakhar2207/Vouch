@@ -9,7 +9,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useShortcuts } from '@/context/ShortcutContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
 import { useToast } from '@/context/ToastContext';
-import { ChevronDown, ScanBarcode } from 'lucide-react';
+import { ChevronDown, ScanBarcode, AlertTriangle, CheckCircle2, ArrowRight, Hash } from 'lucide-react';
 import { queueOfflineVoucher } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
 
@@ -313,9 +313,51 @@ export default function SalesPage() {
     }
   };
 
+  const handleToggleManualInvoice = (manual: boolean) => {
+    setEnableManualInvoice(manual);
+    if (manual && !invoiceNumber && seqPreview) {
+      setInvoiceNumber(seqPreview);
+    }
+
+    if (manual) {
+      toast.info("Switched to Manual Invoice Numbering", "You can specify custom invoice numbers. Saved to your settings.");
+    } else {
+      toast.info("Switched to Automatic Invoice Numbering", "Invoices will be sequentially numbered automatically (GST Rule 46b).");
+    }
+
+    // Persist setting to company settings asynchronously
+    const targetCid = companyId || company?.id;
+    if (targetCid) {
+      const token = getAccessToken();
+      const headers = { Authorization: `Bearer ${token}` };
+      axios.patch(`${API_BASE_URL}/api/v1/companies/${targetCid}/update_settings/`, {
+        enable_manual_invoice_number: manual
+      }, { headers }).catch(err => {
+        console.warn('Could not persist manual invoice setting to backend', err);
+      });
+
+      if (company) {
+        const updatedComp = {
+          ...company,
+          settings: {
+            ...(company.settings || {}),
+            enable_manual_invoice_number: manual
+          }
+        };
+        setCompany(updatedComp);
+        offlineDb.masters.put({ key: 'company', data: updatedComp, updatedAt: Date.now() }).catch(() => {});
+      }
+    }
+  };
+
   const handleSave = async () => {
     if (!partyLedgerId || !salesLedgerId) {
       toast.warning("Please select Party and Sales ledgers!");
+      return;
+    }
+
+    if (enableManualInvoice && !invoiceNumber.trim()) {
+      toast.warning("Manual Invoice Number Required", "Please enter an invoice number, or toggle to Auto Numbering.");
       return;
     }
     
@@ -354,7 +396,7 @@ export default function SalesPage() {
       const payload: any = {
         company_id: companyId,
         party_ledger_id: partyLedgerId,
-        voucher_number: enableManualInvoice ? invoiceNumber : undefined,
+        voucher_number: enableManualInvoice && invoiceNumber.trim() ? invoiceNumber.trim() : undefined,
         voucher_date: invoiceDate,
         items: flatItems.map((it: any) => {
           const itemCopy = { ...it };
@@ -853,30 +895,176 @@ export default function SalesPage() {
 
   if (loading) return <DashboardLayout><div className="flex items-center justify-center h-full text-muted-foreground">Loading invoice form...</div></DashboardLayout>;
 
-  let missingFields = [];
-  if (company) {
-    if (!company.proprietor_name) missingFields.push("Proprietor Name");
-    if (!company.proprietor_phone) missingFields.push("Proprietor Phone");
-    if (!company.proprietor_signature) missingFields.push("Digital Signature");
+  interface MissingProfileField {
+    key: string;
+    label: string;
+    requirement: string;
+    instruction: string;
+    example?: string;
   }
 
-  if (missingFields.length > 0) {
+  const missingProfileFields: MissingProfileField[] = [];
+
+  if (company) {
+    if (!company.name?.trim()) {
+      missingProfileFields.push({
+        key: 'name',
+        label: 'Firm / Business Name',
+        requirement: 'Seller Identification',
+        instruction: 'Enter your registered trade or business legal name (as printed on your GST certificate or PAN).',
+        example: 'e.g. Ramesh Trading Co. or ABC Enterprises LLP'
+      });
+    }
+
+    if (!company.proprietor_name?.trim()) {
+      missingProfileFields.push({
+        key: 'proprietor_name',
+        label: 'Proprietor / Authorized Signatory Name',
+        requirement: 'Statutory Invoice Signature (GST Rule 46)',
+        instruction: 'Enter the full legal name of the owner, director, or authorized person who signs commercial invoices.',
+        example: 'e.g. Rajesh Sharma'
+      });
+    }
+
+    if (!company.proprietor_phone?.trim() && !company.phone?.trim()) {
+      missingProfileFields.push({
+        key: 'proprietor_phone',
+        label: 'Contact Phone Number',
+        requirement: 'Invoice Header Communication',
+        instruction: 'Enter a valid primary mobile or business phone number for buyer inquiries and delivery dispatches.',
+        example: 'e.g. +91 98765 43210'
+      });
+    }
+
+    if (!company.address?.trim()) {
+      missingProfileFields.push({
+        key: 'address',
+        label: 'Registered Business Address',
+        requirement: 'Place of Dispatch / Seller Address',
+        instruction: 'Enter the registered office or warehouse address from where goods/services are supplied.',
+        example: 'e.g. Shop 14, Main Market, Sector 18, Noida, UP - 201301'
+      });
+    }
+
+    if (!company.state_code?.trim()) {
+      missingProfileFields.push({
+        key: 'state_code',
+        label: 'State & State Code',
+        requirement: 'GST Place of Supply (Tax Determination)',
+        instruction: 'Select your state or union territory so Vouch can automatically calculate Intra-State (CGST+SGST) vs Inter-State (IGST) tax.',
+        example: 'e.g. 07 - Delhi or 09 - Uttar Pradesh'
+      });
+    }
+  } else {
+    // If no company record loaded
     return (
       <DashboardLayout>
-        <div className="max-w-2xl mx-auto mt-20 p-8 bg-card border border-border rounded-xl shadow-lg text-center">
-          <div className="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+        <div className="max-w-2xl mx-auto mt-20 p-8 bg-card border border-border/60 rounded-2xl shadow-xl text-center space-y-4">
+          <div className="w-12 h-12 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center mx-auto">
+            <AlertTriangle className="w-6 h-6" />
           </div>
-          <h2 className="text-2xl font-bold text-foreground mb-2">Proprietor Details Required</h2>
-          <p className="text-muted-foreground mb-4">
-            You must complete your firm's profile before you can generate invoices. The following details are missing:
+          <h2 className="text-xl font-bold text-foreground">No Company Profile Found</h2>
+          <p className="text-sm text-muted-foreground">
+            Please create or select an active company profile before creating sales invoices.
           </p>
-          <ul className="text-amber-500 font-medium mb-8 flex flex-col items-center gap-1">
-            {missingFields.map(f => <li key={f}>• {f}</li>)}
-          </ul>
-          <Link href="/settings" className="inline-block bg-blue-600 hover:bg-blue-700 text-foreground px-8 py-3 rounded-lg font-bold shadow-lg transition-colors">
-            Go to Profile Settings
+          <Link
+            href="/settings"
+            className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 px-6 py-2.5 rounded-xl font-bold text-sm shadow transition-colors"
+          >
+            <span>Go to Profile Settings</span>
+            <ArrowRight className="w-4 h-4" />
           </Link>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (missingProfileFields.length > 0) {
+    return (
+      <DashboardLayout>
+        <div className="max-w-3xl mx-auto my-12 p-6 sm:p-8 bg-card border border-border/60 rounded-2xl shadow-xl space-y-6">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-xl sm:text-2xl font-bold text-foreground">
+                Complete Your Firm Profile to Generate Sales Invoices
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Under statutory invoicing standards (GST Rule 46), tax invoices require seller details.
+                Please complete the following missing detail{missingProfileFields.length > 1 ? 's' : ''} in your profile:
+              </p>
+            </div>
+          </div>
+
+          {/* Missing fields itemized list */}
+          <div className="space-y-3">
+            {missingProfileFields.map((field, idx) => (
+              <div 
+                key={field.key} 
+                className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 flex flex-col sm:flex-row sm:items-start justify-between gap-3"
+              >
+                <div className="space-y-1 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-bold flex items-center justify-center font-mono">
+                      {idx + 1}
+                    </span>
+                    <span className="font-semibold text-foreground text-sm">{field.label}</span>
+                    <span className="text-[10px] font-mono font-bold uppercase px-2 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                      Required
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground pl-7">
+                    {field.instruction}
+                  </p>
+                  {field.example && (
+                    <div className="text-[11px] text-muted-foreground/80 font-mono pl-7">
+                      Format: <span className="text-foreground/90">{field.example}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="sm:text-right pl-7 sm:pl-0 shrink-0">
+                  <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-md">
+                    {field.requirement}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Digital Signature clarification callout */}
+          <div className="bg-muted/40 border border-border/40 rounded-xl p-4 flex items-start gap-3">
+            <div className="w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-500 flex items-center justify-center shrink-0 mt-0.5">
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
+            <div className="text-xs space-y-1">
+              <div className="font-semibold text-foreground">
+                Digital Signature is strictly optional
+              </div>
+              <p className="text-muted-foreground leading-relaxed">
+                You do <strong>not</strong> need a digital signature image to create or post sales bills.
+                Tax invoices can be physically signed or stamped after printing. If you want your signature to automatically print on invoice PDFs, you can optionally upload a signature image anytime in Settings.
+              </p>
+            </div>
+          </div>
+
+          {/* Action CTAs */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-border/40">
+            <Link
+              href="/sales"
+              className="text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors order-2 sm:order-1"
+            >
+              ← Back to Sales Vouchers
+            </Link>
+            <Link
+              href="/settings"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 px-6 py-2.5 rounded-xl font-bold text-sm shadow-md shadow-primary/20 transition-colors order-1 sm:order-2"
+            >
+              <span>Go to Profile Settings & Complete Details</span>
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
         </div>
       </DashboardLayout>
     );
@@ -916,40 +1104,133 @@ export default function SalesPage() {
         
         {/* Billing Details Card */}
         <div className="bg-card border border-border rounded-xl shadow-sm p-6">
-          <div className="flex justify-between items-center mb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
             <h2 className="text-lg font-semibold text-foreground">Billing Details</h2>
             {seqPreview && (
-              <span className="text-xs font-mono font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30 px-2.5 py-1 rounded-lg">
-                Next Serial: {seqPreview} (GST Rule 46b)
+              <span className={`text-xs font-mono font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 w-fit ${
+                enableManualInvoice 
+                  ? 'bg-amber-500/15 text-amber-500 border-amber-500/30' 
+                  : 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+              }`}>
+                <span>{enableManualInvoice ? 'Manual Sequence Override' : `Next Serial: ${seqPreview}`}</span>
+                <span className="text-[10px] font-sans font-normal opacity-80">(GST Rule 46b)</span>
               </span>
             )}
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 pb-6 border-b border-border">
-            {enableManualInvoice && (
-              <div>
-                <label className="block text-sm font-medium text-muted-foreground mb-1.5">Invoice Number</label>
-                <input
-                  type="text"
-                  value={invoiceNumber}
-                  onChange={e => setInvoiceNumber(e.target.value)}
-                  placeholder={seqPreview ? `Auto: ${seqPreview}` : "e.g. INV-001"}
-                  className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono"
-                />
-              </div>
-            )}
+            {/* Invoice Numbering (Auto vs Manual like Tally) */}
             <div>
-              <label className="block text-sm font-medium text-muted-foreground mb-1.5">
-                Invoice Date {activeFY && <span className="text-zinc-500 font-normal font-mono">({activeFY.code})</span>}
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-sm font-medium text-foreground flex items-center gap-2">
+                  <Hash className="w-4 h-4 text-primary" />
+                  <span>Invoice Number</span>
+                  <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${
+                    enableManualInvoice 
+                      ? 'bg-amber-500/15 text-amber-500 border-amber-500/30' 
+                      : 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                  }`}>
+                    {enableManualInvoice ? 'MANUAL' : 'AUTO'}
+                  </span>
+                </label>
+
+                {/* Tally-style Toggle Switch */}
+                <div className="inline-flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/50 text-xs shadow-xs">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleManualInvoice(false)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
+                      !enableManualInvoice
+                        ? 'bg-primary text-primary-foreground shadow-xs'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                    title="Switch to Auto-sequencing (Tally Default)"
+                  >
+                    Auto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleManualInvoice(true)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
+                      enableManualInvoice
+                        ? 'bg-primary text-primary-foreground shadow-xs'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                    title="Switch to Manual custom invoice numbering"
+                  >
+                    Manual
+                  </button>
+                </div>
+              </div>
+
+              {enableManualInvoice ? (
+                <div className="space-y-1">
+                  <input
+                    type="text"
+                    value={invoiceNumber}
+                    onChange={e => setInvoiceNumber(e.target.value)}
+                    placeholder={seqPreview || "e.g. INV-001"}
+                    className="w-full bg-muted/50 border border-amber-500/50 text-foreground p-3 rounded-lg focus:ring-2 focus:ring-primary outline-none transition-all font-mono font-semibold"
+                    autoFocus
+                  />
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span>Manual custom numbering active.</span>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleManualInvoice(false)}
+                      className="text-primary hover:underline font-medium cursor-pointer"
+                    >
+                      Revert to Auto
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <div className="w-full bg-muted/30 border border-border/60 text-foreground p-3 rounded-lg flex items-center justify-between font-mono">
+                    <span className="font-semibold text-foreground">
+                      {seqPreview ? seqPreview : "Auto-Generated upon Post"}
+                    </span>
+                    <span className="text-[11px] text-muted-foreground font-sans">
+                      (Sequential)
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span>Sequential number generated on posting.</span>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleManualInvoice(true)}
+                      className="text-primary hover:underline font-medium cursor-pointer"
+                    >
+                      Override with Manual #
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Invoice Date */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-sm font-medium text-muted-foreground">
+                  Invoice Date {activeFY && <span className="text-muted-foreground font-normal font-mono">({activeFY.code})</span>}
+                </label>
+                {activeFY && (
+                  <span className="text-[11px] text-muted-foreground font-mono">
+                    FY: {activeFY.start_date} ~ {activeFY.end_date}
+                  </span>
+                )}
+              </div>
               <input
                 type="date"
                 value={invoiceDate}
                 min={activeFY?.start_date}
                 max={activeFY?.end_date}
                 onChange={e => setInvoiceDate(e.target.value)}
-                className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono"
+                className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-primary outline-none transition-all font-mono"
               />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Voucher accounting date within selected financial period.
+              </p>
             </div>
           </div>
           

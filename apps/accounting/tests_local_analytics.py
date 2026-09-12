@@ -297,6 +297,48 @@ class LocalAnalyticsAndDeltaSyncTestCase(TestCase):
         self.assertEqual(r3["debit"], Decimal("8105.00"))
         self.assertEqual(r3["credit"], Decimal("0.00"))
 
+    def test_od_statement_detection_and_cheque_receipt_direction(self):
+        """
+        Verify that Strategy B correctly detects Overdraft accounts and classifies:
+        1. 'BY CLG:DEL ACCTS-KOTAK MAHINDRA BANK LTD, SKAK INDUSTRIES LLP' as Credit (Receipt).
+        2. '14:11:37 Chq: 645911339826 -' with negative delta as Credit (Receipt).
+        3. 'SC NEFT OTHER THAN SB IMB' as Debit (Payment).
+        """
+        import io
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+        from apps.accounting.services.bank_statement_service import BankStatementService
+
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf, pagesize=letter)
+        c.drawString(50, 750, 'Date Particulars Deposits Withdrawals Balance')
+        c.drawString(50, 730, '02/04/2026 NEFT CR-PANEM INDU 18939.00 938276.78')
+        c.drawString(50, 710, '03/04/2026 14:11:37 Chq: 645911339826 - 7408.00 930868.78')
+        c.drawString(50, 690, '03/04/2026 SC NEFT OTHER THAN SB IMB Chq: 0 - 6.00 930874.78')
+        c.drawString(50, 670, '06/05/2026 BY CLG:DEL ACCTS-KOTAK MAHINDRA BANK LTD, SKAK INDUSTRIES LLP Chq: 000000000002 - 3956.00 926918.78')
+        c.drawString(50, 650, '12/05/2026 MB NEFT DR PAYMENT 7000.00 933918.78')
+        c.save()
+
+        pdf_bytes = buf.getvalue()
+        rows, errors = BankStatementService.parse_pdf(pdf_bytes)
+        self.assertEqual(len(rows), 5)
+
+        # 14:11:37 Chq: 645911339826 must be parsed as credit in an OD statement
+        self.assertEqual(rows[1]["credit"], Decimal("7408.00"))
+        self.assertEqual(rows[1]["debit"], Decimal("0.00"))
+
+        # SC NEFT must be parsed as debit
+        self.assertEqual(rows[2]["debit"], Decimal("6.00"))
+        self.assertEqual(rows[2]["credit"], Decimal("0.00"))
+
+        # BY CLG: SKAK must be parsed as credit
+        self.assertEqual(rows[3]["credit"], Decimal("3956.00"))
+        self.assertEqual(rows[3]["debit"], Decimal("0.00"))
+
+        # MB NEFT DR must be parsed as debit
+        self.assertEqual(rows[4]["debit"], Decimal("7000.00"))
+        self.assertEqual(rows[4]["credit"], Decimal("0.00"))
+
     def test_cash_deposit_auto_match_and_reconcile(self):
         """
         Verify cash deposits (e.g. CASH DEPOSIT SELF) match company Cash ledger

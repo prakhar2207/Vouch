@@ -69,7 +69,16 @@ class BankTransactionListAPIView(APIView):
     def get(self, request, *args, **kwargs):
         company = get_authorized_company(request)
 
-        qs = BankTransaction.objects.filter(company=company).select_related('bank_ledger', 'matched_party', 'matched_voucher')
+        qs = BankTransaction.objects.filter(company=company).select_related(
+            'bank_ledger', 'matched_party', 'matched_voucher'
+        ).only(
+            'id', 'transaction_date', 'value_date', 'description', 'normalized_narration',
+            'reference_number', 'debit_amount', 'credit_amount', 'balance', 'status',
+            'match_confidence', 'match_notes',
+            'bank_ledger__id', 'bank_ledger__name',
+            'matched_party__id', 'matched_party__name', 'matched_party__ledger_type',
+            'matched_voucher__id', 'matched_voucher__voucher_number',
+        )
 
         # Filter by status
         st = request.query_params.get('status')

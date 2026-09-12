@@ -723,14 +723,21 @@ class BankStatementService:
                                     bal = cls.clean_amount_str(row[col_map['balance']]) if 'balance' in col_map and col_map['balance'] < len(row) and str(row[col_map['balance']]).strip() else None
 
                                     # Running balance delta direction correction
+                                    # Never flip if narration explicitly indicates credit or debit keywords
+                                    upper_desc = desc.upper()
+                                    has_desc_credit = bool(cls.IS_CREDIT_REGEX.search(upper_desc))
+                                    has_desc_debit = bool(cls.IS_DEBIT_REGEX.search(upper_desc))
+
                                     if prev_balance is not None and bal is not None:
                                         delta = bal - prev_balance
                                         if delta > Decimal('0.01') and deb > 0 and cred == 0 and abs(delta - deb) < Decimal('0.05'):
-                                            cred = deb
-                                            deb = Decimal('0.00')
+                                            if not has_desc_debit:
+                                                cred = deb
+                                                deb = Decimal('0.00')
                                         elif delta < -Decimal('0.01') and cred > 0 and deb == 0 and abs(abs(delta) - cred) < Decimal('0.05'):
-                                            deb = cred
-                                            cred = Decimal('0.00')
+                                            if not has_desc_credit:
+                                                deb = cred
+                                                cred = Decimal('0.00')
                                     if bal is not None:
                                         prev_balance = bal
 
@@ -845,12 +852,26 @@ class BankStatementService:
                     l_str = before_c
 
                 if current_block:
-                    pending_blocks.append(current_block)
-                current_block = {
-                    "date_str": m.group(1),
-                    "page": page_no,
-                    "lines": [l_str]
-                }
+                    if not amt_finder_re.findall(" ".join(current_block.get("lines", []))):
+                        carried_lines = current_block.get("lines", [])
+                        current_block = {
+                            "date_str": m.group(1),
+                            "page": page_no,
+                            "lines": carried_lines + [l_str]
+                        }
+                    else:
+                        pending_blocks.append(current_block)
+                        current_block = {
+                            "date_str": m.group(1),
+                            "page": page_no,
+                            "lines": [l_str]
+                        }
+                else:
+                    current_block = {
+                        "date_str": m.group(1),
+                        "page": page_no,
+                        "lines": [l_str]
+                    }
             elif current_block:
                 if cls.is_boilerplate_line(l_str):
                     continue
@@ -864,6 +885,39 @@ class BankStatementService:
 
         if current_block:
             pending_blocks.append(current_block)
+
+        # Detect whether the statement operates as an Overdraft (OD/CC) account
+        # where deposits decrease the outstanding debit balance and withdrawals increase it.
+        is_od_statement = False
+        od_votes = 0
+        regular_votes = 0
+        scan_prev_bal = None
+        for b in pending_blocks:
+            b_text = " ".join(b.get("lines", []))
+            b_amts = amt_finder_re.findall(b_text)
+            if len(b_amts) >= 2:
+                b_amt = cls.clean_amount_str(b_amts[0])
+                b_bal = cls.clean_amount_str(b_amts[-1])
+                if scan_prev_bal is not None and b_bal is not None and b_amt > 0:
+                    d = b_bal - scan_prev_bal
+                    b_upper = b_text.upper()
+                    cr_kw = bool(is_credit_re.search(b_upper)) and not bool(is_debit_re.search(b_upper))
+                    dr_kw = bool(is_debit_re.search(b_upper)) and not bool(is_credit_re.search(b_upper))
+                    if cr_kw:
+                        if abs(d - (-b_amt)) <= Decimal('0.05') or d < -Decimal('0.01'):
+                            od_votes += 1
+                        elif abs(d - b_amt) <= Decimal('0.05') or d > Decimal('0.01'):
+                            regular_votes += 1
+                    elif dr_kw:
+                        if abs(d - b_amt) <= Decimal('0.05') or d > Decimal('0.01'):
+                            od_votes += 1
+                        elif abs(d - (-b_amt)) <= Decimal('0.05') or d < -Decimal('0.01'):
+                            regular_votes += 1
+                if b_bal is not None:
+                    scan_prev_bal = b_bal
+
+        if od_votes > regular_votes:
+            is_od_statement = True
 
         prev_balance = None
         for block in pending_blocks:
@@ -910,24 +964,33 @@ class BankStatementService:
                 amt_val = cls.clean_amount_str(amts[0])
                 bal = cls.clean_amount_str(amts[1])
 
-                if prev_balance is not None and bal is not None:
-                    delta = bal - prev_balance
-                    if abs(delta - amt_val) <= Decimal('0.05') or delta > Decimal('0.01'):
-                        credit = amt_val
-                    elif abs(delta - (-amt_val)) <= Decimal('0.05') or delta < -Decimal('0.01'):
-                        debit = amt_val
-                    elif has_credit and not has_debit:
-                        credit = amt_val
-                    elif has_debit and not has_credit:
-                        debit = amt_val
-                    elif deposit_col_first:
-                        credit = amt_val
-                    else:
-                        debit = amt_val
-                elif has_credit and not has_debit:
+                # Priority 1: Explicit authoritative narration keywords (BY CLG, CR, TO CLG, DR, etc.)
+                if has_credit and not has_debit:
                     credit = amt_val
                 elif has_debit and not has_credit:
                     debit = amt_val
+                elif prev_balance is not None and bal is not None:
+                    delta = bal - prev_balance
+                    if is_od_statement:
+                        # Overdraft/CC dynamics: receipts decrease debt balance, payments increase debt balance
+                        if abs(delta - (-amt_val)) <= Decimal('0.05') or delta < -Decimal('0.01'):
+                            credit = amt_val
+                        elif abs(delta - amt_val) <= Decimal('0.05') or delta > Decimal('0.01'):
+                            debit = amt_val
+                        elif deposit_col_first:
+                            credit = amt_val
+                        else:
+                            debit = amt_val
+                    else:
+                        # Standard asset dynamics: receipts increase balance, payments decrease balance
+                        if abs(delta - amt_val) <= Decimal('0.05') or delta > Decimal('0.01'):
+                            credit = amt_val
+                        elif abs(delta - (-amt_val)) <= Decimal('0.05') or delta < -Decimal('0.01'):
+                            debit = amt_val
+                        elif deposit_col_first:
+                            credit = amt_val
+                        else:
+                            debit = amt_val
                 elif deposit_col_first:
                     credit = amt_val
                 else:
@@ -1356,6 +1419,14 @@ class BankStatementService:
                 # Accounting integrity guardrail:
                 # A customer paying by cheque / clearing is a Deposit (Credit), NOT a Payment.
                 mp = match_res.get('matched_party')
+                if not mp and match_res.get('suggested_matches'):
+                    top_sug = match_res['suggested_matches'][0]
+                    if top_sug.get('confidence', 0) >= 80 and top_sug.get('party_id'):
+                        try:
+                            mp = Ledger.objects.get(id=top_sug['party_id'], company=company)
+                        except Exception:
+                            pass
+
                 if mp and mp.ledger_type == 'CUSTOMER':
                     if deb_amt > 0 and cred_amt == 0:
                         if not re.search(r'\bREFUND\b', norm_desc, re.IGNORECASE):

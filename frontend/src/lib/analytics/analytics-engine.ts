@@ -528,7 +528,119 @@ export class LocalAnalyticsEngine {
     });
   }
 
-  private static getEmptyDashboard(): LocalDashboardResult {
+  /**
+   * Incrementally updates only the affected dates and parties without full-table scans.
+   */
+  static async updateIncrementalAnalytics(companyId: string, changedVouchers: SyncedVoucher[]): Promise<void> {
+    if (!companyId || !changedVouchers || changedVouchers.length === 0) return;
+
+    // For large bulk changes (>200 items), a full rebuild is more efficient
+    if (changedVouchers.length > 200) {
+      return this.rebuildLocalAnalytics(companyId);
+    }
+
+    const affectedDates = Array.from(new Set(changedVouchers.map((v) => v.voucherDate).filter(Boolean)));
+    const affectedPartyIds = Array.from(
+      new Set(changedVouchers.map((v) => v.partyLedgerId).filter(Boolean))
+    ) as string[];
+
+    // 1. Update only affected Daily aggregates
+    const dailyUpdates = [];
+    for (const d of affectedDates) {
+      const dayVouchers = await offlineDb.syncedVouchers
+        .where("companyId")
+        .equals(companyId)
+        .and((v) => v.voucherDate === d && (v.status === "POSTED" || v.status === "CORRECTED"))
+        .toArray();
+
+      let sales = 0, purchases = 0, collections = 0, payments = 0, salesCount = 0, purchaseCount = 0;
+      for (const v of dayVouchers) {
+        const amt = Number(v.totalAmount) || 0;
+        if (v.voucherType === "SALES") {
+          sales += amt;
+          salesCount += 1;
+        } else if (v.voucherType === "PURCHASE") {
+          purchases += amt;
+          purchaseCount += 1;
+        } else if (v.voucherType === "RECEIPT") {
+          collections += amt;
+        } else if (v.voucherType === "PAYMENT") {
+          payments += amt;
+        }
+      }
+
+      dailyUpdates.push({
+        id: `${companyId}_${d}`,
+        companyId,
+        date: d,
+        sales: Math.round(sales * 100) / 100,
+        purchases: Math.round(purchases * 100) / 100,
+        collections: Math.round(collections * 100) / 100,
+        payments: Math.round(payments * 100) / 100,
+        salesCount,
+        purchaseCount,
+      });
+    }
+
+    if (dailyUpdates.length > 0) {
+      await offlineDb.analyticsDaily.bulkPut(dailyUpdates);
+    }
+
+    // 2. Update only affected Party aggregates
+    const partyUpdates = [];
+    for (const pId of affectedPartyIds) {
+      const pVouchers = await offlineDb.syncedVouchers
+        .where("companyId")
+        .equals(companyId)
+        .and((v) => v.partyLedgerId === pId && (v.status === "POSTED" || v.status === "CORRECTED"))
+        .toArray();
+
+      let sales = 0, purchases = 0, receipts = 0, payments = 0, invoiceCount = 0;
+      let lastDate = "";
+      let pName = "";
+
+      for (const v of pVouchers) {
+        const amt = Number(v.totalAmount) || 0;
+        if (!pName && v.partyName) pName = v.partyName;
+        if (v.voucherDate > lastDate) lastDate = v.voucherDate;
+
+        if (v.voucherType === "SALES") {
+          sales += amt;
+          invoiceCount += 1;
+        } else if (v.voucherType === "PURCHASE") {
+          purchases += amt;
+        } else if (v.voucherType === "RECEIPT") {
+          receipts += amt;
+        } else if (v.voucherType === "PAYMENT") {
+          payments += amt;
+        }
+      }
+
+      partyUpdates.push({
+        id: `${companyId}_${pId}`,
+        companyId,
+        partyId: pId,
+        partyName: pName || "Party",
+        sales: Math.round(sales * 100) / 100,
+        purchases: Math.round(purchases * 100) / 100,
+        receipts: Math.round(receipts * 100) / 100,
+        payments: Math.round(payments * 100) / 100,
+        invoiceCount,
+        lastTransactionDate: lastDate,
+        outstanding: Math.round((sales - receipts) * 100) / 100,
+      });
+    }
+
+    if (partyUpdates.length > 0) {
+      await offlineDb.analyticsParty.bulkPut(partyUpdates);
+    }
+
+    if (process.env.NODE_ENV === "development") {
+      console.log(`[LOCAL] incremental analytics updated (dates=${dailyUpdates.length}, parties=${partyUpdates.length})`);
+    }
+  }
+
+  static getEmptyDashboard(): LocalDashboardResult {
     return {
       business_health: "Constant",
       trend_summary: "No local data available for this company.",

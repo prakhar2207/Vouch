@@ -51,6 +51,10 @@ export default function InventoryPage() {
           setCategories(cachedCats.data);
           if (cachedSummary?.data) setSummary(cachedSummary.data);
           setLoading(false);
+          // If cached within the last 5 minutes, do not make repeated network requests
+          if (cachedCats.updatedAt && Date.now() - cachedCats.updatedAt < 5 * 60 * 1000) {
+            return;
+          }
         }
       } catch (cacheErr) {
         console.warn('Could not read categories from offline cache', cacheErr);

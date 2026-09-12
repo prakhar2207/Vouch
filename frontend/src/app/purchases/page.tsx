@@ -13,6 +13,7 @@ import ConfirmModal from "@/components/modals/ConfirmModal";
 import { Edit2, Trash2, Eye, FileText, Plus, ChevronLeft, ChevronRight, AlertCircle, RefreshCw, CheckCircle, AlertTriangle, CloudOff } from "lucide-react";
 import { offlineDb } from "@/lib/db/offlineDb";
 import { retryFailedVoucher } from "@/lib/sync/sync-worker";
+import { vouchersRepository } from "@/lib/data";
 
 export default function PurchaseInvoiceList() {
   const router = useRouter();
@@ -48,50 +49,13 @@ export default function PurchaseInvoiceList() {
     setLoading(true);
     setFetchError(null);
 
-    // 1. Fetch pending and failed offline purchase vouchers from Dexie
-    let offlineList: any[] = [];
     try {
-      const localVouchers = await offlineDb.vouchers
-        .where("voucherType")
-        .equals("PURCHASE")
-        .toArray();
-
-      offlineList = localVouchers
-        .filter((v) => v.status !== "SYNCED")
-        .map((v) => {
-          const payload = v.payload || {};
-          const lineItems = payload.items || [];
-          const total = lineItems.reduce((sum: number, it: any) => {
-            const gross = Number(it.quantity || 0) * Number(it.rate || 0);
-            const disc = gross * (Number(it.discount_percent || 0) / 100);
-            const taxable = gross - disc;
-            return sum + taxable + taxable * (Number(it.gst_rate || 18) / 100);
-          }, 0);
-
-          return {
-            id: v.localId,
-            dexieId: v.id,
-            isOffline: true,
-            voucher_number: payload.voucher_number || payload.reference_number || v.localId.substring(0, 15).toUpperCase(),
-            date: v.voucherDate || payload.voucher_date,
-            party_name: payload.party_name || payload.supplier_name || "Offline Supplier",
-            total_amount: Math.round(total),
-            syncStatus: v.status === "FAILED" ? "SYNC_FAILED" : "OFFLINE_PENDING",
-            errorMessage: v.errorMessage,
-            status: v.status === "FAILED" ? "FAILED" : "PENDING_SYNC",
-          };
-        });
-    } catch (offlineErr) {
-      console.warn("Could not read offline purchase vouchers", offlineErr);
-    }
-
-    try {
-      const token = getAccessToken();
       let companyId = activeCompanyId;
       if (!companyId && typeof window !== "undefined") {
         companyId = localStorage.getItem("vouch_active_company_id");
       }
       if (!companyId) {
+        const token = getAccessToken();
         const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
           headers: { Authorization: `Bearer ${token}` },
           timeout: 8000,
@@ -102,45 +66,28 @@ export default function PurchaseInvoiceList() {
 
       if (!companyId) {
         setFetchError("No company found for the current user.");
-        setInvoices(offlineList);
         return;
       }
 
-      const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
-      const offset = (targetPage - 1) * pageSize;
-      const res = await axios.get(
-        `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?type=PURCHASE&limit=${pageSize}&offset=${offset}`,
-        { headers, timeout: 8000 }
-      );
-      const purchaseVouchers = (res.data.data || [])
-        .filter((v: any) => v.type === "PURCHASE")
-        .map((v: any) => ({ ...v, syncStatus: "SYNCED" }));
+      const result = await vouchersRepository.getPurchaseInvoices(companyId, {
+        page: targetPage,
+        pageSize,
+      });
 
-      setInvoices([...offlineList, ...purchaseVouchers]);
-      if (res.data.pagination) {
-        setPagination(res.data.pagination);
-      }
+      setInvoices(result.data);
+      setPagination({
+        page: result.page,
+        limit: result.pageSize,
+        total_count: result.totalCount,
+        total_pages: result.totalPages,
+      });
       setPage(targetPage);
       setFetchError(null);
-
-      // Cache remote purchase invoices for offline viewing
-      offlineDb.masters.put({ key: "cached_purchase_invoices", data: purchaseVouchers, updatedAt: Date.now() }).catch(() => {});
     } catch (err: any) {
       console.error("fetchInvoices error:", err);
       const errorMsg = err.response?.data?.error || err.response?.data?.message || err.message || "Failed to load purchase invoices";
-
-      const cached = await offlineDb.masters.get("cached_purchase_invoices").catch(() => null);
-      if (cached?.data?.length) {
-        const cachedList = cached.data.map((v: any) => ({ ...v, syncStatus: "SYNCED" }));
-        setInvoices([...offlineList, ...cachedList]);
-        toast.warning("Loaded purchase invoices from offline cache. Live server unreachable.");
-      } else {
-        setInvoices(offlineList);
-        if (offlineList.length === 0) {
-          setFetchError(errorMsg);
-          toast.error("Failed to load invoices", errorMsg);
-        }
-      }
+      setFetchError(errorMsg);
+      toast.error("Failed to load invoices", errorMsg);
     } finally {
       setLoading(false);
     }

@@ -9,6 +9,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
+import { ledgersRepository } from '@/lib/data';
 import { 
   Search, 
   Trash2, 
@@ -75,29 +76,7 @@ export default function PartiesPage() {
       if (!cid) return;
       setCompanyId(cid);
 
-      const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/?show_archived=true`, { headers });
-      
-      const rawLedgers = ledgersRes.data.data || [];
-      const filteredParties = rawLedgers.filter((l: any) => 
-        l.canonical_role === 'CUSTOMER' ||
-        l.canonical_role === 'SUPPLIER' ||
-        l.canonical_role === 'BOTH' ||
-        l.ledger_type === 'CUSTOMER' ||
-        l.ledger_type === 'SUPPLIER' ||
-        l.ledger_type === 'BOTH' ||
-        (l.group && l.group.includes('Debtor')) || 
-        (l.group && l.group.includes('Creditor'))
-      ).map((l: any) => {
-        const isCust = l.canonical_role === 'CUSTOMER' || l.ledger_type === 'CUSTOMER' || (l.group && l.group.includes('Debtor'));
-        const isSupp = l.canonical_role === 'SUPPLIER' || l.ledger_type === 'SUPPLIER' || (l.group && l.group.includes('Creditor'));
-        const isBoth = l.canonical_role === 'BOTH' || l.ledger_type === 'BOTH' || (isCust && isSupp);
-        return {
-          ...l,
-          role: isBoth ? 'BOTH' : (isCust ? 'CUSTOMER' : 'SUPPLIER'),
-          type: isBoth ? 'Both' : (isCust ? 'Customer' : 'Supplier')
-        };
-      });
-
+      const { data: filteredParties } = await ledgersRepository.getParties(cid);
       setParties(filteredParties);
     } catch (err) {
       console.error(err);

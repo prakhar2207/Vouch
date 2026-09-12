@@ -9,12 +9,15 @@ import DashboardLayout from '@/components/DashboardLayout';
 
 import { ChevronLeft, ChevronRight, Edit2, Trash2 } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
+import { useCompany } from '@/context/CompanyContext';
+import { vouchersRepository } from '@/lib/data';
 import EditPaymentReceiptModal from '@/components/modals/EditPaymentReceiptModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 
 export default function VouchersPage() {
   const router = useRouter();
   const { toast } = useToast();
+  const { companyId: activeCompanyId } = useCompany();
   const [vouchers, setVouchers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'ALL' | 'PAYMENT' | 'RECEIPT'>('ALL');
@@ -35,21 +38,31 @@ export default function VouchersPage() {
   const fetchVouchers = async (typeFilter: string = filter, targetPage: number = page) => {
     setLoading(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const companyId = compRes.data.data[0]?.id;
+      let companyId = activeCompanyId;
+      if (!companyId && typeof window !== 'undefined') {
+        companyId = localStorage.getItem('vouch_active_company_id');
+      }
+      if (!companyId) {
+        const token = getAccessToken();
+        const headers = { Authorization: `Bearer ${token}` };
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+        companyId = compRes.data?.data?.[0]?.id || compRes.data?.[0]?.id;
+      }
       if (!companyId) return;
 
-      const offset = (targetPage - 1) * pageSize;
-      let url = `${API_BASE_URL}/api/v1/accounting/payment-receipts/${companyId}/?limit=${pageSize}&offset=${offset}`;
-      if (typeFilter && typeFilter !== 'ALL') url += `&type=${typeFilter}`;
-      
-      const res = await axios.get(url, { headers });
-      setVouchers(res.data.data || []);
-      if (res.data.pagination) {
-        setPagination(res.data.pagination);
-      }
+      const result = await vouchersRepository.getPaymentReceipts(companyId, {
+        page: targetPage,
+        pageSize,
+        type: typeFilter !== 'ALL' ? typeFilter : ['PAYMENT', 'RECEIPT'],
+      });
+
+      setVouchers(result.data);
+      setPagination({
+        page: result.page,
+        limit: result.pageSize,
+        total_count: result.totalCount,
+        total_pages: result.totalPages,
+      });
       setPage(targetPage);
     } catch (err) {
       console.error(err);
