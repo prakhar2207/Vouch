@@ -220,6 +220,7 @@ class ProductListView(APIView):
                     "stock_quantity": int(round(sq)) if is_integer_unit(p.unit) else sq,
                     "has_invoice_stock": has_posted_purchase,
                     "costing_method": getattr(p, 'costing_method', 'AVG_COST') or 'AVG_COST',
+                    "reorder_level": p.reorder_level,
                     "track_batches": p.track_batches,
                     "track_serial_numbers": p.track_serial_numbers
                 })
@@ -368,6 +369,7 @@ class ProductDetailView(APIView):
             if 'sku' in data: product.sku = data['sku']
             if 'unit' in data: product.unit = data['unit']
             if 'costing_method' in data: product.costing_method = data['costing_method']
+            if 'reorder_level' in data: product.reorder_level = to_decimal(data['reorder_level'])
             
             if 'stock_quantity' in data:
                 new_stock = to_decimal(data['stock_quantity'])

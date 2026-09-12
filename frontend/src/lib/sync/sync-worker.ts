@@ -1,4 +1,4 @@
-import { offlineDb, OfflineVoucher, SyncedVoucher, SyncedLedger, SyncedProduct } from "../db/offlineDb";
+import { offlineDb, OfflineVoucher, SyncedVoucher, SyncedLedger, SyncedProduct, SyncedBankTransaction, SyncedPaymentAllocation } from "../db/offlineDb";
 import { LocalAnalyticsEngine } from "../analytics/analytics-engine";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
@@ -84,7 +84,7 @@ async function withTabLock<T>(lockName: string, fn: () => Promise<T>, fallback: 
  * - Categorization of retryable vs permanent failures
  * - Exponential backoff on retries (max 10 retries)
  */
-const BACKOFF_DELAYS = [2000, 5000, 15000, 30000, 60000];
+const BACKOFF_DELAYS = [2000, 5000, 15000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000];
 
 export async function executeClientOutboxSync(): Promise<{ processed: number; failed: number }> {
   return await withTabLock("vouch_outbox_push_lock", async () => {
@@ -201,10 +201,10 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
           // Retryable error: 408, 429, 500, 502, 503, 504, or network failure
           const newRetry = (item.retryCount || 0) + 1;
           const errMsg = resData.errors?.[0]?.error || resData.error || `Server error (${httpStatus})`;
-          if (newRetry >= 5) {
+          if (newRetry >= 10) {
             await offlineDb.vouchers.update(item.id!, {
               status: "FAILED",
-              errorMessage: `Exceeded max retry limit (5): ${errMsg}`,
+              errorMessage: `Exceeded max retry limit (10): ${errMsg}`,
               retryCount: newRetry,
               nextRetryAt: undefined,
             });
@@ -222,7 +222,7 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
       } catch (err: any) {
         const isOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
         const newRetry = (item.retryCount || 0) + 1;
-        if (isOnline && newRetry >= 5) {
+        if (isOnline && newRetry >= 10) {
           await offlineDb.vouchers.update(item.id!, {
             status: "FAILED",
             errorMessage: err?.message || "Exceeded max network retry limit",
@@ -410,6 +410,7 @@ export async function pullIncrementalChanges(
           salesPrice: Number(p.sales_price) || 0,
           gstRate: Number(p.gst_rate) || 0,
           currentStock: Number(p.current_stock) || 0,
+          reorderLevel: Number(p.reorder_level) || 0,
           serverUpdatedAt: p.server_updated_at || Date.now(),
         }));
         if (toPut.length > 0) {
@@ -468,6 +469,66 @@ export async function pullIncrementalChanges(
           }));
           await offlineDb.syncedVouchers.bulkPut(toUpdateCancelled);
           allChangedVouchers.push(...toUpdateCancelled);
+        }
+      }
+
+      // 4. Ingest Bank Transactions
+      if (changes.bank_transactions) {
+        const toPut = [
+          ...(changes.bank_transactions.created || []),
+          ...(changes.bank_transactions.updated || []),
+        ].map((bt: any) => ({
+          id: bt.id,
+          companyId: bt.company_id || companyId,
+          bankLedgerId: bt.bank_ledger_id,
+          bankLedgerName: bt.bank_ledger_name,
+          transactionDate: bt.transaction_date,
+          valueDate: bt.value_date,
+          description: bt.description,
+          normalizedNarration: bt.normalized_narration,
+          referenceNumber: bt.reference_number,
+          debitAmount: Number(bt.debit_amount) || 0,
+          creditAmount: Number(bt.credit_amount) || 0,
+          balance: bt.balance ? Number(bt.balance) : null,
+          status: bt.status,
+          matchedPartyId: bt.matched_party_id,
+          matchedPartyName: bt.matched_party_name,
+          matchedVoucherId: bt.matched_voucher_id,
+          matchedVoucherNumber: bt.matched_voucher_number,
+          matchConfidence: Number(bt.match_confidence) || 0,
+          matchNotes: bt.match_notes,
+          serverUpdatedAt: bt.server_updated_at || Date.now(),
+        }));
+        if (toPut.length > 0) {
+          await offlineDb.syncedBankTransactions.bulkPut(toPut);
+          totalRecords += toPut.length;
+        }
+        if (changes.bank_transactions.deleted && changes.bank_transactions.deleted.length > 0) {
+          const toDel = changes.bank_transactions.deleted.map((bt: any) => bt.id);
+          await offlineDb.syncedBankTransactions.bulkDelete(toDel);
+        }
+      }
+
+      // 5. Ingest Payment Allocations
+      if (changes.payment_allocations) {
+        const toPut = [
+          ...(changes.payment_allocations.created || []),
+          ...(changes.payment_allocations.updated || []),
+        ].map((pa: any) => ({
+          id: pa.id,
+          companyId: pa.company_id || companyId,
+          paymentVoucherId: pa.payment_voucher_id,
+          invoiceVoucherId: pa.invoice_voucher_id,
+          allocatedAmount: Number(pa.allocated_amount) || 0,
+          serverUpdatedAt: pa.server_updated_at || Date.now(),
+        }));
+        if (toPut.length > 0) {
+          await offlineDb.syncedPaymentAllocations.bulkPut(toPut);
+          totalRecords += toPut.length;
+        }
+        if (changes.payment_allocations.deleted && changes.payment_allocations.deleted.length > 0) {
+          const toDel = changes.payment_allocations.deleted.map((pa: any) => pa.id);
+          await offlineDb.syncedPaymentAllocations.bulkDelete(toDel);
         }
       }
 

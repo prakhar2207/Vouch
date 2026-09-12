@@ -217,7 +217,7 @@ export class LocalAnalyticsEngine {
         totalRetailValue += qty * sPrice;
       }
 
-      if (qty >= 0 && qty <= 5) {
+      if (qty <= (p.reorderLevel || 0)) {
         lowStockProducts.push(p);
       }
     }

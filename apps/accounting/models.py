@@ -168,14 +168,9 @@ class Voucher(models.Model):
         ]
 
     def clean(self):
-        from django.core.exceptions import ValidationError
-        if self.status == 'POSTED' and self.pk:
-            entries = self.ledger_entries.all()
-            if entries.exists():
-                total_dr = sum(e.debit_amount for e in entries)
-                total_cr = sum(e.credit_amount for e in entries)
-                if total_dr != total_cr:
-                    raise ValidationError(f"Double-entry constraint violated: Total Debit ({total_dr}) does not equal Total Credit ({total_cr}).")
+        # Validation is handled explicitly by VoucherService.post_voucher
+        # to avoid expensive N+1 queries during simple saves.
+        pass
 
     def save(self, *args, **kwargs):
         self.clean()

@@ -143,6 +143,7 @@ class SyncPullAPIView(APIView):
                     'sales_price': str(getattr(p, 'selling_price', '0.00') or '0.00'),
                     'gst_rate': str(getattr(p, 'gst_rate', '0.00') or '0.00'),
                     'current_stock': str(getattr(p, 'stock_quantity', '0.00') or '0.00'),
+                    'reorder_level': str(getattr(p, 'reorder_level', '0.00') or '0.00'),
                     'server_updated_at': int(p.updated_at.timestamp() * 1000) if p.updated_at else now_ts,
                 }
                 if getattr(p, 'is_active', True) is False:
@@ -211,7 +212,64 @@ class SyncPullAPIView(APIView):
             'vouchers': {'created': vouchers_created, 'updated': vouchers_updated, 'deleted': vouchers_deleted},
             'voucher_items': {'created': [], 'updated': [], 'deleted': []},
             'ledger_entries': {'created': [], 'updated': [], 'deleted': []},
+            'bank_transactions': {'created': [], 'updated': [], 'deleted': []},
+            'payment_allocations': {'created': [], 'updated': [], 'deleted': []},
         }
+
+        # Sync Bank Transactions and Payment Allocations
+        from apps.accounting.models import BankTransaction, PaymentAllocation
+        
+        should_sync_extra = not skip_master_data
+        
+        if should_sync_extra:
+            # Bank Transactions
+            bt_qs = BankTransaction.objects.filter(company=company).select_related('bank_ledger', 'matched_party', 'matched_voucher')
+            if ledger_since_dt: # reuse ledger timestamp for simplicity
+                bt_qs = bt_qs.filter(updated_at__gte=ledger_since_dt)
+                
+            for bt in bt_qs:
+                bt_item = {
+                    'id': str(bt.id),
+                    'company_id': str(bt.company_id),
+                    'bank_ledger_id': str(bt.bank_ledger_id),
+                    'bank_ledger_name': bt.bank_ledger.name if bt.bank_ledger else '',
+                    'transaction_date': str(bt.transaction_date),
+                    'value_date': str(bt.value_date) if bt.value_date else None,
+                    'description': bt.description,
+                    'normalized_narration': bt.normalized_narration,
+                    'reference_number': bt.reference_number or '',
+                    'debit_amount': str(bt.debit_amount),
+                    'credit_amount': str(bt.credit_amount),
+                    'balance': str(bt.balance) if bt.balance is not None else None,
+                    'status': bt.status,
+                    'matched_party_id': str(bt.matched_party_id) if bt.matched_party_id else None,
+                    'matched_party_name': bt.matched_party.name if bt.matched_party else None,
+                    'matched_voucher_id': str(bt.matched_voucher_id) if bt.matched_voucher_id else None,
+                    'matched_voucher_number': bt.matched_voucher.voucher_number if bt.matched_voucher else None,
+                    'match_confidence': bt.match_confidence,
+                    'match_notes': str(bt.match_notes) if bt.match_notes else None,
+                    'server_updated_at': int(bt.updated_at.timestamp() * 1000) if bt.updated_at else now_ts,
+                }
+                if ledger_since_dt and bt.created_at and bt.created_at < ledger_since_dt:
+                    changes_dict['bank_transactions']['updated'].append(bt_item)
+                else:
+                    changes_dict['bank_transactions']['created'].append(bt_item)
+
+            # Payment Allocations
+            pa_qs = PaymentAllocation.objects.filter(company=company)
+            if ledger_since_dt:
+                pa_qs = pa_qs.filter(created_at__gte=ledger_since_dt) # created_at since no updated_at
+                
+            for pa in pa_qs:
+                pa_item = {
+                    'id': str(pa.id),
+                    'company_id': str(pa.company_id),
+                    'payment_voucher_id': str(pa.payment_voucher_id),
+                    'invoice_voucher_id': str(pa.invoice_voucher_id),
+                    'allocated_amount': str(pa.allocated_amount),
+                    'server_updated_at': int(pa.created_at.timestamp() * 1000) if pa.created_at else now_ts,
+                }
+                changes_dict['payment_allocations']['created'].append(pa_item)
 
         if include_details and voucher_ids:
             items_data = []
@@ -305,29 +363,32 @@ class SyncPushAPIView(APIView):
             if not cmd_id:
                 continue
 
+            from django.db import IntegrityError
+            
             # P0-2 & P0-3: Persist OfflineCommand outside the business transaction so failures are not rolled back
-            existing_cmd = OfflineCommand.objects.filter(command_id=cmd_id).first()
-            if existing_cmd:
-                if existing_cmd.company_id != company.id:
-                    errors.append({
-                        'command_id': cmd_id,
-                        'error': 'Command ID already registered to another company/tenant',
-                        'error_code': 'TENANT_MISMATCH'
-                    })
-                    continue
-                cmd_obj = existing_cmd
-                created = False
-            else:
-                cmd_obj = OfflineCommand.objects.create(
+            try:
+                cmd_obj, created = OfflineCommand.objects.get_or_create(
                     command_id=cmd_id,
-                    company=company,
-                    device_id=device_id,
-                    user=request.user,
-                    command_type=cmd_type,
-                    payload=payload,
-                    status='PROCESSING'
+                    defaults={
+                        'company': company,
+                        'device_id': device_id,
+                        'user': request.user,
+                        'command_type': cmd_type,
+                        'payload': payload,
+                        'status': 'PROCESSING'
+                    }
                 )
-                created = True
+            except IntegrityError:
+                cmd_obj = OfflineCommand.objects.get(command_id=cmd_id)
+                created = False
+
+            if not created and cmd_obj.company_id != company.id:
+                errors.append({
+                    'command_id': cmd_id,
+                    'error': 'Command ID already registered to another company/tenant',
+                    'error_code': 'TENANT_MISMATCH'
+                })
+                continue
 
             # Idempotency Check: if command already processed, skip duplicate posting and return cached voucher result
             if not created:
