@@ -398,9 +398,9 @@ export default function LedgersPage() {
               <BookOpen className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Chart of Accounts</h1>
+              <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Accounts</h1>
               <p className="text-sm text-muted-foreground">
-                Manage financial ledgers, primary group hierarchies, and double-entry safeguards
+                Manage your account heads and ledgers
               </p>
             </div>
           </div>

@@ -388,10 +388,10 @@ export default function SettingsPage() {
       <div className="max-w-4xl mx-auto space-y-8 pb-16">
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-            Settings & Workspace
+            Settings
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            Manage your company profile, invoicing rules, team members, and system maintenance
+            Manage your business settings
           </p>
         </div>
 
@@ -891,9 +891,9 @@ export default function SettingsPage() {
               <div className="flex items-center gap-2.5 border-b border-border/40 pb-3">
                 <Wrench className="w-5 h-5 text-primary" />
                 <div>
-                  <h2 className="text-base font-bold text-foreground">Data Health & Diagnostics</h2>
+                  <h2 className="text-base font-bold text-foreground">Maintenance</h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Self-healing automated maintenance tools for tax ledgers and ledger balance integrity
+                    Tools to keep your books in order
                   </p>
                 </div>
               </div>
@@ -903,13 +903,13 @@ export default function SettingsPage() {
                 <div className="p-4 bg-muted/30 border border-border/40 rounded-xl flex flex-col justify-between space-y-3">
                   <div>
                     <h3 className="text-xs font-bold text-foreground flex items-center gap-2">
-                      <span>Sync & Align Tax Ledgers</span>
+                      <span>Fix Tax Accounts</span>
                       <span className="text-[10px] font-mono px-1.5 py-0.2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded font-semibold">
-                        GST AUTO-HEAL
+                        TAX
                       </span>
                     </h3>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Scans Chart of Accounts for missing standard input/output CGST, SGST, IGST tax ledgers and automatically provisions them with correct tax configurations.
+                      Checks for missing tax accounts and creates them automatically
                     </p>
                   </div>
                   <button
@@ -927,13 +927,13 @@ export default function SettingsPage() {
                 <div className="p-4 bg-muted/30 border border-border/40 rounded-xl flex flex-col justify-between space-y-3">
                   <div>
                     <h3 className="text-xs font-bold text-foreground flex items-center gap-2">
-                      <span>Rebuild Ledger Balances</span>
+                      <span>Recalculate Balances</span>
                       <span className="text-[10px] font-mono px-1.5 py-0.2 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded font-semibold">
-                        INTEGRITY
+                        BALANCES
                       </span>
                     </h3>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Recalculates all running ledger closing balances from scratch using raw posted double-entry journal entries, eliminating any rounding or caching drifts.
+                      Recalculates all account balances from your transaction history to fix any discrepancies
                     </p>
                   </div>
                   <button

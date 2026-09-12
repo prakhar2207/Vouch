@@ -295,11 +295,11 @@ export default function HealthPage() {
                 VOUCH CHECK
               </span>
               <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                Accounting Health & Integrity
+                Books Health
               </h1>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Vouch checked your books for things that may need attention. Continuous mathematical & double-entry integrity audits.
+              Vouch checks your books for things that need attention
             </p>
           </div>
 
@@ -377,7 +377,7 @@ export default function HealthPage() {
                   {report?.health_status ? report.health_status.replace("_", " ") : "Calculating"}
                 </span>
               </div>
-              <h2 className="text-sm font-bold text-foreground">Bookkeeping Health Score</h2>
+              <h2 className="text-sm font-bold text-foreground">Books health</h2>
               <p className="text-[11px] text-muted-foreground">
                 {report?.health_status === "HEALTHY"
                   ? "Books are mathematically balanced with zero critical accounting flaws."
@@ -392,10 +392,10 @@ export default function HealthPage() {
           <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm space-y-3 flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                Transparent Formula
+                HOW IT'S CALCULATED
               </span>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                Deterministic
+                Automated
               </span>
             </div>
 
@@ -590,9 +590,9 @@ export default function HealthPage() {
         <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-sm font-bold text-foreground">11 Deterministic Accounting Checks</h2>
+              <h2 className="text-sm font-bold text-foreground">Automated Checks</h2>
               <p className="text-xs text-muted-foreground">
-                Continuous double-entry equilibrium & business rule verifications.
+                Vouch automatically runs these checks on your books
               </p>
             </div>
             <span className="text-xs font-mono font-bold text-muted-foreground">

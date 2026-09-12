@@ -36,6 +36,8 @@ class SyncPullAPIView(APIView):
             limit = 200
 
         # Try to parse cursor as integer (new monotonic sequence)
+        skip_master_data = str(request.data.get('skip_master_data', '')).lower() == 'true'
+        include_details = str(request.data.get('include_details', '')).lower() == 'true'
         try:
             if cursor == 'latest':
                 cursor_id = -1 # Special flag
@@ -117,7 +119,7 @@ class SyncPullAPIView(APIView):
 
         # --- Hydrate LEDGERS ---
         ledger_ids = grouped['LEDGER']['CREATE'].union(grouped['LEDGER']['UPDATE'])
-        if ledger_ids:
+        if not skip_master_data and ledger_ids:
             ledgers = Ledger.objects.filter(id__in=ledger_ids)
             for l in ledgers:
                 item = {
@@ -142,7 +144,7 @@ class SyncPullAPIView(APIView):
 
         # --- Hydrate PRODUCTS ---
         product_ids = grouped['PRODUCT']['CREATE'].union(grouped['PRODUCT']['UPDATE'])
-        if product_ids:
+        if not skip_master_data and product_ids:
             products = Product.objects.filter(id__in=product_ids)
             for p in products:
                 item = {
@@ -195,6 +197,41 @@ class SyncPullAPIView(APIView):
                     changes_dict['vouchers']['updated'].append(item)
         for d_id in grouped['VOUCHER']['DELETE']:
             changes_dict['vouchers']['deleted'].append({'id': str(d_id)})
+
+        # --- Hydrate Details if Requested ---
+        if include_details and voucher_ids:
+            # We don't emit SyncEvents for items/entries (optimization), 
+            # so we just pull all items/entries for the affected vouchers in this batch.
+            from apps.accounting.models import VoucherItem, LedgerEntry
+            
+            v_items = VoucherItem.objects.filter(voucher_id__in=voucher_ids).select_related('product')
+            for vi in v_items:
+                changes_dict['voucher_items']['created'].append({
+                    'id': str(vi.id),
+                    'voucher_id': str(vi.voucher_id),
+                    'product_id': str(vi.product_id),
+                    'product_name': vi.product.name if vi.product else '',
+                    'quantity': str(vi.quantity),
+                    'rate': str(vi.rate),
+                    'total_amount': str(vi.total_amount),
+                    'taxable_amount': str(vi.taxable_amount),
+                    'gst_rate': str(vi.gst_rate),
+                    'cgst_amount': str(vi.cgst_amount),
+                    'sgst_amount': str(vi.sgst_amount),
+                    'igst_amount': str(vi.igst_amount),
+                })
+                
+            l_entries = LedgerEntry.objects.filter(voucher_id__in=voucher_ids).select_related('ledger')
+            for le in l_entries:
+                changes_dict['ledger_entries']['created'].append({
+                    'id': str(le.id),
+                    'company_id': str(le.company_id) if le.company_id else None,
+                    'voucher_id': str(le.voucher_id),
+                    'ledger_id': str(le.ledger_id),
+                    'ledger_name': le.ledger.name if le.ledger else '',
+                    'debit_amount': str(le.debit_amount),
+                    'credit_amount': str(le.credit_amount),
+                })
 
         # --- Hydrate BANK TRANSACTIONS ---
         bt_ids = grouped['BANKTRANSACTION']['CREATE'].union(grouped['BANKTRANSACTION']['UPDATE'])
