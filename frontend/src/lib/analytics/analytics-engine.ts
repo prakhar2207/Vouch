@@ -230,8 +230,32 @@ export class LocalAnalyticsEngine {
 
     // --- G. Recent Vouchers (Sorted for table display) ---
     const recentVouchers = [...activeVouchers]
-      .sort((a, b) => (b.voucherDate > a.voucherDate ? 1 : b.voucherDate < a.voucherDate ? -1 : (b.serverUpdatedAt || 0) - (a.serverUpdatedAt || 0)))
-      .slice(0, 15);
+      .sort((a: any, b: any) => {
+        const dateA = a.voucherDate || a.voucher_date || "";
+        const dateB = b.voucherDate || b.voucher_date || "";
+        if (dateB !== dateA) return dateB > dateA ? 1 : -1;
+        const updA = a.serverUpdatedAt || a.server_updated_at || 0;
+        const updB = b.serverUpdatedAt || b.server_updated_at || 0;
+        return updB - updA;
+      })
+      .slice(0, 15)
+      .map((v: any) => ({
+        ...v,
+        id: v.id,
+        voucherNumber: v.voucherNumber || v.voucher_number || "",
+        voucher_number: v.voucher_number || v.voucherNumber || "",
+        voucherDate: v.voucherDate || v.voucher_date || v.date || "",
+        voucher_date: v.voucher_date || v.voucherDate || v.date || "",
+        date: v.voucherDate || v.voucher_date || v.date || "",
+        voucherType: v.voucherType || v.voucher_type || v.type || "GENERAL",
+        voucher_type: v.voucher_type || v.voucherType || v.type || "GENERAL",
+        type: v.voucherType || v.voucher_type || v.type || "GENERAL",
+        partyName: v.partyName || v.party_name || v.narration || "General Entry",
+        party_name: v.party_name || v.partyName || v.narration || "General Entry",
+        totalAmount: Number(v.totalAmount !== undefined && v.totalAmount !== null ? v.totalAmount : (v.total_amount || 0)),
+        total_amount: Number(v.total_amount !== undefined && v.total_amount !== null ? v.total_amount : (v.totalAmount || 0)),
+        status: v.status || "POSTED",
+      }));
 
     return {
       business_health: trendDetails.status,

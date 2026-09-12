@@ -44,6 +44,69 @@ import {
   CloudUpload,
 } from "lucide-react";
 
+function getVoucherTypeBadgeClass(type: string): string {
+  switch (type) {
+    case "SALES":
+      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+    case "PURCHASE":
+      return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
+    case "PAYMENT":
+      return "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20";
+    case "RECEIPT":
+      return "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20";
+    case "CONTRA":
+      return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
+    case "JOURNAL":
+    default:
+      return "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20";
+  }
+}
+
+function getVoucherStatusBadgeClass(status: string): string {
+  switch (status) {
+    case "POSTED":
+    case "CORRECTED":
+      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+    case "DRAFT":
+      return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
+    case "CANCELLED":
+    case "REVERSED":
+      return "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20";
+    default:
+      return "bg-muted text-muted-foreground border-border/50";
+  }
+}
+
+function getCustomerTierBadgeClass(segment: string): string {
+  const s = segment.toLowerCase();
+  if (s.includes("vip") || s.includes("high")) {
+    return "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20";
+  }
+  if (s.includes("frequent") || s.includes("regular")) {
+    return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
+  }
+  if (s.includes("moderate") || s.includes("growth")) {
+    return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+  }
+  return "bg-muted text-muted-foreground border-border/50";
+}
+
+function formatChartDate(dateStr: string): string {
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  } catch {
+    return dateStr;
+  }
+}
+
+function formatCurrencyShort(val: number): string {
+  if (val >= 100000) return `₹${(val / 100000).toFixed(1)}L`;
+  if (val >= 1000) return `₹${(val / 1000).toFixed(0)}k`;
+  return `₹${val}`;
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const { startTour, setIsHelpOpen } = useShortcuts();
@@ -732,24 +795,51 @@ export default function Dashboard() {
                 <div className="h-48 w-full pt-1">
                   {forecast?.daily_forecast && forecast.daily_forecast.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={forecast.daily_forecast}>
+                      <AreaChart data={forecast.daily_forecast} margin={{ top: 10, right: 15, left: -10, bottom: 0 }}>
                         <defs>
                           <linearGradient id="forecastGrad" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.35} />
                             <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
                           </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" />
-                        <XAxis dataKey="date" stroke="currentColor" className="text-muted-foreground" fontSize={11} />
-                        <YAxis stroke="currentColor" className="text-muted-foreground" fontSize={11} />
+                        <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
+                        <XAxis 
+                          dataKey="date" 
+                          stroke="currentColor" 
+                          className="text-muted-foreground" 
+                          fontSize={11}
+                          tickLine={false}
+                          axisLine={false}
+                          tickMargin={8}
+                          minTickGap={16}
+                          tickFormatter={formatChartDate}
+                        />
+                        <YAxis 
+                          stroke="currentColor" 
+                          className="text-muted-foreground" 
+                          fontSize={11}
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={formatCurrencyShort}
+                        />
                         <Tooltip
                           contentStyle={{
                             backgroundColor: "var(--card)",
                             borderColor: "var(--border)",
-                            borderRadius: "8px",
+                            borderRadius: "12px",
+                            boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
                             fontSize: "12px",
                           }}
-                          formatter={(val: any) => [`₹${Number(val).toLocaleString("en-IN")}`, "Projected Sales"]}
+                          labelFormatter={(label: any) => {
+                            try {
+                              const d = new Date(label);
+                              if (!isNaN(d.getTime())) {
+                                return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                              }
+                            } catch {}
+                            return label;
+                          }}
+                          formatter={(val: any) => [`₹${Number(val).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`, "Projected Sales"]}
                         />
                         <Area
                           type="monotone"
@@ -779,24 +869,51 @@ export default function Dashboard() {
               <div className="h-60 w-full pt-1">
                 {trend.daily_trend && trend.daily_trend.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trend.daily_trend}>
+                    <AreaChart data={trend.daily_trend} margin={{ top: 10, right: 15, left: -10, bottom: 0 }}>
                       <defs>
                         <linearGradient id="salesVelocityGrad" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25} />
                           <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" />
-                      <XAxis dataKey="date" stroke="currentColor" className="text-muted-foreground" fontSize={12} />
-                      <YAxis stroke="currentColor" className="text-muted-foreground" fontSize={12} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
+                      <XAxis 
+                        dataKey="date" 
+                        stroke="currentColor" 
+                        className="text-muted-foreground" 
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={8}
+                        minTickGap={16}
+                        tickFormatter={formatChartDate}
+                      />
+                      <YAxis 
+                        stroke="currentColor" 
+                        className="text-muted-foreground" 
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={formatCurrencyShort}
+                      />
                       <Tooltip
                         contentStyle={{
                           backgroundColor: "var(--card)",
                           borderColor: "var(--border)",
-                          borderRadius: "8px",
+                          borderRadius: "12px",
+                          boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
                           fontSize: "12px",
                         }}
-                        formatter={(val: any) => [`₹${Number(val).toLocaleString("en-IN")}`, "Sales"]}
+                        labelFormatter={(label: any) => {
+                          try {
+                            const d = new Date(label);
+                            if (!isNaN(d.getTime())) {
+                              return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                            }
+                          } catch {}
+                          return label;
+                        }}
+                        formatter={(val: any) => [`₹${Number(val).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`, "Sales"]}
                       />
                       <Area
                         type="monotone"
@@ -858,7 +975,7 @@ export default function Dashboard() {
                             {customer.party_ledger__name || "Customer"}
                           </td>
                           <td className="py-3">
-                            <span className="px-2 py-0.5 rounded text-xs font-semibold bg-muted text-muted-foreground border border-border/50">
+                            <span className={`px-2 py-0.5 rounded text-xs font-semibold border ${getCustomerTierBadgeClass(segName)}`}>
                               {segName}
                             </span>
                           </td>
@@ -893,13 +1010,13 @@ export default function Dashboard() {
               <h2 className="text-sm font-semibold text-foreground">Recent Transactions</h2>
               <p className="text-xs text-muted-foreground">Audit log of recently posted vouchers</p>
             </div>
-            <Link href="/vouchers" className="text-xs text-muted-foreground hover:text-foreground font-medium transition-colors">
+            <Link href="/vouchers" className="text-xs text-primary hover:underline font-medium transition-colors">
               View Day Book →
             </Link>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] text-left text-xs border-collapse">
+            <table className="w-full min-w-[560px] text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-border/60 text-muted-foreground">
                   <th className="py-2.5 font-medium">Voucher No.</th>
@@ -911,26 +1028,60 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/30">
-                {vouchers.slice(0, 6).map((v) => (
-                  <tr key={v.id} className="hover:bg-muted/40 transition-colors">
-                    <td className="py-3 font-mono tabular-nums font-semibold text-foreground">{v.voucher_number}</td>
-                    <td className="py-3 text-muted-foreground">{v.date || v.voucher_date}</td>
-                    <td className="py-3">
-                      <span className="px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase bg-muted text-muted-foreground border border-border/50">
-                        {v.type || v.voucher_type}
-                      </span>
-                    </td>
-                    <td className="py-3 text-foreground font-medium">{v.party_name || "General Entry"}</td>
-                    <td className="py-3">
-                      <span className="px-2 py-0.5 rounded text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">
-                        {v.status}
-                      </span>
-                    </td>
-                    <td className="py-3 text-right font-mono tabular-nums font-semibold text-foreground">
-                      ₹{Number(v.total_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </td>
-                  </tr>
-                ))}
+                {vouchers.slice(0, 8).map((v) => {
+                  const voucherNo = v.voucherNumber || v.voucher_number || "—";
+                  const rawDate = v.voucherDate || v.voucher_date || v.date;
+                  const formattedDate = rawDate
+                    ? (() => {
+                        try {
+                          const d = new Date(rawDate);
+                          return isNaN(d.getTime())
+                            ? rawDate
+                            : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+                        } catch {
+                          return rawDate;
+                        }
+                      })()
+                    : "—";
+                  const vType = (v.voucherType || v.voucher_type || v.type || "GENERAL").toUpperCase();
+                  const partyName = v.partyName || v.party_name || v.narration || "General Entry";
+                  const status = v.status || "POSTED";
+                  const rawAmount = v.totalAmount !== undefined && v.totalAmount !== null
+                    ? v.totalAmount
+                    : (v.total_amount !== undefined && v.total_amount !== null ? v.total_amount : 0);
+                  const amount = Number(rawAmount) || 0;
+
+                  return (
+                    <tr
+                      key={v.id || voucherNo}
+                      onClick={() => router.push(`/vouchers?search=${encodeURIComponent(voucherNo !== "—" ? voucherNo : "")}`)}
+                      className="hover:bg-muted/40 transition-colors cursor-pointer group"
+                    >
+                      <td className="py-3 font-mono tabular-nums font-semibold text-foreground group-hover:text-primary transition-colors">
+                        {voucherNo}
+                      </td>
+                      <td className="py-3 text-muted-foreground font-mono tabular-nums">
+                        {formattedDate}
+                      </td>
+                      <td className="py-3">
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold uppercase border ${getVoucherTypeBadgeClass(vType)}`}>
+                          {vType}
+                        </span>
+                      </td>
+                      <td className="py-3 text-foreground font-medium max-w-[220px] truncate" title={partyName}>
+                        {partyName}
+                      </td>
+                      <td className="py-3">
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${getVoucherStatusBadgeClass(status)}`}>
+                          {status}
+                        </span>
+                      </td>
+                      <td className="py-3 text-right font-mono tabular-nums font-semibold text-foreground">
+                        ₹{amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {!hasTransactions && (
                   <tr>
                     <td colSpan={6} className="py-8 text-center text-muted-foreground text-xs">
