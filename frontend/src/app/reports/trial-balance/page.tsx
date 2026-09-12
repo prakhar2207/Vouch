@@ -196,7 +196,7 @@ export default function TrialBalancePage() {
                 Trial Balance
               </h1>
               <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
-                Double-entry equilibrium of ledger balances for {company?.name || 'Company'}
+                View your account balances
               </p>
             </div>
           </div>

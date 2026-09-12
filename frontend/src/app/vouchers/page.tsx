@@ -113,8 +113,8 @@ export default function VouchersPage() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold">Payments & Receipts</h1>
-            <p className="text-xs sm:text-sm text-muted-foreground mt-1">Record cash inflows and outflows against parties</p>
+            <h1 className="text-2xl sm:text-3xl font-bold">Cash & Bank</h1>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-1">Record money you sent and received</p>
           </div>
           <Link href="/vouchers/new" className="w-full sm:w-auto justify-center bg-blue-600 text-foreground px-5 py-2.5 rounded-lg shadow hover:bg-blue-700 transition-colors font-medium flex items-center gap-2">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>

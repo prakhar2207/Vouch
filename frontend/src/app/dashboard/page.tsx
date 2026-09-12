@@ -428,34 +428,29 @@ export default function Dashboard() {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border/40 pb-5">
           <div>
             <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Business Overview</h1>
+              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                {activeCompany?.name ? `${activeCompany.name}` : "Your Business"}
+              </h1>
               
-              {/* Sync Status & Freshness Badge */}
+              {/* Minimal sync indicator — dot only */}
               {syncStatus === "SYNCING" ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-500 border border-blue-500/20">
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-500 border border-blue-500/20" title="Updating your books...">
                   <RefreshCw className="w-3 h-3 animate-spin" />
-                  <span>{syncMessage || "Syncing books..."}</span>
-                </span>
-              ) : pendingMutations > 0 ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20" title="Changes queued offline waiting to sync">
-                  <CloudUpload className="w-3.5 h-3.5" />
-                  <span>{pendingMutations} offline changes queued</span>
+                  <span>Updating...</span>
                 </span>
               ) : !isOnline ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border/60">
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border/60" title="You're offline. Changes will sync when you're back online.">
                   <WifiOff className="w-3 h-3" />
-                  <span>Offline · Local Books</span>
+                  <span>Offline</span>
+                </span>
+              ) : pendingMutations > 0 ? (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20" title="Changes will sync automatically">
+                  <CloudUpload className="w-3.5 h-3.5" />
+                  <span>{pendingMutations} pending</span>
                 </span>
               ) : coverage?.lastSyncAt ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" title={`Last synced: ${new Date(coverage.lastSyncAt).toLocaleTimeString()}`}>
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Local-First · Synced</span>
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border/40">
-                  <span>Local Books</span>
-                </span>
-              )}
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" title={`Up to date · Last checked ${new Date(coverage.lastSyncAt).toLocaleTimeString()}`}></span>
+              ) : null}
 
               {/* Sync Refresh Button */}
               {isOnline && (
@@ -464,24 +459,16 @@ export default function Dashboard() {
                   onClick={handleManualSync}
                   disabled={syncStatus === "SYNCING"}
                   className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer"
-                  title="Force refresh synchronization"
+                  title="Refresh"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${syncStatus === "SYNCING" ? "animate-spin text-primary" : ""}`} />
                 </button>
               )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground mt-1">
-              <span>Instant operational metrics calculated locally from IndexedDB.</span>
-              {coverage?.oldestDate && coverage?.newestDate && (
-                <>
-                  <span>•</span>
-                  <span className="font-mono text-[11px] text-foreground/80">
-                    History: {coverage.oldestDate} &rarr; {coverage.newestDate} ({coverage.totalVouchersCount} vouchers)
-                  </span>
-                </>
-              )}
-            </div>
+            <p className="text-sm text-muted-foreground mt-1">
+              Here&apos;s how your business is doing today
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">

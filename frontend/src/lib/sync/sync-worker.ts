@@ -325,6 +325,7 @@ export async function pullIncrementalChanges(
 
       let hasMore = true;
       let currentCursor = meta.changeCursor || "0";
+      let snapshotCursor = meta.snapshotCursor;
       let totalRecords = 0;
       let batchIndex = 0;
       const allChangedVouchers: SyncedVoucher[] = [];
@@ -360,6 +361,9 @@ export async function pullIncrementalChanges(
 
       const resData = await response.json();
       const changes = resData.changes || {};
+      if (resData.snapshot_cursor) {
+        snapshotCursor = resData.snapshot_cursor;
+      }
 
       // 1. Ingest Ledgers
       if (changes.ledgers) {
@@ -538,7 +542,7 @@ export async function pullIncrementalChanges(
       companyId,
       lastSuccessfulSyncAt: Date.now(),
       changeCursor: currentCursor,
-      snapshotCursor: resData.snapshot_cursor || updatedMeta.snapshotCursor,
+      snapshotCursor: snapshotCursor || updatedMeta.snapshotCursor,
       syncStatus: "IDLE",
       isInitialComplete: true,
       pendingMutationsCount: 0,
