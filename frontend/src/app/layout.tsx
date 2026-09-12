@@ -9,6 +9,7 @@ import QuickCreateModal from "@/components/modals/QuickCreateModal";
 import OnboardingTour from "@/components/tour/OnboardingTour";
 import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 import OfflineSyncHandler from "@/components/OfflineSyncHandler";
+import ExtensionErrorSuppressor from "@/components/ExtensionErrorSuppressor";
 import { ToastProvider } from "@/context/ToastContext";
 
 const geistSans = Geist({
@@ -78,6 +79,7 @@ export default function RootLayout({
                     <OnboardingTour />
                     <PWAInstallPrompt />
                     <OfflineSyncHandler />
+                    <ExtensionErrorSuppressor />
                   </ToastProvider>
                 </ShortcutProvider>
               </PeriodProvider>

@@ -7,6 +7,7 @@ import { API_BASE_URL } from '@/utils/api';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useToast } from '@/context/ToastContext';
+import { useCompany } from '@/context/CompanyContext';
 import {
   Search,
   Plus,
@@ -31,7 +32,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { ledgersRepository } from '@/lib/data';
-import { offlineDb } from '@/lib/db/offlineDb';
+import { offlineDb, SyncedLedger } from '@/lib/db/offlineDb';
 
 interface LedgerItem {
   id: string;
@@ -63,6 +64,7 @@ interface LedgerGroupItem {
 export default function LedgersPage() {
   const router = useRouter();
   const { toast } = useToast();
+  const { companyId: activeCompanyId } = useCompany();
 
   const [companyId, setCompanyId] = useState('');
   const [ledgers, setLedgers] = useState<LedgerItem[]>([]);
@@ -103,7 +105,7 @@ export default function LedgersPage() {
       return;
     }
     fetchLedgers();
-  }, [router]);
+  }, [router, activeCompanyId]);
 
   const fetchLedgers = async () => {
     setLoading(true);
@@ -111,26 +113,104 @@ export default function LedgersPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
 
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const cid = compRes.data?.data?.[0]?.id || compRes.data?.[0]?.id;
+      let cid = activeCompanyId;
+      if (!cid) {
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+        cid = compRes.data?.data?.[0]?.id || compRes.data?.[0]?.id;
+      }
       if (!cid) return;
       setCompanyId(cid);
 
-      // 1. Read ledgers locally via ledgersRepository
-      const { data: localLedgers } = await ledgersRepository.getLedgers(cid);
-      setLedgers(localLedgers as any[]);
-
-      // 2. Read groups locally or fetch once
+      // 1. Fetch groups locally or from server first
+      let grpList: LedgerGroupItem[] = [];
       const cachedGroups = await offlineDb.masters.get('ledger_groups').catch(() => null);
       if (cachedGroups?.data?.length) {
-        setGroups(cachedGroups.data);
+        grpList = cachedGroups.data;
+        setGroups(grpList);
       } else {
         const groupsRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/groups/`, { headers }).catch(() => ({ data: { data: [] } }));
-        const grpList = groupsRes.data?.data || [];
+        grpList = groupsRes.data?.data || [];
         setGroups(grpList);
         if (grpList.length > 0) {
           offlineDb.masters.put({ key: 'ledger_groups', data: grpList, updatedAt: Date.now() }).catch(() => {});
         }
+      }
+
+      // 2. Read ledgers locally first for instant UI response
+      const { data: localLedgers } = await ledgersRepository.getLedgers(cid);
+      if (localLedgers && localLedgers.length > 0) {
+        const mappedLocal: LedgerItem[] = localLedgers.map((l: any) => {
+          const grp = grpList.find(g => g.id === (l.group_id || l.groupId) || g.name === l.group);
+          return {
+            id: String(l.id),
+            name: l.name,
+            group_id: l.group_id ? String(l.group_id) : (grp?.id || undefined),
+            group: l.group || grp?.name || 'General',
+            nature: ((l.nature || grp?.nature || 'ASSET') as string).toUpperCase() as any,
+            ledger_type: l.ledgerType || l.ledger_type || 'GENERAL',
+            gstin: l.gstin || '',
+            state_code: l.stateCode || l.state_code || '',
+            phone: l.phone || '',
+            email: l.email || '',
+            address: l.address || '',
+            current_balance: Number(l.currentBalance ?? l.current_balance) || 0,
+            opening_balance: Number(l.openingBalance ?? l.opening_balance) || 0,
+            opening_balance_type: l.openingBalanceType || l.opening_balance_type || 'DEBIT',
+            discount_percent: Number(l.discount_percent) || 0,
+            is_active: l.is_active ?? true,
+          };
+        });
+        setLedgers(mappedLocal);
+      }
+
+      // 3. Fetch authoritative fresh ledgers with full nature & group from server
+      const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers }).catch((err) => {
+        console.warn("[Ledgers] Server fetch error:", err);
+        return null;
+      });
+
+      if (res?.data?.data && Array.isArray(res.data.data)) {
+        const serverLedgers: LedgerItem[] = res.data.data.map((l: any) => {
+          const grp = grpList.find(g => g.id === l.group_id || g.name === l.group);
+          return {
+            id: String(l.id),
+            name: l.name,
+            group_id: l.group_id ? String(l.group_id) : (grp?.id || undefined),
+            group: l.group || grp?.name || 'General',
+            nature: ((l.nature || grp?.nature || 'ASSET') as string).toUpperCase() as any,
+            ledger_type: l.ledger_type || 'GENERAL',
+            gstin: l.gstin || '',
+            state_code: l.state_code || '',
+            phone: l.phone || '',
+            email: l.email || '',
+            address: l.address || '',
+            current_balance: Number(l.current_balance) || 0,
+            opening_balance: Number(l.opening_balance) || 0,
+            opening_balance_type: l.opening_balance_type || 'DEBIT',
+            discount_percent: Number(l.discount_percent) || 0,
+            is_active: l.is_active ?? true,
+          };
+        });
+        setLedgers(serverLedgers);
+
+        // Update local Dexie cache with full nature & group
+        const toPut: SyncedLedger[] = serverLedgers.map((l) => ({
+          id: l.id,
+          companyId: cid!,
+          name: l.name,
+          ledgerType: l.ledger_type,
+          group: l.group,
+          group_id: l.group_id,
+          nature: l.nature,
+          gstin: l.gstin,
+          stateCode: l.state_code,
+          currentBalance: l.current_balance || 0,
+          openingBalance: l.opening_balance || 0,
+          openingBalanceType: l.opening_balance_type || 'DEBIT',
+          phone: l.phone,
+          serverUpdatedAt: Date.now(),
+        }));
+        await offlineDb.syncedLedgers.bulkPut(toPut).catch(() => {});
       }
     } catch (err: any) {
       console.error(err);
@@ -288,10 +368,10 @@ export default function LedgersPage() {
 
   // Metrics
   const metrics = useMemo(() => {
-    const assets = ledgers.filter(l => l.nature === 'ASSET').length;
-    const liabilities = ledgers.filter(l => l.nature === 'LIABILITY').length;
-    const income = ledgers.filter(l => l.nature === 'INCOME').length;
-    const expenses = ledgers.filter(l => l.nature === 'EXPENSE').length;
+    const assets = ledgers.filter(l => (l.nature || '').toUpperCase() === 'ASSET').length;
+    const liabilities = ledgers.filter(l => (l.nature || '').toUpperCase() === 'LIABILITY').length;
+    const income = ledgers.filter(l => (l.nature || '').toUpperCase() === 'INCOME').length;
+    const expenses = ledgers.filter(l => (l.nature || '').toUpperCase() === 'EXPENSE').length;
     return { total: ledgers.length, assets, liabilities, income, expenses };
   }, [ledgers]);
 
@@ -373,7 +453,7 @@ export default function LedgersPage() {
           /^(input|output)\s+(cgst|sgst|igst|tax)/i.test(l.name) ||
           /^(cgst|sgst|igst)$/i.test(l.name);
         if (!isTax) return false;
-      } else if (activeTab !== 'ALL' && l.nature !== activeTab) {
+      } else if (activeTab !== 'ALL' && (l.nature || '').toUpperCase() !== activeTab) {
         return false;
       }
       if (searchTerm.trim()) {
@@ -689,6 +769,8 @@ export default function LedgersPage() {
                       </>
                     ) : tab === 'ALL' ? (
                       'All Heads'
+                    ) : tab === 'LIABILITY' ? (
+                      'Liabilities'
                     ) : (
                       tab.charAt(0) + tab.slice(1).toLowerCase() + 's'
                     )}

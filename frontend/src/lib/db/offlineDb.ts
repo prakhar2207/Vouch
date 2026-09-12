@@ -57,6 +57,9 @@ export interface SyncedLedger {
   openingBalance: number;
   openingBalanceType: "DEBIT" | "CREDIT";
   phone?: string;
+  group?: string;
+  group_id?: string;
+  nature?: string;
   serverUpdatedAt: number;
 }
 
