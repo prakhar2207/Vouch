@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import React, { useState, useRef, useEffect } from "react";
 import { Search, ChevronDown, Check, Plus, X } from "lucide-react";
 
@@ -279,7 +279,13 @@ export default function SearchableSelect({
                     <div className="flex items-center gap-2 shrink-0">
                       {opt.balance !== undefined && (
                         <span className="text-xs font-mono tabular-nums text-muted-foreground font-medium">
-                          ₹{Number(opt.balance).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          {typeof opt.balance === "number"
+                            ? `₹${opt.balance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`
+                            : String(opt.balance).startsWith("₹")
+                            ? opt.balance
+                            : isNaN(Number(opt.balance))
+                            ? opt.balance
+                            : `₹${Number(opt.balance).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
                           {opt.balanceType ? ` ${opt.balanceType}` : ""}
                         </span>
                       )}

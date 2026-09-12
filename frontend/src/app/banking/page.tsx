@@ -8,6 +8,8 @@ import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
 import { useCompany } from "@/context/CompanyContext";
+import ConfirmModal from "@/components/modals/ConfirmModal";
+import SearchableSelect, { SearchableOption } from "@/components/SearchableSelect";
 import {
   Landmark,
   UploadCloud,
@@ -152,6 +154,24 @@ export default function BankingPage() {
   const [actionTransferLedgerId, setActionTransferLedgerId] = useState<string>("");
   const [actionRemarks, setActionRemarks] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
+
+  const [confirmModalConfig, setConfirmModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: React.ReactNode;
+    confirmText: string;
+    variant: "danger" | "warning" | "info";
+    onConfirm: () => void | Promise<void>;
+    isLoading?: boolean;
+  }>({
+    isOpen: false,
+    title: "",
+    description: null,
+    confirmText: "Confirm",
+    variant: "danger",
+    onConfirm: () => {},
+    isLoading: false,
+  });
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -333,47 +353,103 @@ export default function BankingPage() {
     }
   };
 
-  const handleDeleteStatement = async (statement: any) => {
-    if (
-      !window.confirm(
-        `Delete Statement: This will permanently remove '${statement.source_file_name}' and all ${statement.successful_rows || ""} imported transactions from the server. Are you sure?`
-      )
-    ) {
-      return;
-    }
-    setDeletingStatementId(statement.id);
-    try {
-      const headers = getHeaders();
-      const res = await axios.delete(`${API_BASE_URL}/api/v1/accounting/banking/statements/${statement.id}/`, { headers });
-      toast.success("Statement Deleted", res.data?.message || `Statement '${statement.source_file_name}' was removed from server.`);
-      await fetchStatementsList();
-      await fetchTransactionsAndSummary();
-    } catch (err: any) {
-      toast.error("Delete Failed", err.response?.data?.error || err.message || "Failed to delete statement");
-    } finally {
-      setDeletingStatementId(null);
-    }
+  const handleDeleteStatement = (statement: any) => {
+    setConfirmModalConfig({
+      isOpen: true,
+      title: "Delete Statement",
+      description: (
+        <div className="space-y-3 text-left">
+          <p className="text-sm">
+            Are you sure you want to permanently delete this statement and its imported records?
+          </p>
+          <div className="p-3.5 rounded-xl bg-muted/60 border border-border/60 text-xs space-y-1.5 font-sans">
+            <div className="font-bold text-foreground truncate">{statement.source_file_name}</div>
+            <div className="flex items-center gap-2 text-muted-foreground text-[11px] flex-wrap">
+              <span>Format: <strong className="text-foreground">{statement.file_format}</strong></span>
+              <span>•</span>
+              <span>Rows: <strong className="text-foreground">{statement.successful_rows || 0} imported</strong></span>
+              {statement.bank_ledger?.name && (
+                <>
+                  <span>•</span>
+                  <span>Bank: <strong className="text-foreground">{statement.bank_ledger.name}</strong></span>
+                </>
+              )}
+            </div>
+          </div>
+          <p className="text-xs text-rose-500/90 font-medium">
+            This will permanently remove all associated transactions from the server and safely roll back any auto-generated reconciliation vouchers. This action cannot be undone.
+          </p>
+        </div>
+      ),
+      confirmText: "Delete Statement",
+      variant: "danger",
+      onConfirm: async () => {
+        setDeletingStatementId(statement.id);
+        setConfirmModalConfig((prev) => ({ ...prev, isLoading: true }));
+        try {
+          const headers = getHeaders();
+          const res = await axios.delete(`${API_BASE_URL}/api/v1/accounting/banking/statements/${statement.id}/`, { headers });
+          toast.success("Statement Deleted", res.data?.message || `Statement '${statement.source_file_name}' was removed from server.`);
+          await fetchStatementsList();
+          await fetchTransactionsAndSummary();
+        } catch (err: any) {
+          toast.error("Delete Failed", err.response?.data?.error || err.message || "Failed to delete statement");
+        } finally {
+          setDeletingStatementId(null);
+          setConfirmModalConfig((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+        }
+      },
+    });
   };
 
-  const handleDeleteTransaction = async (tx: BankTransactionItem) => {
-    if (
-      !window.confirm(
-        `Delete Transaction: Are you sure you want to remove this transaction from the server?\n\n"${tx.description}"\nDate: ${tx.transaction_date}\nAmount: ₹${parseFloat(tx.credit_amount) > 0 ? tx.credit_amount : tx.debit_amount}`
-      )
-    ) {
-      return;
-    }
-    setDeletingTxId(tx.id);
-    try {
-      const headers = getHeaders();
-      await axios.delete(`${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/`, { headers });
-      toast.success("Transaction Deleted", "The transaction was deleted from the server.");
-      await fetchTransactionsAndSummary();
-    } catch (err: any) {
-      toast.error("Delete Failed", err.response?.data?.error || err.message || "Failed to delete transaction");
-    } finally {
-      setDeletingTxId(null);
-    }
+  const handleDeleteTransaction = (tx: BankTransactionItem) => {
+    const isCredit = parseFloat(tx.credit_amount) > 0;
+    const formattedAmt = isCredit
+      ? `+₹${parseFloat(tx.credit_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`
+      : `-₹${parseFloat(tx.debit_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+
+    setConfirmModalConfig({
+      isOpen: true,
+      title: "Delete Bank Transaction",
+      description: (
+        <div className="space-y-3 text-left">
+          <p className="text-sm">
+            Are you sure you want to permanently delete this transaction from the server?
+          </p>
+          <div className="p-3.5 rounded-xl bg-muted/60 border border-border/60 text-xs space-y-2 font-mono">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-muted-foreground">Date: {tx.transaction_date}</span>
+              <span className={`font-bold ${isCredit ? "text-emerald-500" : "text-rose-500"}`}>
+                {formattedAmt}
+              </span>
+            </div>
+            <p className="text-foreground font-sans line-clamp-3 text-[11px] break-words">
+              {tx.description}
+            </p>
+          </div>
+          <p className="text-xs text-rose-500/90 font-medium">
+            Any linked auto-generated reconciliation voucher will be safely reversed. This action cannot be undone.
+          </p>
+        </div>
+      ),
+      confirmText: "Delete Transaction",
+      variant: "danger",
+      onConfirm: async () => {
+        setDeletingTxId(tx.id);
+        setConfirmModalConfig((prev) => ({ ...prev, isLoading: true }));
+        try {
+          const headers = getHeaders();
+          await axios.delete(`${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/`, { headers });
+          toast.success("Transaction Deleted", "The transaction was deleted from the server.");
+          await fetchTransactionsAndSummary();
+        } catch (err: any) {
+          toast.error("Delete Failed", err.response?.data?.error || err.message || "Failed to delete transaction");
+        } finally {
+          setDeletingTxId(null);
+          setConfirmModalConfig((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+        }
+      },
+    });
   };
 
   const handleFileUpload = async (e: React.FormEvent) => {
@@ -569,6 +645,45 @@ export default function BankingPage() {
     );
   }, [allLedgers, selectedBankId]);
 
+  const partyOptions: SearchableOption[] = useMemo(() => {
+    return customerAndSupplierLedgers.map((p) => ({
+      id: p.id,
+      name: p.name,
+      group: p.ledger_type || "PARTY",
+      balance: p.current_balance !== undefined && p.current_balance !== null ? Number(p.current_balance) : undefined,
+      subtitle: p.gstin ? `GSTIN: ${p.gstin}` : p.phone ? `Phone: ${p.phone}` : undefined,
+    }));
+  }, [customerAndSupplierLedgers]);
+
+  const expenseOptions: SearchableOption[] = useMemo(() => {
+    return expenseLedgers.map((exp) => ({
+      id: exp.id,
+      name: exp.name,
+      group: exp.group || "EXPENSE",
+      balance: exp.current_balance !== undefined && exp.current_balance !== null ? Number(exp.current_balance) : undefined,
+    }));
+  }, [expenseLedgers]);
+
+  const contraOptions: SearchableOption[] = useMemo(() => {
+    return contraLedgers.map((c) => ({
+      id: c.id,
+      name: c.name,
+      group: c.ledger_type || "CONTRA",
+      balance: c.current_balance !== undefined && c.current_balance !== null ? Number(c.current_balance) : undefined,
+      subtitle: c.bank_account_number ? `A/c ...${c.bank_account_number.slice(-4)}` : undefined,
+    }));
+  }, [contraLedgers]);
+
+  const bankOptions: SearchableOption[] = useMemo(() => {
+    return bankLedgers.map((b) => ({
+      id: b.id,
+      name: b.name,
+      group: "BANK",
+      balance: b.current_balance !== undefined && b.current_balance !== null ? Number(b.current_balance) : undefined,
+      subtitle: b.bank_account_number ? `A/c ...${b.bank_account_number.slice(-4)}` : undefined,
+    }));
+  }, [bankLedgers]);
+
   return (
     <DashboardLayout>
       <div className="space-y-6 pb-12">
@@ -646,17 +761,13 @@ export default function BankingPage() {
               </span>
             </div>
 
-            <select
+            <SearchableSelect
               value={selectedBankId}
-              onChange={(e) => setSelectedBankId(e.target.value)}
-              className="w-full bg-muted/40 border border-border/60 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
-            >
-              {bankLedgers.map((bank) => (
-                <option key={bank.id} value={bank.id} className="bg-card text-foreground">
-                  {bank.name} {bank.bank_account_number ? `(A/c: ...${bank.bank_account_number.slice(-4)})` : ""}
-                </option>
-              ))}
-            </select>
+              onChange={(val) => setSelectedBankId(val)}
+              options={bankOptions}
+              placeholder="-- Select Bank Account --"
+              searchPlaceholder="Search bank accounts..."
+            />
 
             {bankLedgers.find((b) => b.id === selectedBankId) && (
               <div className="text-xs space-y-1 text-muted-foreground bg-muted/20 p-3 rounded-xl border border-border/30 font-mono">
@@ -1075,9 +1186,12 @@ export default function BankingPage() {
 
         {/* UPLOAD STATEMENT MODAL */}
         {isUploadOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setIsUploadOpen(false)}
+          >
             <div
-              className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200"
+              className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-lg overflow-visible animate-in zoom-in-95 duration-200"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between p-5 border-b border-border">
@@ -1103,17 +1217,13 @@ export default function BankingPage() {
                   <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1.5">
                     Target Bank Ledger
                   </label>
-                  <select
+                  <SearchableSelect
                     value={selectedBankId}
-                    onChange={(e) => setSelectedBankId(e.target.value)}
-                    className="w-full bg-muted/40 border border-border/60 rounded-xl px-3 py-2.5 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
-                  >
-                    {bankLedgers.map((bank) => (
-                      <option key={bank.id} value={bank.id}>
-                        {bank.name} {bank.bank_account_number ? `(${bank.bank_account_number})` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(val) => setSelectedBankId(val)}
+                    options={bankOptions}
+                    placeholder="-- Select Target Bank Account --"
+                    searchPlaceholder="Search bank accounts..."
+                  />
                 </div>
 
                 {/* Drag and Drop Zone */}
@@ -1275,9 +1385,12 @@ export default function BankingPage() {
 
         {/* TRANSACTION ACTION MODAL (Match / Payment / Expense / Transfer / Drawing) */}
         {selectedTx && actionType && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={closeActionModal}
+          >
             <div
-              className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200"
+              className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md overflow-visible animate-in zoom-in-95 duration-200"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="p-5 border-b border-border">
@@ -1308,18 +1421,13 @@ export default function BankingPage() {
                     <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1.5">
                       Select Party
                     </label>
-                    <select
+                    <SearchableSelect
                       value={actionTargetPartyId}
-                      onChange={(e) => setActionTargetPartyId(e.target.value)}
-                      className="w-full bg-muted/40 border border-border/60 rounded-xl px-3 py-2.5 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
-                    >
-                      <option value="">-- Choose Party --</option>
-                      {customerAndSupplierLedgers.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} ({p.ledger_type}) • Bal: ₹{p.current_balance}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(val) => setActionTargetPartyId(val)}
+                      options={partyOptions}
+                      placeholder="-- Choose Party --"
+                      searchPlaceholder="Search party name, GSTIN, phone..."
+                    />
                     {actionType === "RECORD_PAYMENT" && (
                       <p className="text-[11px] text-muted-foreground mt-1.5">
                         Payment will be automatically applied to the oldest unpaid invoices.
@@ -1334,18 +1442,13 @@ export default function BankingPage() {
                     <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1.5">
                       Select Expense Ledger
                     </label>
-                    <select
+                    <SearchableSelect
                       value={actionExpenseLedgerId}
-                      onChange={(e) => setActionExpenseLedgerId(e.target.value)}
-                      className="w-full bg-muted/40 border border-border/60 rounded-xl px-3 py-2.5 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
-                    >
-                      <option value="">-- Choose Expense Account --</option>
-                      {expenseLedgers.map((exp) => (
-                        <option key={exp.id} value={exp.id}>
-                          {exp.name} ({exp.group || "Expense"})
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(val) => setActionExpenseLedgerId(val)}
+                      options={expenseOptions}
+                      placeholder="-- Choose Expense Account --"
+                      searchPlaceholder="Search expense category or ledger..."
+                    />
                   </div>
                 )}
 
@@ -1355,18 +1458,13 @@ export default function BankingPage() {
                     <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1.5">
                       Transfer Account (Bank / Cash)
                     </label>
-                    <select
+                    <SearchableSelect
                       value={actionTransferLedgerId}
-                      onChange={(e) => setActionTransferLedgerId(e.target.value)}
-                      className="w-full bg-muted/40 border border-border/60 rounded-xl px-3 py-2.5 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
-                    >
-                      <option value="">-- Choose Target/Source Ledger --</option>
-                      {contraLedgers.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} ({c.ledger_type})
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(val) => setActionTransferLedgerId(val)}
+                      options={contraOptions}
+                      placeholder="-- Choose Target/Source Ledger --"
+                      searchPlaceholder="Search bank or cash ledger..."
+                    />
                   </div>
                 )}
 
@@ -1523,6 +1621,18 @@ export default function BankingPage() {
             </div>
           </div>
         )}
+
+        {/* REUSABLE MODERN CONFIRMATION MODAL */}
+        <ConfirmModal
+          isOpen={confirmModalConfig.isOpen}
+          onClose={() => setConfirmModalConfig((prev) => ({ ...prev, isOpen: false }))}
+          onConfirm={confirmModalConfig.onConfirm}
+          title={confirmModalConfig.title}
+          description={confirmModalConfig.description}
+          confirmText={confirmModalConfig.confirmText}
+          variant={confirmModalConfig.variant}
+          isLoading={confirmModalConfig.isLoading}
+        />
       </div>
     </DashboardLayout>
   );
