@@ -27,84 +27,99 @@ class SyncPullAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from django.db.models import Q
         company = get_authorized_company(request, request.data.get('company_id'))
-        cursor = request.data.get('cursor') or request.data.get('vouchers_cursor')
-        last_pulled_at = request.data.get('last_pulled_at')
-        ledgers_since = request.data.get('ledgers_since')
-        products_since = request.data.get('products_since')
-        skip_master_data = request.data.get('skip_master_data', False)
+        cursor = request.data.get('cursor', 0)
         
         try:
-            limit = min(max(int(request.data.get('limit', 200)), 1), 500)
+            limit = min(max(int(request.data.get('limit', 200)), 1), 1000)
         except (ValueError, TypeError):
             limit = 200
 
-        since_dt = None
-        cursor_dt = None
-        cursor_uuid = None
+        # Try to parse cursor as integer (new monotonic sequence)
+        try:
+            if cursor == 'latest':
+                cursor_id = -1 # Special flag
+            else:
+                cursor_id = int(cursor) if cursor else 0
+        except (ValueError, TypeError):
+            cursor_id = 0
 
-        if cursor and isinstance(cursor, str) and '_' in cursor:
-            try:
-                parts = cursor.split('_', 1)
-                raw_cursor_time = parts[0]
-                cursor_uuid_str = parts[1] if parts[1] != 'latest' else None
-                if 'T' in raw_cursor_time:
-                    cursor_dt = datetime.datetime.fromisoformat(raw_cursor_time)
-                else:
-                    raw_ts = float(raw_cursor_time)
-                    cursor_ts = raw_ts / 1000.0 if raw_ts > 1e11 else raw_ts
-                    cursor_dt = datetime.datetime.fromtimestamp(cursor_ts, tz=datetime.timezone.utc)
-                if cursor_uuid_str:
-                    try:
-                        cursor_uuid = uuid.UUID(cursor_uuid_str)
-                    except Exception:
-                        cursor_uuid = cursor_uuid_str
-            except Exception:
-                cursor_dt = None
-                cursor_uuid = None
-        
-        if last_pulled_at:
-            try:
-                raw_dt = datetime.datetime.fromtimestamp(float(last_pulled_at) / 1000.0, tz=datetime.timezone.utc)
-                # 2-second buffer against client-server clock skew
-                since_dt = raw_dt - datetime.timedelta(seconds=2)
-            except Exception:
-                since_dt = None
-
-        def parse_since(since_val):
-            if not since_val:
-                return None
-            try:
-                if isinstance(since_val, (int, float)) or (isinstance(since_val, str) and since_val.replace('.', '', 1).isdigit()):
-                    raw_ts = float(since_val)
-                    ts = raw_ts / 1000.0 if raw_ts > 1e11 else raw_ts
-                    return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc) - datetime.timedelta(seconds=2)
-                return datetime.datetime.fromisoformat(str(since_val)) - datetime.timedelta(seconds=2)
-            except Exception:
-                return None
-
-        ledger_since_dt = parse_since(ledgers_since) or since_dt
-        product_since_dt = parse_since(products_since) or since_dt
-
+        from apps.accounting.models import SyncEvent, BankTransaction, PaymentAllocation
         now_ts = int(timezone.now().timestamp() * 1000)
+        
+        # Get server snapshot cursor
+        latest_event = SyncEvent.objects.filter(company=company).order_by('-id').first()
+        snapshot_cursor = latest_event.id if latest_event else 0
 
-        # P0-1: Master data sync is decoupled from voucher cursor.
-        # If cursor is provided during voucher pagination and no explicit ledgers_since/products_since is passed,
-        # skip master data to prevent duplicate transfer across multi-batch voucher pagination.
-        should_sync_ledgers = not skip_master_data and (not cursor or bool(ledgers_since))
-        should_sync_products = not skip_master_data and (not cursor or bool(products_since))
+        if cursor_id == -1:
+            # Client just wants the snapshot cursor to start fresh
+            return Response({
+                'success': True,
+                'changes': {
+                    'ledgers': {'created': [], 'updated': [], 'deleted': []},
+                    'products': {'created': [], 'updated': [], 'deleted': []},
+                    'vouchers': {'created': [], 'updated': [], 'deleted': []},
+                    'voucher_items': {'created': [], 'updated': [], 'deleted': []},
+                    'ledger_entries': {'created': [], 'updated': [], 'deleted': []},
+                    'bank_transactions': {'created': [], 'updated': [], 'deleted': []},
+                    'payment_allocations': {'created': [], 'updated': [], 'deleted': []},
+                },
+                'next_cursor': snapshot_cursor,
+                'has_more': False,
+                'snapshot_cursor': snapshot_cursor,
+                'server_time': now_ts
+            })
 
-        ledgers_created, ledgers_updated, ledgers_deleted = [], [], []
-        products_created, products_updated, products_deleted = [], [], []
+        # Query events
+        events_qs = SyncEvent.objects.filter(company=company, id__gt=cursor_id).order_by('id')
+        
+        # Fetch bounded limit + 1
+        batch_events = list(events_qs[:limit + 1])
+        has_more = len(batch_events) > limit
+        events = batch_events[:limit]
+        
+        next_cursor = events[-1].id if events else cursor_id
 
-        if should_sync_ledgers:
-            # 1. Ledgers (Incremental changes)
-            ledger_qs = Ledger.objects.filter(company=company)
-            if ledger_since_dt:
-                ledger_qs = ledger_qs.filter(updated_at__gte=ledger_since_dt)
+        # Collapse events (only care about the final state of an entity in this batch)
+        entity_map = {}
+        for ev in events:
+            key = (ev.entity_type, ev.entity_id)
+            current_op = entity_map.get(key)
+            if current_op == 'CREATE' and ev.operation == 'UPDATE':
+                entity_map[key] = 'CREATE'
+            elif current_op == 'CREATE' and ev.operation == 'DELETE':
+                entity_map[key] = 'DELETE'
+            else:
+                entity_map[key] = ev.operation
 
-            for l in ledger_qs:
+        # Group by type and operation
+        grouped = {
+            'LEDGER': {'CREATE': set(), 'UPDATE': set(), 'DELETE': set()},
+            'PRODUCT': {'CREATE': set(), 'UPDATE': set(), 'DELETE': set()},
+            'VOUCHER': {'CREATE': set(), 'UPDATE': set(), 'DELETE': set()},
+            'BANKTRANSACTION': {'CREATE': set(), 'UPDATE': set(), 'DELETE': set()},
+            'PAYMENTALLOCATION': {'CREATE': set(), 'UPDATE': set(), 'DELETE': set()},
+        }
+        
+        for (e_type, e_id), op in entity_map.items():
+            if e_type in grouped:
+                grouped[e_type][op].add(e_id)
+
+        changes_dict = {
+            'ledgers': {'created': [], 'updated': [], 'deleted': []},
+            'products': {'created': [], 'updated': [], 'deleted': []},
+            'vouchers': {'created': [], 'updated': [], 'deleted': []},
+            'voucher_items': {'created': [], 'updated': [], 'deleted': []},
+            'ledger_entries': {'created': [], 'updated': [], 'deleted': []},
+            'bank_transactions': {'created': [], 'updated': [], 'deleted': []},
+            'payment_allocations': {'created': [], 'updated': [], 'deleted': []},
+        }
+
+        # --- Hydrate LEDGERS ---
+        ledger_ids = grouped['LEDGER']['CREATE'].union(grouped['LEDGER']['UPDATE'])
+        if ledger_ids:
+            ledgers = Ledger.objects.filter(id__in=ledger_ids)
+            for l in ledgers:
                 item = {
                     'id': str(l.id),
                     'company_id': str(company.id),
@@ -116,22 +131,20 @@ class SyncPullAPIView(APIView):
                     'opening_balance': str(l.opening_balance or '0.00'),
                     'opening_balance_type': l.opening_balance_type or 'DEBIT',
                     'phone': l.phone or '',
-                    'server_updated_at': int(l.updated_at.timestamp() * 1000) if l.updated_at else now_ts,
+                    'server_updated_at': int(l.updated_at.timestamp() * 1000) if getattr(l, 'updated_at', None) else now_ts,
                 }
-                if l.is_archived or not l.is_active:
-                    ledgers_deleted.append(item)
-                elif ledger_since_dt and l.created_at and l.created_at < ledger_since_dt:
-                    ledgers_updated.append(item)
+                if l.id in grouped['LEDGER']['CREATE']:
+                    changes_dict['ledgers']['created'].append(item)
                 else:
-                    ledgers_created.append(item)
+                    changes_dict['ledgers']['updated'].append(item)
+        for d_id in grouped['LEDGER']['DELETE']:
+            changes_dict['ledgers']['deleted'].append({'id': str(d_id)})
 
-        if should_sync_products:
-            # 2. Products (Incremental changes)
-            product_qs = Product.objects.filter(company=company)
-            if product_since_dt:
-                product_qs = product_qs.filter(updated_at__gte=product_since_dt)
-
-            for p in product_qs:
+        # --- Hydrate PRODUCTS ---
+        product_ids = grouped['PRODUCT']['CREATE'].union(grouped['PRODUCT']['UPDATE'])
+        if product_ids:
+            products = Product.objects.filter(id__in=product_ids)
+            for p in products:
                 item = {
                     'id': str(p.id),
                     'company_id': str(company.id),
@@ -144,91 +157,51 @@ class SyncPullAPIView(APIView):
                     'gst_rate': str(getattr(p, 'gst_rate', '0.00') or '0.00'),
                     'current_stock': str(getattr(p, 'stock_quantity', '0.00') or '0.00'),
                     'reorder_level': str(getattr(p, 'reorder_level', '0.00') or '0.00'),
-                    'server_updated_at': int(p.updated_at.timestamp() * 1000) if p.updated_at else now_ts,
+                    'server_updated_at': int(p.updated_at.timestamp() * 1000) if getattr(p, 'updated_at', None) else now_ts,
                 }
-                if getattr(p, 'is_active', True) is False:
-                    products_deleted.append(item)
-                elif product_since_dt and p.created_at and p.created_at < product_since_dt:
-                    products_updated.append(item)
+                if p.id in grouped['PRODUCT']['CREATE']:
+                    changes_dict['products']['created'].append(item)
                 else:
-                    products_created.append(item)
+                    changes_dict['products']['updated'].append(item)
+        for d_id in grouped['PRODUCT']['DELETE']:
+            changes_dict['products']['deleted'].append({'id': str(d_id)})
 
-        # 3. Vouchers (Cursor-based pagination across large historical datasets)
-        # Strictly defer attachment_data to stop massive binary/base64 network egress from Neon
-        voucher_qs = Voucher.objects.filter(company=company).select_related('party_ledger').defer('attachment_data', 'attachment_mime')
-        if since_dt and not (cursor_uuid and cursor_dt):
-            voucher_qs = voucher_qs.filter(updated_at__gte=since_dt)
+        # --- Hydrate VOUCHERS ---
+        voucher_ids = grouped['VOUCHER']['CREATE'].union(grouped['VOUCHER']['UPDATE'])
+        if voucher_ids:
+            vouchers = Voucher.objects.filter(id__in=voucher_ids).select_related('party_ledger').defer('attachment_data', 'attachment_mime')
+            for v in vouchers:
+                item = {
+                    'id': str(v.id),
+                    'company_id': str(company.id),
+                    'financial_year_id': str(v.financial_year_id) if v.financial_year_id else None,
+                    'voucher_type': v.voucher_type,
+                    'voucher_number': v.voucher_number,
+                    'voucher_date': str(v.voucher_date),
+                    'due_date': str(v.due_date) if v.due_date else None,
+                    'reference_number': v.reference_number or '',
+                    'party_ledger_id': str(v.party_ledger_id) if v.party_ledger_id else None,
+                    'party_name': v.party_ledger.name if v.party_ledger else (v.buyer_name or ''),
+                    'status': v.status,
+                    'total_amount': str(v.total_amount or '0.00'),
+                    'narration': v.narration or '',
+                    'server_updated_at': int(v.updated_at.timestamp() * 1000) if getattr(v, 'updated_at', None) else now_ts,
+                }
+                if v.status in ['CANCELLED', 'REVERSED', 'SUPERSEDED']:
+                    changes_dict['vouchers']['deleted'].append(item)
+                elif v.id in grouped['VOUCHER']['CREATE']:
+                    changes_dict['vouchers']['created'].append(item)
+                else:
+                    changes_dict['vouchers']['updated'].append(item)
+        for d_id in grouped['VOUCHER']['DELETE']:
+            changes_dict['vouchers']['deleted'].append({'id': str(d_id)})
 
-        if cursor_uuid and cursor_dt:
-            voucher_qs = voucher_qs.filter(
-                Q(updated_at__gt=cursor_dt) | Q(updated_at=cursor_dt, id__gt=cursor_uuid)
-            )
-
-        # Order deterministically by updated_at and id
-        batch_raw = list(voucher_qs.order_by('updated_at', 'id')[:limit + 1])
-        has_more = len(batch_raw) > limit
-        vouchers = batch_raw[:limit]
-
-        if vouchers:
-            last_v = vouchers[-1]
-            last_v_time = last_v.updated_at.isoformat() if last_v.updated_at else datetime.datetime.now(datetime.timezone.utc).isoformat()
-            next_cursor = f"{last_v_time}_{str(last_v.id)}"
-        else:
-            next_cursor = f"{timezone.now().isoformat()}_latest"
-
-        vouchers_created, vouchers_updated, vouchers_deleted = [], [], []
-        voucher_ids = [v.id for v in vouchers]
-
-        for v in vouchers:
-            item = {
-                'id': str(v.id),
-                'company_id': str(company.id),
-                'financial_year_id': str(v.financial_year_id) if v.financial_year_id else None,
-                'voucher_type': v.voucher_type,
-                'voucher_number': v.voucher_number,
-                'voucher_date': str(v.voucher_date),
-                'due_date': str(v.due_date) if v.due_date else None,
-                'reference_number': v.reference_number or '',
-                'party_ledger_id': str(v.party_ledger_id) if v.party_ledger_id else None,
-                'party_name': v.party_ledger.name if v.party_ledger else (v.buyer_name or ''),
-                'status': v.status,
-                'total_amount': str(v.total_amount or '0.00'),
-                'narration': v.narration or '',
-                'server_updated_at': int(v.updated_at.timestamp() * 1000) if v.updated_at else now_ts,
-            }
-            # P0-5: Exclude SUPERSEDED, CANCELLED, and REVERSED vouchers from active registers
-            if v.status in ['CANCELLED', 'REVERSED', 'SUPERSEDED']:
-                vouchers_deleted.append(item)
-            elif since_dt and v.created_at and v.created_at < since_dt:
-                vouchers_updated.append(item)
-            else:
-                vouchers_created.append(item)
-
-        # P0-4: Voucher Items & Ledger Entries are ONLY attached if explicitly requested
-        include_details = str(request.data.get('include_details', request.query_params.get('include_details', 'false'))).lower() in ['true', '1']
-        changes_dict = {
-            'ledgers': {'created': ledgers_created, 'updated': ledgers_updated, 'deleted': ledgers_deleted},
-            'products': {'created': products_created, 'updated': products_updated, 'deleted': products_deleted},
-            'vouchers': {'created': vouchers_created, 'updated': vouchers_updated, 'deleted': vouchers_deleted},
-            'voucher_items': {'created': [], 'updated': [], 'deleted': []},
-            'ledger_entries': {'created': [], 'updated': [], 'deleted': []},
-            'bank_transactions': {'created': [], 'updated': [], 'deleted': []},
-            'payment_allocations': {'created': [], 'updated': [], 'deleted': []},
-        }
-
-        # Sync Bank Transactions and Payment Allocations
-        from apps.accounting.models import BankTransaction, PaymentAllocation
-        
-        should_sync_extra = not skip_master_data
-        
-        if should_sync_extra:
-            # Bank Transactions
-            bt_qs = BankTransaction.objects.filter(company=company).select_related('bank_ledger', 'matched_party', 'matched_voucher')
-            if ledger_since_dt: # reuse ledger timestamp for simplicity
-                bt_qs = bt_qs.filter(updated_at__gte=ledger_since_dt)
-                
-            for bt in bt_qs:
-                bt_item = {
+        # --- Hydrate BANK TRANSACTIONS ---
+        bt_ids = grouped['BANKTRANSACTION']['CREATE'].union(grouped['BANKTRANSACTION']['UPDATE'])
+        if bt_ids:
+            bts = BankTransaction.objects.filter(id__in=bt_ids).select_related('bank_ledger', 'matched_party', 'matched_voucher')
+            for bt in bts:
+                item = {
                     'id': str(bt.id),
                     'company_id': str(bt.company_id),
                     'bank_ledger_id': str(bt.bank_ledger_id),
@@ -248,71 +221,43 @@ class SyncPullAPIView(APIView):
                     'matched_voucher_number': bt.matched_voucher.voucher_number if bt.matched_voucher else None,
                     'match_confidence': bt.match_confidence,
                     'match_notes': str(bt.match_notes) if bt.match_notes else None,
-                    'server_updated_at': int(bt.updated_at.timestamp() * 1000) if bt.updated_at else now_ts,
+                    'server_updated_at': int(bt.updated_at.timestamp() * 1000) if getattr(bt, 'updated_at', None) else now_ts,
                 }
-                if ledger_since_dt and bt.created_at and bt.created_at < ledger_since_dt:
-                    changes_dict['bank_transactions']['updated'].append(bt_item)
+                if bt.id in grouped['BANKTRANSACTION']['CREATE']:
+                    changes_dict['bank_transactions']['created'].append(item)
                 else:
-                    changes_dict['bank_transactions']['created'].append(bt_item)
+                    changes_dict['bank_transactions']['updated'].append(item)
+        for d_id in grouped['BANKTRANSACTION']['DELETE']:
+            changes_dict['bank_transactions']['deleted'].append({'id': str(d_id)})
 
-            # Payment Allocations
-            pa_qs = PaymentAllocation.objects.filter(company=company)
-            if ledger_since_dt:
-                pa_qs = pa_qs.filter(created_at__gte=ledger_since_dt) # created_at since no updated_at
-                
-            for pa in pa_qs:
-                pa_item = {
+        # --- Hydrate PAYMENT ALLOCATIONS ---
+        pa_ids = grouped['PAYMENTALLOCATION']['CREATE'].union(grouped['PAYMENTALLOCATION']['UPDATE'])
+        if pa_ids:
+            pas = PaymentAllocation.objects.filter(id__in=pa_ids)
+            for pa in pas:
+                item = {
                     'id': str(pa.id),
                     'company_id': str(pa.company_id),
                     'payment_voucher_id': str(pa.payment_voucher_id),
                     'invoice_voucher_id': str(pa.invoice_voucher_id),
                     'allocated_amount': str(pa.allocated_amount),
-                    'server_updated_at': int(pa.created_at.timestamp() * 1000) if pa.created_at else now_ts,
+                    'server_updated_at': int(getattr(pa, 'updated_at', timezone.now()).timestamp() * 1000) if hasattr(pa, 'updated_at') else now_ts,
                 }
-                changes_dict['payment_allocations']['created'].append(pa_item)
-
-        if include_details and voucher_ids:
-            items_data = []
-            entries_data = []
-            for item_obj in VoucherItem.objects.filter(voucher_id__in=voucher_ids).select_related('product'):
-                items_data.append({
-                    'id': str(item_obj.id),
-                    'voucher_id': str(item_obj.voucher_id),
-                    'product_id': str(item_obj.product_id),
-                    'product_name': item_obj.product.name if item_obj.product else '',
-                    'quantity': str(item_obj.quantity or '0.00'),
-                    'rate': str(item_obj.rate or '0.00'),
-                    'discount_percent': str(item_obj.discount_percent or '0.00'),
-                    'discount_amount': str(item_obj.discount_amount or '0.00'),
-                    'taxable_amount': str(item_obj.taxable_amount or '0.00'),
-                    'gst_rate': str(item_obj.gst_rate or '0.00'),
-                    'total_amount': str(item_obj.total_amount or '0.00'),
-                })
-
-            for entry in LedgerEntry.objects.filter(voucher_id__in=voucher_ids):
-                entries_data.append({
-                    'id': str(entry.id),
-                    'voucher_id': str(entry.voucher_id),
-                    'ledger_id': str(entry.ledger_id),
-                    'debit_amount': str(entry.debit_amount or '0.00'),
-                    'credit_amount': str(entry.credit_amount or '0.00'),
-                    'narration': entry.narration or '',
-                })
-            changes_dict['voucher_items'] = {'created': items_data, 'updated': [], 'deleted': []}
-            changes_dict['ledger_entries'] = {'created': entries_data, 'updated': [], 'deleted': []}
+                if pa.id in grouped['PAYMENTALLOCATION']['CREATE']:
+                    changes_dict['payment_allocations']['created'].append(item)
+                else:
+                    changes_dict['payment_allocations']['updated'].append(item)
+        for d_id in grouped['PAYMENTALLOCATION']['DELETE']:
+            changes_dict['payment_allocations']['deleted'].append({'id': str(d_id)})
 
         return Response({
+            'success': True,
             'changes': changes_dict,
+            'next_cursor': str(next_cursor),
             'has_more': has_more,
-            'next_cursor': next_cursor,
-            'timestamp': now_ts,
-            'entity_timestamps': {
-                'vouchers': now_ts,
-                'ledgers': now_ts,
-                'products': now_ts,
-            }
+            'snapshot_cursor': str(snapshot_cursor),
+            'server_time': now_ts,
         })
-
 
 class SyncPushAPIView(APIView):
     """
@@ -393,12 +338,25 @@ class SyncPushAPIView(APIView):
             # Idempotency Check: if command already processed, skip duplicate posting and return cached voucher result
             if not created:
                 if cmd_obj.status == 'PROCESSED' and cmd_obj.result_voucher:
+                    voucher = cmd_obj.result_voucher
+                    voucher_data = {
+                        'id': str(voucher.id),
+                        'companyId': str(voucher.company_id),
+                        'voucherType': voucher.voucher_type,
+                        'voucherNumber': voucher.voucher_number,
+                        'voucherDate': str(voucher.voucher_date),
+                        'totalAmount': str(voucher.total_amount),
+                        'status': voucher.status,
+                        'partyLedgerId': str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
+                        'partyName': voucher.party_ledger.name if voucher.party_ledger else (voucher.buyer_name or ''),
+                    }
                     processed_commands.append({
                         'command_id': cmd_id,
                         'status': 'PROCESSED',
                         'voucher_id': str(cmd_obj.result_voucher_id),
                         'voucher_number': cmd_obj.result_voucher.voucher_number,
-                        'idempotent_cached': True
+                        'idempotent_cached': True,
+                        'voucher_data': voucher_data
                     })
                     continue
                 cmd_obj.status = 'PROCESSING'
@@ -512,11 +470,24 @@ class SyncPushAPIView(APIView):
                         cmd_obj.error_message = None
                         cmd_obj.save(update_fields=['status', 'result_voucher', 'processed_at', 'error_code', 'error_message'])
 
+                        voucher_data = {
+                            'id': str(voucher.id),
+                            'companyId': str(voucher.company_id),
+                            'voucherType': voucher.voucher_type,
+                            'voucherNumber': voucher.voucher_number,
+                            'voucherDate': str(voucher.voucher_date),
+                            'totalAmount': str(voucher.total_amount),
+                            'status': voucher.status,
+                            'partyLedgerId': str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
+                            'partyName': voucher.party_ledger.name if voucher.party_ledger else (voucher.buyer_name or ''),
+                        }
+
                         processed_commands.append({
                             'command_id': cmd_id,
                             'status': 'PROCESSED',
                             'voucher_id': str(voucher.id),
-                            'voucher_number': voucher.voucher_number
+                            'voucher_number': voucher.voucher_number,
+                            'voucher_data': voucher_data
                         })
 
             except Exception as e:

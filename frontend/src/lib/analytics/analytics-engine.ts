@@ -1,4 +1,4 @@
-import { offlineDb, SyncedVoucher, SyncedLedger, SyncedProduct } from "../db/offlineDb";
+import { offlineDb, SyncedVoucher, SyncedLedger, SyncedProduct, SyncedPaymentAllocation } from "../db/offlineDb";
 
 /**
  * Returns YYYY-MM-DD string in Indian Standard Time (Asia/Kolkata).
@@ -80,6 +80,49 @@ export interface LocalDashboardResult {
  * Guaranteed to be company-scoped and non-blocking.
  */
 export class LocalAnalyticsEngine {
+
+  /**
+   * P0: Centralized authoritative definition of an "effective" accounting voucher.
+   * A voucher is effective if its status is POSTED.
+   * DRAFT, CANCELLED, REVERSED, SUPERSEDED, CORRECTED are excluded.
+   */
+  static isEffectiveVoucher(v: SyncedVoucher): boolean {
+    return v.status === "POSTED";
+  }
+
+  static resolveEffectiveVouchers(vouchers: SyncedVoucher[]): SyncedVoucher[] {
+    return vouchers.filter(this.isEffectiveVoucher);
+  }
+
+  /**
+   * P0: Computes the actual remaining outstanding amount of an invoice
+   * by summing all valid PaymentAllocations linked to it.
+   */
+  static calculateInvoiceOutstanding(
+    invoice: SyncedVoucher,
+    allAllocations: SyncedPaymentAllocation[],
+    allEffectiveVouchers: Map<string, SyncedVoucher>
+  ): number {
+    if (!this.isEffectiveVoucher(invoice)) return 0;
+    
+    // Find all allocations for this invoice
+    const allocations = allAllocations.filter(pa => pa.invoiceVoucherId === invoice.id);
+    
+    let allocatedAmount = 0;
+    for (const pa of allocations) {
+      // The payment allocation is only valid if the source payment voucher is ALSO effective
+      const paymentVoucher = allEffectiveVouchers.get(pa.paymentVoucherId);
+      if (paymentVoucher && this.isEffectiveVoucher(paymentVoucher)) {
+        allocatedAmount += Number(pa.allocatedAmount) || 0;
+      }
+    }
+    
+    const invoiceTotal = Number(invoice.totalAmount) || 0;
+    const outstanding = invoiceTotal - allocatedAmount;
+    
+    // Guard against negative outstanding due to overpayment
+    return outstanding > 0 ? outstanding : 0;
+  }
   /**
    * Primary entry point for rendering the operational dashboard.
    */
@@ -95,9 +138,14 @@ export class LocalAnalyticsEngine {
       .equals(companyId)
       .toArray();
 
-    const activeVouchers = allCompanyVouchers.filter(
-      (v) => v.status === "POSTED"
-    );
+    const activeVouchers = this.resolveEffectiveVouchers(allCompanyVouchers);
+    const activeVouchersMap = new Map(activeVouchers.map(v => [v.id, v]));
+
+    // Fetch allocations for outstanding calculations
+    const allAllocations = await offlineDb.syncedPaymentAllocations
+      .where("companyId")
+      .equals(companyId)
+      .toArray();
 
     // 2. Fetch ledgers for active company
     const ledgers = await offlineDb.syncedLedgers
@@ -118,6 +166,14 @@ export class LocalAnalyticsEngine {
     const todayStr = getIndiaTodayStr();
     const thirtyDaysAgo = getIndiaDateDaysAgo(30);
 
+    // --- P1: Aggregate-First Fast Path ---
+    // Try to read from pre-computed local aggregates
+    const dailyAggregates = await offlineDb.analyticsDaily.where("companyId").equals(companyId).toArray();
+    const partyAggregates = await offlineDb.analyticsParty.where("companyId").equals(companyId).toArray();
+    
+    // Fallback detection (if aggregates are empty but we have vouchers, or initial sync isn't complete)
+    const useAggregates = dailyAggregates.length > 0 || activeVouchers.length === 0;
+
     // --- A. Financial KPIs ---
     let todaySales = 0;
     let todayCollections = 0;
@@ -133,46 +189,88 @@ export class LocalAnalyticsEngine {
     let oldestDate: string | null = null;
     let newestDate: string | null = null;
 
-    for (const v of activeVouchers) {
-      const amt = Number(v.totalAmount) || 0;
-      const vDate = v.voucherDate;
+    if (useAggregates && dailyAggregates.length > 0) {
+      for (const d of dailyAggregates) {
+        totalSales += d.sales;
+        totalPurchases += d.purchases;
+        salesCount += d.salesCount;
+        purchaseCount += d.purchaseCount;
+        salesByDate[d.date] = d.sales;
 
-      if (!oldestDate || vDate < oldestDate) oldestDate = vDate;
-      if (!newestDate || vDate > newestDate) newestDate = vDate;
+        if (!oldestDate || d.date < oldestDate) oldestDate = d.date;
+        if (!newestDate || d.date > newestDate) newestDate = d.date;
 
-      if (v.voucherType === "SALES") {
-        totalSales += amt;
-        salesCount++;
-        if (vDate === todayStr) {
-          todaySales += amt;
+        if (d.date === todayStr) {
+          todaySales += d.sales;
+          todayCollections += d.collections;
         }
+      }
 
-        // Daily trend accumulation
-        salesByDate[vDate] = (salesByDate[vDate] || 0) + amt;
+      for (const p of partyAggregates) {
+        salesByParty[p.partyId] = {
+          name: p.partyName,
+          count: p.invoiceCount,
+          total: p.sales,
+          lastDate: p.lastTransactionDate
+        };
+      }
+      
+      // We still need to iterate over outstanding sales invoices to find overdue ones, 
+      // but we only need to look at SALES vouchers, not the entire history.
+      const salesVouchers = activeVouchers.filter(v => v.voucherType === "SALES");
+      for (const v of salesVouchers) {
+        const outstanding = this.calculateInvoiceOutstanding(v, allAllocations, activeVouchersMap);
+        if (outstanding > 0) {
+          const isOverdue = v.dueDate ? (v.dueDate < todayStr) : false;
+          if (isOverdue) overdueInvoices.push(v);
+        }
+      }
+    } else {
+      // --- Fallback: Raw History Scan ---
+      for (const v of activeVouchers) {
+        const amt = Number(v.totalAmount) || 0;
+        const vDate = v.voucherDate;
 
-        // Customer RFM accumulation (Canonical partyLedgerId grouping)
-        const partyKey = v.partyLedgerId || v.partyName || "Counter Sale / Cash";
-        const partyName = v.partyName || "Counter Sale / Cash";
-        if (!salesByParty[partyKey]) {
-          salesByParty[partyKey] = { name: partyName, count: 0, total: 0, lastDate: vDate };
-        }
-        salesByParty[partyKey].count += 1;
-        salesByParty[partyKey].total += amt;
-        if (vDate > salesByParty[partyKey].lastDate) {
-          salesByParty[partyKey].lastDate = vDate;
-        }
+        if (!oldestDate || vDate < oldestDate) oldestDate = vDate;
+        if (!newestDate || vDate > newestDate) newestDate = vDate;
 
-        // Check overdue (P0-6: Canonical due-date calculation)
-        const isOverdue = v.dueDate ? (v.dueDate < todayStr) : (vDate < thirtyDaysAgo);
-        if (isOverdue) {
-          overdueInvoices.push(v);
-        }
-      } else if (v.voucherType === "PURCHASE") {
-        totalPurchases += amt;
-        purchaseCount++;
-      } else if (v.voucherType === "RECEIPT") {
-        if (vDate === todayStr) {
-          todayCollections += amt;
+        if (v.voucherType === "SALES") {
+          totalSales += amt;
+          salesCount++;
+          if (vDate === todayStr) {
+            todaySales += amt;
+          }
+
+          // Daily trend accumulation
+          salesByDate[vDate] = (salesByDate[vDate] || 0) + amt;
+
+          // Customer RFM accumulation (Canonical partyLedgerId grouping)
+          const partyKey = v.partyLedgerId || v.partyName || "Counter Sale / Cash";
+          const partyName = v.partyName || "Counter Sale / Cash";
+          if (!salesByParty[partyKey]) {
+            salesByParty[partyKey] = { name: partyName, count: 0, total: 0, lastDate: vDate };
+          }
+          salesByParty[partyKey].count += 1;
+          salesByParty[partyKey].total += amt;
+          if (vDate > salesByParty[partyKey].lastDate) {
+            salesByParty[partyKey].lastDate = vDate;
+          }
+
+          // Check overdue (P0: Payment Allocation drives outstanding)
+          const outstanding = this.calculateInvoiceOutstanding(v, allAllocations, activeVouchersMap);
+          if (outstanding > 0) {
+            const isOverdue = v.dueDate ? (v.dueDate < todayStr) : false;
+            if (isOverdue) {
+              overdueInvoices.push(v);
+            }
+          }
+        } else if (v.voucherType === "PURCHASE") {
+          totalPurchases += amt;
+          purchaseCount++;
+        } else if (v.voucherType === "RECEIPT") {
+          if (vDate === todayStr) {
+            todayCollections += amt;
+          }
         }
       }
     }
@@ -468,24 +566,28 @@ export class LocalAnalyticsEngine {
       .equals(companyId)
       .toArray();
 
-    const activeVouchers = vouchers.filter(
-      (v) => v.status === "POSTED"
-    );
+    const activeVouchers = this.resolveEffectiveVouchers(vouchers);
+    const activeVouchersMap = new Map(activeVouchers.map(v => [v.id, v]));
+
+    const allAllocations = await offlineDb.syncedPaymentAllocations
+      .where("companyId")
+      .equals(companyId)
+      .toArray();
 
     const dailyMap: Record<string, { sales: number; purchases: number; collections: number; payments: number; salesCount: number; purchaseCount: number }> = {};
-    const partyMap: Record<string, { name: string; sales: number; purchases: number; receipts: number; payments: number; invoiceCount: number; lastDate: string }> = {};
+    const partyMap: Record<string, { name: string; sales: number; purchases: number; receipts: number; payments: number; invoiceCount: number; lastDate: string; outstanding: number }> = {};
 
     for (const v of activeVouchers) {
       const d = v.voucherDate;
       const amt = Number(v.totalAmount) || 0;
-      const pId = v.partyLedgerId || "counter-sale";
+      const pId = v.partyLedgerId || v.partyName || "counter-sale";
       const pName = v.partyName || "Counter Sale";
 
       if (!dailyMap[d]) {
         dailyMap[d] = { sales: 0, purchases: 0, collections: 0, payments: 0, salesCount: 0, purchaseCount: 0 };
       }
       if (!partyMap[pId]) {
-        partyMap[pId] = { name: pName, sales: 0, purchases: 0, receipts: 0, payments: 0, invoiceCount: 0, lastDate: d };
+        partyMap[pId] = { name: pName, sales: 0, purchases: 0, receipts: 0, payments: 0, invoiceCount: 0, lastDate: d, outstanding: 0 };
       }
 
       if (v.voucherType === "SALES") {
@@ -493,6 +595,8 @@ export class LocalAnalyticsEngine {
         dailyMap[d].salesCount += 1;
         partyMap[pId].sales += amt;
         partyMap[pId].invoiceCount += 1;
+        
+        partyMap[pId].outstanding += this.calculateInvoiceOutstanding(v, allAllocations, activeVouchersMap);
       } else if (v.voucherType === "PURCHASE") {
         dailyMap[d].purchases += amt;
         dailyMap[d].purchaseCount += 1;

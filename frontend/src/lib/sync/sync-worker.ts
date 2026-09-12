@@ -87,7 +87,6 @@ async function withTabLock<T>(lockName: string, fn: () => Promise<T>, fallback: 
 const BACKOFF_DELAYS = [2000, 5000, 15000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000];
 
 export async function executeClientOutboxSync(): Promise<{ processed: number; failed: number }> {
-  return await withTabLock("vouch_outbox_push_lock", async () => {
     if (typeof window === "undefined" || !navigator.onLine) return { processed: 0, failed: 0 };
     if (isSyncInProgress) return { processed: 0, failed: 0 };
     isSyncInProgress = true;
@@ -162,6 +161,9 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
         if (response.ok && (resData.success || resData.processed_count > 0)) {
           const cmdResult = resData.results?.find((r: any) => r.command_id === commandId) || resData.results?.[0];
           if (cmdResult && cmdResult.status === "PROCESSED") {
+            if (cmdResult.voucher_data) {
+              await ingestVoucherLocally(companyId, cmdResult.voucher_data);
+            }
             await offlineDb.vouchers.update(item.id!, {
               status: "SYNCED",
               voucherNumber: cmdResult?.voucher_number,
@@ -246,7 +248,6 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
   } finally {
     isSyncInProgress = false;
   }
-  }, { processed: 0, failed: 0 });
 }
 
 export async function retryFailedVoucher(id: number) {
@@ -294,7 +295,6 @@ export async function pullIncrementalChanges(
   companyId: string,
   onProgress?: (msg: string) => void
 ): Promise<{ success: boolean; totalRecords: number; error?: string }> {
-  return await withTabLock("vouch_incremental_pull_lock", async () => {
     if (!companyId || typeof window === "undefined" || !navigator.onLine) {
       return { success: false, totalRecords: 0 };
     }
@@ -313,10 +313,10 @@ export async function pullIncrementalChanges(
       if (!meta) {
         meta = {
           companyId,
-          lastSyncAt: 0,
           syncStatus: "SYNCING",
           isInitialComplete: false,
           pendingMutationsCount: 0,
+          changeCursor: "0"
         };
         await offlineDb.syncMeta.put(meta);
       } else {
@@ -324,8 +324,7 @@ export async function pullIncrementalChanges(
       }
 
       let hasMore = true;
-      let currentCursor = meta.vouchersCursor || meta.syncCursor || undefined;
-      let lastPulledAt = meta.lastSyncAt > 0 ? meta.lastSyncAt : undefined;
+      let currentCursor = meta.changeCursor || "0";
       let totalRecords = 0;
       let batchIndex = 0;
       const allChangedVouchers: SyncedVoucher[] = [];
@@ -346,10 +345,6 @@ export async function pullIncrementalChanges(
           body: JSON.stringify({
             company_id: companyId,
             cursor: currentCursor,
-            vouchers_cursor: currentCursor,
-            ledgers_since: meta.ledgersLastSyncAt,
-            products_since: meta.productsLastSyncAt,
-            skip_master_data: batchIndex > 1,
             limit: 200,
           }),
         });
@@ -537,13 +532,13 @@ export async function pullIncrementalChanges(
     }
 
     // Update sync metadata upon complete consumption
+    const updatedMeta = await offlineDb.syncMeta.get(companyId) || meta;
     await offlineDb.syncMeta.put({
+      ...updatedMeta,
       companyId,
-      lastSyncAt: Date.now(),
-      syncCursor: currentCursor,
-      vouchersCursor: currentCursor,
-      ledgersLastSyncAt: Date.now(),
-      productsLastSyncAt: Date.now(),
+      lastSuccessfulSyncAt: Date.now(),
+      changeCursor: currentCursor,
+      snapshotCursor: resData.snapshot_cursor || updatedMeta.snapshotCursor,
       syncStatus: "IDLE",
       isInitialComplete: true,
       pendingMutationsCount: 0,
@@ -579,7 +574,6 @@ export async function pullIncrementalChanges(
   } finally {
     isPullInProgress = false;
   }
-  }, { success: false, totalRecords: 0, error: "Locked by another tab" });
 }
 
 /**
@@ -634,15 +628,35 @@ export async function ingestVoucherLocally(
   notifySyncChannel({ type: "LOCAL_INGEST", companyId, voucherId: syncedV.id });
 }
 
+export async function syncCompany(companyId: string, onProgress?: (msg: string) => void) {
+  return await withTabLock("vouch_sync_coordinator_lock", async () => {
+    if (typeof window === "undefined" || !navigator.onLine) return { success: false, reason: "offline" };
+    
+    // 1. Push pending offline mutations
+    if (onProgress) onProgress("Pushing pending offline commands...");
+    const pushResult = await executeClientOutboxSync();
+
+    // 2. Pull incremental changes
+    if (onProgress) onProgress("Pulling server changes...");
+    const pullResult = await pullIncrementalChanges(companyId, onProgress);
+
+    return { success: true, pushResult, pullResult };
+  }, { success: false, reason: "locked" });
+}
+
 /**
  * P0-3: Coordinated sync on reconnect / online that pushes outbox and pulls server updates.
  */
 export async function triggerFullSync(targetCompanyId?: string) {
   if (typeof window === "undefined" || !navigator.onLine) return;
-  await triggerOutboxSync();
   const cId = targetCompanyId || (typeof localStorage !== "undefined" ? (localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company")) : null);
   if (cId) {
-    await pullIncrementalChanges(cId);
+    await syncCompany(cId);
+  } else {
+    // If no company, just push pending outbox commands safely without pulling
+    await withTabLock("vouch_sync_coordinator_lock", async () => {
+      await executeClientOutboxSync();
+    }, null);
   }
 }
 

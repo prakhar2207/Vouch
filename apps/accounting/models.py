@@ -524,3 +524,17 @@ class AccountingFinding(models.Model):
 
     def __str__(self):
         return f"[{self.severity}] {self.title} ({self.category})"
+
+
+class SyncEvent(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='sync_events')
+    entity_type = models.CharField(max_length=50)
+    entity_id = models.UUIDField()
+    operation = models.CharField(max_length=20)
+    occurred_at = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=['company', 'id'])]
+        ordering = ['id']

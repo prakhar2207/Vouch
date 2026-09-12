@@ -41,14 +41,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   // Dropdown states
-  const [isVouchersDropdownOpen, setIsVouchersDropdownOpen] = useState(false);
-  const [isReportsDropdownOpen, setIsReportsDropdownOpen] = useState(false);
+  const [isMoreDropdownOpen, setIsMoreDropdownOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isFYDropdownOpen, setIsFYDropdownOpen] = useState(false);
   const [isCompanyDropdownOpen, setIsCompanyDropdownOpen] = useState(false);
 
-  const vouchersRef = useRef<HTMLDivElement>(null);
-  const reportsRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const fyRef = useRef<HTMLDivElement>(null);
   const companyRef = useRef<HTMLDivElement>(null);
@@ -61,8 +59,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Close dropdowns on route change
   useEffect(() => {
     setIsMobileNavOpen(false);
-    setIsVouchersDropdownOpen(false);
-    setIsReportsDropdownOpen(false);
+    setIsMoreDropdownOpen(false);
     setIsUserMenuOpen(false);
     setIsFYDropdownOpen(false);
     setIsCompanyDropdownOpen(false);
@@ -71,11 +68,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Click away listener for dropdowns
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (vouchersRef.current && !vouchersRef.current.contains(e.target as Node)) {
-        setIsVouchersDropdownOpen(false);
-      }
-      if (reportsRef.current && !reportsRef.current.contains(e.target as Node)) {
-        setIsReportsDropdownOpen(false);
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
+        setIsMoreDropdownOpen(false);
       }
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setIsUserMenuOpen(false);
@@ -105,17 +99,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { enableOnFormTags: true }
   );
 
-  const isVouchersActive =
+  const isSalesActive = pathname.startsWith("/sales");
+  const isPurchasesActive = pathname.startsWith("/purchases");
+  const isMoreActive =
     pathname.startsWith("/vouchers") ||
-    pathname.startsWith("/sales") ||
-    pathname.startsWith("/purchases") ||
-    pathname.startsWith("/network");
-
-  const isReportsActive =
+    pathname.startsWith("/network") ||
     pathname.startsWith("/export") ||
     pathname.startsWith("/analytics") ||
     pathname.startsWith("/reports") ||
-    pathname.startsWith("/audit");
+    pathname.startsWith("/audit") ||
+    pathname.startsWith("/health") ||
+    pathname.startsWith("/ledgers");
 
   return (
     <div className="min-h-screen bg-background font-sans text-foreground flex flex-col">
@@ -142,7 +136,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </svg>
             </button>
 
-            {/* Brand Logo with subtle muted CORE badge */}
+            {/* Brand Logo */}
             <div id="tour-header-brand" className="flex items-center gap-1.5 shrink-0">
               <Link
                 href="/dashboard"
@@ -152,9 +146,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   Vouch
                 </span>
               </Link>
-              <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 text-xs font-mono font-semibold text-muted-foreground bg-muted/60 border border-border/50 rounded shrink-0">
-                CORE
-              </span>
             </div>
 
             {/* Desktop Navigation Links */}

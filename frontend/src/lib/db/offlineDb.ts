@@ -77,13 +77,20 @@ export interface SyncedProduct {
 
 export interface SyncMeta {
   companyId: string;
-  lastSyncAt: number;
+  // Legacy timestamps (kept for backwards compatibility during rollout)
+  lastSyncAt?: number;
   syncCursor?: string;
   vouchersCursor?: string;
   ledgersLastSyncAt?: number;
   productsLastSyncAt?: number;
   oldestSyncedAt?: number;
   newestSyncedAt?: number;
+  
+  // New change feed metadata
+  changeCursor?: string;
+  snapshotCursor?: string;
+  lastSuccessfulSyncAt?: number;
+  
   syncStatus: "IDLE" | "SYNCING" | "ERROR";
   isInitialComplete: boolean;
   pendingMutationsCount: number;
