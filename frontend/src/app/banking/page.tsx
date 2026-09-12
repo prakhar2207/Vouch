@@ -939,7 +939,7 @@ export default function BankingPage() {
         {loading ? (
           <div className="flex flex-col items-center justify-center p-16 space-y-3">
             <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-xs text-muted-foreground">Loading bank intelligence feed...</p>
+            <p className="text-xs text-muted-foreground">Loading bank transactions...</p>
           </div>
         ) : filteredTransactions.length === 0 ? (
           <div className="bg-card border border-border/40 rounded-2xl p-12 text-center space-y-3 shadow-sm">

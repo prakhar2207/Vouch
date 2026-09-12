@@ -79,34 +79,34 @@ export default function SyncStatusBadge() {
     badgeContent = (
       <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20">
         <WifiOff className="w-3 h-3 shrink-0" />
-        <span className="hidden xl:inline">Offline (Local)</span>
+        <span className="hidden xl:inline">Offline</span>
       </span>
     );
-    tooltipText = "Operating offline on local IndexedDB data. Mutations queued.";
+    tooltipText = "You're offline. Changes will sync when you're back online.";
   } else if (isSyncing) {
     badgeContent = (
       <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium bg-blue-500/10 text-blue-500 border border-blue-500/20 animate-pulse">
         <RefreshCw className="w-3 h-3 animate-spin shrink-0" />
-        <span className="hidden xl:inline">Syncing...</span>
+        <span className="hidden xl:inline">Updating...</span>
       </span>
     );
-    tooltipText = "Synchronizing operational data with Neon.";
+    tooltipText = "Updating your books...";
   } else if (hasPending) {
     badgeContent = (
       <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
         <Clock className="w-3 h-3 shrink-0" />
-        <span className="hidden xl:inline">{syncInfo.pendingMutationsCount} queued</span>
+        <span className="hidden xl:inline">{syncInfo.pendingMutationsCount} pending</span>
       </span>
     );
-    tooltipText = `${syncInfo.pendingMutationsCount} local mutations waiting to sync.`;
+    tooltipText = `${syncInfo.pendingMutationsCount} changes waiting to save. They'll sync automatically.`;
   } else if (syncInfo.lastSyncAt) {
     badgeContent = (
       <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
         <CheckCircle2 className="w-3 h-3 shrink-0" />
-        <span className="hidden xl:inline">Synced {formatLastSync(syncInfo.lastSyncAt)}</span>
+        <span className="hidden xl:inline">Up to date</span>
       </span>
     );
-    tooltipText = `Local database synced with Neon ${formatLastSync(syncInfo.lastSyncAt)}. Click to sync now.`;
+    tooltipText = `Your books are up to date (${formatLastSync(syncInfo.lastSyncAt)}). Click to refresh.`;
   } else {
     badgeContent = (
       <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium bg-muted text-muted-foreground border border-border">
@@ -114,7 +114,7 @@ export default function SyncStatusBadge() {
         <span className="hidden xl:inline">Ready</span>
       </span>
     );
-    tooltipText = "Click to synchronize with cloud database.";
+    tooltipText = "Click to check for updates.";
   }
 
   return (

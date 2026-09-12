@@ -741,7 +741,7 @@ export default function LedgersPage() {
                     <td colSpan={8} className="text-center py-12 text-muted-foreground">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <RefreshCw className="w-5 h-5 animate-spin text-blue-500" />
-                        <span>Loading Chart of Accounts...</span>
+                        <span>Loading accounts...</span>
                       </div>
                     </td>
                   </tr>

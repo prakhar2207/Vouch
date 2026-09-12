@@ -380,7 +380,7 @@ export default function HealthPage() {
               <h2 className="text-sm font-bold text-foreground">Books health</h2>
               <p className="text-[11px] text-muted-foreground">
                 {report?.health_status === "HEALTHY"
-                  ? "Books are mathematically balanced with zero critical accounting flaws."
+                  ? "Everything looks good. No issues found."
                   : report?.health_status === "NEEDS_ATTENTION"
                   ? "Minor reconciliation gaps or tax warnings need your review."
                   : "Critical accounting balance violations require immediate review."}
@@ -439,7 +439,7 @@ export default function HealthPage() {
               <div className="text-2xl font-black font-mono text-foreground">
                 {report ? `${report.metrics?.passed_checks}/${report.metrics?.total_checks}` : "--"}
               </div>
-              <div className="text-[10px] text-muted-foreground">Checks in equilibrium</div>
+              <div className="text-[10px] text-muted-foreground">Checks passing</div>
             </div>
 
             <div className="p-3 bg-rose-500/5 rounded-xl border border-rose-500/20 space-y-1">
@@ -707,7 +707,7 @@ export default function HealthPage() {
           {loading ? (
             <div className="flex flex-col items-center justify-center p-16 space-y-3">
               <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-              <p className="text-xs text-muted-foreground">Auditing accounting integrity engine...</p>
+              <p className="text-xs text-muted-foreground">Checking your books...</p>
             </div>
           ) : filteredFindings.length === 0 ? (
             <div className="bg-card border border-border/40 rounded-2xl p-12 text-center space-y-3 shadow-sm">
@@ -719,7 +719,7 @@ export default function HealthPage() {
               </h3>
               <p className="text-xs text-muted-foreground max-w-sm mx-auto">
                 {activeTab === "ALL"
-                  ? "All deterministic accounting health checks passed with full double-entry mathematical integrity."
+                  ? "All automated checks passed. Your books are balanced and in order."
                   : `There are currently no items flagged under ${activeTab.toLowerCase()}.`}
               </p>
             </div>

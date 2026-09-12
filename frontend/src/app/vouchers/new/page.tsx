@@ -288,8 +288,8 @@ export default function NewVoucherPage() {
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
           </Link>
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold">New Payment / Receipt</h1>
-            <p className="text-muted-foreground mt-1 text-xs sm:text-sm">Record a cash or bank inflow/outflow against parties</p>
+            <h1 className="text-2xl sm:text-3xl font-bold">Record Payment / Receipt</h1>
+            <p className="text-muted-foreground mt-1 text-xs sm:text-sm">Record money received from customers or paid to suppliers</p>
           </div>
         </div>
 
@@ -665,7 +665,7 @@ export default function NewVoucherPage() {
             
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
-                Voucher Date *
+                Date *
               </label>
               <input
                 required

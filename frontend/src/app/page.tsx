@@ -228,9 +228,9 @@ export default function LandingPage() {
               <div className="w-12 h-12 bg-amber-600/10 text-amber-400 rounded-xl flex items-center justify-center border border-amber-500/20 group-hover:scale-105 transition-transform">
                 <TrendingUp className="w-6 h-6" />
               </div>
-              <h3 className="text-base font-bold text-foreground">AI Business Intelligence</h3>
+              <h3 className="text-base font-bold text-foreground">Business Insights</h3>
               <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-                RFM customer value clustering and real-time sales growth forecasting. Identifies whether daily revenue is Booming 🚀, Steady ⚖️, or Slowing down 📉.
+                Customer insights and sales trends at a glance. Understand your best customers and daily revenue patterns.
               </p>
             </div>
           </div>

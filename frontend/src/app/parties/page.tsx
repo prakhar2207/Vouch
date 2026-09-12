@@ -257,7 +257,7 @@ export default function PartiesPage() {
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-border/40 pb-6">
           <div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Parties</h1>
-            <p className="text-muted-foreground mt-1 text-xs sm:text-sm">Manage your Customers and Suppliers accounts</p>
+            <p className="text-muted-foreground mt-1 text-xs sm:text-sm">Manage your customers and suppliers</p>
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
@@ -611,7 +611,7 @@ export default function PartiesPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="flex items-center gap-1 font-semibold text-foreground">
               <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-              Tally Shortcuts:
+              Shortcuts:
             </span>
             <span className="flex items-center gap-1">
               <kbd className="px-1.5 py-0.5 bg-muted rounded border border-border/60 font-mono text-[10px] text-foreground font-bold">↑</kbd>

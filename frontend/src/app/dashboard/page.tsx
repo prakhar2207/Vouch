@@ -486,8 +486,7 @@ export default function Dashboard() {
               className="px-4 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-sm font-semibold shadow-sm transition-all flex items-center gap-2 cursor-pointer min-h-[40px]"
             >
               <Plus className="w-4 h-4" />
-              <span>Sell</span>
-              <kbd className="hidden sm:inline text-xs font-mono font-semibold px-1.5 py-0.5 bg-primary-foreground/20 rounded">F8</kbd>
+              <span>New Sale</span>
             </Link>
 
             <Link
@@ -495,9 +494,8 @@ export default function Dashboard() {
               href="/purchases/new"
               className="px-4 py-2.5 bg-secondary text-foreground hover:bg-secondary/80 border border-border/60 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer min-h-[40px]"
             >
-              <Sparkles className="w-4 h-4 text-muted-foreground" />
-              <span>Buy</span>
-              <kbd className="hidden sm:inline text-xs font-mono font-semibold px-1.5 py-0.5 bg-muted border border-border/50 rounded text-muted-foreground">F9</kbd>
+              <ShoppingCart className="w-4 h-4 text-muted-foreground" />
+              <span>New Purchase</span>
             </Link>
 
             <Link
@@ -505,7 +503,7 @@ export default function Dashboard() {
               className="px-3.5 py-2.5 bg-card hover:bg-muted text-foreground border border-border/60 rounded-xl text-sm font-semibold transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px]"
             >
               <ArrowDownRight className="w-4 h-4 text-emerald-500" />
-              <span>Receive</span>
+              <span>Receive Money</span>
             </Link>
 
             <Link
@@ -513,30 +511,42 @@ export default function Dashboard() {
               className="px-3.5 py-2.5 bg-card hover:bg-muted text-foreground border border-border/60 rounded-xl text-sm font-semibold transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px]"
             >
               <ArrowUpRight className="w-4 h-4 text-rose-500" />
-              <span>Pay</span>
+              <span>Pay Supplier</span>
             </Link>
           </div>
         </div>
 
-        {/* Actionable Business Alerts Banner (P2-3) */}
+        {/* Attention Center — compact grouped alerts */}
         {alerts.length > 0 && (
-          <div className="space-y-2">
-            {alerts.map((alert: any, idx: number) => (
-              <div
-                key={idx}
-                className="flex items-center gap-3 p-3.5 rounded-xl border border-amber-500/20 bg-amber-500/10 text-foreground text-xs font-medium"
-              >
-                <Info className="w-4 h-4 text-amber-500 shrink-0" />
-                <span>{alert.message}</span>
-              </div>
-            ))}
+          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-foreground">Needs your attention</h2>
+              <Link href="/health" className="text-xs text-muted-foreground hover:text-foreground font-medium transition-colors">
+                View all →
+              </Link>
+            </div>
+            <div className="space-y-2">
+              {alerts.slice(0, 5).map((alert: any, idx: number) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-2.5 py-1.5 text-xs text-foreground"
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                    alert.message?.toLowerCase().includes('overdue') ? 'bg-rose-400' :
+                    alert.message?.toLowerCase().includes('low stock') ? 'bg-amber-400' :
+                    'bg-blue-400'
+                  }`}></span>
+                  <span>{alert.message}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
-        {/* Books Health & Bank Reconciliation Live Watcher Card */}
-        <div className="bg-gradient-to-r from-card to-card/60 border border-border/50 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className={`p-3 rounded-xl shrink-0 ${
+        {/* Books Status — simple health indicator */}
+        <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
               healthReport ? (
                 (healthReport?.health_score ?? 100) >= 90
                   ? "bg-emerald-500/10 text-emerald-400"
@@ -545,55 +555,44 @@ export default function Dashboard() {
                   : "bg-rose-500/10 text-rose-400"
               ) : "bg-muted text-muted-foreground"
             }`}>
-              <Activity className="w-6 h-6" />
+              {healthReport && (healthReport?.health_score ?? 100) >= 90 ? (
+                <CheckCircle2 className="w-4 h-4" />
+              ) : healthReport ? (
+                <Info className="w-4 h-4" />
+              ) : (
+                <Activity className="w-4 h-4" />
+              )}
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-foreground">Vouch Books Health Watcher</h3>
+              <h3 className="text-sm font-semibold text-foreground">
                 {healthReport ? (
-                  <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                    healthReport.health_score >= 90
-                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                      : healthReport.health_score >= 70
-                      ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                      : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                  }`}>
-                    {healthReport.health_score}% Health
-                  </span>
+                  (healthReport?.health_score ?? 100) >= 90
+                    ? "Your books look good"
+                    : healthReport.health_status === "CRITICAL"
+                    ? `${healthReport.metrics?.critical_findings_count || 1} things need review`
+                    : "Some things need attention"
                 ) : (
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-muted text-muted-foreground border border-border/40">
-                    Audit Server Check
-                  </span>
+                  "Books status"
                 )}
-              </div>
+              </h3>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {healthReport ? (
-                  healthReport.health_status === "CRITICAL"
-                    ? `${healthReport.metrics?.critical_findings_count || 1} critical balance discrepancies require your review.`
-                    : `Books are mathematically audited (${healthReport._cachedAt ? `checked ${new Date(healthReport._cachedAt).toLocaleTimeString()}` : 'cached'}).`
+                  (healthReport?.health_score ?? 100) >= 90
+                    ? `Last checked ${healthReport._cachedAt ? new Date(healthReport._cachedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'recently'}`
+                    : "Review recommended"
                 ) : (
-                  "Authoritative bookkeeping health checks run server-side on demand."
+                  "Run a check to see how your books are doing"
                 )}
               </p>
             </div>
           </div>
-
-          <div className="flex items-center gap-2.5 w-full md:w-auto">
-            <Link
-              href="/banking"
-              className="flex-1 md:flex-initial px-3.5 py-2 rounded-xl border border-border/60 bg-muted/40 hover:bg-muted text-foreground text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-            >
-              <Landmark className="w-3.5 h-3.5 text-blue-400" />
-              <span>Reconcile Bank</span>
-            </Link>
-            <Link
-              href="/health"
-              className="flex-1 md:flex-initial px-4 py-2 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm"
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Audit Books</span>
-            </Link>
-          </div>
+          <Link
+            href="/health"
+            className="px-3.5 py-2 rounded-xl border border-border/60 bg-muted/40 hover:bg-muted text-foreground text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+          >
+            <span>{healthReport && (healthReport?.health_score ?? 100) < 90 ? "Review now" : "View details"}</span>
+            <ArrowUpRight className="w-3 h-3" />
+          </Link>
         </div>
 
         {/* 6-Column Owner-First Metric Grid (P1-12 & P1-13) */}
@@ -617,14 +616,14 @@ export default function Dashboard() {
           <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
             <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-emerald-500 to-teal-500" />
             <div className="flex items-center justify-between text-muted-foreground pl-2">
-              <span className="text-xs font-medium">Today's Collected</span>
+              <span className="text-xs font-medium">Received Today</span>
               <ArrowDownRight className="w-4 h-4 text-emerald-500/70" />
             </div>
             <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-emerald-500 pl-2">
               ₹{(kpis.today_collections || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
             <div className="text-[11px] text-muted-foreground pl-2">
-              Incoming cash/receipts
+              Payments received
             </div>
           </div>
 
@@ -642,7 +641,7 @@ export default function Dashboard() {
               ₹{(kpis.money_to_collect || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
             <div className="text-[11px] text-muted-foreground pl-2">
-              Customer outstandings &rarr;
+              Customers owe you &rarr;
             </div>
           </Link>
 
@@ -660,7 +659,7 @@ export default function Dashboard() {
               ₹{(kpis.bills_to_pay || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
             <div className="text-[11px] text-muted-foreground pl-2">
-              Supplier outstandings &rarr;
+              You owe suppliers &rarr;
             </div>
           </Link>
 
@@ -678,7 +677,7 @@ export default function Dashboard() {
               ₹{(kpis.cash_and_bank || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
             <div className="text-[11px] text-muted-foreground pl-2">
-              Liquid funds available &rarr;
+              Cash &amp; bank balance &rarr;
             </div>
           </Link>
 
@@ -708,13 +707,13 @@ export default function Dashboard() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                  <span>{chartMode === 'VELOCITY' ? 'Sales Velocity' : 'AI Sales Forecast (30-Day)'}</span>
-                  <span title={chartMode === 'VELOCITY' ? 'Daily revenue trajectory over time' : 'Machine learning linear projection over historical velocity'} className="cursor-help text-muted-foreground hover:text-foreground">
+                  <span>{chartMode === 'VELOCITY' ? 'Sales over time' : 'Sales forecast'}</span>
+                  <span title={chartMode === 'VELOCITY' ? 'Daily sales over time' : 'Projected sales based on past performance'} className="cursor-help text-muted-foreground hover:text-foreground">
                     <Info className="w-3.5 h-3.5" />
                   </span>
                 </h2>
                 <p className="text-xs text-muted-foreground">
-                  {chartMode === 'VELOCITY' ? 'Day-to-day revenue flow and billing frequency' : 'Predictive revenue trajectory with confidence intervals'}
+                  {chartMode === 'VELOCITY' ? 'See how your sales are changing' : 'Expected sales based on your recent trends'}
                 </p>
               </div>
 
@@ -740,8 +739,7 @@ export default function Dashboard() {
                         : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
-                    <Sparkles className="w-3 h-3 text-amber-300" />
-                    <span>AI Forecast</span>
+                    <span>Forecast</span>
                   </button>
                 </div>
 
@@ -930,12 +928,9 @@ export default function Dashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                  <span>Customer Loyalty & Recency</span>
-                  <span title="Recency, Frequency, and Monetary distribution of buyers" className="cursor-help text-muted-foreground hover:text-foreground">
-                    <Info className="w-3.5 h-3.5" />
-                  </span>
+                  <span>Your best customers</span>
                 </h2>
-                <p className="text-xs text-muted-foreground">Top customers grouped by ordering frequency</p>
+                <p className="text-xs text-muted-foreground">Customers by sales volume</p>
               </div>
               <Link href="/parties" className="text-xs text-muted-foreground hover:text-foreground font-medium transition-colors">
                 View all →
@@ -948,9 +943,9 @@ export default function Dashboard() {
                   <thead>
                     <tr className="border-b border-border/60 text-muted-foreground">
                       <th className="pb-2 font-medium">Customer</th>
-                      <th className="pb-2 font-medium">Tier</th>
-                      <th className="pb-2 font-medium text-right">Bills</th>
-                      <th className="pb-2 font-medium text-right">Revenue</th>
+                      <th className="pb-2 font-medium">Status</th>
+                      <th className="pb-2 font-medium text-right">Orders</th>
+                      <th className="pb-2 font-medium text-right">Sales</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/30">
@@ -995,10 +990,10 @@ export default function Dashboard() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-sm font-semibold text-foreground">Recent Transactions</h2>
-              <p className="text-xs text-muted-foreground">Audit log of recently posted vouchers</p>
+              <p className="text-xs text-muted-foreground">Your latest transactions</p>
             </div>
             <Link href="/vouchers" className="text-xs text-primary hover:underline font-medium transition-colors">
-              View Day Book →
+              View all →
             </Link>
           </div>
 
@@ -1006,10 +1001,10 @@ export default function Dashboard() {
             <table className="w-full min-w-[560px] text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-border/60 text-muted-foreground">
-                  <th className="py-2.5 font-medium">Voucher No.</th>
+                  <th className="py-2.5 font-medium">Number</th>
                   <th className="py-2.5 font-medium">Date</th>
                   <th className="py-2.5 font-medium">Type</th>
-                  <th className="py-2.5 font-medium">Particulars</th>
+                  <th className="py-2.5 font-medium">Details / Party</th>
                   <th className="py-2.5 font-medium">Status</th>
                   <th className="py-2.5 font-medium text-right">Amount</th>
                 </tr>

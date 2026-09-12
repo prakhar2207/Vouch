@@ -374,13 +374,9 @@ export default function PriceListImportModal({
           const isFlash36 = src.includes("3.6-flash") || model.includes("3.6-flash");
 
           setParsingEngine(
-            isLite
-              ? "⚡ Gemini 3.1 Flash-Lite AI OCR"
-              : isFlash36
-              ? "🧠 Gemini 3.6 Flash AI OCR"
-              : src.startsWith("AI_GEMINI_VISION")
-              ? "✨ Gemini Vision AI OCR"
-              : "Multi-Column Industrial Parser"
+            isLite || isFlash36 || src.startsWith("AI_GEMINI_VISION")
+              ? "✨ Smart Scanner"
+              : "Document Parser"
           );
           toast.success(`Extracted ${rawItems.length} items from PDF price list`);
         } else {
@@ -586,7 +582,7 @@ export default function PriceListImportModal({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-purple-400" />
-                <span className="text-xs font-bold text-purple-400">Gemini Vision AI OCR Available</span>
+                <span className="text-xs font-bold text-purple-400">Smart Document Scanner Available</span>
               </div>
               <button
                 type="button"
@@ -594,14 +590,14 @@ export default function PriceListImportModal({
                 className="text-[11px] text-purple-400 hover:text-purple-300 underline cursor-pointer flex items-center gap-1"
               >
                 <KeyRound className="w-3 h-3" />
-                <span>{showKeyInput ? "Hide API Key" : "Configure Custom Key"}</span>
+                <span>{showKeyInput ? "Hide Key" : "Configure Custom Key"}</span>
               </button>
             </div>
             {showKeyInput && (
               <div className="pt-1 flex items-center gap-2">
                 <input
                   type="password"
-                  placeholder="Paste your Gemini API Key (optional)"
+                  placeholder="Paste custom API key (optional)"
                   value={geminiApiKey}
                   onChange={(e) => {
                     setGeminiApiKey(e.target.value);

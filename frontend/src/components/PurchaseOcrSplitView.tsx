@@ -223,8 +223,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
     setError(null);
     setScanStatusToast(
       activeMode === 'handwritten'
-        ? "🧠 Gemini 3.6 Flash deep vision analyzing handwritten notes & irregular tables..."
-        : "⚡ Gemini 3.1 Flash-Lite ultra-fast analyzing printed invoice..."
+        ? "Deep scan analyzing handwritten bill details..."
+        : "Scanning printed invoice..."
     );
 
     // Compute hash for local caching
@@ -561,7 +561,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1.5 underline cursor-pointer self-end md:self-auto"
         >
           <span>🔑</span>
-          <span>{showApiKeyAccordion ? "Hide API Key" : geminiApiKey ? "Gemini Key Configured ✓" : "Configure Custom API Key"}</span>
+          <span>{showApiKeyAccordion ? "Hide Key Settings" : geminiApiKey ? "Custom Key Configured ✓" : "Configure Custom Key"}</span>
         </button>
       </div>
 
@@ -569,7 +569,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       {showApiKeyAccordion && (
         <div className="p-3.5 bg-purple-500/10 border border-purple-500/25 rounded-2xl space-y-2">
           <div className="flex items-center justify-between text-xs text-purple-300 font-semibold">
-            <span>Google Gemini API Key (saved in browser localStorage):</span>
+            <span>Custom Scanner API Key (saved in browser):</span>
             {geminiApiKey && (
               <button
                 type="button"
@@ -585,7 +585,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           </div>
           <input
             type="password"
-            placeholder="Paste your Gemini API Key here (AIzaSy...)"
+            placeholder="Paste your custom API Key here..."
             value={geminiApiKey}
             onChange={(e) => {
               const val = e.target.value.trim();
@@ -598,7 +598,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
             className="w-full bg-zinc-950 border border-purple-500/35 text-foreground px-3 py-2 rounded-xl text-xs font-mono outline-none focus:ring-1 focus:ring-purple-500"
           />
           <p className="text-[10px] text-muted-foreground">
-            Key is used for both Purchase OCR & Price List PDF imports. It is passed securely to Google AI Studio.
+            Optional custom key for high-volume bill scanning and price list imports.
           </p>
         </div>
       )}
@@ -620,7 +620,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
             <div className="space-y-1">
               <h3 className="text-lg font-bold text-foreground">Upload Supplier Invoice (Photo or PDF)</h3>
               <p className="text-xs text-muted-foreground">
-                Active engine: <strong className="text-foreground">{scanMode === 'printed' ? '⚡ Gemini 3.1 Flash-Lite (Fast & High Quota)' : '🧠 Gemini 3.6 Flash (Handwritten / Deep Vision)'}</strong>
+                Active scanner: <strong className="text-foreground">{scanMode === 'printed' ? 'Standard (Printed Bills)' : 'Deep Scan (Handwritten / Complex)'}</strong>
               </p>
             </div>
             <button
@@ -642,9 +642,9 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           </div>
           <div className="text-xs font-mono px-3 py-1 rounded-full border animate-pulse flex items-center gap-1.5 bg-blue-500/10 text-blue-400 border-blue-500/20">
             {scanMode === 'handwritten' ? (
-              <><span>🧠</span><span>Gemini 3.6 Flash (Deep Handwriting Vision)</span></>
+              <><span>🧠</span><span>Deep Scan Mode</span></>
             ) : (
-              <><span>⚡</span><span>Gemini 3.1 Flash-Lite (High-Speed Engine)</span></>
+              <><span>⚡</span><span>Standard Scan Mode</span></>
             )}
           </div>
         </div>
@@ -665,7 +665,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           <div className="space-y-1">
             <div className="font-bold">Text extraction was partial or unclear from this photo</div>
             <p className="text-amber-400/90 text-[11px]">
-              {invoice.mock_reason || "Could not recognize all invoice details automatically. Please verify or fill in the supplier and item details on the right, or ensure the GEMINI_API_KEY environment variable is set on your Render backend for high-accuracy vision."}
+              {invoice.mock_reason || "Could not recognize all invoice details automatically. Please verify or fill in the supplier and item details on the right."}
             </p>
           </div>
         </div>
@@ -708,28 +708,18 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                 <div className="text-sm font-bold text-foreground flex items-center gap-2 flex-wrap">
                   <span>{fileName}</span>
                   {invoice.source?.startsWith("AI_GEMINI_VISION") && (
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
-                      (invoice.source?.includes("flash-lite") || invoice.model_used?.includes("flash-lite"))
-                        ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
-                        : "bg-purple-500/10 text-purple-400 border-purple-500/20"
-                    }`}>
-                      {(invoice.source?.includes("flash-lite") || invoice.model_used?.includes("flash-lite")) ? (
-                        <><span>⚡</span><span>Gemini 3.1 Flash-Lite</span></>
-                      ) : (invoice.source?.includes("3.6-flash") || invoice.model_used?.includes("3.6-flash")) ? (
-                        <><span>🧠</span><span>Gemini 3.6 Flash</span></>
-                      ) : (
-                        <><span>✨</span><span>Gemini Vision AI</span></>
-                      )}
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 bg-purple-500/10 text-purple-400 border-purple-500/20">
+                      <span>✨</span><span>Smart Scan</span>
                     </span>
                   )}
                   {invoice.source === "RAPID_OCR_VISION" && (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                      ⚡ Vision OCR
+                      ⚡ Smart Scan
                     </span>
                   )}
                   {invoice.source === "PDF_TEXT_STREAM" && (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      📄 Digital PDF Table
+                      📄 Digital Document
                     </span>
                   )}
                   {invoice.validation && (

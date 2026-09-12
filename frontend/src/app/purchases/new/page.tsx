@@ -275,8 +275,8 @@ export default function PurchasePage() {
             status: 'POSTED',
           });
           toast.success(
-            "⚡ Saved Offline to Local Database!",
-            `Stored securely on device (${offlineRes.localId}). Will sync to Neon cloud automatically.`
+            "Saved Offline",
+            `Saved to your device. Will sync automatically when connected.`
           );
           router.push('/purchases');
           router.refresh();

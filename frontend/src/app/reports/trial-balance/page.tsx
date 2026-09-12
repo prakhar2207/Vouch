@@ -258,7 +258,7 @@ export default function TrialBalancePage() {
               )}
               <div>
                 <div className="font-bold text-sm text-foreground flex items-center gap-2">
-                  {isBalanced ? 'Trial Balance in Equilibrium' : 'Imbalance Detected'}
+                  {isBalanced ? 'Accounts in Balance' : 'Imbalance Detected'}
                   <span
                     className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
                       isBalanced
@@ -271,8 +271,8 @@ export default function TrialBalancePage() {
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5">
                   {isBalanced
-                    ? 'Total debits exactly equal total credits across all posted vouchers.'
-                    : 'Debits do not match credits. You may run Rebuild Ledger Balances under Settings.'}
+                    ? 'Total debits and credits match across all entries.'
+                    : 'Debits do not match credits. You can run Recalculate Balances under Settings.'}
                 </div>
               </div>
             </div>

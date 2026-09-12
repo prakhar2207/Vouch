@@ -919,7 +919,7 @@ export default function SettingsPage() {
                     className="px-3.5 py-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-xs font-bold transition-colors w-fit flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${syncingTax ? 'animate-spin' : ''}`} />
-                    <span>{syncingTax ? 'Aligning...' : 'Run Tax Alignment'}</span>
+                    <span>{syncingTax ? 'Fixing...' : 'Fix Tax Accounts'}</span>
                   </button>
                 </div>
 
@@ -943,7 +943,7 @@ export default function SettingsPage() {
                     className="px-3.5 py-2 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-lg text-xs font-bold transition-colors w-fit flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
                     <Database className={`w-3.5 h-3.5 ${rebuildingBalances ? 'animate-spin' : ''}`} />
-                    <span>{rebuildingBalances ? 'Recomputing...' : 'Recompute Ledger Balances'}</span>
+                    <span>{rebuildingBalances ? 'Recalculating...' : 'Recalculate Balances'}</span>
                   </button>
                 </div>
               </div>

@@ -537,7 +537,7 @@ function AgGridVoucherEntryContent() {
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                <h1 className="text-sm sm:text-base font-black tracking-tight text-foreground">Quick Journal Entry</h1>
+                <h1 className="text-sm sm:text-base font-black tracking-tight text-foreground">Journal Entry</h1>
                 <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full border ${typeConfig.badge}`}>
                   {typeConfig.label}
                 </span>
@@ -548,7 +548,7 @@ function AgGridVoucherEntryContent() {
                 )}
               </div>
               <p className="text-[11px] text-muted-foreground hidden sm:block">
-                Double-entry spreadsheet engine. Navigate with <kbd className="px-1 py-0.2 bg-muted text-zinc-300 rounded border border-input font-mono text-[9px]">Tab</kbd> / <kbd className="px-1 py-0.2 bg-muted text-zinc-300 rounded border border-input font-mono text-[9px]">Enter</kbd>.
+                Enter accounting transactions. Navigate with <kbd className="px-1 py-0.2 bg-muted text-zinc-300 rounded border border-input font-mono text-[9px]">Tab</kbd> / <kbd className="px-1 py-0.2 bg-muted text-zinc-300 rounded border border-input font-mono text-[9px]">Enter</kbd>.
               </p>
             </div>
           </div>
@@ -707,7 +707,7 @@ function AgGridVoucherEntryContent() {
           <div className="px-3 py-1.5 bg-zinc-900/90 border-b border-border flex items-center justify-between text-xs text-muted-foreground shrink-0">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span className="font-semibold text-foreground">Double-Entry Spreadsheet</span>
+              <span className="font-semibold text-foreground">Entry Lines</span>
               <span className="text-[11px] text-zinc-500">({rowData.length} rows staged)</span>
             </div>
             <div className="flex items-center gap-2 text-[11px] text-zinc-400">

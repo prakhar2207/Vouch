@@ -144,10 +144,10 @@ export default function AuditPage() {
             </div>
             <div>
               <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                System Audit Trail
+                Activity Log
               </h1>
               <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
-                Cryptographically hashed audit log for statutory compliance & forensic analysis
+                Complete history of changes and entries for your business
               </p>
             </div>
           </div>
@@ -172,20 +172,20 @@ export default function AuditPage() {
             </div>
             <div>
               <div className="font-bold text-sm text-foreground flex items-center gap-2">
-                <span>Cryptographic Blockchain Chain: VERIFIED</span>
+                <span>Audit Log Integrity: Verified</span>
                 <span className="text-[10px] font-mono px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full font-bold">
                   SHA-256
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Every state modification links its current SHA-256 hash to the previous entry, preventing retroactive database tampering.
+                Every transaction is cryptographically verified to ensure records cannot be altered.
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 text-xs font-mono text-emerald-400">
             <CheckCircle2 className="w-4 h-4" />
-            <span>Tamper-Free Ledger State</span>
+            <span>Verified Records</span>
           </div>
         </div>
 
