@@ -29,8 +29,11 @@ class SyncPullAPIView(APIView):
     def post(self, request):
         from django.db.models import Q
         company = get_authorized_company(request, request.data.get('company_id'))
-        cursor = request.data.get('cursor')
+        cursor = request.data.get('cursor') or request.data.get('vouchers_cursor')
         last_pulled_at = request.data.get('last_pulled_at')
+        ledgers_since = request.data.get('ledgers_since')
+        products_since = request.data.get('products_since')
+        skip_master_data = request.data.get('skip_master_data', False)
         
         try:
             limit = min(max(int(request.data.get('limit', 200)), 1), 500)
@@ -60,7 +63,8 @@ class SyncPullAPIView(APIView):
             except Exception:
                 cursor_dt = None
                 cursor_uuid = None
-        elif last_pulled_at:
+        
+        if last_pulled_at:
             try:
                 raw_dt = datetime.datetime.fromtimestamp(float(last_pulled_at) / 1000.0, tz=datetime.timezone.utc)
                 # 2-second buffer against client-server clock skew
@@ -68,18 +72,37 @@ class SyncPullAPIView(APIView):
             except Exception:
                 since_dt = None
 
+        def parse_since(since_val):
+            if not since_val:
+                return None
+            try:
+                if isinstance(since_val, (int, float)) or (isinstance(since_val, str) and since_val.replace('.', '', 1).isdigit()):
+                    raw_ts = float(since_val)
+                    ts = raw_ts / 1000.0 if raw_ts > 1e11 else raw_ts
+                    return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc) - datetime.timedelta(seconds=2)
+                return datetime.datetime.fromisoformat(str(since_val)) - datetime.timedelta(seconds=2)
+            except Exception:
+                return None
+
+        ledger_since_dt = parse_since(ledgers_since) or since_dt
+        product_since_dt = parse_since(products_since) or since_dt
+
         now_ts = int(timezone.now().timestamp() * 1000)
 
-        # Master data (ledgers, products) is only returned on initial batch (cursor is empty/None),
-        # preventing redundant queries and transfer during multi-batch voucher pagination.
-        is_initial_batch = not bool(cursor)
+        # P0-1: Master data sync is decoupled from voucher cursor.
+        # If cursor is provided during voucher pagination and no explicit ledgers_since/products_since is passed,
+        # skip master data to prevent duplicate transfer across multi-batch voucher pagination.
+        should_sync_ledgers = not skip_master_data and (not cursor or bool(ledgers_since))
+        should_sync_products = not skip_master_data and (not cursor or bool(products_since))
 
         ledgers_created, ledgers_updated, ledgers_deleted = [], [], []
-        if is_initial_batch:
+        products_created, products_updated, products_deleted = [], [], []
+
+        if should_sync_ledgers:
             # 1. Ledgers (Incremental changes)
             ledger_qs = Ledger.objects.filter(company=company)
-            if since_dt:
-                ledger_qs = ledger_qs.filter(updated_at__gte=since_dt)
+            if ledger_since_dt:
+                ledger_qs = ledger_qs.filter(updated_at__gte=ledger_since_dt)
 
             for l in ledger_qs:
                 item = {
@@ -97,17 +120,16 @@ class SyncPullAPIView(APIView):
                 }
                 if l.is_archived or not l.is_active:
                     ledgers_deleted.append(item)
-                elif since_dt and l.created_at and l.created_at < since_dt:
+                elif ledger_since_dt and l.created_at and l.created_at < ledger_since_dt:
                     ledgers_updated.append(item)
                 else:
                     ledgers_created.append(item)
 
-        products_created, products_updated, products_deleted = [], [], []
-        if is_initial_batch:
+        if should_sync_products:
             # 2. Products (Incremental changes)
             product_qs = Product.objects.filter(company=company)
-            if since_dt:
-                product_qs = product_qs.filter(updated_at__gte=since_dt)
+            if product_since_dt:
+                product_qs = product_qs.filter(updated_at__gte=product_since_dt)
 
             for p in product_qs:
                 item = {
@@ -125,7 +147,7 @@ class SyncPullAPIView(APIView):
                 }
                 if getattr(p, 'is_active', True) is False:
                     products_deleted.append(item)
-                elif since_dt and p.created_at and p.created_at < since_dt:
+                elif product_since_dt and p.created_at and p.created_at < product_since_dt:
                     products_updated.append(item)
                 else:
                     products_created.append(item)
@@ -133,7 +155,7 @@ class SyncPullAPIView(APIView):
         # 3. Vouchers (Cursor-based pagination across large historical datasets)
         # Strictly defer attachment_data to stop massive binary/base64 network egress from Neon
         voucher_qs = Voucher.objects.filter(company=company).select_related('party_ledger').defer('attachment_data', 'attachment_mime')
-        if since_dt:
+        if since_dt and not (cursor_uuid and cursor_dt):
             voucher_qs = voucher_qs.filter(updated_at__gte=since_dt)
 
         if cursor_uuid and cursor_dt:
@@ -164,6 +186,7 @@ class SyncPullAPIView(APIView):
                 'voucher_type': v.voucher_type,
                 'voucher_number': v.voucher_number,
                 'voucher_date': str(v.voucher_date),
+                'due_date': str(v.due_date) if v.due_date else None,
                 'reference_number': v.reference_number or '',
                 'party_ledger_id': str(v.party_ledger_id) if v.party_ledger_id else None,
                 'party_name': v.party_ledger.name if v.party_ledger else (v.buyer_name or ''),
@@ -172,18 +195,27 @@ class SyncPullAPIView(APIView):
                 'narration': v.narration or '',
                 'server_updated_at': int(v.updated_at.timestamp() * 1000) if v.updated_at else now_ts,
             }
-            if v.status in ['CANCELLED', 'REVERSED']:
+            # P0-5: Exclude SUPERSEDED, CANCELLED, and REVERSED vouchers from active registers
+            if v.status in ['CANCELLED', 'REVERSED', 'SUPERSEDED']:
                 vouchers_deleted.append(item)
             elif since_dt and v.created_at and v.created_at < since_dt:
                 vouchers_updated.append(item)
             else:
                 vouchers_created.append(item)
 
-        # 4. Voucher Items & Ledger Entries (Only if explicitly requested to stop discarded transfer)
+        # P0-4: Voucher Items & Ledger Entries are ONLY attached if explicitly requested
         include_details = str(request.data.get('include_details', request.query_params.get('include_details', 'false'))).lower() in ['true', '1']
-        items_data = []
-        entries_data = []
+        changes_dict = {
+            'ledgers': {'created': ledgers_created, 'updated': ledgers_updated, 'deleted': ledgers_deleted},
+            'products': {'created': products_created, 'updated': products_updated, 'deleted': products_deleted},
+            'vouchers': {'created': vouchers_created, 'updated': vouchers_updated, 'deleted': vouchers_deleted},
+            'voucher_items': {'created': [], 'updated': [], 'deleted': []},
+            'ledger_entries': {'created': [], 'updated': [], 'deleted': []},
+        }
+
         if include_details and voucher_ids:
+            items_data = []
+            entries_data = []
             for item_obj in VoucherItem.objects.filter(voucher_id__in=voucher_ids).select_related('product'):
                 items_data.append({
                     'id': str(item_obj.id),
@@ -208,18 +240,19 @@ class SyncPullAPIView(APIView):
                     'credit_amount': str(entry.credit_amount or '0.00'),
                     'narration': entry.narration or '',
                 })
+            changes_dict['voucher_items'] = {'created': items_data, 'updated': [], 'deleted': []}
+            changes_dict['ledger_entries'] = {'created': entries_data, 'updated': [], 'deleted': []}
 
         return Response({
-            'changes': {
-                'ledgers': {'created': ledgers_created, 'updated': ledgers_updated, 'deleted': ledgers_deleted},
-                'products': {'created': products_created, 'updated': products_updated, 'deleted': products_deleted},
-                'vouchers': {'created': vouchers_created, 'updated': vouchers_updated, 'deleted': vouchers_deleted},
-                'voucher_items': {'created': items_data, 'updated': [], 'deleted': []},
-                'ledger_entries': {'created': entries_data, 'updated': [], 'deleted': []},
-            },
+            'changes': changes_dict,
             'has_more': has_more,
             'next_cursor': next_cursor,
             'timestamp': now_ts,
+            'entity_timestamps': {
+                'vouchers': now_ts,
+                'ledgers': now_ts,
+                'products': now_ts,
+            }
         })
 
 

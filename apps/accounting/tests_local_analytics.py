@@ -305,8 +305,12 @@ class LocalAnalyticsAndDeltaSyncTestCase(TestCase):
         3. 'SC NEFT OTHER THAN SB IMB' as Debit (Payment).
         """
         import io
-        from reportlab.lib.pagesizes import letter
-        from reportlab.pdfgen import canvas
+        try:
+            import pdfplumber
+            from reportlab.lib.pagesizes import letter
+            from reportlab.pdfgen import canvas
+        except ImportError:
+            self.skipTest("pdfplumber or reportlab not installed in test environment")
         from apps.accounting.services.bank_statement_service import BankStatementService
 
         buf = io.BytesIO()

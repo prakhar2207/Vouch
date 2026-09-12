@@ -10,7 +10,7 @@ import { useShortcuts } from '@/context/ShortcutContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
 import { useToast } from '@/context/ToastContext';
 import { ChevronDown, ScanBarcode, AlertTriangle, CheckCircle2, ArrowRight, Hash } from 'lucide-react';
-import { queueOfflineVoucher } from '@/lib/sync/sync-worker';
+import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
 
 export default function SalesPage() {
@@ -422,6 +422,15 @@ export default function SalesPage() {
       
       try {
         const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/sales-invoice/`, payload, { headers, timeout: 8000 });
+        if (res.data?.voucher) {
+          await ingestVoucherLocally(companyId, {
+            ...res.data.voucher,
+            totalAmount: res.data.voucher.total_amount || grandTotal,
+            voucherType: 'SALES',
+            partyName: selectedParty?.name || res.data.voucher.party_name,
+            partyLedgerId: selectedParty?.id || res.data.voucher.party_ledger_id,
+          });
+        }
         toast.success(`Sales Invoice generated!`, `Voucher: ${res.data.voucher_number}`);
         router.push('/sales');
         router.refresh();
@@ -430,6 +439,17 @@ export default function SalesPage() {
         const isNetworkErr = !navigator.onLine || postErr.code === 'ERR_NETWORK' || !postErr.response;
         if (isNetworkErr) {
           const offlineRes = await queueOfflineVoucher('SALES', payload, invoiceDate);
+          await ingestVoucherLocally(companyId, {
+            id: offlineRes.localId,
+            voucherType: 'SALES',
+            voucherNumber: offlineRes.localId,
+            voucherDate: invoiceDate,
+            dueDate: (payload as any).due_date || invoiceDate,
+            totalAmount: grandTotal,
+            partyName: selectedParty?.name || 'Customer',
+            partyLedgerId: selectedParty?.id || null,
+            status: 'POSTED',
+          });
           toast.success(
             "⚡ Saved Offline to Local Database!",
             `Stored securely on device (${offlineRes.localId}). Will sync to Neon cloud automatically.`

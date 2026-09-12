@@ -1,5 +1,6 @@
 import { offlineDb } from "../db/offlineDb";
-import { executeClientOutboxSync, pullIncrementalChanges } from "../sync/sync-worker";
+import { executeClientOutboxSync, pullIncrementalChanges, ingestVoucherLocally, triggerFullSync } from "../sync/sync-worker";
+import type { SyncedVoucher } from "../db/offlineDb";
 
 export interface SyncStatusInfo {
   status: "IDLE" | "SYNCING" | "ERROR" | "OFFLINE";
@@ -23,6 +24,29 @@ export class SyncRepository {
       console.warn("[SyncRepo] Sync failed:", e);
       return false;
     }
+  }
+
+  /**
+   * Immediately ingests a created voucher into local IndexedDB before navigation.
+   */
+  async ingestVoucherLocally(
+    companyId: string,
+    voucher: Partial<SyncedVoucher> & {
+      id: string;
+      voucherType: string;
+      voucherNumber: string;
+      voucherDate: string;
+      totalAmount: number | string;
+    }
+  ): Promise<void> {
+    await ingestVoucherLocally(companyId, voucher);
+  }
+
+  /**
+   * Full push & pull sync.
+   */
+  async triggerFullSync(companyId?: string): Promise<void> {
+    await triggerFullSync(companyId);
   }
 
   /**

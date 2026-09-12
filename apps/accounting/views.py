@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
 from decimal import Decimal
+from django.utils import timezone
 
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
@@ -139,9 +140,23 @@ class CreateSalesInvoiceAPIView(APIView):
             return Response({
                 "success": True,
                 "message": "Sales Invoice Generated Successfully.",
+                "voucher_id": str(voucher.id),
                 "voucher_number": voucher.voucher_number,
                 "status": voucher.status,
-                "total_amount": voucher.total_amount
+                "total_amount": voucher.total_amount,
+                "voucher": {
+                    "id": str(voucher.id),
+                    "voucher_type": voucher.voucher_type,
+                    "voucher_number": voucher.voucher_number,
+                    "voucher_date": str(voucher.voucher_date),
+                    "due_date": str(voucher.due_date) if voucher.due_date else None,
+                    "party_ledger_id": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
+                    "party_name": voucher.party_ledger.name if voucher.party_ledger else (voucher.buyer_name or ''),
+                    "status": voucher.status,
+                    "total_amount": str(voucher.total_amount or '0.00'),
+                    "narration": voucher.narration or '',
+                    "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
+                }
             }, status=status.HTTP_201_CREATED)
             
         except Exception as e:
@@ -231,8 +246,23 @@ class CreatePurchaseInvoiceAPIView(APIView):
                     
             return Response({
                 "success": True,
+                "voucher_id": str(voucher.id),
                 "voucher_number": voucher.voucher_number,
-                "status": voucher.status
+                "status": voucher.status,
+                "total_amount": voucher.total_amount,
+                "voucher": {
+                    "id": str(voucher.id),
+                    "voucher_type": voucher.voucher_type,
+                    "voucher_number": voucher.voucher_number,
+                    "voucher_date": str(voucher.voucher_date),
+                    "due_date": str(voucher.due_date) if voucher.due_date else None,
+                    "party_ledger_id": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
+                    "party_name": voucher.party_ledger.name if voucher.party_ledger else '',
+                    "status": voucher.status,
+                    "total_amount": str(voucher.total_amount or '0.00'),
+                    "narration": voucher.narration or '',
+                    "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
+                }
             }, status=status.HTTP_201_CREATED)
             
         except Exception as e:
@@ -1521,7 +1551,20 @@ class CreatePaymentReceiptAPIView(APIView):
                 "message": f"{voucher_type.title()} Voucher posted successfully.",
                 "voucher_number": voucher.voucher_number,
                 "amount": str(amount),
-                "allocations": allocations
+                "allocations": allocations,
+                "voucher": {
+                    "id": str(voucher.id),
+                    "voucher_type": voucher.voucher_type,
+                    "voucher_number": voucher.voucher_number,
+                    "voucher_date": str(voucher.voucher_date),
+                    "due_date": str(voucher.due_date) if voucher.due_date else None,
+                    "party_ledger_id": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
+                    "party_name": voucher.party_ledger.name if voucher.party_ledger else '',
+                    "status": voucher.status,
+                    "total_amount": str(voucher.total_amount or '0.00'),
+                    "narration": voucher.narration or '',
+                    "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
+                }
             }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
@@ -1907,7 +1950,20 @@ class UniversalVoucherAPIView(APIView):
                     "message": "Voucher created and posted successfully.",
                     "id": str(voucher.id),
                     "voucher_number": voucher.voucher_number,
-                    "total_amount": str(voucher.total_amount)
+                    "total_amount": str(voucher.total_amount),
+                    "voucher": {
+                        "id": str(voucher.id),
+                        "voucher_type": voucher.voucher_type,
+                        "voucher_number": voucher.voucher_number,
+                        "voucher_date": str(voucher.voucher_date),
+                        "due_date": str(voucher.due_date) if voucher.due_date else None,
+                        "party_ledger_id": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
+                        "party_name": voucher.party_ledger.name if voucher.party_ledger else '',
+                        "status": voucher.status,
+                        "total_amount": str(voucher.total_amount or '0.00'),
+                        "narration": voucher.narration or '',
+                        "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
+                    }
                 }, status=status.HTTP_201_CREATED)
 
         except Exception as e:

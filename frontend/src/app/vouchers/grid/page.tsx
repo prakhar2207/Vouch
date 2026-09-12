@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense } from "react";
 import axios from "axios";
@@ -11,6 +11,8 @@ import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { useFinancialYear } from "@/context/FinancialYearContext";
+import { ledgersRepository } from "@/lib/data/ledgers-repository";
+import { ingestVoucherLocally } from "@/lib/sync/sync-worker";
 import {
   Layers,
   Plus,
@@ -161,8 +163,9 @@ function AgGridVoucherEntryContent() {
       if (!cid) return;
       setCompanyId(cid);
 
-      const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers });
-      setLedgers(ledgersRes.data.data || []);
+      // P0-7: Read ledgers directly from local IndexedDB read model
+      const { data: localLedgers } = await ledgersRepository.getLedgers(cid);
+      setLedgers(localLedgers || []);
     } catch (err) {
       console.error(err);
     }
@@ -487,6 +490,13 @@ function AgGridVoucherEntryContent() {
       };
 
       const res = await axios.post(`${API_BASE_URL}/api/vouchers/`, payload, { headers });
+
+      if (res.data?.voucher) {
+        await ingestVoucherLocally(companyId, {
+          ...res.data.voucher,
+          totalAmount: res.data.voucher.total_amount || totalDebit,
+        });
+      }
 
       setStatusMessage({
         type: "success",

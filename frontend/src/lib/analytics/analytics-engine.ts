@@ -1,5 +1,20 @@
 import { offlineDb, SyncedVoucher, SyncedLedger, SyncedProduct } from "../db/offlineDb";
 
+/**
+ * Returns YYYY-MM-DD string in Indian Standard Time (Asia/Kolkata).
+ */
+export function getIndiaTodayStr(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+}
+
+/**
+ * Returns YYYY-MM-DD string N days ago in Indian Standard Time (Asia/Kolkata).
+ */
+export function getIndiaDateDaysAgo(days: number): string {
+  const d = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(d);
+}
+
 export interface DashboardKpis {
   today_sales: number;
   today_collections: number;
@@ -81,7 +96,7 @@ export class LocalAnalyticsEngine {
       .toArray();
 
     const activeVouchers = allCompanyVouchers.filter(
-      (v) => v.status === "POSTED" || v.status === "CORRECTED"
+      (v) => v.status === "POSTED"
     );
 
     // 2. Fetch ledgers for active company
@@ -99,9 +114,9 @@ export class LocalAnalyticsEngine {
     // 4. Fetch sync metadata
     const syncMeta = await offlineDb.syncMeta.get(companyId);
 
-    // Compute date ranges
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    // Compute date ranges in Indian Standard Time (IST)
+    const todayStr = getIndiaTodayStr();
+    const thirtyDaysAgo = getIndiaDateDaysAgo(30);
 
     // --- A. Financial KPIs ---
     let todaySales = 0;
@@ -111,7 +126,7 @@ export class LocalAnalyticsEngine {
     let salesCount = 0;
     let purchaseCount = 0;
 
-    const salesByParty: Record<string, { count: number; total: number; lastDate: string }> = {};
+    const salesByParty: Record<string, { name: string; count: number; total: number; lastDate: string }> = {};
     const salesByDate: Record<string, number> = {};
     const overdueInvoices: SyncedVoucher[] = [];
 
@@ -135,19 +150,21 @@ export class LocalAnalyticsEngine {
         // Daily trend accumulation
         salesByDate[vDate] = (salesByDate[vDate] || 0) + amt;
 
-        // Customer RFM accumulation
+        // Customer RFM accumulation (Canonical partyLedgerId grouping)
+        const partyKey = v.partyLedgerId || v.partyName || "Counter Sale / Cash";
         const partyName = v.partyName || "Counter Sale / Cash";
-        if (!salesByParty[partyName]) {
-          salesByParty[partyName] = { count: 0, total: 0, lastDate: vDate };
+        if (!salesByParty[partyKey]) {
+          salesByParty[partyKey] = { name: partyName, count: 0, total: 0, lastDate: vDate };
         }
-        salesByParty[partyName].count += 1;
-        salesByParty[partyName].total += amt;
-        if (vDate > salesByParty[partyName].lastDate) {
-          salesByParty[partyName].lastDate = vDate;
+        salesByParty[partyKey].count += 1;
+        salesByParty[partyKey].total += amt;
+        if (vDate > salesByParty[partyKey].lastDate) {
+          salesByParty[partyKey].lastDate = vDate;
         }
 
-        // Check overdue
-        if (vDate < thirtyDaysAgo) {
+        // Check overdue (P0-6: Canonical due-date calculation)
+        const isOverdue = v.dueDate ? (v.dueDate < todayStr) : (vDate < thirtyDaysAgo);
+        if (isOverdue) {
           overdueInvoices.push(v);
         }
       } else if (v.voucherType === "PURCHASE") {
@@ -215,10 +232,11 @@ export class LocalAnalyticsEngine {
       });
     }
     for (const oi of overdueInvoices.slice(0, 3)) {
+      const dueInfo = oi.dueDate ? `was due on ${oi.dueDate}` : "is past 30 days";
       alerts.push({
         type: "OVERDUE_INVOICE",
         severity: "INFO",
-        message: `Overdue Bill: Invoice #${oi.voucherNumber} for ${oi.partyName || "Customer"} (₹${oi.totalAmount.toLocaleString("en-IN")}) is past 30 days.`,
+        message: `Overdue Bill: Invoice #${oi.voucherNumber} for ${oi.partyName || "Customer"} (₹${oi.totalAmount.toLocaleString("en-IN")}) ${dueInfo}.`,
       });
     }
 
@@ -388,7 +406,7 @@ export class LocalAnalyticsEngine {
    * Deterministic RFM Customer Segmentation.
    */
   private static calculateRfmClusters(
-    salesByParty: Record<string, { count: number; total: number; lastDate: string }>,
+    salesByParty: Record<string, { name?: string; count: number; total: number; lastDate: string }>,
     todayStr: string
   ): RfmCluster[] {
     const today = new Date(todayStr);
@@ -396,12 +414,12 @@ export class LocalAnalyticsEngine {
 
     if (parties.length === 0) return [];
 
-    const rawList = parties.map((pName) => {
-      const info = salesByParty[pName];
+    const rawList = parties.map((pKey) => {
+      const info = salesByParty[pKey];
       const lastD = new Date(info.lastDate);
       const recency = Math.max(0, Math.floor((today.getTime() - lastD.getTime()) / (24 * 60 * 60 * 1000)));
       return {
-        party_ledger__name: pName,
+        party_ledger__name: info.name || pKey,
         recency,
         frequency: info.count,
         monetary: Math.round(info.total * 100) / 100,
@@ -451,7 +469,7 @@ export class LocalAnalyticsEngine {
       .toArray();
 
     const activeVouchers = vouchers.filter(
-      (v) => v.status === "POSTED" || v.status === "CORRECTED"
+      (v) => v.status === "POSTED"
     );
 
     const dailyMap: Record<string, { sales: number; purchases: number; collections: number; payments: number; salesCount: number; purchaseCount: number }> = {};
@@ -541,7 +559,7 @@ export class LocalAnalyticsEngine {
 
     const affectedDates = Array.from(new Set(changedVouchers.map((v) => v.voucherDate).filter(Boolean)));
     const affectedPartyIds = Array.from(
-      new Set(changedVouchers.map((v) => v.partyLedgerId).filter(Boolean))
+      new Set(changedVouchers.map((v) => v.partyLedgerId || v.partyName).filter(Boolean))
     ) as string[];
 
     // 1. Update only affected Daily aggregates
@@ -550,7 +568,7 @@ export class LocalAnalyticsEngine {
       const dayVouchers = await offlineDb.syncedVouchers
         .where("companyId")
         .equals(companyId)
-        .and((v) => v.voucherDate === d && (v.status === "POSTED" || v.status === "CORRECTED"))
+        .and((v) => v.voucherDate === d && v.status === "POSTED")
         .toArray();
 
       let sales = 0, purchases = 0, collections = 0, payments = 0, salesCount = 0, purchaseCount = 0;
@@ -592,7 +610,7 @@ export class LocalAnalyticsEngine {
       const pVouchers = await offlineDb.syncedVouchers
         .where("companyId")
         .equals(companyId)
-        .and((v) => v.partyLedgerId === pId && (v.status === "POSTED" || v.status === "CORRECTED"))
+        .and((v) => (v.partyLedgerId === pId || (!v.partyLedgerId && v.partyName === pId)) && v.status === "POSTED")
         .toArray();
 
       let sales = 0, purchases = 0, receipts = 0, payments = 0, invoiceCount = 0;
