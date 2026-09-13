@@ -60,6 +60,8 @@ export interface SyncedLedger {
   group?: string;
   group_id?: string;
   nature?: string;
+  balanceState?: string;
+  displayAmount?: number;
   serverUpdatedAt: number;
 }
 
@@ -219,6 +221,19 @@ export class VouchOfflineDB extends Dexie {
       syncedBankTransactions: "id, companyId, bankLedgerId, status, transactionDate, serverUpdatedAt, [companyId+status], [companyId+bankLedgerId]",
     });
     this.version(6).stores({
+      vouchers: "++id, localId, voucherType, status, createdAt",
+      masters: "key, updatedAt",
+      ocrCache: "fileHash, cachedAt",
+      syncedVouchers: "id, companyId, voucherType, voucherDate, dueDate, status, partyLedgerId, serverUpdatedAt, [companyId+voucherDate], [companyId+status], [companyId+voucherType]",
+      syncedLedgers: "id, companyId, ledgerType, name, [companyId+ledgerType]",
+      syncedProducts: "id, companyId, sku, [companyId+currentStock]",
+      syncMeta: "companyId, lastSyncAt, syncStatus",
+      analyticsDaily: "id, companyId, date, [companyId+date]",
+      analyticsParty: "id, companyId, partyId, [companyId+partyId]",
+      syncedBankTransactions: "id, companyId, bankLedgerId, status, transactionDate, serverUpdatedAt, [companyId+status], [companyId+bankLedgerId]",
+      syncedPaymentAllocations: "id, companyId, paymentVoucherId, invoiceVoucherId, [companyId+paymentVoucherId], [companyId+invoiceVoucherId]"
+    });
+    this.version(7).stores({
       vouchers: "++id, localId, voucherType, status, createdAt",
       masters: "key, updatedAt",
       ocrCache: "fileHash, cachedAt",

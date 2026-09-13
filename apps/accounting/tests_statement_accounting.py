@@ -151,7 +151,9 @@ class StatementAccountingRegressionTests(TestCase):
         
         response = client.get(f'/api/v1/accounting/reports/ledger-statement/{self.company.id}/{supplier.id}/')
         self.assertEqual(response.status_code, 200)
-        data = response.json()
+        json_resp = response.json()
+        self.assertTrue(json_resp['success'])
+        data = json_resp['data']
         
         self.assertIn('closing_balance', data)
         self.assertEqual(data['closing_balance'], '68362.12')

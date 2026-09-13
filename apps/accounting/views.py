@@ -1401,28 +1401,31 @@ class LedgerStatementAPIView(APIView):
                 })
 
             return Response({
-                "ledger": {
-                    "id": ledger.id,
-                    "name": ledger.name,
-                    "ledger_type": ledger.ledger_type,
-                    "current_balance": str(ledger.current_balance),
-                    "balance_type": ledger.opening_balance_type
-                },
-                "party_role": role,
-                "opening_balance": f"{Decimal(str(period_opening_amount)).quantize(Decimal('0.00'))}",
-                "opening_balance_type": period_opening_type,
-                "period_debit": f"{Decimal(str(total_period_debit)).quantize(Decimal('0.00'))}",
-                "period_credit": f"{Decimal(str(total_period_credit)).quantize(Decimal('0.00'))}",
-                "closing_balance": f"{Decimal(str(closing_amount)).quantize(Decimal('0.00'))}",
-                "closing_balance_type": closing_type,
-                "semantic_state": semantic_state,
-                "display_amount": f"{Decimal(str(closing_amount)).quantize(Decimal('0.00'))}",
-                "entries": statement_rows,
-                "pagination": {
-                    "limit": limit,
-                    "offset": offset,
-                    "total_count": total_count,
-                    "has_more": (offset + limit) < total_count
+                "success": True,
+                "data": {
+                    "ledger": {
+                        "id": ledger.id,
+                        "name": ledger.name,
+                        "ledger_type": ledger.ledger_type,
+                        "current_balance": str(ledger.current_balance),
+                        "balance_type": ledger.opening_balance_type
+                    },
+                    "party_role": role,
+                    "opening_balance": f"{Decimal(str(period_opening_amount)).quantize(Decimal('0.00'))}",
+                    "opening_balance_type": period_opening_type,
+                    "period_debit": f"{Decimal(str(total_period_debit)).quantize(Decimal('0.00'))}",
+                    "period_credit": f"{Decimal(str(total_period_credit)).quantize(Decimal('0.00'))}",
+                    "closing_balance": f"{Decimal(str(closing_amount)).quantize(Decimal('0.00'))}",
+                    "closing_balance_type": closing_type,
+                    "semantic_state": semantic_state,
+                    "display_amount": f"{Decimal(str(closing_amount)).quantize(Decimal('0.00'))}",
+                    "entries": statement_rows,
+                    "pagination": {
+                        "limit": limit,
+                        "offset": offset,
+                        "total_count": total_count,
+                        "has_more": (offset + limit) < total_count
+                    }
                 }
             })
         except Exception as e:

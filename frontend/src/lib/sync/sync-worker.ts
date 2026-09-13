@@ -384,6 +384,8 @@ export async function pullIncrementalChanges(
           openingBalance: Number(l.opening_balance) || 0,
           openingBalanceType: l.opening_balance_type || "DEBIT",
           phone: l.phone,
+          balanceState: l.balance_state,
+          displayAmount: Number(l.display_amount) || 0,
           serverUpdatedAt: l.server_updated_at || Date.now(),
         }));
         if (toPut.length > 0) {

@@ -49,6 +49,8 @@ export class LedgersRepository {
               openingBalance: Number(l.opening_balance) || 0,
               openingBalanceType: l.opening_balance_type || "DEBIT",
               phone: l.phone || "",
+              balanceState: l.balance_state,
+              displayAmount: Number(l.display_amount) || 0,
               serverUpdatedAt: Date.now(),
             }));
             await offlineDb.syncedLedgers.bulkPut(toPut);
@@ -119,6 +121,8 @@ export class LedgersRepository {
         current_balance: l.currentBalance,
         opening_balance: l.openingBalance,
         opening_balance_type: l.openingBalanceType,
+        balance_state: l.balanceState,
+        display_amount: l.displayAmount,
       };
     });
 
