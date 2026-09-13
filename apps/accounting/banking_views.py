@@ -63,6 +63,11 @@ class BankStatementUploadAPIView(APIView):
             return Response({"error": f"Statement parsing failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
 
+from decimal import Decimal
+from django.db.models import Q
+import json
+import ast
+
 class BankTransactionListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -74,14 +79,16 @@ class BankTransactionListAPIView(APIView):
         ).only(
             'id', 'transaction_date', 'value_date', 'description', 'normalized_narration',
             'reference_number', 'debit_amount', 'credit_amount', 'balance', 'status',
+            'is_excluded', 'exclusion_reason', 'excluded_at',
             'match_confidence', 'match_notes',
             'bank_ledger__id', 'bank_ledger__name',
             'matched_party__id', 'matched_party__name', 'matched_party__ledger_type',
             'matched_voucher__id', 'matched_voucher__voucher_number',
         )
 
-        # Filter by status
+        # Status filter
         st = request.query_params.get('status')
+        raw_statuses = []
         if st:
             raw_statuses = [s.strip().upper() for s in st.split(',') if s.strip()]
             resolved_statuses = []
@@ -96,7 +103,32 @@ class BankTransactionListAPIView(APIView):
                     resolved_statuses.append(s)
             qs = qs.filter(status__in=list(set(resolved_statuses)))
 
-        # Filter by bank ledger
+        # Excluded filter
+        is_excluded_param = request.query_params.get('is_excluded')
+        if is_excluded_param is not None:
+            is_exc = is_excluded_param.strip().lower() in ['true', '1']
+            qs = qs.filter(is_excluded=is_exc)
+        elif 'EXCLUDED' in raw_statuses:
+            qs = qs.filter(is_excluded=True)
+        else:
+            qs = qs.filter(is_excluded=False)
+
+        # Direction filter (Money IN vs Money OUT)
+        direction = request.query_params.get('direction', '').strip().upper()
+        if direction in ['IN', 'CREDIT']:
+            qs = qs.filter(credit_amount__gt=Decimal('0.00'))
+        elif direction in ['OUT', 'DEBIT']:
+            qs = qs.filter(debit_amount__gt=Decimal('0.00'))
+
+        # Date range filters
+        start_date = request.query_params.get('start_date')
+        if start_date:
+            qs = qs.filter(transaction_date__gte=start_date)
+        end_date = request.query_params.get('end_date')
+        if end_date:
+            qs = qs.filter(transaction_date__lte=end_date)
+
+        # Bank ledger filter
         bank_ledger_id = request.query_params.get('bank_ledger_id')
         if bank_ledger_id and str(bank_ledger_id).strip().lower() not in ['null', 'undefined', 'all', 'none', '']:
             try:
@@ -106,10 +138,24 @@ class BankTransactionListAPIView(APIView):
             except (ValueError, TypeError, AttributeError):
                 pass
 
-        # Search query
+        # Multi-field search (narration, description, reference, party name, or amount)
         search = request.query_params.get('search')
-        if search:
-            qs = qs.filter(normalized_narration__icontains=search.strip().upper())
+        if search and search.strip():
+            s = search.strip()
+            search_filter = (
+                Q(normalized_narration__icontains=s) |
+                Q(description__icontains=s) |
+                Q(reference_number__icontains=s) |
+                Q(matched_party__name__icontains=s)
+            )
+            # Check if search is numeric amount
+            clean_amt = s.replace(',', '').replace('₹', '').replace(' ', '')
+            try:
+                amt_val = Decimal(clean_amt)
+                search_filter |= Q(debit_amount=amt_val) | Q(credit_amount=amt_val)
+            except Exception:
+                pass
+            qs = qs.filter(search_filter)
 
         # Pagination
         try:
@@ -125,6 +171,21 @@ class BankTransactionListAPIView(APIView):
 
         data = []
         for tx in results:
+            # Clean match_notes to guarantee a valid dict
+            raw_notes = tx.match_notes
+            if isinstance(raw_notes, str):
+                try:
+                    notes = json.loads(raw_notes)
+                except Exception:
+                    try:
+                        notes = ast.literal_eval(raw_notes)
+                    except Exception:
+                        notes = {"notes": raw_notes}
+            elif isinstance(raw_notes, dict):
+                notes = raw_notes
+            else:
+                notes = {}
+
             data.append({
                 "id": str(tx.id),
                 "transaction_date": tx.transaction_date.isoformat(),
@@ -136,6 +197,9 @@ class BankTransactionListAPIView(APIView):
                 "credit_amount": str(tx.credit_amount),
                 "balance": str(tx.balance) if tx.balance is not None else None,
                 "status": tx.status,
+                "is_excluded": tx.is_excluded,
+                "exclusion_reason": tx.exclusion_reason,
+                "excluded_at": tx.excluded_at.isoformat() if tx.excluded_at else None,
                 "bank_ledger": {
                     "id": str(tx.bank_ledger.id),
                     "name": tx.bank_ledger.name
@@ -150,7 +214,7 @@ class BankTransactionListAPIView(APIView):
                     "voucher_number": tx.matched_voucher.voucher_number
                 } if tx.matched_voucher else None,
                 "match_confidence": tx.match_confidence,
-                "match_notes": tx.match_notes
+                "match_notes": notes
             })
 
         return Response({
@@ -167,7 +231,12 @@ class BankTransactionResolveAPIView(APIView):
     def post(self, request, pk, *args, **kwargs):
         """
         Executes an action to reconcile/resolve a bank transaction.
-        Action types: MATCH_PARTY, RECORD_PAYMENT, RECORD_EXPENSE, RECORD_TRANSFER, OWNER_DRAWING, IGNORE.
+        Action types:
+        - MATCH_PARTY / RECORD_PAYMENT / CONFIRM_RECEIPT / CONFIRM_PAYMENT
+        - CONFIRM_CUSTOMER_RECEIPT / CONFIRM_SUPPLIER_PAYMENT
+        - CONFIRM_SUPPLIER_REFUND / CONFIRM_CUSTOMER_REFUND
+        - RECORD_EXPENSE / RECORD_TRANSFER / OWNER_DRAWING
+        - IGNORE / EXCLUDE
         """
         company = get_authorized_company(request)
         tx = get_object_or_404(BankTransaction, id=pk, company=company)
@@ -248,18 +317,32 @@ class BankSummaryAPIView(APIView):
 class BankTransactionDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def delete(self, request, pk, *args, **kwargs):
+    def post(self, request, pk, *args, **kwargs):
         """
-        Deletes an individual bank transaction from the server.
-        Safely rolls back any generated reconciliation voucher.
+        Excludes an individual bank transaction with an audit reason.
+        If a voucher was generated, canonically reverses it.
         """
         company = get_authorized_company(request)
         tx = get_object_or_404(BankTransaction, id=pk, company=company)
+        reason = request.data.get('reason', 'User requested transaction exclusion')
         try:
-            BankReconciliationService.delete_transaction(tx)
-            return Response({"status": "SUCCESS", "message": "Transaction deleted successfully."}, status=status.HTTP_200_OK)
+            res = BankReconciliationService.exclude_transaction(tx, reason=reason, user=request.user)
+            return Response(res, status=status.HTTP_200_OK)
         except Exception as e:
-            return Response({"error": f"Failed to delete transaction: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": f"Failed to exclude transaction: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk, *args, **kwargs):
+        """
+        Safe non-destructive exclusion handler for DELETE requests.
+        """
+        company = get_authorized_company(request)
+        tx = get_object_or_404(BankTransaction, id=pk, company=company)
+        reason = request.query_params.get('reason') or request.data.get('reason', 'User requested transaction exclusion')
+        try:
+            res = BankReconciliationService.exclude_transaction(tx, reason=reason, user=request.user)
+            return Response(res, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": f"Failed to exclude transaction: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class BankStatementImportListAPIView(APIView):
@@ -267,10 +350,14 @@ class BankStatementImportListAPIView(APIView):
 
     def get(self, request, *args, **kwargs):
         """
-        Lists all uploaded statements for the company, optionally filtered by bank ledger.
+        Lists uploaded statements for the company, excluding voided/excluded statements unless requested.
         """
         company = get_authorized_company(request)
         qs = BankStatementImport.objects.filter(company=company).select_related('bank_ledger', 'created_by').order_by('-created_at')
+
+        include_excluded = request.query_params.get('include_excluded', 'false').lower() in ['true', '1']
+        if not include_excluded:
+            qs = qs.filter(is_excluded=False)
 
         bank_ledger_id = request.query_params.get('bank_ledger_id')
         if bank_ledger_id and str(bank_ledger_id).strip().lower() not in ['null', 'undefined', 'all', 'none', '']:
@@ -288,6 +375,10 @@ class BankStatementImportListAPIView(APIView):
                 "source_file_name": imp.source_file_name,
                 "file_format": imp.file_format,
                 "status": imp.status,
+                "is_excluded": imp.is_excluded,
+                "exclusion_reason": imp.exclusion_reason,
+                "statement_start_date": imp.statement_start_date.isoformat() if imp.statement_start_date else None,
+                "statement_end_date": imp.statement_end_date.isoformat() if imp.statement_end_date else None,
                 "total_rows": imp.total_rows,
                 "successful_rows": imp.successful_rows,
                 "failed_rows": imp.failed_rows,
@@ -306,18 +397,36 @@ class BankStatementImportListAPIView(APIView):
 class BankStatementImportDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def delete(self, request, pk, *args, **kwargs):
+    def post(self, request, pk, *args, **kwargs):
         """
-        Deletes a statement import and all associated bank transactions from the server.
+        Excludes an entire statement import with audit reason, reversing any generated vouchers.
         """
         company = get_authorized_company(request)
         statement_import = get_object_or_404(BankStatementImport, id=pk, company=company)
-        file_name = statement_import.source_file_name
+        reason = request.data.get('reason', 'User requested statement exclusion')
         try:
-            deleted_count = BankReconciliationService.delete_statement_import(statement_import)
+            count = BankReconciliationService.exclude_statement_import(statement_import, reason=reason, user=request.user)
             return Response({
                 "status": "SUCCESS",
-                "message": f"Statement '{file_name}' and {deleted_count} imported transactions were deleted from the server."
+                "message": f"Statement '{statement_import.source_file_name}' and {count} transactions excluded.",
+                "excluded_count": count
             }, status=status.HTTP_200_OK)
         except Exception as e:
-            return Response({"error": f"Failed to delete statement: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": f"Failed to exclude statement: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk, *args, **kwargs):
+        """
+        Safe non-destructive exclusion handler for DELETE requests.
+        """
+        company = get_authorized_company(request)
+        statement_import = get_object_or_404(BankStatementImport, id=pk, company=company)
+        reason = request.query_params.get('reason') or request.data.get('reason', 'User requested statement exclusion')
+        try:
+            count = BankReconciliationService.exclude_statement_import(statement_import, reason=reason, user=request.user)
+            return Response({
+                "status": "SUCCESS",
+                "message": f"Statement '{statement_import.source_file_name}' and {count} transactions excluded.",
+                "excluded_count": count
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": f"Failed to exclude statement: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)

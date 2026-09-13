@@ -383,6 +383,12 @@ class BankStatementImport(models.Model):
     calculated_closing_balance = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     balance_chain_valid = models.BooleanField(default=True)
     discrepancy_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    statement_start_date = models.DateField(null=True, blank=True)
+    statement_end_date = models.DateField(null=True, blank=True)
+    is_excluded = models.BooleanField(default=False, db_index=True)
+    exclusion_reason = models.TextField(blank=True, null=True)
+    excluded_at = models.DateTimeField(blank=True, null=True)
+    excluded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='excluded_statement_imports')
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='bank_imports')
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -390,6 +396,7 @@ class BankStatementImport(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['company', 'bank_ledger', '-created_at']),
+            models.Index(fields=['company', 'is_excluded']),
         ]
 
     def __str__(self):
@@ -404,6 +411,7 @@ class BankTransaction(models.Model):
         ('UNRESOLVED', 'Unresolved'),
         ('RECONCILED', 'Reconciled'),
         ('IGNORED', 'Ignored'),
+        ('EXCLUDED', 'Excluded'),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -423,6 +431,10 @@ class BankTransaction(models.Model):
     source_page = models.IntegerField(null=True, blank=True)
     extraction_confidence = models.FloatField(default=1.0)
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='UNPROCESSED', db_index=True)
+    is_excluded = models.BooleanField(default=False, db_index=True)
+    exclusion_reason = models.TextField(blank=True, null=True)
+    excluded_at = models.DateTimeField(blank=True, null=True)
+    excluded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='excluded_bank_transactions')
     matched_party = models.ForeignKey(Ledger, on_delete=models.SET_NULL, null=True, blank=True, related_name='matched_bank_transactions')
     matched_voucher = models.ForeignKey(Voucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='reconciled_bank_transactions')
     matched_invoice = models.ForeignKey(Voucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='invoice_bank_transactions')
@@ -436,8 +448,9 @@ class BankTransaction(models.Model):
         indexes = [
             models.Index(fields=['company', 'transaction_date']),
             models.Index(fields=['company', 'status']),
+            models.Index(fields=['company', 'is_excluded', 'status']),
             models.Index(fields=['company', 'reference_number']),
-            models.Index(fields=['company', 'bank_ledger']),
+            models.Index(fields=['company', 'bank_ledger', 'transaction_date']),
             models.Index(fields=['company', 'fingerprint']),
         ]
 

@@ -48,23 +48,28 @@ class BankReconciliationService:
         bank_ledger = bank_tx.bank_ledger
 
         if bank_tx.status == 'RECONCILED':
-            v_num = bank_tx.matched_voucher.voucher_number if bank_tx.matched_voucher else 'unknown'
+            if bank_tx.matched_voucher:
+                return {
+                    "status": "SUCCESS",
+                    "voucher_id": str(bank_tx.matched_voucher.id),
+                    "voucher_number": bank_tx.matched_voucher.voucher_number,
+                    "message": "Transaction already reconciled.",
+                    "allocations": []
+                }
             raise ValidationError(
-                f"Bank transaction '{bank_tx.description}' has already been reconciled into voucher #{v_num}. "
+                f"Bank transaction '{bank_tx.description}' has already been reconciled. "
                 f"One bank transaction can produce only one accounting outcome."
             )
 
         fy = InvoiceSequenceService.get_or_create_active_fy(company, bank_tx.transaction_date)
 
-        if action_type == 'IGNORE':
-            bank_tx.status = 'IGNORED'
-            bank_tx.match_notes['ignore_reason'] = payload.get('reason', 'User marked as ignored')
-            bank_tx.save(update_fields=['status', 'match_notes'])
-            return {"status": "SUCCESS", "message": "Transaction marked as ignored."}
+        if action_type in ['IGNORE', 'EXCLUDE']:
+            reason = payload.get('reason', 'User marked as ignored/excluded')
+            return cls.exclude_transaction(bank_tx, reason=reason, user=user)
 
         created_voucher = None
 
-        if action_type in ['MATCH_PARTY', 'RECORD_PAYMENT', 'CONFIRM_RECEIPT', 'CONFIRM_PAYMENT']:
+        if action_type in ['MATCH_PARTY', 'RECORD_PAYMENT', 'CONFIRM_RECEIPT', 'CONFIRM_PAYMENT', 'CONFIRM_CUSTOMER_RECEIPT', 'CONFIRM_SUPPLIER_PAYMENT', 'CONFIRM_SUPPLIER_REFUND', 'CONFIRM_CUSTOMER_REFUND']:
             party_id = payload.get('party_id')
             if not party_id:
                 raise ValidationError("Party ID is required to match transaction.")
@@ -97,7 +102,7 @@ class BankReconciliationService:
                 voucher_date=bank_tx.transaction_date,
                 party_ledger=party,
                 reference_number=bank_tx.reference_number or "",
-                status='POSTED',
+                status='DRAFT',
                 total_amount=amount,
                 narration=narration,
                 created_by=user
@@ -140,12 +145,14 @@ class BankReconciliationService:
                     narration=f"Withdrawal from {bank_ledger.name}"
                 )
 
-            # Auto-allocate against oldest unpaid invoices/bills
-            allocations = PaymentAllocationService.auto_allocate_voucher(created_voucher)
+            # Canonical posting pipeline (enforces double entry, row locks, balances)
+            VoucherService.post_voucher(created_voucher)
 
-            # Recalculate balances
-            VoucherService.recalculate_ledger_balance(bank_ledger)
-            VoucherService.recalculate_ledger_balance(party)
+            # Reference-aware and concurrency-safe allocation
+            allocations = PaymentAllocationService.auto_allocate_voucher(
+                created_voucher,
+                preferred_invoice_id=payload.get('invoice_id')
+            )
 
             # Store learned mapping
             upi_id = PartyIntelligenceService.extract_upi_id(bank_tx.normalized_narration)
@@ -199,7 +206,6 @@ class BankReconciliationService:
         elif action_type == 'RECORD_EXPENSE':
             expense_ledger_id = payload.get('expense_ledger_id')
             if not expense_ledger_id:
-                # Default or find Bank Charges ledger
                 exp_grp, _ = LedgerGroup.objects.get_or_create(
                     company=company,
                     name="Indirect Expenses",
@@ -222,7 +228,7 @@ class BankReconciliationService:
                 voucher_date=bank_tx.transaction_date,
                 party_ledger=exp_ledger,
                 reference_number=bank_tx.reference_number or "",
-                status='POSTED',
+                status='DRAFT',
                 total_amount=amount,
                 narration=f"Bank Expense via {bank_ledger.name}: {bank_tx.description}",
                 created_by=user
@@ -238,8 +244,7 @@ class BankReconciliationService:
                 debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Bank Charge from {bank_ledger.name}"
             )
 
-            VoucherService.recalculate_ledger_balance(bank_ledger)
-            VoucherService.recalculate_ledger_balance(exp_ledger)
+            VoucherService.post_voucher(created_voucher)
 
             bank_tx.matched_party = exp_ledger
             bank_tx.matched_voucher = created_voucher
@@ -267,25 +272,22 @@ class BankReconciliationService:
                 voucher_number=v_num,
                 voucher_date=bank_tx.transaction_date,
                 reference_number=bank_tx.reference_number or "",
-                status='POSTED',
+                status='DRAFT',
                 total_amount=amount,
                 narration=f"Contra Fund Transfer: {bank_tx.description}",
                 created_by=user
             )
 
             if is_money_in:
-                # Deposit into this bank from target (e.g. Cash Deposit or Transfer in)
-                # Dr Bank, Cr Target
+                # Deposit into this bank from target (e.g. Cash Deposit or Transfer in): Dr Bank, Cr Target
                 LedgerEntry.objects.create(company=company, voucher=created_voucher, ledger=bank_ledger, debit_amount=amount, credit_amount=Decimal('0.00'))
                 LedgerEntry.objects.create(company=company, voucher=created_voucher, ledger=target_ledger, debit_amount=Decimal('0.00'), credit_amount=amount)
             else:
-                # Withdrawal from this bank to target (e.g. Cash Withdrawal or Transfer out)
-                # Dr Target, Cr Bank
+                # Withdrawal from this bank to target: Dr Target, Cr Bank
                 LedgerEntry.objects.create(company=company, voucher=created_voucher, ledger=target_ledger, debit_amount=amount, credit_amount=Decimal('0.00'))
                 LedgerEntry.objects.create(company=company, voucher=created_voucher, ledger=bank_ledger, debit_amount=Decimal('0.00'), credit_amount=amount)
 
-            VoucherService.recalculate_ledger_balance(bank_ledger)
-            VoucherService.recalculate_ledger_balance(target_ledger)
+            VoucherService.post_voucher(created_voucher)
 
             bank_tx.matched_voucher = created_voucher
             bank_tx.status = 'RECONCILED'
@@ -315,7 +317,7 @@ class BankReconciliationService:
                 voucher_number=v_num,
                 voucher_date=bank_tx.transaction_date,
                 party_ledger=drawings_ledger,
-                status='POSTED',
+                status='DRAFT',
                 total_amount=amount,
                 narration=f"Owner {'Capital Deposit' if is_money_in else 'Personal Drawing'} via {bank_ledger.name}",
                 created_by=user
@@ -330,8 +332,7 @@ class BankReconciliationService:
                 LedgerEntry.objects.create(company=company, voucher=created_voucher, ledger=drawings_ledger, debit_amount=amount, credit_amount=Decimal('0.00'))
                 LedgerEntry.objects.create(company=company, voucher=created_voucher, ledger=bank_ledger, debit_amount=Decimal('0.00'), credit_amount=amount)
 
-            VoucherService.recalculate_ledger_balance(bank_ledger)
-            VoucherService.recalculate_ledger_balance(drawings_ledger)
+            VoucherService.post_voucher(created_voucher)
 
             bank_tx.matched_party = drawings_ledger
             bank_tx.matched_voucher = created_voucher
@@ -348,8 +349,54 @@ class BankReconciliationService:
             raise ValidationError(f"Unknown reconciliation action '{action_type}'.")
 
     @classmethod
+    def get_bank_balance_as_of(cls, bank_ledger: Ledger, cutoff_date: Optional[datetime.date] = None) -> Decimal:
+        """
+        Calculates the authoritative book ledger balance for a bank account strictly as of cutoff_date.
+        Includes opening balance plus all posted / reversed / corrected voucher ledger entries
+        on or before cutoff_date.
+        """
+        from apps.accounting.models import LedgerEntry
+        from django.db.models import Sum
+
+        if not bank_ledger:
+            return Decimal('0.00')
+
+        has_opening_entries = LedgerEntry.objects.filter(
+            ledger=bank_ledger,
+            voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED'],
+            voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
+        ).exists()
+
+        op_balance = Decimal('0.00') if has_opening_entries else Decimal(str(bank_ledger.opening_balance or '0.00'))
+
+        if bank_ledger.opening_balance_type == 'CREDIT':
+            op_dr = Decimal('0.00')
+            op_cr = op_balance
+        else:
+            op_dr = op_balance
+            op_cr = Decimal('0.00')
+
+        entry_filter = {
+            'ledger': bank_ledger,
+            'voucher__status__in': ['POSTED', 'REVERSED', 'CORRECTED'],
+        }
+        if cutoff_date:
+            entry_filter['voucher__voucher_date__lte'] = cutoff_date
+
+        totals = LedgerEntry.objects.filter(**entry_filter).aggregate(
+            total_dr=Sum('debit_amount'),
+            total_cr=Sum('credit_amount')
+        )
+        total_dr = op_dr + Decimal(str(totals['total_dr'] or '0.00'))
+        total_cr = op_cr + Decimal(str(totals['total_cr'] or '0.00'))
+
+        if bank_ledger.normal_balance == 'CREDIT':
+            return total_cr - total_dr
+        return total_dr - total_cr
+
+    @classmethod
     def get_reconciliation_summary(cls, company: Company, bank_ledger_id: Optional[str] = None) -> Dict[str, Any]:
-        """Calculates aggregate dashboard counters for bank reconciliation."""
+        """Calculates aggregate dashboard counters and date-bound verification for bank reconciliation."""
         from django.db.models import Sum, Count, Q
 
         valid_bank_id = None
@@ -367,15 +414,16 @@ class BankReconciliationService:
 
         stats = qs.aggregate(
             total=Count('id'),
-            matched_auto=Count('id', filter=Q(status='MATCHED_AUTO')),
-            matched_suggested=Count('id', filter=Q(status='MATCHED_SUGGESTED')),
-            unresolved=Count('id', filter=Q(status__in=['UNRESOLVED', 'UNPROCESSED'])),
-            reconciled=Count('id', filter=Q(status='RECONCILED')),
-            ignored=Count('id', filter=Q(status='IGNORED')),
-            total_debits=Sum('debit_amount'),
-            total_credits=Sum('credit_amount'),
-            unrec_debit=Sum('debit_amount', filter=Q(status__in=['UNPROCESSED', 'UNRESOLVED', 'MATCHED_SUGGESTED'])),
-            unrec_credit=Sum('credit_amount', filter=Q(status__in=['UNPROCESSED', 'UNRESOLVED', 'MATCHED_SUGGESTED']))
+            matched_auto=Count('id', filter=Q(status='MATCHED_AUTO', is_excluded=False)),
+            matched_suggested=Count('id', filter=Q(status='MATCHED_SUGGESTED', is_excluded=False)),
+            unresolved=Count('id', filter=Q(status__in=['UNRESOLVED', 'UNPROCESSED'], is_excluded=False)),
+            reconciled=Count('id', filter=Q(status='RECONCILED', is_excluded=False)),
+            ignored=Count('id', filter=Q(status='IGNORED', is_excluded=False)),
+            excluded=Count('id', filter=Q(is_excluded=True)),
+            total_debits=Sum('debit_amount', filter=Q(is_excluded=False)),
+            total_credits=Sum('credit_amount', filter=Q(is_excluded=False)),
+            unrec_debit=Sum('debit_amount', filter=Q(status__in=['UNPROCESSED', 'UNRESOLVED', 'MATCHED_SUGGESTED'], is_excluded=False)),
+            unrec_credit=Sum('credit_amount', filter=Q(status__in=['UNPROCESSED', 'UNRESOLVED', 'MATCHED_SUGGESTED'], is_excluded=False))
         )
 
         total_tx = stats['total'] or 0
@@ -384,19 +432,43 @@ class BankReconciliationService:
         unresolved = stats['unresolved'] or 0
         reconciled = stats['reconciled'] or 0
         ignored = stats['ignored'] or 0
+        excluded = stats['excluded'] or 0
 
-        # Calculate statement closing balance (latest transaction balance if available)
+        # Determine cutoff date:
+        # 1. From latest non-excluded statement import
+        # 2. From latest non-excluded transaction
+        statement_cutoff_date = None
+        if valid_bank_id:
+            latest_import = BankStatementImport.objects.filter(
+                company=company,
+                bank_ledger_id=valid_bank_id,
+                is_excluded=False
+            ).order_by('-statement_end_date', '-created_at').first()
+            if latest_import and latest_import.statement_end_date:
+                statement_cutoff_date = latest_import.statement_end_date
+
+        if not statement_cutoff_date:
+            latest_tx_date = qs.filter(is_excluded=False).order_by('-transaction_date').values_list('transaction_date', flat=True).first()
+            if latest_tx_date:
+                statement_cutoff_date = latest_tx_date
+
+        # Calculate statement closing balance
         statement_closing_balance = None
-        latest_tx = qs.exclude(balance__isnull=True).order_by('-transaction_date', '-created_at').first()
+        latest_tx = qs.filter(is_excluded=False).exclude(balance__isnull=True).order_by('-transaction_date', '-created_at').first()
         if latest_tx and latest_tx.balance is not None:
             statement_closing_balance = str(latest_tx.balance)
+        elif valid_bank_id:
+            stmt = BankStatementImport.objects.filter(company=company, bank_ledger_id=valid_bank_id, is_excluded=False).order_by('-created_at').first()
+            if stmt and stmt.closing_balance is not None:
+                statement_closing_balance = str(stmt.closing_balance)
 
-        # Calculate book closing balance
+        # Calculate book closing balance as of statement cutoff date
         book_closing_balance = None
         if valid_bank_id:
             bank_ledger = Ledger.objects.filter(id=valid_bank_id, company=company).first()
             if bank_ledger:
-                book_closing_balance = str(bank_ledger.current_balance or Decimal('0.00'))
+                book_bal = cls.get_bank_balance_as_of(bank_ledger, statement_cutoff_date)
+                book_closing_balance = str(book_bal)
 
         reconciliation_gap = None
         is_balanced = False
@@ -404,9 +476,16 @@ class BankReconciliationService:
             gap = abs(Decimal(statement_closing_balance) - Decimal(book_closing_balance))
             reconciliation_gap = str(gap)
             is_balanced = (gap == Decimal('0.00'))
+
+        # Classification state
+        if unresolved == 0 and suggested == 0 and is_balanced:
+            reconciliation_state = "FULLY_RECONCILED"
         elif unresolved == 0 and suggested == 0:
-            is_balanced = True
-            reconciliation_gap = "0.00"
+            reconciliation_state = "TRANSACTIONS_REVIEWED"
+        elif is_balanced:
+            reconciliation_state = "BALANCE_VERIFIED"
+        else:
+            reconciliation_state = "DISCREPANCY_DETECTED"
 
         return {
             "total_transactions": total_tx,
@@ -415,33 +494,97 @@ class BankReconciliationService:
             "unresolved": unresolved,
             "reconciled": reconciled,
             "ignored": ignored,
+            "excluded": excluded,
             "unresolved_count": unresolved,
             "needs_review_count": suggested,
             "matched_count": auto_matched + reconciled,
             "reconciled_count": reconciled,
             "ignored_count": ignored,
+            "excluded_count": excluded,
             "total_debits": str(stats['total_debits'] or Decimal('0.00')),
             "total_credits": str(stats['total_credits'] or Decimal('0.00')),
             "unreconciled_debit_amount": str(stats['unrec_debit'] or Decimal('0.00')),
             "unreconciled_credit_amount": str(stats['unrec_credit'] or Decimal('0.00')),
             "net_unreconciled_amount": str(Decimal(str(stats['unrec_credit'] or '0.00')) - Decimal(str(stats['unrec_debit'] or '0.00'))),
+            "statement_cutoff_date": statement_cutoff_date.isoformat() if statement_cutoff_date else None,
             "statement_closing_balance": statement_closing_balance or "0.00",
             "book_closing_balance": book_closing_balance or "0.00",
             "reconciliation_gap": reconciliation_gap or "0.00",
-            "is_balanced": is_balanced
+            "is_balanced": is_balanced,
+            "reconciliation_state": reconciliation_state
         }
+
+    @classmethod
+    @transaction.atomic
+    def exclude_transaction(cls, bank_tx: BankTransaction, reason: str = "User excluded from books", user=None) -> Dict[str, Any]:
+        """
+        Audited, non-destructive exclusion of a bank transaction.
+        If the transaction generated a posted voucher, canonically reverses it using VoucherService.create_reversal_voucher.
+        """
+        reversal_voucher = None
+        if bank_tx.matched_voucher:
+            vch = bank_tx.matched_voucher
+            if vch.status in ['POSTED', 'VALIDATING']:
+                reversal_voucher = VoucherService.create_reversal_voucher(
+                    voucher=vch,
+                    user=user,
+                    reason=f"Bank transaction excluded: {reason}"
+                )
+
+        bank_tx.is_excluded = True
+        bank_tx.status = 'EXCLUDED'
+        bank_tx.exclusion_reason = reason
+        bank_tx.excluded_at = timezone.now()
+        bank_tx.excluded_by = user
+        bank_tx.save(update_fields=['is_excluded', 'status', 'exclusion_reason', 'excluded_at', 'excluded_by', 'updated_at'])
+
+        AuditService.log_action(
+            company=bank_tx.company,
+            user=user,
+            action='EXCLUDE',
+            model_name='BankTransaction',
+            record_id=bank_tx.id,
+            changes={
+                "reason": reason,
+                "reversal_voucher_id": str(reversal_voucher.id) if reversal_voucher else None
+            }
+        )
+        return {
+            "status": "SUCCESS",
+            "message": "Transaction excluded from books.",
+            "reversal_voucher_number": reversal_voucher.voucher_number if reversal_voucher else None
+        }
+
+    @classmethod
+    @transaction.atomic
+    def exclude_statement_import(cls, statement_import: BankStatementImport, reason: str = "User excluded statement", user=None) -> int:
+        """
+        Audited, non-destructive exclusion of a statement import and all of its associated transactions.
+        Safely reverses any generated vouchers.
+        """
+        txs = list(statement_import.transactions.all())
+        count = 0
+        for tx in txs:
+            cls.exclude_transaction(tx, reason=f"Statement '{statement_import.source_file_name}' excluded: {reason}", user=user)
+            count += 1
+
+        statement_import.is_excluded = True
+        statement_import.exclusion_reason = reason
+        statement_import.excluded_at = timezone.now()
+        statement_import.excluded_by = user
+        statement_import.save(update_fields=['is_excluded', 'exclusion_reason', 'excluded_at', 'excluded_by'])
+        return count
 
     @classmethod
     @transaction.atomic
     def delete_transaction(cls, bank_tx: BankTransaction) -> None:
         """
         Deletes a bank transaction from the server.
-        If it generated an automated reconciliation voucher, rolls back and deletes that voucher.
+        If it generated a reconciliation voucher, rolls back and cancels that voucher.
         """
         if bank_tx.matched_voucher:
             vch = bank_tx.matched_voucher
-            # Only delete if it's an auto-generated bank voucher
-            if vch.voucher_type in ['RECEIPT', 'PAYMENT', 'CONTRA']:
+            if vch.status in ['POSTED', 'VALIDATING']:
                 entries = list(vch.ledger_entries.select_related('ledger'))
                 ledgers_to_recalc = set(e.ledger for e in entries)
                 vch.delete()

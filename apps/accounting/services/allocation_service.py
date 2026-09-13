@@ -68,10 +68,11 @@ class PaymentAllocationService:
 
     @classmethod
     @transaction.atomic
-    def auto_allocate_voucher(cls, payment_voucher: Voucher) -> list:
+    def auto_allocate_voucher(cls, payment_voucher: Voucher, preferred_invoice_id: str = None) -> list:
         """
-        Automatically performs FIFO allocation of a Payment or Receipt voucher
-        against the party's oldest outstanding invoices.
+        Automatically performs reference-aware and FIFO allocation of a Payment or Receipt voucher
+        against the party's outstanding invoices.
+        Uses select_for_update() row locks to prevent concurrent over-allocation.
         Any remaining unallocated amount represents an Advance.
         Enforces strict cross-company isolation invariant.
         """
@@ -82,26 +83,63 @@ class PaymentAllocationService:
         if not party:
             return []
 
-        unpaid_invoices = cls.get_unpaid_invoices_for_party(payment_voucher.company, party)
-        rem_funds = quantize_money(payment_voucher.total_amount)
-        allocations = []
-
         # Delete any prior allocations for this payment voucher
         PaymentAllocation.objects.filter(payment_voucher=payment_voucher).delete()
 
-        for inv_info in unpaid_invoices:
+        rem_funds = quantize_money(payment_voucher.total_amount)
+        if rem_funds <= Decimal('0.00'):
+            return []
+
+        # Canonical party role: CUSTOMER (receivable) vs SUPPLIER (payable)
+        is_customer = (party.canonical_role == 'CUSTOMER') or (party.opening_balance_type == 'DEBIT')
+        target_vtypes = ['SALES', 'OPENING_INVOICE'] if is_customer else ['PURCHASE', 'OPENING_BILL']
+
+        # Determine candidate invoices
+        candidate_qs = Voucher.objects.filter(
+            company=payment_voucher.company,
+            party_ledger=party,
+            voucher_type__in=target_vtypes,
+            status='POSTED'
+        ).order_by('due_date', 'voucher_date', 'created_at')
+
+        # Check for explicit invoice reference match in reference_number
+        preferred_inv = None
+        if preferred_invoice_id:
+            preferred_inv = candidate_qs.filter(id=preferred_invoice_id).first()
+        elif payment_voucher.reference_number:
+            ref = str(payment_voucher.reference_number).strip()
+            preferred_inv = candidate_qs.filter(voucher_number__iexact=ref).first()
+
+        ordered_candidates = []
+        if preferred_inv:
+            ordered_candidates.append(preferred_inv)
+
+        for inv in candidate_qs:
+            if preferred_inv and inv.id == preferred_inv.id:
+                continue
+            ordered_candidates.append(inv)
+
+        allocations = []
+        for candidate in ordered_candidates:
             if rem_funds <= Decimal('0.00'):
                 break
 
-            inv = Voucher.objects.get(id=inv_info['voucher_id'])
-            # P1-18: Payment Allocation Company Invariant
+            # Lock candidate invoice row
+            inv = Voucher.objects.select_for_update().get(id=candidate.id)
             if inv.company_id != payment_voucher.company_id:
                 from rest_framework.exceptions import ValidationError
                 raise ValidationError("Cross-company payment allocation is strictly prohibited.")
 
-            inv_due = Decimal(inv_info['remaining_amount'])
-            alloc_amt = min(rem_funds, inv_due)
+            # Calculate real-time remaining unpaid balance under lock
+            currently_paid = PaymentAllocation.objects.filter(
+                invoice_voucher=inv
+            ).aggregate(total=Sum('allocated_amount'))['total'] or Decimal('0.00')
 
+            inv_due = max(Decimal('0.00'), quantize_money(inv.total_amount - currently_paid))
+            if inv_due <= Decimal('0.00'):
+                continue
+
+            alloc_amt = min(rem_funds, inv_due)
             alloc = PaymentAllocation.objects.create(
                 company=payment_voucher.company,
                 payment_voucher=payment_voucher,
@@ -122,16 +160,38 @@ class PaymentAllocationService:
     def allocate_payment(cls, payment_voucher: Voucher, invoice_voucher: Voucher, allocated_amount: Decimal) -> PaymentAllocation:
         """
         Allocates a specific payment amount against an invoice.
-        Enforces strict cross-company isolation invariant.
+        Enforces row-locking and invoice total capacity invariants.
         """
         if payment_voucher.company_id != invoice_voucher.company_id:
             from rest_framework.exceptions import ValidationError
             raise ValidationError("Cross-company payment allocation is strictly prohibited.")
 
+        alloc_amt = quantize_money(allocated_amount)
+        if alloc_amt <= Decimal('0.00'):
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError("Allocated amount must be greater than zero.")
+
+        # Lock invoice row to prevent concurrent over-allocation
+        inv = Voucher.objects.select_for_update().get(id=invoice_voucher.id)
+
+        currently_paid = PaymentAllocation.objects.filter(
+            invoice_voucher=inv
+        ).exclude(payment_voucher=payment_voucher).aggregate(total=Sum('allocated_amount'))['total'] or Decimal('0.00')
+
+        remaining_capacity = max(Decimal('0.00'), quantize_money(inv.total_amount - currently_paid))
+        if alloc_amt > remaining_capacity:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                f"Cannot allocate ₹{alloc_amt}: remaining unpaid balance on invoice {inv.voucher_number} is only ₹{remaining_capacity}."
+            )
+
+        # Remove existing allocation for this pair if any
+        PaymentAllocation.objects.filter(payment_voucher=payment_voucher, invoice_voucher=inv).delete()
+
         alloc = PaymentAllocation.objects.create(
             company=payment_voucher.company,
             payment_voucher=payment_voucher,
-            invoice_voucher=invoice_voucher,
-            allocated_amount=allocated_amount
+            invoice_voucher=inv,
+            allocated_amount=alloc_amt
         )
         return alloc

@@ -60,7 +60,9 @@ interface BankTransactionItem {
   debit_amount: string;
   credit_amount: string;
   balance?: string | null;
-  status: "UNRESOLVED" | "NEEDS_REVIEW" | "MATCHED" | "RECONCILED" | "IGNORED" | "MATCHED_AUTO" | "MATCHED_SUGGESTED";
+  status: "UNRESOLVED" | "NEEDS_REVIEW" | "MATCHED" | "RECONCILED" | "IGNORED" | "MATCHED_AUTO" | "MATCHED_SUGGESTED" | "EXCLUDED";
+  is_excluded?: boolean;
+  exclusion_reason?: string | null;
   bank_ledger: {
     id: string;
     name: string;
@@ -85,12 +87,15 @@ interface ReconciliationSummary {
   matched_count: number;
   reconciled_count: number;
   ignored_count: number;
+  excluded_count: number;
   total_debits: string;
   total_credits: string;
   statement_closing_balance: string | null;
   book_closing_balance: string | null;
   reconciliation_gap: string | null;
   is_balanced: boolean;
+  statement_cutoff_date?: string | null;
+  reconciliation_state?: string;
 }
 
 interface PartyMappingItem {
@@ -127,7 +132,7 @@ export default function BankingPage() {
   const [summary, setSummary] = useState<ReconciliationSummary | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"NEEDS_REVIEW" | "UNRESOLVED" | "MATCHED" | "ALL">("NEEDS_REVIEW");
+  const [activeTab, setActiveTab] = useState<"NEEDS_REVIEW" | "UNRESOLVED" | "MATCHED" | "EXCLUDED" | "ALL">("NEEDS_REVIEW");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
   // Upload Modal State
@@ -148,6 +153,12 @@ export default function BankingPage() {
   const [loadingStatements, setLoadingStatements] = useState<boolean>(false);
   const [deletingStatementId, setDeletingStatementId] = useState<string | null>(null);
   const [deletingTxId, setDeletingTxId] = useState<string | null>(null);
+
+  // Exclusion Modal State
+  const [txToExclude, setTxToExclude] = useState<BankTransactionItem | null>(null);
+  const [stmtToExclude, setStmtToExclude] = useState<any | null>(null);
+  const [exclusionReasonInput, setExclusionReasonInput] = useState<string>("Personal transaction");
+  const [isExclusionSubmitting, setIsExclusionSubmitting] = useState<boolean>(false);
 
   // Action Modal State (for Match Party / Record Payment / Expense / Transfer)
   const [selectedTx, setSelectedTx] = useState<BankTransactionItem | null>(null);
@@ -269,6 +280,10 @@ export default function BankingPage() {
         params.status = "UNRESOLVED,UNPROCESSED";
       } else if (activeTab === "MATCHED") {
         params.status = "MATCHED_AUTO,RECONCILED";
+      } else if (activeTab === "EXCLUDED") {
+        params.status = "EXCLUDED";
+      } else if (activeTab === "ALL") {
+        params.status = "ALL";
       }
 
       const [txResult, summaryRes] = await Promise.all([
@@ -294,12 +309,15 @@ export default function BankingPage() {
           matched_count: sData.matched_count ?? ((sData.auto_matched ?? 0) + (sData.reconciled ?? 0)),
           reconciled_count: sData.reconciled_count ?? sData.reconciled ?? 0,
           ignored_count: sData.ignored_count ?? sData.ignored ?? 0,
+          excluded_count: sData.excluded_count ?? sData.excluded ?? 0,
           total_debits: sData.total_debits ?? sData.unreconciled_debit_amount ?? "0.00",
           total_credits: sData.total_credits ?? sData.unreconciled_credit_amount ?? "0.00",
           statement_closing_balance: sData.statement_closing_balance ?? null,
           book_closing_balance: sData.book_closing_balance ?? null,
           reconciliation_gap: sData.reconciliation_gap ?? null,
           is_balanced: Boolean(sData.is_balanced),
+          statement_cutoff_date: sData.statement_cutoff_date ?? null,
+          reconciliation_state: sData.reconciliation_state || (sData.is_balanced ? "BALANCE_VERIFIED" : "DISCREPANCY_DETECTED"),
         });
       } else {
         setSummary(null);
@@ -405,54 +423,84 @@ export default function BankingPage() {
     });
   };
 
-  const handleDeleteTransaction = (tx: BankTransactionItem) => {
-    const isCredit = parseFloat(tx.credit_amount) > 0;
-    const formattedAmt = isCredit
-      ? `+₹${parseFloat(tx.credit_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`
-      : `-₹${parseFloat(tx.debit_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+  const handleExcludeTransaction = (tx: BankTransactionItem) => {
+    setTxToExclude(tx);
+    setExclusionReasonInput("Personal transaction");
+  };
 
-    setConfirmModalConfig({
-      isOpen: true,
-      title: "Delete Bank Transaction",
-      description: (
-        <div className="space-y-3 text-left">
-          <p className="text-sm">
-            Are you sure you want to permanently delete this transaction from the server?
-          </p>
-          <div className="p-3.5 rounded-xl bg-muted/60 border border-border/60 text-xs space-y-2 font-mono">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-muted-foreground">Date: {tx.transaction_date}</span>
-              <span className={`font-bold ${isCredit ? "text-emerald-500" : "text-rose-500"}`}>
-                {formattedAmt}
-              </span>
-            </div>
-            <p className="text-foreground font-sans line-clamp-3 text-[11px] break-words">
-              {tx.description}
-            </p>
-          </div>
-          <p className="text-xs text-rose-500/90 font-medium">
-            Any linked auto-generated reconciliation voucher will be safely reversed. This action cannot be undone.
-          </p>
-        </div>
-      ),
-      confirmText: "Delete Transaction",
-      variant: "danger",
-      onConfirm: async () => {
-        setDeletingTxId(tx.id);
-        setConfirmModalConfig((prev) => ({ ...prev, isLoading: true }));
-        try {
-          const headers = getHeaders();
-          await axios.delete(`${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/`, { headers });
-          toast.success("Transaction Deleted", "The transaction was deleted from the server.");
-          await fetchTransactionsAndSummary();
-        } catch (err: any) {
-          toast.error("Delete Failed", err.response?.data?.error || err.message || "Failed to delete transaction");
-        } finally {
-          setDeletingTxId(null);
-          setConfirmModalConfig((prev) => ({ ...prev, isOpen: false, isLoading: false }));
-        }
-      },
-    });
+  const submitExcludeTransaction = async () => {
+    if (!txToExclude) return;
+    setIsExclusionSubmitting(true);
+    try {
+      const headers = getHeaders();
+      await axios.post(
+        `${API_BASE_URL}/api/v1/accounting/banking/transactions/${txToExclude.id}/exclude/`,
+        { reason: exclusionReasonInput || "Excluded from business books" },
+        { headers }
+      );
+      toast.success("Transaction Excluded", "Moved to Excluded. Any generated voucher was canonically reversed.");
+      setTxToExclude(null);
+      await fetchTransactionsAndSummary(true);
+    } catch (err: any) {
+      toast.error("Exclusion Failed", err.response?.data?.error || err.message || "Failed to exclude transaction.");
+    } finally {
+      setIsExclusionSubmitting(false);
+    }
+  };
+
+  const handleRestoreTransaction = async (tx: BankTransactionItem) => {
+    try {
+      const headers = getHeaders();
+      await axios.delete(
+        `${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/exclude/`,
+        { headers }
+      );
+      toast.success("Transaction Restored", "Returned to active reconciliation.");
+      await fetchTransactionsAndSummary(true);
+    } catch (err: any) {
+      toast.error("Restore Failed", err.response?.data?.error || err.message || "Failed to restore transaction.");
+    }
+  };
+
+  const handleExcludeStatement = (stmt: any) => {
+    setStmtToExclude(stmt);
+    setExclusionReasonInput("Incorrect statement upload");
+  };
+
+  const submitExcludeStatement = async () => {
+    if (!stmtToExclude) return;
+    setIsExclusionSubmitting(true);
+    try {
+      const headers = getHeaders();
+      await axios.post(
+        `${API_BASE_URL}/api/v1/accounting/banking/statements/${stmtToExclude.id}/exclude/`,
+        { reason: exclusionReasonInput || "Excluded from business books" },
+        { headers }
+      );
+      toast.success("Statement Excluded", "All transactions in statement were excluded and vouchers reversed.");
+      setStmtToExclude(null);
+      await fetchStatementsList();
+      await fetchTransactionsAndSummary(true);
+    } catch (err: any) {
+      toast.error("Exclusion Failed", err.response?.data?.error || err.message || "Failed to exclude statement.");
+    } finally {
+      setIsExclusionSubmitting(false);
+    }
+  };
+
+  const handleRestoreStatement = async (stmt: any) => {
+    try {
+      const headers = getHeaders();
+      await axios.delete(
+        `${API_BASE_URL}/api/v1/accounting/banking/statements/${stmt.id}/exclude/`,
+        { headers }
+      );
+      toast.success("Statement Restored", "Statement transactions restored to active.");
+      await fetchStatementsList();
+      await fetchTransactionsAndSummary(true);
+    } catch (err: any) {
+      toast.error("Restore Failed", err.response?.data?.error || err.message || "Failed to restore statement.");
+    }
   };
 
   const handleFileUpload = async (e: React.FormEvent) => {
@@ -613,7 +661,11 @@ export default function BankingPage() {
         (tx.description ?? "").toLowerCase().includes(q) ||
         (tx.normalized_narration ?? "").toLowerCase().includes(q) ||
         ((tx.reference_number ?? "").toLowerCase().includes(q)) ||
-        (tx.matched_party?.name ? tx.matched_party.name.toLowerCase().includes(q) : false)
+        (tx.matched_party?.name ? tx.matched_party.name.toLowerCase().includes(q) : false) ||
+        (tx.debit_amount ?? "").includes(q) ||
+        (tx.credit_amount ?? "").includes(q) ||
+        (tx.balance ? tx.balance.includes(q) : false) ||
+        (tx.exclusion_reason ? tx.exclusion_reason.toLowerCase().includes(q) : false)
     );
   }, [transactions, searchQuery]);
 
@@ -805,13 +857,30 @@ export default function BankingPage() {
           {/* Balance Comparison & Gap Card */}
           <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                BOOK VS BANK
-              </span>
-              {summary?.is_balanced ? (
+              <div>
+                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">
+                  BOOK VS BANK
+                </span>
+                {summary?.statement_cutoff_date && (
+                  <span className="text-[11px] font-mono text-primary font-medium">
+                    As of {new Date(summary.statement_cutoff_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                  </span>
+                )}
+              </div>
+              {summary?.reconciliation_state === "FULLY_RECONCILED" ? (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  In Sync
+                  Fully Reconciled
+                </span>
+              ) : summary?.is_balanced ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Balances Match
+                </span>
+              ) : summary?.reconciliation_state === "TRANSACTIONS_REVIEWED" ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Reviewed
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
@@ -827,37 +896,30 @@ export default function BankingPage() {
                 <div className="text-base sm:text-lg font-bold font-mono tabular-nums text-foreground">
                   ₹{parseFloat(summary?.book_closing_balance || "0").toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">As of cutoff date</div>
               </div>
               <div className="p-3 bg-muted/30 rounded-xl border border-border/30">
                 <div className="text-[11px] text-muted-foreground">Statement Balance</div>
                 <div className="text-base sm:text-lg font-bold font-mono tabular-nums text-foreground">
                   ₹{parseFloat(summary?.statement_closing_balance || "0").toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Statement closing</div>
               </div>
             </div>
 
             <p className="text-[11px] text-muted-foreground">
-              {summary?.unresolved_count || 0} unresolved items awaiting classification to reach zero gap.
+              {summary?.is_balanced
+                ? "Books match bank statement as of cutoff date."
+                : `${summary?.unresolved_count || 0} unresolved items awaiting review to balance.`}
             </p>
           </div>
 
           {/* Quick Stats Grid */}
           <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm grid grid-cols-2 gap-3">
-            <div className="p-3 bg-amber-500/5 rounded-xl border border-amber-500/20 space-y-1">
-              <div className="text-[11px] font-semibold text-amber-500 flex items-center gap-1">
-                <Sparkles className="w-3 h-3" />
-                Needs Review
-              </div>
-              <div className="text-2xl font-black font-mono text-foreground">
-                {summary?.needs_review_count || 0}
-              </div>
-              <div className="text-[10px] text-muted-foreground">Suggested match</div>
-            </div>
-
             <div className="p-3 bg-rose-500/5 rounded-xl border border-rose-500/20 space-y-1">
               <div className="text-[11px] font-semibold text-rose-500 flex items-center gap-1">
                 <AlertCircle className="w-3 h-3" />
-                Unresolved
+                Needs Attention
               </div>
               <div className="text-2xl font-black font-mono text-foreground">
                 {summary?.unresolved_count || 0}
@@ -865,10 +927,21 @@ export default function BankingPage() {
               <div className="text-[10px] text-muted-foreground">Requires attention</div>
             </div>
 
+            <div className="p-3 bg-amber-500/5 rounded-xl border border-amber-500/20 space-y-1">
+              <div className="text-[11px] font-semibold text-amber-500 flex items-center gap-1">
+                <Sparkles className="w-3 h-3" />
+                Ready to Confirm
+              </div>
+              <div className="text-2xl font-black font-mono text-foreground">
+                {summary?.needs_review_count || 0}
+              </div>
+              <div className="text-[10px] text-muted-foreground">Suggested match</div>
+            </div>
+
             <div className="p-3 bg-emerald-500/5 rounded-xl border border-emerald-500/20 space-y-1">
               <div className="text-[11px] font-semibold text-emerald-500 flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" />
-                Auto-Matched
+                Completed
               </div>
               <div className="text-2xl font-black font-mono text-foreground">
                 {(summary?.matched_count || 0) + (summary?.reconciled_count || 0)}
@@ -879,35 +952,19 @@ export default function BankingPage() {
             <div className="p-3 bg-muted/40 rounded-xl border border-border/40 space-y-1">
               <div className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1">
                 <Layers className="w-3 h-3" />
-                Total Entries
+                Excluded
               </div>
               <div className="text-2xl font-black font-mono text-foreground">
-                {summary?.total_transactions || 0}
+                {summary?.excluded_count || 0}
               </div>
-              <div className="text-[10px] text-muted-foreground">Ingested rows</div>
+              <div className="text-[10px] text-muted-foreground">Non-business items</div>
             </div>
           </div>
         </div>
 
         {/* Filter Tabs & Search Bar */}
         <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
-          <div className="flex items-center gap-1 p-1 bg-muted/40 border border-border/40 rounded-xl">
-            <button
-              onClick={() => setActiveTab("NEEDS_REVIEW")}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === "NEEDS_REVIEW"
-                  ? "bg-card text-foreground shadow-sm border border-border/60"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <span>Needs Review</span>
-              {(summary?.needs_review_count || 0) > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-500">
-                  {summary?.needs_review_count}
-                </span>
-              )}
-            </button>
-
+          <div className="flex items-center gap-1 p-1 bg-muted/40 border border-border/40 rounded-xl flex-wrap">
             <button
               onClick={() => setActiveTab("UNRESOLVED")}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
@@ -916,7 +973,7 @@ export default function BankingPage() {
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              <span>Unresolved</span>
+              <span>Needs Attention</span>
               {(summary?.unresolved_count || 0) > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-500">
                   {summary?.unresolved_count}
@@ -925,14 +982,51 @@ export default function BankingPage() {
             </button>
 
             <button
+              onClick={() => setActiveTab("NEEDS_REVIEW")}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "NEEDS_REVIEW"
+                  ? "bg-card text-foreground shadow-sm border border-border/60"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <span>Ready to Confirm</span>
+              {(summary?.needs_review_count || 0) > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-500">
+                  {summary?.needs_review_count}
+                </span>
+              )}
+            </button>
+
+            <button
               onClick={() => setActiveTab("MATCHED")}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeTab === "MATCHED"
                   ? "bg-card text-foreground shadow-sm border border-border/60"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              Matched & Reconciled
+              <span>Completed</span>
+              {((summary?.matched_count || 0) + (summary?.reconciled_count || 0)) > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-500">
+                  {(summary?.matched_count || 0) + (summary?.reconciled_count || 0)}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab("EXCLUDED")}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "EXCLUDED"
+                  ? "bg-card text-foreground shadow-sm border border-border/60"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <span>Excluded</span>
+              {(summary?.excluded_count || 0) > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-muted text-muted-foreground border border-border">
+                  {summary?.excluded_count}
+                </span>
+              )}
             </button>
 
             <button
@@ -943,7 +1037,7 @@ export default function BankingPage() {
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              All Ingested
+              All ({summary?.total_transactions || 0})
             </button>
           </div>
 
@@ -1017,7 +1111,9 @@ export default function BankingPage() {
                           )}
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
-                              tx.status === "MATCHED" || tx.status === "RECONCILED" || tx.status === "MATCHED_AUTO"
+                              tx.is_excluded || tx.status === "EXCLUDED"
+                                ? "bg-muted text-muted-foreground border border-border"
+                                : tx.status === "MATCHED" || tx.status === "RECONCILED" || tx.status === "MATCHED_AUTO"
                                 ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
                                 : tx.status === "NEEDS_REVIEW" || tx.status === "MATCHED_SUGGESTED"
                                 ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
@@ -1026,7 +1122,9 @@ export default function BankingPage() {
                                 : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
                             }`}
                           >
-                            {tx.status === "MATCHED" || tx.status === "RECONCILED" || tx.status === "MATCHED_AUTO"
+                            {tx.is_excluded || tx.status === "EXCLUDED"
+                              ? "Excluded"
+                              : tx.status === "MATCHED" || tx.status === "RECONCILED" || tx.status === "MATCHED_AUTO"
                               ? "Completed"
                               : tx.status === "NEEDS_REVIEW" || tx.status === "MATCHED_SUGGESTED"
                               ? "Ready to Confirm"
@@ -1039,6 +1137,13 @@ export default function BankingPage() {
                         <div className="text-sm font-bold text-foreground leading-snug">
                           {tx.description}
                         </div>
+
+                        {(tx.is_excluded || tx.status === "EXCLUDED") && tx.exclusion_reason && (
+                          <div className="text-[11px] text-amber-500/90 font-medium flex items-center gap-1">
+                            <EyeOff className="w-3 h-3" />
+                            <span>Excluded: {tx.exclusion_reason}</span>
+                          </div>
+                        )}
 
                         <div className="text-[11px] text-muted-foreground font-mono">
                           Normalized: {tx.normalized_narration}
@@ -1063,7 +1168,7 @@ export default function BankingPage() {
                   </div>
 
                   {/* AI Suggestion Card if match found */}
-                  {tx.matched_party && (
+                  {tx.matched_party && !tx.is_excluded && tx.status !== "EXCLUDED" && (
                     <div className="bg-muted/30 border border-border/50 rounded-xl p-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                       <div className="flex items-center gap-2.5">
                         <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400">
@@ -1090,15 +1195,30 @@ export default function BankingPage() {
                           </div>
                           {(() => {
                             if (!tx.match_notes) return null;
-                            if (typeof tx.match_notes === "string") {
-                              return <p className="text-[11px] text-muted-foreground">{tx.match_notes}</p>;
-                            }
+                            let notesObj: any = null;
                             if (typeof tx.match_notes === "object") {
-                              const signals = Array.isArray(tx.match_notes.signals) ? tx.match_notes.signals.filter(Boolean) : [];
-                              const reason = tx.match_notes.ignore_reason || tx.match_notes.reason;
+                              notesObj = tx.match_notes;
+                            } else if (typeof tx.match_notes === "string") {
+                              try {
+                                notesObj = JSON.parse(tx.match_notes);
+                              } catch {
+                                return <p className="text-[11px] text-muted-foreground mt-0.5">{tx.match_notes}</p>;
+                              }
+                            }
+                            if (notesObj && typeof notesObj === "object") {
+                              const signals = Array.isArray(notesObj.signals) ? notesObj.signals.filter(Boolean) : [];
+                              const reason = notesObj.ignore_reason || notesObj.reason;
                               const parts = [...signals, ...(reason ? [String(reason)] : [])];
                               if (parts.length > 0) {
-                                return <p className="text-[11px] text-muted-foreground">{parts.join(" · ")}</p>;
+                                return (
+                                  <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                                    {parts.map((p, idx) => (
+                                      <span key={idx} className="text-[10px] px-2 py-0.5 rounded-md bg-muted/60 text-muted-foreground border border-border/40 font-mono">
+                                        {p}
+                                      </span>
+                                    ))}
+                                  </div>
+                                );
                               }
                             }
                             return null;
@@ -1132,7 +1252,7 @@ export default function BankingPage() {
                   )}
 
                   {/* Reconciled Voucher Link if resolved */}
-                  {tx.matched_voucher && (
+                  {tx.matched_voucher && !tx.is_excluded && tx.status !== "EXCLUDED" && (
                     <div className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg flex items-center justify-between font-mono">
                       <span>✓ Reconciled to Voucher: {tx.matched_voucher.voucher_number}</span>
                       <div className="flex items-center gap-2">
@@ -1143,20 +1263,32 @@ export default function BankingPage() {
                           View Voucher →
                         </button>
                         <button
-                          onClick={() => handleDeleteTransaction(tx)}
-                          disabled={deletingTxId === tx.id}
-                          className="text-rose-400/80 hover:text-rose-300 hover:underline text-[11px] cursor-pointer flex items-center gap-1 ml-2"
-                          title="Delete transaction from server and reverse voucher"
+                          onClick={() => handleExcludeTransaction(tx)}
+                          className="text-amber-400/80 hover:text-amber-300 hover:underline text-[11px] cursor-pointer flex items-center gap-1 ml-2"
+                          title="Exclude transaction and reverse reconciliation voucher"
                         >
-                          <Trash2 className="w-3 h-3" />
-                          Delete
+                          <EyeOff className="w-3 h-3" />
+                          Exclude
                         </button>
                       </div>
                     </div>
                   )}
 
+                  {/* Excluded state actions */}
+                  {(tx.is_excluded || tx.status === "EXCLUDED") && (
+                    <div className="flex items-center justify-between pt-2 border-t border-border/30">
+                      <span className="text-[11px] text-muted-foreground">Excluded from business accounts and books</span>
+                      <button
+                        onClick={() => handleRestoreTransaction(tx)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer shadow-sm"
+                      >
+                        Restore to Books
+                      </button>
+                    </div>
+                  )}
+
                   {/* Quick Action Toolbar (Unresolved / Review) */}
-                  {tx.status !== "MATCHED" && tx.status !== "RECONCILED" && (
+                  {!tx.is_excluded && tx.status !== "EXCLUDED" && tx.status !== "MATCHED" && tx.status !== "RECONCILED" && (
                     <div className="flex items-center gap-2 pt-2 border-t border-border/30 flex-wrap">
                       <span className="text-[11px] font-bold text-muted-foreground mr-1">Actions:</span>
 
@@ -1207,13 +1339,12 @@ export default function BankingPage() {
                       </button>
 
                       <button
-                        onClick={() => handleDeleteTransaction(tx)}
-                        disabled={deletingTxId === tx.id}
-                        className="px-2.5 py-1 rounded-lg text-xs font-semibold text-rose-500 hover:text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition-colors cursor-pointer flex items-center gap-1"
-                        title="Delete this transaction from server"
+                        onClick={() => handleExcludeTransaction(tx)}
+                        className="px-2.5 py-1 rounded-lg text-xs font-semibold text-amber-500 hover:text-amber-400 hover:bg-amber-500/10 border border-amber-500/20 transition-colors cursor-pointer flex items-center gap-1"
+                        title="Exclude from books without destructive deletion"
                       >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Delete</span>
+                        <EyeOff className="w-3 h-3" />
+                        <span>Exclude</span>
                       </button>
                     </div>
                   )}
@@ -1468,10 +1599,18 @@ export default function BankingPage() {
                       placeholder="-- Choose Party --"
                       searchPlaceholder="Search party name, GSTIN, phone..."
                     />
-                    {actionType === "RECORD_PAYMENT" && (
-                      <p className="text-[11px] text-muted-foreground mt-1.5">
-                        Payment will be automatically applied to the oldest unpaid invoices.
-                      </p>
+                    {(actionType === "RECORD_PAYMENT" || actionType === "MATCH_PARTY") && (
+                      <div className="p-2.5 rounded-lg bg-primary/5 border border-primary/20 text-[11px] text-muted-foreground mt-2 space-y-1">
+                        <div className="font-semibold text-foreground flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-primary" />
+                          <span>Auto-Allocation Rule</span>
+                        </div>
+                        <p>
+                          {parseFloat(selectedTx.credit_amount) > 0
+                            ? "Incoming customer receipt will be safely applied to oldest unpaid sales invoices (FIFO) or matching invoice references under concurrency locks. Any excess remains an advance balance."
+                            : "Outgoing supplier payment will be safely applied to oldest unpaid purchase bills (FIFO) or matching invoice references under concurrency locks. Any excess remains an advance balance."}
+                        </p>
+                      </div>
                     )}
                   </div>
                 )}
@@ -1601,15 +1740,21 @@ export default function BankingPage() {
                           <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-primary/10 text-primary border border-primary/20">
                             {stmt.file_format}
                           </span>
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
-                              stmt.status === "COMPLETED"
-                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                                : "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                            }`}
-                          >
-                            {stmt.status}
-                          </span>
+                          {stmt.is_excluded ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-muted text-muted-foreground border border-border">
+                              EXCLUDED
+                            </span>
+                          ) : (
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                                stmt.status === "COMPLETED"
+                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                  : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                              }`}
+                            >
+                              {stmt.status}
+                            </span>
+                          )}
                         </div>
 
                         <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
@@ -1625,26 +1770,32 @@ export default function BankingPage() {
                             Bal: ₹{parseFloat(stmt.opening_balance || "0").toLocaleString("en-IN", { minimumFractionDigits: 2 })} → ₹{parseFloat(stmt.closing_balance || "0").toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                           </div>
                         )}
+
+                        {stmt.is_excluded && stmt.exclusion_reason && (
+                          <div className="text-[11px] text-amber-500 font-medium flex items-center gap-1 mt-1">
+                            <EyeOff className="w-3 h-3" />
+                            <span>Excluded: {stmt.exclusion_reason}</span>
+                          </div>
+                        )}
                       </div>
 
-                      <button
-                        onClick={() => handleDeleteStatement(stmt)}
-                        disabled={deletingStatementId === stmt.id}
-                        className="px-3 py-2 rounded-xl text-xs font-bold text-rose-500 hover:text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition-all cursor-pointer flex items-center gap-1.5 w-full sm:w-auto justify-center disabled:opacity-50"
-                        title="Permanently remove statement and all its imported transactions from server"
-                      >
-                        {deletingStatementId === stmt.id ? (
-                          <>
-                            <div className="w-3.5 h-3.5 border-2 border-rose-500 border-t-transparent rounded-full animate-spin"></div>
-                            <span>Deleting...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Delete Statement</span>
-                          </>
-                        )}
-                      </button>
+                      {stmt.is_excluded ? (
+                        <button
+                          onClick={() => handleRestoreStatement(stmt)}
+                          className="px-3 py-2 rounded-xl text-xs font-bold text-primary hover:bg-primary/10 border border-primary/20 transition-all cursor-pointer flex items-center gap-1.5 w-full sm:w-auto justify-center"
+                        >
+                          Restore Statement
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleExcludeStatement(stmt)}
+                          className="px-3 py-2 rounded-xl text-xs font-bold text-amber-500 hover:text-amber-400 hover:bg-amber-500/10 border border-amber-500/20 transition-all cursor-pointer flex items-center gap-1.5 w-full sm:w-auto justify-center"
+                          title="Exclude statement from books and reverse linked vouchers"
+                        >
+                          <EyeOff className="w-3.5 h-3.5" />
+                          <span>Exclude Statement</span>
+                        </button>
+                      )}
                     </div>
                   ))
                 )}
@@ -1657,6 +1808,125 @@ export default function BankingPage() {
                 >
                   Close
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* AUDITED EXCLUSION MODAL */}
+        {(txToExclude || stmtToExclude) && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => {
+              setTxToExclude(null);
+              setStmtToExclude(null);
+            }}
+          >
+            <div
+              className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-5 border-b border-border/40">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
+                      <EyeOff className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-foreground">
+                        {txToExclude ? "Exclude Transaction from Books" : "Exclude Statement from Books"}
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Audited financial exclusion (non-destructive)
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setTxToExclude(null);
+                      setStmtToExclude(null);
+                    }}
+                    className="text-muted-foreground hover:text-foreground p-1 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-4">
+                <div className="p-3.5 rounded-xl bg-muted/40 border border-border/40 text-xs space-y-1.5">
+                  <div className="font-bold text-foreground">
+                    {txToExclude ? txToExclude.description : stmtToExclude?.source_file_name}
+                  </div>
+                  {txToExclude && (
+                    <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                      <span>Date: {txToExclude.transaction_date}</span>
+                      <span className="font-bold text-foreground">
+                        ₹{parseFloat(parseFloat(txToExclude.credit_amount) > 0 ? txToExclude.credit_amount : txToExclude.debit_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    This preserves the raw banking record for audit compliance while removing it from company financial statements. Any auto-created voucher is canonically reversed with a REV- voucher.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1.5">
+                    Reason for Exclusion
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    {["Personal transaction", "Contra duplicate", "Non-business fee", "Wrong account"].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setExclusionReasonInput(preset)}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer text-left truncate ${
+                          exclusionReasonInput === preset
+                            ? "bg-primary/10 border-primary/40 text-primary font-bold"
+                            : "bg-muted/40 border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted"
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="text"
+                    value={exclusionReasonInput}
+                    onChange={(e) => setExclusionReasonInput(e.target.value)}
+                    placeholder="Enter custom exclusion reason..."
+                    className="w-full bg-muted/40 border border-border/60 rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                </div>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTxToExclude(null);
+                      setStmtToExclude(null);
+                    }}
+                    className="flex-1 py-2.5 rounded-xl text-xs font-bold text-muted-foreground hover:text-foreground bg-muted hover:bg-muted/80 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={txToExclude ? submitExcludeTransaction : submitExcludeStatement}
+                    disabled={isExclusionSubmitting}
+                    className="flex-1 py-2.5 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 shadow-md shadow-amber-600/20"
+                  >
+                    {isExclusionSubmitting ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <span>Excluding...</span>
+                      </>
+                    ) : (
+                      <span>Confirm Exclusion</span>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

@@ -65,6 +65,8 @@ export class BankTransactionsRepository {
               creditAmount: Number(t.credit_amount) || 0,
               balance: t.balance !== null && t.balance !== undefined ? Number(t.balance) : null,
               status: t.status || "UNRESOLVED",
+              isExcluded: Boolean(t.is_excluded),
+              exclusionReason: t.exclusion_reason || null,
               matchedPartyId: t.matched_party?.id || null,
               matchedPartyName: t.matched_party?.name || null,
               matchedPartyType: t.matched_party?.ledger_type || null,
@@ -92,21 +94,29 @@ export class BankTransactionsRepository {
       filtered = filtered.filter((t) => t.bankLedgerId === options.bankLedgerId);
     }
 
-    if (options.status && options.status !== "ALL") {
-      const rawStatuses = options.status.split(",").map((s) => s.trim().toUpperCase());
-      const resolvedStatuses: string[] = [];
-      for (const s of rawStatuses) {
-        if (s === "NEEDS_REVIEW") {
-          resolvedStatuses.push("MATCHED_SUGGESTED", "NEEDS_REVIEW");
-        } else if (s === "MATCHED") {
-          resolvedStatuses.push("MATCHED_AUTO", "RECONCILED");
-        } else if (s === "UNRESOLVED") {
-          resolvedStatuses.push("UNRESOLVED", "UNPROCESSED");
-        } else {
-          resolvedStatuses.push(s);
-        }
+    // Excluded tab vs standard tabs
+    if (options.status === "EXCLUDED") {
+      filtered = filtered.filter((t) => t.isExcluded || t.status === "EXCLUDED");
+    } else {
+      if (options.status !== "ALL") {
+        filtered = filtered.filter((t) => !t.isExcluded);
       }
-      filtered = filtered.filter((t) => resolvedStatuses.includes(t.status));
+      if (options.status && options.status !== "ALL") {
+        const rawStatuses = options.status.split(",").map((s) => s.trim().toUpperCase());
+        const resolvedStatuses: string[] = [];
+        for (const s of rawStatuses) {
+          if (s === "NEEDS_REVIEW") {
+            resolvedStatuses.push("MATCHED_SUGGESTED", "NEEDS_REVIEW");
+          } else if (s === "MATCHED") {
+            resolvedStatuses.push("MATCHED_AUTO", "RECONCILED");
+          } else if (s === "UNRESOLVED") {
+            resolvedStatuses.push("UNRESOLVED", "UNPROCESSED");
+          } else {
+            resolvedStatuses.push(s);
+          }
+        }
+        filtered = filtered.filter((t) => resolvedStatuses.includes(t.status));
+      }
     }
 
     if (options.search) {
@@ -134,6 +144,8 @@ export class BankTransactionsRepository {
       credit_amount: String(t.creditAmount),
       balance: t.balance !== null ? String(t.balance) : null,
       status: t.status,
+      is_excluded: Boolean(t.isExcluded),
+      exclusion_reason: t.exclusionReason || null,
       bank_ledger: { id: t.bankLedgerId, name: t.bankLedgerName || "Bank" },
       matched_party: t.matchedPartyId
         ? { id: t.matchedPartyId, name: t.matchedPartyName, ledger_type: t.matchedPartyType || "CUSTOMER" }

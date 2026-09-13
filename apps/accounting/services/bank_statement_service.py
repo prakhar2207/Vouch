@@ -485,11 +485,25 @@ class BankStatementService:
                     continue
 
                 val_date = cls.parse_date_str(row[col_map['value_date']], preferred_format=batch_date_fmt) if 'value_date' in col_map and col_map['value_date'] < len(row) else None
+                bal = None
+                if 'balance' in col_map:
+                    if col_map['balance'] < len(row) and str(row[col_map['balance']]).strip():
+                        bal = cls.clean_amount_str(row[col_map['balance']])
+                    elif row and str(row[-1]).strip():
+                        try:
+                            bal = cls.clean_amount_str(row[-1])
+                        except Exception:
+                            bal = None
+
                 desc = row[col_map['desc']].strip() if 'desc' in col_map and col_map['desc'] < len(row) else ""
                 if cls.is_boilerplate_line(desc):
+                    if bal is not None:
+                        prev_balance = bal
                     continue
                 desc = cls.clean_boilerplate_from_narration(desc)
                 if not desc or cls.is_boilerplate_line(desc):
+                    if bal is not None:
+                        prev_balance = bal
                     continue
                 ref = row[col_map['ref']].strip() if 'ref' in col_map and col_map['ref'] < len(row) else ""
 
@@ -500,8 +514,6 @@ class BankStatementService:
                     debit = cls.clean_amount_str(row[col_map['debit']])
                 if 'credit' in col_map and col_map['credit'] < len(row):
                     credit = cls.clean_amount_str(row[col_map['credit']])
-
-                bal = cls.clean_amount_str(row[col_map['balance']]) if 'balance' in col_map and col_map['balance'] < len(row) and str(row[col_map['balance']]).strip() else None
 
                 # Directional check via running balance delta if both balances are known
                 if prev_balance is not None and bal is not None:
@@ -1341,6 +1353,10 @@ class BankStatementService:
         elif len(valid_rows) == 0 and len(errors) > 0:
             status = 'FAILED'
 
+        dates = [r['date'] for r in valid_rows if r.get('date')]
+        stmt_start_date = min(dates) if dates else None
+        stmt_end_date = max(dates) if dates else None
+
         from apps.accounting.services.party_intelligence_service import PartyIntelligenceService
 
         with transaction.atomic():
@@ -1355,6 +1371,8 @@ class BankStatementService:
                 successful_rows=len(valid_rows),
                 failed_rows=len(errors),
                 error_summary=errors[:50],
+                statement_start_date=stmt_start_date,
+                statement_end_date=stmt_end_date,
                 opening_balance=chain_report["opening_balance"],
                 closing_balance=chain_report["closing_balance"],
                 calculated_closing_balance=chain_report["calculated_closing_balance"],
@@ -1416,34 +1434,8 @@ class BankStatementService:
                     tx_date=tx_date
                 )
 
-                # Accounting integrity guardrail:
-                # A customer paying by cheque / clearing is a Deposit (Credit), NOT a Payment.
-                mp = match_res.get('matched_party')
-                if not mp and match_res.get('suggested_matches'):
-                    top_sug = match_res['suggested_matches'][0]
-                    if top_sug.get('confidence', 0) >= 80 and top_sug.get('party_id'):
-                        try:
-                            mp = Ledger.objects.get(id=top_sug['party_id'], company=company)
-                        except Exception:
-                            pass
-
-                if mp and mp.ledger_type == 'CUSTOMER':
-                    if deb_amt > 0 and cred_amt == 0:
-                        if not re.search(r'\bREFUND\b', norm_desc, re.IGNORECASE):
-                            cred_amt = deb_amt
-                            deb_amt = Decimal('0.00')
-                            match_res.setdefault('signals', []).append(
-                                "Reclassified to Deposit (Credit) for Customer party"
-                            )
-                elif mp and mp.ledger_type == 'SUPPLIER':
-                    if cred_amt > 0 and deb_amt == 0:
-                        if not re.search(r'\bREFUND\b', norm_desc, re.IGNORECASE):
-                            deb_amt = cred_amt
-                            cred_amt = Decimal('0.00')
-                            match_res.setdefault('signals', []).append(
-                                "Reclassified to Withdrawal (Debit) for Supplier party"
-                            )
-
+                # Bank statement source evidence is immutable:
+                # Debits (Money OUT) and Credits (Money IN) are recorded exactly as received.
                 initial_status = 'UNRESOLVED'
                 if match_res['confidence'] >= 0.95:
                     initial_status = 'MATCHED_AUTO'

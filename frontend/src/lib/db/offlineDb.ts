@@ -149,6 +149,8 @@ export interface SyncedBankTransaction {
   matchedVoucherNumber?: string | null;
   matchConfidence?: number;
   matchNotes?: string;
+  isExcluded?: boolean;
+  exclusionReason?: string | null;
   serverUpdatedAt: number;
 }
 
