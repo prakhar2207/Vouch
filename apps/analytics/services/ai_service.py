@@ -299,7 +299,8 @@ class AnalyticsEngine:
             neg_parties = Ledger.objects.filter(
                 company=company, ledger_type='PARTY', current_balance__lt=0
             ).aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
-            creditors_balance = abs(neg_parties)
+            creditors_balance = neg_parties
+        creditors_balance = abs(creditors_balance)
 
         # 5. Cash & Bank
         cash_bank = Ledger.objects.filter(

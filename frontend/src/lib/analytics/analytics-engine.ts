@@ -302,11 +302,17 @@ export class LocalAnalyticsEngine {
       const bal = Number(l.currentBalance) || 0;
       const lt = (l.ledgerType || "").toUpperCase();
 
-      if (lt === "CUSTOMER") {
+      const isCustomer = lt === "CUSTOMER" || lt.includes("DEBTOR");
+      const isSupplier = lt === "SUPPLIER" || lt.includes("CREDITOR");
+      const isParty = lt === "PARTY" || lt === "BOTH";
+
+      if (isCustomer) {
         if (bal > 0) moneyToCollect += bal;
-      } else if (lt === "SUPPLIER") {
-        if (bal > 0) billsToPay += bal;
-      } else if (lt === "PARTY") {
+      } else if (isSupplier) {
+        // In double-entry accounting, creditors have credit balance (negative in Vouch ledger balances)
+        if (bal < 0) billsToPay += Math.abs(bal);
+        else if (bal > 0) billsToPay += bal;
+      } else if (isParty) {
         if (bal > 0) moneyToCollect += bal;
         else if (bal < 0) billsToPay += Math.abs(bal);
       } else if (lt === "CASH" || lt === "BANK") {

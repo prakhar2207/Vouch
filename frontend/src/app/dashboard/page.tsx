@@ -618,35 +618,41 @@ export default function Dashboard() {
 
         {/* 6-Column Owner-First Metric Grid (P1-12 & P1-13) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          {/* Card 1: Today's Sales */}
-          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
+          {/* Card 1: Total Sales */}
+          <Link
+            href="/sales"
+            className="bg-card border border-border/40 hover:border-blue-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
+          >
             <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-blue-500 to-indigo-500" />
-            <div className="flex items-center justify-between text-muted-foreground pl-2">
-              <span className="text-xs font-medium">Today's Sales</span>
-              <Receipt className="w-4 h-4 text-blue-500/70" />
+            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
+              <span className="text-xs font-medium">Total Sales</span>
+              <Receipt className="w-4 h-4 text-blue-500/80 group-hover:scale-110 transition-transform" />
             </div>
             <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-foreground pl-2">
-              ₹{(kpis.today_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              ₹{(kpis.total_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-[11px] text-muted-foreground pl-2">
-              Total: ₹{kpis.total_sales.toLocaleString("en-IN", { minimumFractionDigits: 0 })}
+            <div className="text-[11px] text-muted-foreground pl-2 truncate">
+              Today: ₹{(kpis.today_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 0 })} &bull; {kpis.sales_vouchers_count || 0} bills &rarr;
             </div>
-          </div>
+          </Link>
 
-          {/* Card 2: Today's Collections */}
-          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1 relative overflow-hidden">
-            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-emerald-500 to-teal-500" />
-            <div className="flex items-center justify-between text-muted-foreground pl-2">
-              <span className="text-xs font-medium">Received Today</span>
-              <ArrowDownRight className="w-4 h-4 text-emerald-500/70" />
+          {/* Card 2: Total Purchases */}
+          <Link
+            href="/purchases"
+            className="bg-card border border-border/40 hover:border-purple-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
+          >
+            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-purple-500 to-violet-500" />
+            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
+              <span className="text-xs font-medium">Total Purchases</span>
+              <ShoppingCart className="w-4 h-4 text-purple-400 group-hover:scale-110 transition-transform" />
             </div>
-            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-emerald-500 pl-2">
-              ₹{(kpis.today_collections || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-purple-400 pl-2">
+              ₹{(kpis.total_purchases || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-[11px] text-muted-foreground pl-2">
-              Payments received
+            <div className="text-[11px] text-muted-foreground pl-2 truncate">
+              {kpis.purchase_vouchers_count || 0} purchase bills &rarr;
             </div>
-          </div>
+          </Link>
 
           {/* Card 3: Money to Collect (Sundry Debtors) */}
           <Link
@@ -661,8 +667,8 @@ export default function Dashboard() {
             <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-emerald-400 pl-2">
               ₹{(kpis.money_to_collect || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-[11px] text-muted-foreground pl-2">
-              Customers owe you &rarr;
+            <div className="text-[11px] text-muted-foreground pl-2 truncate">
+              Customers owe &bull; Today: ₹{(kpis.today_collections || 0).toLocaleString("en-IN", { minimumFractionDigits: 0 })} &rarr;
             </div>
           </Link>
 
@@ -674,12 +680,12 @@ export default function Dashboard() {
             <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-orange-500 to-rose-500" />
             <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
               <span className="text-xs font-medium">Bills to Pay</span>
-              <ShoppingCart className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
+              <FileText className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
             </div>
             <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-rose-400 pl-2">
               ₹{(kpis.bills_to_pay || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-[11px] text-muted-foreground pl-2">
+            <div className="text-[11px] text-muted-foreground pl-2 truncate">
               You owe suppliers &rarr;
             </div>
           </Link>
