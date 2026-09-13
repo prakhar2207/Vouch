@@ -445,6 +445,8 @@ export async function pullIncrementalChanges(
           partyName: v.party_name,
           status: v.status,
           totalAmount: Number(v.total_amount) || 0,
+          paymentStatus: v.payment_status || v.paymentStatus || "UNPAID",
+          paidAmount: Number(v.paid_amount ?? v.paidAmount) || 0,
           narration: v.narration,
           serverUpdatedAt: v.server_updated_at || Date.now(),
         }));

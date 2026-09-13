@@ -176,8 +176,26 @@ class SyncPullAPIView(APIView):
         # --- Hydrate VOUCHERS ---
         voucher_ids = grouped['VOUCHER']['CREATE'].union(grouped['VOUCHER']['UPDATE'])
         if voucher_ids:
+            from apps.accounting.models import PaymentAllocation
+            from django.db.models import Sum
+            alloc_by_inv = {row['invoice_voucher_id']: row['paid'] for row in PaymentAllocation.objects.filter(invoice_voucher_id__in=voucher_ids).values('invoice_voucher_id').annotate(paid=Sum('allocated_amount'))}
+            alloc_by_pmt = {row['payment_voucher_id']: row['allocated'] for row in PaymentAllocation.objects.filter(payment_voucher_id__in=voucher_ids).values('payment_voucher_id').annotate(allocated=Sum('allocated_amount'))}
+
             vouchers = Voucher.objects.filter(id__in=voucher_ids).select_related('party_ledger').defer('attachment_data', 'attachment_mime')
             for v in vouchers:
+                tot = v.total_amount or Decimal('0.00')
+                if v.voucher_type in ['SALES', 'PURCHASE']:
+                    paid = alloc_by_inv.get(v.id, Decimal('0.00'))
+                    p_status = 'PAID' if paid >= tot and tot > 0 else ('PARTIAL' if paid > 0 else 'UNPAID')
+                    paid_amt = float(paid)
+                elif v.voucher_type in ['PAYMENT', 'RECEIPT']:
+                    allocated = alloc_by_pmt.get(v.id, Decimal('0.00'))
+                    p_status = 'ALLOCATED' if allocated >= tot and tot > 0 else ('PARTIAL' if allocated > 0 else 'UNALLOCATED')
+                    paid_amt = float(allocated)
+                else:
+                    p_status = 'N/A'
+                    paid_amt = 0.0
+
                 item = {
                     'id': str(v.id),
                     'company_id': str(company.id),
@@ -191,6 +209,8 @@ class SyncPullAPIView(APIView):
                     'party_name': v.party_ledger.name if v.party_ledger else (v.buyer_name or ''),
                     'status': v.status,
                     'total_amount': str(v.total_amount or '0.00'),
+                    'paid_amount': paid_amt,
+                    'payment_status': p_status,
                     'narration': v.narration or '',
                     'server_updated_at': int(v.updated_at.timestamp() * 1000) if getattr(v, 'updated_at', None) else now_ts,
                 }
