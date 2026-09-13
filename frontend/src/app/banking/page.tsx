@@ -616,73 +616,95 @@ export default function BankingPage() {
   }, [transactions, searchQuery]);
 
   const customerAndSupplierLedgers = useMemo(() => {
-    return allLedgers.filter(
-      (l) =>
-        l.ledger_type === "CUSTOMER" ||
-        l.ledger_type === "SUPPLIER" ||
-        l.ledger_type === "BOTH" ||
-        l.ledger_type === "CASH" ||
+    return allLedgers.filter((l) => {
+      const type = l.ledgerType || l.ledger_type;
+      const role = l.canonical_role;
+      return (
+        type === "CUSTOMER" ||
+        type === "SUPPLIER" ||
+        type === "BOTH" ||
+        type === "PARTY" ||
+        type === "CASH" ||
         (l.name && l.name.toLowerCase().includes("cash")) ||
-        l.canonical_role === "CUSTOMER" ||
-        l.canonical_role === "SUPPLIER" ||
-        l.canonical_role === "BOTH"
-    );
+        role === "CUSTOMER" ||
+        role === "SUPPLIER" ||
+        role === "BOTH" ||
+        (l.group && l.group.toUpperCase().includes("DEBTOR")) ||
+        (l.group && l.group.toUpperCase().includes("CREDITOR"))
+      );
+    });
   }, [allLedgers]);
 
   const expenseLedgers = useMemo(() => {
-    return allLedgers.filter(
-      (l) =>
-        l.ledger_type === "EXPENSE" ||
+    return allLedgers.filter((l) => {
+      const type = l.ledgerType || l.ledger_type;
+      return (
+        type === "EXPENSE" ||
         l.nature === "EXPENSE" ||
         (l.group && l.group.toLowerCase().includes("expense"))
-    );
+      );
+    });
   }, [allLedgers]);
 
   const contraLedgers = useMemo(() => {
-    return allLedgers.filter(
-      (l) =>
-        (l.ledger_type === "BANK" || l.ledger_type === "CASH" || l.nature === "ASSET") &&
+    return allLedgers.filter((l) => {
+      const type = l.ledgerType || l.ledger_type;
+      return (
+        (type === "BANK" || type === "CASH" || l.nature === "ASSET") &&
         l.id !== selectedBankId
-    );
+      );
+    });
   }, [allLedgers, selectedBankId]);
 
   const partyOptions: SearchableOption[] = useMemo(() => {
-    return customerAndSupplierLedgers.map((p) => ({
-      id: p.id,
-      name: p.name,
-      group: p.ledger_type || "PARTY",
-      balance: p.current_balance !== undefined && p.current_balance !== null ? Number(p.current_balance) : undefined,
-      subtitle: p.gstin ? `GSTIN: ${p.gstin}` : p.phone ? `Phone: ${p.phone}` : undefined,
-    }));
+    return customerAndSupplierLedgers.map((p) => {
+      const balance = p.currentBalance !== undefined ? p.currentBalance : p.current_balance;
+      return {
+        id: p.id,
+        name: p.name,
+        group: p.ledgerType || p.ledger_type || "PARTY",
+        balance: balance !== undefined && balance !== null ? Number(balance) : undefined,
+        subtitle: p.gstin ? `GSTIN: ${p.gstin}` : p.phone ? `Phone: ${p.phone}` : undefined,
+      };
+    });
   }, [customerAndSupplierLedgers]);
 
   const expenseOptions: SearchableOption[] = useMemo(() => {
-    return expenseLedgers.map((exp) => ({
-      id: exp.id,
-      name: exp.name,
-      group: exp.group || "EXPENSE",
-      balance: exp.current_balance !== undefined && exp.current_balance !== null ? Number(exp.current_balance) : undefined,
-    }));
+    return expenseLedgers.map((exp) => {
+      const balance = exp.currentBalance !== undefined ? exp.currentBalance : exp.current_balance;
+      return {
+        id: exp.id,
+        name: exp.name,
+        group: exp.group || "EXPENSE",
+        balance: balance !== undefined && balance !== null ? Number(balance) : undefined,
+      };
+    });
   }, [expenseLedgers]);
 
   const contraOptions: SearchableOption[] = useMemo(() => {
-    return contraLedgers.map((c) => ({
-      id: c.id,
-      name: c.name,
-      group: c.ledger_type || "CONTRA",
-      balance: c.current_balance !== undefined && c.current_balance !== null ? Number(c.current_balance) : undefined,
-      subtitle: c.bank_account_number ? `A/c ...${c.bank_account_number.slice(-4)}` : undefined,
-    }));
+    return contraLedgers.map((c) => {
+      const balance = c.currentBalance !== undefined ? c.currentBalance : c.current_balance;
+      return {
+        id: c.id,
+        name: c.name,
+        group: c.ledgerType || c.ledger_type || "CONTRA",
+        balance: balance !== undefined && balance !== null ? Number(balance) : undefined,
+        subtitle: c.bank_account_number ? `A/c ...${c.bank_account_number.slice(-4)}` : undefined,
+      };
+    });
   }, [contraLedgers]);
 
   const bankOptions: SearchableOption[] = useMemo(() => {
-    return bankLedgers.map((b) => ({
-      id: b.id,
-      name: b.name,
-      group: "BANK",
-      balance: b.current_balance !== undefined && b.current_balance !== null ? Number(b.current_balance) : undefined,
-      subtitle: b.bank_account_number ? `A/c ...${b.bank_account_number.slice(-4)}` : undefined,
-    }));
+    return bankLedgers.map((b) => {
+      const balance = b.currentBalance !== undefined ? b.currentBalance : b.current_balance;
+      return {
+        id: b.id,
+        name: b.name,
+        group: "BANK",
+        balance: balance !== undefined && balance !== null ? Number(balance) : undefined,
+        subtitle: b.bank_account_number ? `A/c ...${b.bank_account_number.slice(-4)}` : undefined,
+      };
+    });
   }, [bankLedgers]);
 
   return (
