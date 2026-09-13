@@ -121,10 +121,10 @@ class VoucherService:
                 
             ledger = locked_ledgers[entry.ledger_id]
             
-            if ledger.opening_balance_type == 'DEBIT':
-                ledger.current_balance = ledger.current_balance + entry.debit_amount - entry.credit_amount
-            else:
+            if ledger.normal_balance == 'CREDIT':
                 ledger.current_balance = ledger.current_balance + entry.credit_amount - entry.debit_amount
+            else:
+                ledger.current_balance = ledger.current_balance + entry.debit_amount - entry.credit_amount
                 
             ledger.save(update_fields=['current_balance'])
             
@@ -314,6 +314,14 @@ class VoucherService:
 
         op_balance = Decimal('0.00') if has_opening_entries else Decimal(str(locked_ledger.opening_balance or '0.00'))
         
+        # Calculate opening debit and credit contribution
+        if locked_ledger.opening_balance_type == 'CREDIT':
+            op_dr = Decimal('0.00')
+            op_cr = op_balance
+        else:
+            op_dr = op_balance
+            op_cr = Decimal('0.00')
+
         # POSTED vouchers and explicit REVERSED/CORRECTED balancing history affect accounting balances
         totals = LedgerEntry.objects.filter(
             ledger=locked_ledger,
@@ -323,13 +331,13 @@ class VoucherService:
             total_cr=Sum('credit_amount')
         )
 
-        total_dr = Decimal(str(totals['total_dr'] or '0.00'))
-        total_cr = Decimal(str(totals['total_cr'] or '0.00'))
+        total_dr = op_dr + Decimal(str(totals['total_dr'] or '0.00'))
+        total_cr = op_cr + Decimal(str(totals['total_cr'] or '0.00'))
 
-        if locked_ledger.opening_balance_type == 'DEBIT':
-            locked_ledger.current_balance = op_balance + total_dr - total_cr
+        if locked_ledger.normal_balance == 'CREDIT':
+            locked_ledger.current_balance = total_cr - total_dr
         else:
-            locked_ledger.current_balance = op_balance + total_cr - total_dr
+            locked_ledger.current_balance = total_dr - total_cr
 
         locked_ledger.save(update_fields=['current_balance'])
         ledger.current_balance = locked_ledger.current_balance

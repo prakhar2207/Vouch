@@ -162,3 +162,67 @@ class StatementAccountingRegressionTests(TestCase):
         self.assertEqual(data['display_amount'], '68362.12')
         self.assertEqual(data['period_debit'], '105000.00')
         self.assertEqual(data['period_credit'], '173362.12')
+
+    def test_banking_refund_preservation(self):
+        from apps.accounting.models import BankTransaction
+        from apps.accounting.services.bank_reconciliation_service import BankReconciliationService
+        from datetime import date
+
+        bank_group = LedgerGroup.objects.create(name="Bank Accounts", company=self.company, nature="ASSET")
+        bank_ledger = Ledger.objects.create(name="HDFC Bank", group=bank_group, company=self.company, ledger_type="BANK")
+        supplier = Ledger.objects.create(name="Refund Supplier", group=self.sundry_creditors, company=self.company, ledger_type="SUPPLIER")
+
+        # Deposit into bank from supplier (supplier refund)
+        # In bank statement: Deposit = Credit on bank passbook
+        bank_tx = BankTransaction.objects.create(
+            company=self.company,
+            bank_ledger=bank_ledger,
+            transaction_date=date.today(),
+            description="REFUND FROM SUPPLIER XYZ",
+            credit_amount=Decimal('5000.00'),
+            debit_amount=Decimal('0.00'),
+            status='UNRESOLVED'
+        )
+
+        res = BankReconciliationService.resolve_transaction(
+            bank_tx=bank_tx,
+            action_type='CONFIRM_RECEIPT',
+            payload={'party_id': str(supplier.id)},
+            user=self.user
+        )
+
+        bank_tx.refresh_from_db()
+        # Ensure bank statement facts were NOT mutated/flipped
+        self.assertEqual(bank_tx.credit_amount, Decimal('5000.00'))
+        self.assertEqual(bank_tx.debit_amount, Decimal('0.00'))
+        self.assertEqual(bank_tx.status, 'RECONCILED')
+
+        voucher = bank_tx.matched_voucher
+        self.assertEqual(voucher.voucher_type, 'RECEIPT')
+        self.assertEqual(voucher.party_ledger, supplier)
+        # Bank debited (asset increase), Supplier credited (liability decrease / refund)
+        bank_entry = voucher.ledger_entries.get(ledger=bank_ledger)
+        supplier_entry = voucher.ledger_entries.get(ledger=supplier)
+        self.assertEqual(bank_entry.debit_amount, Decimal('5000.00'))
+        self.assertEqual(supplier_entry.credit_amount, Decimal('5000.00'))
+
+    def test_health_checks_contract(self):
+        from apps.accounting.services.integrity_engine import AccountingIntegrityEngine
+        report = AccountingIntegrityEngine.run_all_checks(self.company)
+
+        self.assertIn('health_score', report)
+        self.assertIn('health_status', report)
+        self.assertIn('checks', report)
+        self.assertEqual(len(report['checks']), 11)
+
+        for check in report['checks']:
+            self.assertIn('name', check)
+            self.assertIn('category', check)
+            self.assertIn('status', check)
+            self.assertIn('severity', check)
+            self.assertIn('findings_count', check)
+            self.assertIn('description', check)
+            self.assertIn('passed', check)
+            self.assertIn(check['status'], ['PASSED', 'WARNING', 'CRITICAL'])
+            self.assertEqual(check['passed'], check['status'] == 'PASSED')
+

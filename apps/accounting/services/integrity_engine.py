@@ -193,7 +193,7 @@ class AccountingIntegrityEngine:
         existing_findings = {
             f.title: f for f in AccountingFinding.objects.filter(
                 company=company,
-                category='WRONG_PARTY',
+                category__in=['PARTY_BALANCE', 'WRONG_PARTY'],
                 is_resolved=False
             )
         }
@@ -206,10 +206,20 @@ class AccountingIntegrityEngine:
             dr = Decimal(str(t['dr'] or '0.00')) if t else Decimal('0.00')
             cr = Decimal(str(t['cr'] or '0.00')) if t else Decimal('0.00')
 
-            if p.opening_balance_type == 'DEBIT':
-                expected = op + dr - cr
+            if p.opening_balance_type == 'CREDIT':
+                op_dr = Decimal('0.00')
+                op_cr = op
             else:
-                expected = op + cr - dr
+                op_dr = op
+                op_cr = Decimal('0.00')
+
+            total_dr = op_dr + dr
+            total_cr = op_cr + cr
+
+            if p.normal_balance == 'CREDIT':
+                expected = total_cr - total_dr
+            else:
+                expected = total_dr - total_cr
 
             current = Decimal(str(p.current_balance or '0.00'))
             diff = abs(expected - current)
@@ -241,7 +251,7 @@ class AccountingIntegrityEngine:
                 else:
                     finding = AccountingFinding.objects.create(
                         company=company,
-                        category='WRONG_PARTY',
+                        category='PARTY_BALANCE',
                         title=title,
                         is_resolved=False,
                         **defaults
@@ -680,19 +690,105 @@ class AccountingIntegrityEngine:
         elif warning_count > 0:
             status = 'NEEDS_ATTENTION'
 
-        checks_summary = [
-            {"name": "Trial Balance Equilibrium", "passed": not any(f.category == 'TRIAL_BALANCE' for f in findings)},
-            {"name": "Party Ledger Balances", "passed": not any(f.category == 'WRONG_PARTY' and 'balance' in f.title.lower() for f in findings)},
-            {"name": "Payment Allocations", "passed": not any(f.category == 'PAYMENT' for f in findings)},
-            {"name": "Party Assignment Integrity", "passed": not any(f.category == 'WRONG_PARTY' and 'invoice' in f.title.lower() for f in findings)},
-            {"name": "Duplicate Invoices & Bills", "passed": not any(f.category == 'DUPLICATE' for f in findings)},
-            {"name": "GST Rates & Place of Supply", "passed": not any(f.category == 'GST' for f in findings)},
-            {"name": "Inventory & Stock Levels", "passed": not any(f.category == 'INVENTORY' for f in findings)},
-            {"name": "Unusual Transaction Alerts", "passed": not any(f.category == 'UNUSUAL_ACTIVITY' for f in findings)},
-            {"name": "Bank Reconciliation", "passed": unresolved_bank == 0},
-            {"name": "Opening Balances", "passed": not any(f.category == 'OPENING_BALANCE' for f in findings)},
-            {"name": "Voucher Sequence Numbering", "passed": not any(f.category == 'NUMBERING' for f in findings)},
+        check_configs = [
+            {
+                "name": "Trial Balance Equilibrium",
+                "category": "TRIAL_BALANCE",
+                "description": "Verifies total debits equal total credits across all posted entries.",
+                "match": lambda f: f.category == 'TRIAL_BALANCE',
+            },
+            {
+                "name": "Party Ledger Balances",
+                "category": "PARTY_BALANCE",
+                "description": "Ensures recorded party balances match the audit sum of all posted transactions.",
+                "match": lambda f: (f.category in ['PARTY_BALANCE', 'WRONG_PARTY']) and 'balance' in f.title.lower(),
+            },
+            {
+                "name": "Payment Allocations",
+                "category": "PAYMENT",
+                "description": "Validates payment links stay strictly within company boundaries and do not over-allocate invoices.",
+                "match": lambda f: f.category == 'PAYMENT',
+            },
+            {
+                "name": "Party Assignment Integrity",
+                "category": "WRONG_PARTY",
+                "description": "Detects invoices and payments assigned to incorrect party accounts.",
+                "match": lambda f: f.category == 'WRONG_PARTY' and 'invoice' in f.title.lower(),
+            },
+            {
+                "name": "Duplicate Invoices & Bills",
+                "category": "DUPLICATE",
+                "description": "Scans for duplicate invoice numbers and identical party billing amounts.",
+                "match": lambda f: f.category == 'DUPLICATE',
+            },
+            {
+                "name": "GST Rates & Place of Supply",
+                "category": "GST",
+                "description": "Verifies GST rates, CGST/SGST/IGST tax splits, and interstate place of supply rules.",
+                "match": lambda f: f.category == 'GST',
+            },
+            {
+                "name": "Inventory & Stock Levels",
+                "category": "INVENTORY",
+                "description": "Monitors stock quantities to prevent negative inventory and valuation drift.",
+                "match": lambda f: f.category == 'INVENTORY',
+            },
+            {
+                "name": "Unusual Transaction Alerts",
+                "category": "UNUSUAL_ACTIVITY",
+                "description": "Flags high-value anomalies and unusual weekend or non-business day entries.",
+                "match": lambda f: f.category == 'UNUSUAL_ACTIVITY',
+            },
+            {
+                "name": "Bank Reconciliation",
+                "category": "BANK_RECONCILIATION",
+                "description": "Ensures all imported bank feed transactions are reconciled against book vouchers.",
+                "match": lambda f: f.category == 'BANK_RECONCILIATION',
+                "extra_count": unresolved_bank,
+            },
+            {
+                "name": "Opening Balances",
+                "category": "OPENING_BALANCE",
+                "description": "Verifies opening balance suspense accounts are fully resolved and balanced.",
+                "match": lambda f: f.category == 'OPENING_BALANCE',
+            },
+            {
+                "name": "Voucher Sequence Numbering",
+                "category": "NUMBERING",
+                "description": "Guarantees sequential document numbering without gaps or duplicates within each financial year.",
+                "match": lambda f: f.category == 'NUMBERING',
+            },
         ]
+
+        checks_summary = []
+        for cfg in check_configs:
+            matched = [f for f in findings if cfg["match"](f) and not f.is_resolved]
+            count = len(matched) + cfg.get("extra_count", 0)
+
+            if any(f.severity == 'CRITICAL' for f in matched):
+                chk_status = "CRITICAL"
+                severity = "CRITICAL"
+            elif any(f.severity == 'WARNING' for f in matched) or cfg.get("extra_count", 0) > 0:
+                chk_status = "WARNING"
+                severity = "WARNING"
+            elif any(f.severity == 'INFO' for f in matched):
+                chk_status = "WARNING"
+                severity = "INFO"
+            else:
+                chk_status = "PASSED"
+                severity = "PASSED"
+
+            passed = (chk_status == "PASSED")
+
+            checks_summary.append({
+                "name": cfg["name"],
+                "category": cfg["category"],
+                "status": chk_status,
+                "severity": severity,
+                "findings_count": count,
+                "description": cfg["description"],
+                "passed": passed,
+            })
 
         passed_count = sum(1 for c in checks_summary if c["passed"])
 
@@ -756,6 +852,14 @@ class AccountingIntegrityEngine:
         parties = list(Ledger.objects.filter(company=company, ledger_type__in=['CUSTOMER', 'SUPPLIER'], is_archived=False))
         if parties:
             party_ids = [p.id for p in parties]
+            ledgers_with_opening = set(
+                LedgerEntry.objects.filter(
+                    company=company,
+                    ledger_id__in=party_ids,
+                    voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED'],
+                    voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
+                ).values_list('ledger_id', flat=True).distinct()
+            )
             party_entry_totals = LedgerEntry.objects.filter(
                 company=company,
                 ledger_id__in=party_ids,
@@ -765,10 +869,20 @@ class AccountingIntegrityEngine:
             )
             p_map = {row['ledger_id']: row for row in party_entry_totals}
             for p in parties:
+                has_op = p.id in ledgers_with_opening
+                op = Decimal('0.00') if has_op else Decimal(str(p.opening_balance or '0.00'))
                 t = p_map.get(p.id)
                 p_dr = Decimal(str(t['dr'] or '0.00')) if t else Decimal('0.00')
                 p_cr = Decimal(str(t['cr'] or '0.00')) if t else Decimal('0.00')
-                expected = (p_dr - p_cr) if p.opening_balance_type == 'DEBIT' else (p_cr - p_dr)
+                if p.opening_balance_type == 'CREDIT':
+                    op_dr = Decimal('0.00')
+                    op_cr = op
+                else:
+                    op_dr = op
+                    op_cr = Decimal('0.00')
+                total_dr = op_dr + p_dr
+                total_cr = op_cr + p_cr
+                expected = (total_cr - total_dr) if p.normal_balance == 'CREDIT' else (total_dr - total_cr)
                 if abs(expected - Decimal(str(p.current_balance or '0.00'))) == diff:
                     causes.append({
                         "type": "PARTY_BALANCE_DRIFT",

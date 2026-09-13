@@ -132,6 +132,9 @@ class SyncPullAPIView(APIView):
                     'current_balance': str(l.current_balance or '0.00'),
                     'opening_balance': str(l.opening_balance or '0.00'),
                     'opening_balance_type': l.opening_balance_type or 'DEBIT',
+                    'normal_balance': l.normal_balance,
+                    'balance_state': l.balance_state,
+                    'display_amount': str(l.display_amount),
                     'phone': l.phone or '',
                     'server_updated_at': int(l.updated_at.timestamp() * 1000) if getattr(l, 'updated_at', None) else now_ts,
                 }

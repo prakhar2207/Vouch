@@ -64,31 +64,30 @@ class BankReconciliationService:
 
         created_voucher = None
 
-        if action_type in ['MATCH_PARTY', 'RECORD_PAYMENT']:
+        if action_type in ['MATCH_PARTY', 'RECORD_PAYMENT', 'CONFIRM_RECEIPT', 'CONFIRM_PAYMENT']:
             party_id = payload.get('party_id')
             if not party_id:
                 raise ValidationError("Party ID is required to match transaction.")
             party = Ledger.objects.get(id=party_id, company=company)
 
-            # Defensive double-entry guardrail:
-            # If transaction is linked to a Customer, ensure it is treated as a RECEIPT (money in)
-            # unless explicitly marked as a refund. If debit/credit amounts were previously flipped, fix them.
-            import re
-            if party.ledger_type == 'CUSTOMER' and not is_money_in:
-                if not re.search(r'\bREFUND\b', bank_tx.description, re.IGNORECASE):
-                    is_money_in = True
-                    bank_tx.credit_amount = amount
-                    bank_tx.debit_amount = Decimal('0.00')
-                    bank_tx.save(update_fields=['credit_amount', 'debit_amount'])
-            elif party.ledger_type == 'SUPPLIER' and is_money_in:
-                if not re.search(r'\bREFUND\b', bank_tx.description, re.IGNORECASE):
-                    is_money_in = False
-                    bank_tx.debit_amount = amount
-                    bank_tx.credit_amount = Decimal('0.00')
-                    bank_tx.save(update_fields=['credit_amount', 'debit_amount'])
-
+            # Bank statement truth is immutable evidence:
+            # We NEVER mutate bank_tx.credit_amount or bank_tx.debit_amount based on party type.
+            # Money IN (credit on bank statement) is ALWAYS a deposit into Bank (Dr Bank, Cr Party).
+            # Money OUT (debit on bank statement) is ALWAYS a withdrawal from Bank (Dr Party, Cr Bank).
             v_type = 'RECEIPT' if is_money_in else 'PAYMENT'
             v_num, _ = InvoiceSequenceService.get_next_number(company, v_type, bank_tx.transaction_date)
+
+            is_supplier = party.ledger_type == 'SUPPLIER' or (party.canonical_role == 'SUPPLIER')
+            if is_money_in:
+                if is_supplier:
+                    narration = f"Supplier refund / recovery from {party.name} via {bank_ledger.name}: {bank_tx.description}"
+                else:
+                    narration = f"Customer receipt from {party.name} via {bank_ledger.name}: {bank_tx.description}"
+            else:
+                if is_supplier:
+                    narration = f"Payment to supplier {party.name} via {bank_ledger.name}: {bank_tx.description}"
+                else:
+                    narration = f"Customer refund to {party.name} via {bank_ledger.name}: {bank_tx.description}"
 
             created_voucher = Voucher.objects.create(
                 company=company,
@@ -100,12 +99,12 @@ class BankReconciliationService:
                 reference_number=bank_tx.reference_number or "",
                 status='POSTED',
                 total_amount=amount,
-                narration=f"Bank {v_type} via {bank_ledger.name}: {bank_tx.description}",
+                narration=narration,
                 created_by=user
             )
 
             if is_money_in:
-                # Receipt: Dr Bank, Cr Customer
+                # Deposit: Dr Bank, Cr Party (Receipt or Supplier Refund)
                 LedgerEntry.objects.create(
                     company=company,
                     voucher=created_voucher,
@@ -120,17 +119,17 @@ class BankReconciliationService:
                     ledger=party,
                     debit_amount=Decimal('0.00'),
                     credit_amount=amount,
-                    narration=f"Receipt from {party.name}"
+                    narration=f"Receipt from {party.name}" if not is_supplier else f"Refund from {party.name}"
                 )
             else:
-                # Payment: Dr Supplier, Cr Bank
+                # Withdrawal: Dr Party, Cr Bank (Payment or Customer Refund)
                 LedgerEntry.objects.create(
                     company=company,
                     voucher=created_voucher,
                     ledger=party,
                     debit_amount=amount,
                     credit_amount=Decimal('0.00'),
-                    narration=f"Payment to {party.name}"
+                    narration=f"Payment to {party.name}" if is_supplier else f"Refund to {party.name}"
                 )
                 LedgerEntry.objects.create(
                     company=company,

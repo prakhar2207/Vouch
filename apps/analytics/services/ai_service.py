@@ -8,7 +8,7 @@ except ImportError:
     KMeans = None
     LinearRegression = None
     ExponentialSmoothing = None
-from django.db.models import Sum, Count
+from django.db.models import Sum, Count, Q
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
@@ -284,23 +284,21 @@ class AnalyticsEngine:
 
         # 3. Money to Collect (Sundry Debtors / Customer Outstanding)
         debtors_balance = Ledger.objects.filter(
-            company=company, group__nature='ASSET', group__name__icontains='Debtor'
+            company=company, is_archived=False
+        ).filter(
+            Q(ledger_type='CUSTOMER') | Q(group__nature='ASSET', group__name__icontains='Debtor')
+        ).filter(
+            current_balance__gt=0
         ).aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
-        if debtors_balance == Decimal('0.00'):
-            debtors_balance = Ledger.objects.filter(
-                company=company, ledger_type='PARTY', current_balance__gt=0
-            ).aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
 
         # 4. Bills to Pay (Sundry Creditors / Supplier Outstanding)
         creditors_balance = Ledger.objects.filter(
-            company=company, group__nature='LIABILITY', group__name__icontains='Creditor'
+            company=company, is_archived=False
+        ).filter(
+            Q(ledger_type='SUPPLIER') | Q(group__nature='LIABILITY', group__name__icontains='Creditor')
+        ).filter(
+            current_balance__gt=0
         ).aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
-        if creditors_balance == Decimal('0.00'):
-            neg_parties = Ledger.objects.filter(
-                company=company, ledger_type='PARTY', current_balance__lt=0
-            ).aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
-            creditors_balance = neg_parties
-        creditors_balance = abs(creditors_balance)
 
         # 5. Cash & Bank
         cash_bank = Ledger.objects.filter(

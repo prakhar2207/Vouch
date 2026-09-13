@@ -60,7 +60,7 @@ interface BankTransactionItem {
   debit_amount: string;
   credit_amount: string;
   balance?: string | null;
-  status: "UNRESOLVED" | "NEEDS_REVIEW" | "MATCHED" | "RECONCILED" | "IGNORED";
+  status: "UNRESOLVED" | "NEEDS_REVIEW" | "MATCHED" | "RECONCILED" | "IGNORED" | "MATCHED_AUTO" | "MATCHED_SUGGESTED";
   bank_ledger: {
     id: string;
     name: string;
@@ -1017,16 +1017,22 @@ export default function BankingPage() {
                           )}
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
-                              tx.status === "MATCHED" || tx.status === "RECONCILED"
+                              tx.status === "MATCHED" || tx.status === "RECONCILED" || tx.status === "MATCHED_AUTO"
                                 ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                : tx.status === "NEEDS_REVIEW"
+                                : tx.status === "NEEDS_REVIEW" || tx.status === "MATCHED_SUGGESTED"
                                 ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
                                 : tx.status === "IGNORED"
                                 ? "bg-muted text-muted-foreground border border-border/50"
                                 : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
                             }`}
                           >
-                            {tx.status.replace("_", " ")}
+                            {tx.status === "MATCHED" || tx.status === "RECONCILED" || tx.status === "MATCHED_AUTO"
+                              ? "Completed"
+                              : tx.status === "NEEDS_REVIEW" || tx.status === "MATCHED_SUGGESTED"
+                              ? "Ready to Confirm"
+                              : tx.status === "IGNORED"
+                              ? "Ignored"
+                              : "Needs Your Attention"}
                           </span>
                         </div>
 
@@ -1066,7 +1072,9 @@ export default function BankingPage() {
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-bold text-foreground">
-                              Suggested Party: {tx.matched_party.name}
+                              {isCredit
+                                ? `Looks like a customer receipt from ${tx.matched_party.name}`
+                                : `Looks like a supplier payment to ${tx.matched_party.name}`}
                             </span>
                             <span
                               className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${
@@ -1077,7 +1085,7 @@ export default function BankingPage() {
                                   : "bg-muted text-muted-foreground border-border"
                               }`}
                             >
-                              {tx.match_confidence >= 80 ? "Verified Match" : tx.match_confidence >= 50 ? "Suggested Match" : "Needs Review"}
+                              {tx.match_confidence >= 80 ? "Verified Match" : tx.match_confidence >= 50 ? "Suggested" : "Needs Review"}
                             </span>
                           </div>
                           {(() => {
@@ -1099,18 +1107,24 @@ export default function BankingPage() {
                       </div>
 
                       {tx.status !== "MATCHED" && tx.status !== "RECONCILED" && (
-                        <div className="flex items-center gap-2 w-full sm:w-auto">
-                          <button
-                            onClick={() => openActionModal(tx, "RECORD_PAYMENT")}
-                            className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold transition-colors cursor-pointer w-full sm:w-auto text-center"
-                          >
-                            {isCredit || tx.matched_party?.ledger_type === "CUSTOMER" ? "Record Receipt" : "Record Payment"}
-                          </button>
+                        <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
                           <button
                             onClick={() => openActionModal(tx, "MATCH_PARTY")}
+                            className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold transition-colors cursor-pointer w-full sm:w-auto text-center"
+                          >
+                            {isCredit ? "Confirm Receipt" : "Confirm Supplier Payment"}
+                          </button>
+                          <button
+                            onClick={() => openActionModal(tx, "RECORD_PAYMENT")}
                             className="px-2.5 py-1.5 rounded-lg border border-border/60 hover:bg-card text-foreground text-xs font-semibold cursor-pointer"
                           >
-                            Confirm Match
+                            Choose Different Party
+                          </button>
+                          <button
+                            onClick={() => openActionModal(tx, "IGNORE")}
+                            className="px-2 py-1.5 rounded-lg hover:bg-rose-500/10 text-muted-foreground hover:text-rose-400 text-xs font-medium cursor-pointer"
+                          >
+                            Ignore
                           </button>
                         </div>
                       )}
@@ -1421,7 +1435,8 @@ export default function BankingPage() {
               <div className="p-5 border-b border-border">
                 <div className="flex items-center justify-between">
                   <h3 className="text-base font-bold text-foreground">
-                    {actionType === "MATCH_PARTY" && "Match Party & Learn Rule"}
+                    {actionType === "MATCH_PARTY" &&
+                      (parseFloat(selectedTx.credit_amount) > 0 ? "Confirm Customer Receipt & Save Rule" : "Confirm Supplier Payment & Save Rule")}
                     {actionType === "RECORD_PAYMENT" &&
                       (parseFloat(selectedTx.credit_amount) > 0 ? "Record Customer Receipt" : "Record Supplier Payment")}
                     {actionType === "RECORD_EXPENSE" && "Record Bank Expense"}

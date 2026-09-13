@@ -506,51 +506,60 @@ export default function PartiesPage() {
                       </div>
                     )}
                     
-                    <div className="flex justify-between items-baseline pt-1.5 border-t border-border/40">
-                      <span className="text-muted-foreground text-xs font-medium">Balance</span>
-                      <div className="text-right">
-                        <span className={`font-bold text-base font-mono tabular-nums ${
-                          (party.balance_state === 'SETTLED' || hasZeroBalance)
-                            ? 'text-muted-foreground' 
-                            : (party.balance_state === 'TO_COLLECT' || party.balance_state === 'ADVANCE_PAID' || (isCustomer && balanceNum > 0) || (!isCustomer && balanceNum < 0))
-                            ? 'text-emerald-400' 
-                            : 'text-rose-400'
-                        }`}>
-                          ₹{Math.abs(party.display_amount ?? balanceNum).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </span>
-                        <span className={`text-xs ml-1.5 font-bold px-2 py-0.5 rounded-full ${
-                          (party.balance_state === 'SETTLED' || hasZeroBalance)
-                            ? 'text-muted-foreground bg-muted/60'
-                            : party.balance_state === 'TO_COLLECT'
-                            ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
-                            : party.balance_state === 'TO_PAY'
-                            ? 'text-rose-400 bg-rose-500/10 border border-rose-500/20'
-                            : party.balance_state === 'ADVANCE_RECEIVED'
-                            ? 'text-blue-400 bg-blue-500/10 border border-blue-500/20'
-                            : party.balance_state === 'ADVANCE_PAID'
-                            ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
-                            : isCustomer
-                            ? (balanceNum > 0 ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20' : 'text-blue-400 bg-blue-500/10 border border-blue-500/20')
-                            : (balanceNum > 0 ? 'text-rose-400 bg-rose-500/10 border border-rose-500/20' : 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20')
-                        }`}>
-                          {party.balance_state === 'SETTLED'
-                            ? 'Settled'
-                            : party.balance_state === 'TO_COLLECT'
-                            ? 'To Collect'
-                            : party.balance_state === 'TO_PAY'
-                            ? 'To Pay'
-                            : party.balance_state === 'ADVANCE_RECEIVED'
-                            ? 'Advance'
-                            : party.balance_state === 'ADVANCE_PAID'
-                            ? 'Advance Paid'
-                            : hasZeroBalance 
-                            ? 'Settled' 
-                            : isCustomer 
-                            ? (balanceNum > 0 ? 'To Collect' : 'Advance') 
-                            : (balanceNum > 0 ? 'To Pay' : 'Advance Paid')}
-                        </span>
-                      </div>
-                    </div>
+                    {(() => {
+                      const bState = party.balance_state || (
+                        hasZeroBalance ? 'SETTLED' :
+                        isCustomer ? (balanceNum > 0 ? 'TO_COLLECT' : 'ADVANCE_RECEIVED') :
+                        (balanceNum > 0 ? 'TO_PAY' : 'ADVANCE_PAID')
+                      );
+                      const displayAmt = Math.abs(party.display_amount ?? balanceNum);
+
+                      let badgeText = 'Settled';
+                      let badgeStyle = 'text-muted-foreground bg-muted/60 border-border/40';
+                      let explanation = 'Nothing outstanding';
+                      let balanceColor = 'text-muted-foreground';
+
+                      if (bState === 'TO_COLLECT') {
+                        badgeText = 'To Collect';
+                        badgeStyle = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+                        explanation = 'This customer owes you';
+                        balanceColor = 'text-emerald-400';
+                      } else if (bState === 'TO_PAY') {
+                        badgeText = 'To Pay';
+                        badgeStyle = 'text-rose-400 bg-rose-500/10 border-rose-500/20';
+                        explanation = 'You owe this supplier';
+                        balanceColor = 'text-rose-400';
+                      } else if (bState === 'ADVANCE_PAID') {
+                        badgeText = 'Advance Paid';
+                        badgeStyle = 'text-blue-400 bg-blue-500/10 border-blue-500/20';
+                        explanation = 'You have paid more than billed';
+                        balanceColor = 'text-blue-400';
+                      } else if (bState === 'ADVANCE_RECEIVED') {
+                        badgeText = 'Advance Received';
+                        badgeStyle = 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+                        explanation = 'Customer has paid more than billed';
+                        balanceColor = 'text-amber-400';
+                      }
+
+                      return (
+                        <div className="pt-2 border-t border-border/40 space-y-1">
+                          <div className="flex justify-between items-baseline">
+                            <span className="text-muted-foreground text-xs font-medium">Balance</span>
+                            <div className="text-right flex items-center gap-1.5">
+                              <span className={`font-bold text-base font-mono tabular-nums ${balanceColor}`}>
+                                ₹{displayAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </span>
+                              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${badgeStyle}`}>
+                                {badgeText}
+                              </span>
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground text-right font-medium">
+                            {explanation}
+                          </p>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Card Footer */}

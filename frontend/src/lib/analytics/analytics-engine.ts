@@ -306,16 +306,21 @@ export class LocalAnalyticsEngine {
       const isSupplier = lt === "SUPPLIER" || lt.includes("CREDITOR");
       const isParty = lt === "PARTY" || lt === "BOTH";
 
-      if (isCustomer) {
+      if (l.balanceState === "TO_COLLECT") {
+        moneyToCollect += Number(l.displayAmount || Math.abs(bal));
+      } else if (l.balanceState === "TO_PAY") {
+        billsToPay += Number(l.displayAmount || Math.abs(bal));
+      } else if (isCustomer) {
         if (bal > 0) moneyToCollect += bal;
       } else if (isSupplier) {
-        // In double-entry accounting, creditors have credit balance (negative in Vouch ledger balances)
-        if (bal < 0) billsToPay += Math.abs(bal);
-        else if (bal > 0) billsToPay += bal;
+        // Suppliers with positive balance under credit-normal convention are owed money (bills to pay)
+        if (bal > 0) billsToPay += bal;
       } else if (isParty) {
         if (bal > 0) moneyToCollect += bal;
         else if (bal < 0) billsToPay += Math.abs(bal);
-      } else if (lt === "CASH" || lt === "BANK") {
+      }
+
+      if (lt === "CASH" || lt === "BANK") {
         cashAndBank += bal;
       }
     }

@@ -4,52 +4,84 @@ class PartyBalanceService:
     @staticmethod
     def get_party_balance(ledger) -> dict:
         """
-        Canonical party balance projection based on `ledger.current_balance` 
-        and `ledger.canonical_role`.
+        Canonical party balance projection based on `ledger.current_balance`,
+        `ledger.canonical_role`, and `ledger.normal_balance`.
         """
         raw_bal = Decimal(str(ledger.current_balance or '0.00'))
-        role = ledger.canonical_role
+        role = getattr(ledger, 'canonical_role', 'OTHER')
+        normal_bal = getattr(ledger, 'normal_balance', 'DEBIT')
         
-        # Convert raw_bal (which is relative to opening_balance_type) 
-        # to absolute debits minus credits (net debit).
-        if ledger.opening_balance_type == 'DEBIT':
-            net_dr = raw_bal
-        else:
+        # Calculate net_dr (Debit minus Credit)
+        if normal_bal == 'CREDIT':
+            # current_balance = Cr - Dr, so net_dr = -(Cr - Dr) = -raw_bal
             net_dr = -raw_bal
-
-        # Now compute canonical signed balance
-        if role == 'CUSTOMER':
-            signed_bal = net_dr
-            state = 'TO_COLLECT' if signed_bal > 0 else 'ADVANCE_RECEIVED'
-        elif role == 'SUPPLIER':
-            signed_bal = -net_dr
-            state = 'TO_PAY' if signed_bal > 0 else 'ADVANCE_PAID'
+            signed_bal = raw_bal
         else:
-            signed_bal = net_dr
-            state = 'TO_COLLECT' if signed_bal > 0 else 'TO_PAY'
-            
-        if signed_bal == Decimal('0.00'):
-            state = 'SETTLED'
-            
+            # current_balance = Dr - Cr, so net_dr = raw_bal
+            net_dr = raw_bal
+            signed_bal = raw_bal
+
+        if role == 'CUSTOMER':
+            if signed_bal > 0:
+                state = 'TO_COLLECT'
+            elif signed_bal < 0:
+                state = 'ADVANCE_RECEIVED'
+            else:
+                state = 'SETTLED'
+        elif role == 'SUPPLIER':
+            if signed_bal > 0:
+                state = 'TO_PAY'
+            elif signed_bal < 0:
+                state = 'ADVANCE_PAID'
+            else:
+                state = 'SETTLED'
+        else:
+            if signed_bal == Decimal('0.00'):
+                state = 'SETTLED'
+            elif net_dr > 0:
+                state = 'DR'
+            else:
+                state = 'CR'
+
+        disp_amt = abs(signed_bal)
+        if state == 'TO_COLLECT':
+            explanation = f"This customer owes you ₹{disp_amt:,.2f}"
+            owner_headline = "TO COLLECT"
+        elif state == 'TO_PAY':
+            explanation = f"You owe this supplier ₹{disp_amt:,.2f}"
+            owner_headline = "YOU NEED TO PAY"
+        elif state == 'ADVANCE_RECEIVED':
+            explanation = f"Customer has paid ₹{disp_amt:,.2f} more than billed"
+            owner_headline = "ADVANCE RECEIVED"
+        elif state == 'ADVANCE_PAID':
+            explanation = f"You have paid ₹{disp_amt:,.2f} more than billed"
+            owner_headline = "ADVANCE PAID"
+        else:
+            explanation = "Nothing outstanding"
+            owner_headline = "SETTLED"
+
         return {
             'signed_balance': signed_bal,
-            'display_amount': abs(signed_bal),
+            'display_amount': disp_amt,
             'balance_state': state,
+            'owner_headline': owner_headline,
+            'explanation': explanation,
+            'normal_balance_type': normal_bal,
             'balance_direction': 'DEBIT' if net_dr > 0 else ('CREDIT' if net_dr < 0 else 'NONE')
         }
 
     @staticmethod
     def get_balance_direction(ledger, bal: Decimal) -> str:
-        # Compatibility fallback for old code if any
         if bal == Decimal('0.00'):
             return 'NONE'
-        if ledger.opening_balance_type == 'DEBIT':
+        normal_bal = getattr(ledger, 'normal_balance', 'DEBIT')
+        if normal_bal == 'DEBIT':
             return 'DEBIT' if bal > 0 else 'CREDIT'
         else:
             return 'CREDIT' if bal > 0 else 'DEBIT'
 
     @staticmethod
-    def get_balance_from_components(role: str, debit: Decimal, credit: Decimal) -> dict:
+    def get_balance_from_components(role: str, debit: Decimal, credit: Decimal, normal_balance: str = None) -> dict:
         """
         Calculate canonical balance directly from raw debits and credits.
         """
@@ -57,26 +89,65 @@ class PartyBalanceService:
         credit = Decimal(str(credit or '0.00'))
         net_dr = debit - credit
         
+        if not normal_balance:
+            if role == 'SUPPLIER':
+                normal_balance = 'CREDIT'
+            else:
+                normal_balance = 'DEBIT'
+                
         if role == 'CUSTOMER':
-            bal = net_dr
-            state = 'TO_COLLECT' if bal > 0 else 'ADVANCE_RECEIVED'
-            if bal == Decimal('0.00'): state = 'SETTLED'
+            signed_bal = net_dr
+            if signed_bal > 0:
+                state = 'TO_COLLECT'
+            elif signed_bal < 0:
+                state = 'ADVANCE_RECEIVED'
+            else:
+                state = 'SETTLED'
         elif role == 'SUPPLIER':
-            bal = -net_dr
-            state = 'TO_PAY' if bal > 0 else 'ADVANCE_PAID'
-            if bal == Decimal('0.00'): state = 'SETTLED'
+            signed_bal = -net_dr  # credits - debits
+            if signed_bal > 0:
+                state = 'TO_PAY'
+            elif signed_bal < 0:
+                state = 'ADVANCE_PAID'
+            else:
+                state = 'SETTLED'
         else:
-            bal = net_dr
-            state = 'TO_COLLECT' if bal > 0 else 'TO_PAY'
-            if bal == Decimal('0.00'): state = 'SETTLED'
+            if normal_balance == 'CREDIT':
+                signed_bal = -net_dr
+                state = 'CR' if signed_bal > 0 else ('DR' if signed_bal < 0 else 'SETTLED')
+            else:
+                signed_bal = net_dr
+                state = 'DR' if signed_bal > 0 else ('CR' if signed_bal < 0 else 'SETTLED')
             
+        disp_amt = abs(signed_bal)
+        if state == 'TO_COLLECT':
+            explanation = f"This customer owes you ₹{disp_amt:,.2f}"
+            owner_headline = "TO COLLECT"
+        elif state == 'TO_PAY':
+            explanation = f"You owe this supplier ₹{disp_amt:,.2f}"
+            owner_headline = "YOU NEED TO PAY"
+        elif state == 'ADVANCE_RECEIVED':
+            explanation = f"Customer has paid ₹{disp_amt:,.2f} more than billed"
+            owner_headline = "ADVANCE RECEIVED"
+        elif state == 'ADVANCE_PAID':
+            explanation = f"You have paid ₹{disp_amt:,.2f} more than billed"
+            owner_headline = "ADVANCE PAID"
+        else:
+            explanation = "Nothing outstanding"
+            owner_headline = "SETTLED"
+
         direction = 'NONE'
-        if net_dr > 0: direction = 'DEBIT'
-        elif net_dr < 0: direction = 'CREDIT'
+        if net_dr > 0:
+            direction = 'DEBIT'
+        elif net_dr < 0:
+            direction = 'CREDIT'
             
         return {
-            'signed_balance': bal,
-            'display_amount': abs(bal),
+            'signed_balance': signed_bal,
+            'display_amount': disp_amt,
             'balance_state': state,
+            'owner_headline': owner_headline,
+            'explanation': explanation,
+            'normal_balance_type': normal_balance,
             'balance_direction': direction
         }

@@ -1248,9 +1248,18 @@ class LedgerStatementAPIView(APIView):
                 offset = 0
 
             role = ledger.canonical_role
+            normal_bal = ledger.normal_balance
             
             # 1. Opening Balance Calculation (Optimized with DB Aggregation)
-            # Pre-period transactions
+            # Check if double-entry opening vouchers exist for this ledger
+            has_opening_entries = LedgerEntry.objects.filter(
+                ledger=ledger,
+                voucher__company=company,
+                voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED'],
+                voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
+            ).exists()
+
+            # Pre-period transactions (strictly effective vouchers)
             pre_period_dr = Decimal('0.00')
             pre_period_cr = Decimal('0.00')
             
@@ -1258,6 +1267,7 @@ class LedgerStatementAPIView(APIView):
                 pre_agg = LedgerEntry.objects.filter(
                     ledger=ledger,
                     voucher__company=company,
+                    voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED'],
                     voucher__voucher_date__lt=from_date
                 ).aggregate(
                     dr=Sum('debit_amount'),
@@ -1266,22 +1276,23 @@ class LedgerStatementAPIView(APIView):
                 pre_period_dr = Decimal(str(pre_agg['dr'] or '0.00'))
                 pre_period_cr = Decimal(str(pre_agg['cr'] or '0.00'))
 
-            # Initial opening balance
-            initial_op = Decimal(str(ledger.opening_balance or '0.00'))
+            # Initial opening balance (only if not already captured in double-entry vouchers)
+            initial_op = Decimal('0.00') if has_opening_entries else Decimal(str(ledger.opening_balance or '0.00'))
             if ledger.opening_balance_type == 'CREDIT':
                 pre_period_cr += initial_op
             else:
                 pre_period_dr += initial_op
 
             # Period Opening Balance
-            op_balance_info = PartyBalanceService.get_balance_from_components(role, pre_period_dr, pre_period_cr)
+            op_balance_info = PartyBalanceService.get_balance_from_components(role, pre_period_dr, pre_period_cr, normal_balance=normal_bal)
             period_opening_amount = op_balance_info['display_amount']
             period_opening_type = op_balance_info['balance_direction']
 
-            # 2. Period Transactions Query
+            # 2. Period Transactions Query (strictly effective vouchers)
             entries_qs = LedgerEntry.objects.filter(
                 ledger=ledger,
-                voucher__company=company
+                voucher__company=company,
+                voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED']
             ).select_related('voucher', 'voucher__party_ledger')
 
             if from_date:
@@ -1304,7 +1315,7 @@ class LedgerStatementAPIView(APIView):
             total_cumulative_dr = pre_period_dr + total_period_debit
             total_cumulative_cr = pre_period_cr + total_period_credit
             
-            cl_balance_info = PartyBalanceService.get_balance_from_components(role, total_cumulative_dr, total_cumulative_cr)
+            cl_balance_info = PartyBalanceService.get_balance_from_components(role, total_cumulative_dr, total_cumulative_cr, normal_balance=normal_bal)
             closing_amount = cl_balance_info['display_amount']
             closing_type = cl_balance_info['balance_direction']
             semantic_state = cl_balance_info['balance_state']
@@ -1357,7 +1368,17 @@ class LedgerStatementAPIView(APIView):
                 running_dr += dr
                 running_cr += cr
                 
-                row_bal_info = PartyBalanceService.get_balance_from_components(role, running_dr, running_cr)
+                row_bal_info = PartyBalanceService.get_balance_from_components(role, running_dr, running_cr, normal_balance=normal_bal)
+
+                amt = dr if dr > Decimal('0.00') else cr
+                if normal_bal == 'CREDIT':
+                    effect_sign = '+' if cr > 0 else ('-' if dr > 0 else '')
+                    effect_amount = cr if cr > 0 else dr
+                else:
+                    effect_sign = '+' if dr > 0 else ('-' if cr > 0 else '')
+                    effect_amount = dr if dr > 0 else cr
+
+                effect_on_balance = f"{effect_sign}₹{Decimal(str(effect_amount)).quantize(Decimal('0.00'))}" if effect_sign else "₹0.00"
 
                 # Opposing ledger logic:
                 v_sibs = voucher_entries_map.get(e.voucher_id, [])
@@ -1372,10 +1393,10 @@ class LedgerStatementAPIView(APIView):
                 prefix = "To " if dr > 0 else "By "
                 opposing_details = []
                 for s in opp:
-                    amt = s.credit_amount if dr > 0 else s.debit_amount
+                    opp_amt = s.credit_amount if dr > 0 else s.debit_amount
                     opposing_details.append({
                         "ledger_name": s.ledger.name if s.ledger else "Unknown",
-                        "amount": str(amt)
+                        "amount": str(opp_amt)
                     })
 
                 if not opposing_details:
@@ -1393,10 +1414,14 @@ class LedgerStatementAPIView(APIView):
                     "voucher_type": e.voucher.voucher_type if e.voucher else "",
                     "particulars": particulars,
                     "narration": e.narration or (e.voucher.narration if e.voucher else ""),
+                    "amount": f"{Decimal(str(amt)).quantize(Decimal('0.00'))}",
+                    "effect_on_balance": effect_on_balance,
+                    "effect_sign": effect_sign,
                     "debit": str(dr),
                     "credit": str(cr),
                     "running_balance": f"{Decimal(str(row_bal_info['display_amount'])).quantize(Decimal('0.00'))}",
                     "running_balance_type": row_bal_info['balance_direction'],
+                    "running_balance_state": row_bal_info['balance_state'],
                     "opposing_details": opposing_details
                 })
 
@@ -1407,6 +1432,7 @@ class LedgerStatementAPIView(APIView):
                         "id": ledger.id,
                         "name": ledger.name,
                         "ledger_type": ledger.ledger_type,
+                        "normal_balance": normal_bal,
                         "current_balance": str(ledger.current_balance),
                         "balance_type": ledger.opening_balance_type
                     },
@@ -1419,6 +1445,8 @@ class LedgerStatementAPIView(APIView):
                     "closing_balance_type": closing_type,
                     "semantic_state": semantic_state,
                     "display_amount": f"{Decimal(str(closing_amount)).quantize(Decimal('0.00'))}",
+                    "owner_headline": cl_balance_info['owner_headline'],
+                    "explanation": cl_balance_info['explanation'],
                     "entries": statement_rows,
                     "pagination": {
                         "limit": limit,
@@ -1782,9 +1810,6 @@ class SyncTaxLedgersAPIView(APIView):
             return Response({"success": True, "message": "All Input and Output tax ledgers successfully synchronized."})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-    def get(self, request, company_id=None):
-        return self.post(request, company_id)
 
 
 class PartyRatesAPIView(APIView):

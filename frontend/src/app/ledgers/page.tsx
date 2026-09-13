@@ -896,20 +896,61 @@ export default function LedgersPage() {
                       </td>
                       <td className="py-3.5 px-4 text-right font-mono tabular-nums font-semibold">
                         {(() => {
-                          const isCreditType = l.opening_balance_type === 'CREDIT';
                           const raw = Number(l.current_balance || 0);
-                          const isDr = isCreditType ? raw < 0 : raw >= 0;
                           const absVal = Math.abs(raw);
+                          const lt = (l.ledger_type || '').toUpperCase();
+                          const isCustomer = lt === 'CUSTOMER' || (l.group || '').toLowerCase().includes('debtor');
+                          const isSupplier = lt === 'SUPPLIER' || (l.group || '').toLowerCase().includes('creditor');
+
+                          if (isCustomer) {
+                            const bState = raw > 0 ? 'TO_COLLECT' : raw < 0 ? 'ADVANCE_RECEIVED' : 'SETTLED';
+                            return (
+                              <div className="inline-flex items-center justify-end gap-1.5">
+                                <span className={bState === 'TO_COLLECT' ? 'text-emerald-400' : bState === 'ADVANCE_RECEIVED' ? 'text-amber-400' : 'text-muted-foreground'}>
+                                  ₹{absVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                </span>
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                                  bState === 'TO_COLLECT' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                                  bState === 'ADVANCE_RECEIVED' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                                  'bg-muted text-muted-foreground border-border/40'
+                                }`}>
+                                  {bState === 'TO_COLLECT' ? 'To Collect' : bState === 'ADVANCE_RECEIVED' ? 'Advance' : 'Settled'}
+                                </span>
+                              </div>
+                            );
+                          }
+
+                          if (isSupplier) {
+                            const bState = raw > 0 ? 'TO_PAY' : raw < 0 ? 'ADVANCE_PAID' : 'SETTLED';
+                            return (
+                              <div className="inline-flex items-center justify-end gap-1.5">
+                                <span className={bState === 'TO_PAY' ? 'text-rose-400' : bState === 'ADVANCE_PAID' ? 'text-blue-400' : 'text-muted-foreground'}>
+                                  ₹{absVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                </span>
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                                  bState === 'TO_PAY' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
+                                  bState === 'ADVANCE_PAID' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                                  'bg-muted text-muted-foreground border-border/40'
+                                }`}>
+                                  {bState === 'TO_PAY' ? 'To Pay' : bState === 'ADVANCE_PAID' ? 'Adv Paid' : 'Settled'}
+                                </span>
+                              </div>
+                            );
+                          }
+
+                          // Bank, Cash, Asset, Expense, Liability, Income
+                          const isAssetOrExpense = l.nature === 'ASSET' || l.nature === 'EXPENSE';
+                          const isDr = isAssetOrExpense ? raw >= 0 : raw < 0;
                           return (
                             <div className="inline-flex items-center justify-end gap-1.5">
-                              <span className={isDr ? 'text-foreground' : 'text-amber-400'}>
+                              <span className="text-foreground">
                                 ₹{absVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                               </span>
                               <span
-                                className={`text-xs font-semibold px-1.5 py-0.5 rounded ${
+                                className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
                                   isDr
-                                    ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                    ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                                    : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
                                 }`}
                               >
                                 {isDr ? 'Dr' : 'Cr'}

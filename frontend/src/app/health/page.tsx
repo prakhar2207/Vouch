@@ -108,7 +108,7 @@ export default function HealthPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"ALL" | "CRITICAL" | "WARNING" | "ACTIONABLE">("ALL");
+  const [activeTab, setActiveTab] = useState<"ALL" | "ERRORS" | "REVIEWS" | "TASKS" | "CRITICAL" | "WARNING" | "ACTIONABLE">("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
   // Diagnostic tool state
@@ -263,11 +263,11 @@ export default function HealthPage() {
     if (!report?.findings) return [];
     let list = report.findings;
 
-    if (activeTab === "CRITICAL") {
+    if (activeTab === "ERRORS" || activeTab === "CRITICAL") {
       list = list.filter((f) => f.severity === "CRITICAL");
-    } else if (activeTab === "WARNING") {
-      list = list.filter((f) => f.severity === "WARNING");
-    } else if (activeTab === "ACTIONABLE") {
+    } else if (activeTab === "REVIEWS" || activeTab === "WARNING") {
+      list = list.filter((f) => f.severity === "WARNING" || f.severity === "INFO");
+    } else if (activeTab === "TASKS" || activeTab === "ACTIONABLE") {
       list = list.filter((f) => f.is_actionable);
     }
 
@@ -325,9 +325,9 @@ export default function HealthPage() {
 
         {/* TOP METRIC CARDS: Health Score Gauge & Score Deductions */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Health Score Gauge */}
-          <div className="bg-card border border-border/40 rounded-2xl p-6 shadow-sm flex items-center gap-6">
-            <div className="relative w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center shrink-0">
+          {/* Health Score & Balance Status Card */}
+          <div className="bg-card border border-border/40 rounded-2xl p-6 shadow-sm flex items-center gap-5">
+            <div className="relative w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center shrink-0">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
                 <circle
                   className="text-muted/40"
@@ -340,10 +340,8 @@ export default function HealthPage() {
                 />
                 <circle
                   className={
-                    (report?.health_score ?? 0) >= 90
+                    (report?.metrics?.critical_findings_count ?? 0) === 0
                       ? "text-emerald-500"
-                      : (report?.health_score ?? 0) >= 70
-                      ? "text-amber-500"
                       : "text-rose-500"
                   }
                   strokeWidth="8"
@@ -357,33 +355,44 @@ export default function HealthPage() {
                 />
               </svg>
               <div className="absolute flex flex-col items-center justify-center">
-                <span className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-foreground">
-                  {report ? `${report.health_score}%` : "--"}
-                </span>
+                {(report?.metrics?.critical_findings_count ?? 0) === 0 ? (
+                  <CheckCircle2 className="w-7 h-7 sm:w-8 sm:h-8 text-emerald-500" />
+                ) : (
+                  <AlertOctagon className="w-7 h-7 sm:w-8 sm:h-8 text-rose-500" />
+                )}
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
+            <div className="space-y-1.5 flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span
                   className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
-                    report?.health_status === "HEALTHY"
+                    (report?.metrics?.critical_findings_count ?? 0) === 0
                       ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                      : report?.health_status === "NEEDS_ATTENTION"
-                      ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
                       : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
                   }`}
                 >
-                  {report?.health_status ? report.health_status.replace("_", " ") : "Calculating"}
+                  {(report?.metrics?.critical_findings_count ?? 0) === 0
+                    ? "Books are Balanced"
+                    : "Balance Issues Detected"}
+                </span>
+                <span className="text-[11px] font-mono text-muted-foreground">
+                  {report ? `${report.health_score}% score` : ""}
                 </span>
               </div>
-              <h2 className="text-sm font-bold text-foreground">Books health</h2>
-              <p className="text-[11px] text-muted-foreground">
-                {report?.health_status === "HEALTHY"
-                  ? "Everything looks good. No issues found."
-                  : report?.health_status === "NEEDS_ATTENTION"
-                  ? "Minor reconciliation gaps or tax warnings need your review."
-                  : "Critical accounting balance violations require immediate review."}
+              <h2 className="text-sm sm:text-base font-bold text-foreground truncate">
+                {(report?.metrics?.critical_findings_count ?? 0) === 0
+                  ? (report?.metrics?.warning_findings_count ?? 0) > 0
+                    ? `Books are balanced — ${report?.metrics?.warning_findings_count} items need review`
+                    : "Books are balanced & healthy"
+                  : `${report?.metrics?.critical_findings_count} critical issues require attention`}
+              </h2>
+              <p className="text-[11px] text-muted-foreground line-clamp-2">
+                {(report?.metrics?.critical_findings_count ?? 0) === 0
+                  ? (report?.metrics?.warning_findings_count ?? 0) > 0
+                    ? "Total debits equal total credits. Review the warnings below to keep your records audit-ready."
+                    : "Every debit matches every credit across all accounts. No anomalies detected."
+                  : "Discrepancies detected between debits and credits. Review critical errors below."}
               </p>
             </div>
           </div>
@@ -634,27 +643,28 @@ export default function HealthPage() {
         {/* FINDINGS & FIXES ASSISTANT FEED */}
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
-            <div className="flex items-center gap-1 p-1 bg-muted/40 border border-border/40 rounded-xl">
+            <div className="flex items-center gap-1 p-1 bg-muted/40 border border-border/40 rounded-xl overflow-x-auto">
               <button
                 onClick={() => setActiveTab("ALL")}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 ${
                   activeTab === "ALL"
                     ? "bg-card text-foreground shadow-sm border border-border/60"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                All Findings ({report?.findings?.length || 0})
+                All Items ({report?.findings?.length || 0})
               </button>
 
               <button
-                onClick={() => setActiveTab("CRITICAL")}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === "CRITICAL"
+                onClick={() => setActiveTab("ERRORS")}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                  activeTab === "ERRORS" || activeTab === "CRITICAL"
                     ? "bg-card text-foreground shadow-sm border border-border/60"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <span>Critical</span>
+                <AlertOctagon className="w-3.5 h-3.5 text-rose-500" />
+                <span>Accounting Errors</span>
                 {(report?.metrics?.critical_findings_count || 0) > 0 && (
                   <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-500">
                     {report?.metrics?.critical_findings_count}
@@ -663,31 +673,37 @@ export default function HealthPage() {
               </button>
 
               <button
-                onClick={() => setActiveTab("WARNING")}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === "WARNING"
+                onClick={() => setActiveTab("REVIEWS")}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                  activeTab === "REVIEWS" || activeTab === "WARNING"
                     ? "bg-card text-foreground shadow-sm border border-border/60"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <span>Warnings</span>
-                {(report?.metrics?.warning_findings_count || 0) > 0 && (
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                <span>Needs Review</span>
+                {((report?.metrics?.warning_findings_count || 0) + (report?.metrics?.info_findings_count || 0)) > 0 && (
                   <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-500">
-                    {report?.metrics?.warning_findings_count}
+                    {(report?.metrics?.warning_findings_count || 0) + (report?.metrics?.info_findings_count || 0)}
                   </span>
                 )}
               </button>
 
               <button
-                onClick={() => setActiveTab("ACTIONABLE")}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === "ACTIONABLE"
+                onClick={() => setActiveTab("TASKS")}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                  activeTab === "TASKS" || activeTab === "ACTIONABLE"
                     ? "bg-card text-foreground shadow-sm border border-border/60"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 <Sparkles className="w-3.5 h-3.5 text-primary" />
-                <span>Fixable Now</span>
+                <span>Actionable Tasks</span>
+                {(report?.findings?.filter((f) => f.is_actionable).length || 0) > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-primary/20 text-primary">
+                    {report?.findings?.filter((f) => f.is_actionable).length}
+                  </span>
+                )}
               </button>
             </div>
 
@@ -715,12 +731,22 @@ export default function HealthPage() {
                 <CheckCircle2 className="w-6 h-6" />
               </div>
               <h3 className="text-base font-bold text-foreground">
-                {activeTab === "ALL" ? "All Checks In Balance!" : `No ${activeTab.toLowerCase()} findings detected`}
+                {activeTab === "ALL"
+                  ? "All Checks In Balance!"
+                  : activeTab === "ERRORS" || activeTab === "CRITICAL"
+                  ? "Zero Accounting Errors"
+                  : activeTab === "REVIEWS" || activeTab === "WARNING"
+                  ? "No Review Items Pending"
+                  : "No Actionable Tasks"}
               </h3>
               <p className="text-xs text-muted-foreground max-w-sm mx-auto">
                 {activeTab === "ALL"
                   ? "All automated checks passed. Your books are balanced and in order."
-                  : `There are currently no items flagged under ${activeTab.toLowerCase()}.`}
+                  : activeTab === "ERRORS" || activeTab === "CRITICAL"
+                  ? "Trial balance, sequence numbering, and party ledgers are mathematically consistent."
+                  : activeTab === "REVIEWS" || activeTab === "WARNING"
+                  ? "There are currently no reconciliation gaps or tax warnings requiring review."
+                  : "There are no pending 1-click preview fixes to apply right now."}
               </p>
             </div>
           ) : (

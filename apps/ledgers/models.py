@@ -19,6 +19,12 @@ class LedgerGroup(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    @property
+    def normal_balance(self):
+        if self.nature in ('ASSET', 'EXPENSE'):
+            return 'DEBIT'
+        return 'CREDIT'
+
     def __str__(self):
         return f"{self.name} ({self.company.name})"
 
@@ -67,6 +73,26 @@ class Ledger(models.Model):
         if 'creditor' in grp_name:
             return 'SUPPLIER'
         return 'OTHER'
+
+    @property
+    def normal_balance(self):
+        lt = (self.ledger_type or '').upper()
+        if lt in ('CUSTOMER', 'DEBTOR'):
+            return 'DEBIT'
+        if lt in ('SUPPLIER', 'CREDITOR'):
+            return 'CREDIT'
+        if lt in ('BANK', 'CASH'):
+            return 'DEBIT'
+        
+        role = self.canonical_role
+        if role == 'CUSTOMER':
+            return 'DEBIT'
+        if role == 'SUPPLIER':
+            return 'CREDIT'
+
+        if self.group:
+            return self.group.normal_balance
+        return 'DEBIT'
 
     @property
     def balance_state(self):
