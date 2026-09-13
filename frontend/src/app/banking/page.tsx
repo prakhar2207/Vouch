@@ -42,7 +42,9 @@ interface BankLedger {
   id: string;
   name: string;
   ledger_type: string;
+  ledgerType?: string;
   current_balance: number;
+  currentBalance?: number;
   bank_account_number?: string;
   bank_ifsc?: string;
   upi_id?: string;
