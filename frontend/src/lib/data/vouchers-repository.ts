@@ -20,6 +20,8 @@ export interface VoucherQueryResult {
   pageSize: number;
   totalPages: number;
   isLocal: boolean;
+  totalPayments?: number;
+  totalReceipts?: number;
 }
 
 export class VouchersRepository {
@@ -179,6 +181,15 @@ export class VouchersRepository {
       console.log(`[LOCAL] vouchers query (count=${pagedData.length}, total=${totalCount})`);
     }
 
+    // Compute aggregates across ALL combined items (unpaged dataset)
+    const totalPayments = combined
+      .filter((v) => v.type === "PAYMENT" || v.voucherType === "PAYMENT")
+      .reduce((sum, v) => sum + (Number(v.total_amount || v.totalAmount) || 0), 0);
+
+    const totalReceipts = combined
+      .filter((v) => v.type === "RECEIPT" || v.voucherType === "RECEIPT")
+      .reduce((sum, v) => sum + (Number(v.total_amount || v.totalAmount) || 0), 0);
+
     return {
       data: pagedData,
       totalCount,
@@ -186,6 +197,8 @@ export class VouchersRepository {
       pageSize,
       totalPages,
       isLocal: true,
+      totalPayments,
+      totalReceipts,
     };
   }
 

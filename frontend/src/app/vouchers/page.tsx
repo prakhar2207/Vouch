@@ -29,6 +29,11 @@ export default function VouchersPage() {
   const [editingVoucher, setEditingVoucher] = useState<any | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleteConfirmParams, setDeleteConfirmParams] = useState<{ id: string; number: string; type: string } | null>(null);
+  const [summaryTotals, setSummaryTotals] = useState<{ totalPayments: number; totalReceipts: number; totalCount: number }>({
+    totalPayments: 0,
+    totalReceipts: 0,
+    totalCount: 0,
+  });
 
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
@@ -62,6 +67,11 @@ export default function VouchersPage() {
         limit: result.pageSize,
         total_count: result.totalCount,
         total_pages: result.totalPages,
+      });
+      setSummaryTotals({
+        totalPayments: result.totalPayments ?? 0,
+        totalReceipts: result.totalReceipts ?? 0,
+        totalCount: result.totalCount ?? 0,
       });
       setPage(targetPage);
     } catch (err) {
@@ -103,9 +113,6 @@ export default function VouchersPage() {
     }
   };
 
-  const totalPayments = vouchers.filter(v => v.type === 'PAYMENT').reduce((s, v) => s + parseFloat(v.total_amount), 0);
-  const totalReceipts = vouchers.filter(v => v.type === 'RECEIPT').reduce((s, v) => s + parseFloat(v.total_amount), 0);
-
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -126,15 +133,15 @@ export default function VouchersPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6">
           <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm text-center">
             <p className="text-muted-foreground text-xs sm:text-sm uppercase tracking-wider font-medium mb-1">Total Entries</p>
-            <p className="text-2xl sm:text-3xl font-bold text-foreground">{vouchers.length}</p>
+            <p className="text-2xl sm:text-3xl font-bold text-foreground">{pagination?.total_count ?? summaryTotals.totalCount ?? vouchers.length}</p>
           </div>
           <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm text-center">
             <p className="text-muted-foreground text-xs sm:text-sm uppercase tracking-wider font-medium mb-1">Money Paid Out</p>
-            <p className="text-2xl sm:text-3xl font-bold text-red-400">₹{totalPayments.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl sm:text-3xl font-bold text-red-400">₹{summaryTotals.totalPayments.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
           </div>
           <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm text-center">
             <p className="text-muted-foreground text-xs sm:text-sm uppercase tracking-wider font-medium mb-1">Money Received</p>
-            <p className="text-2xl sm:text-3xl font-bold text-green-400">₹{totalReceipts.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl sm:text-3xl font-bold text-green-400">₹{summaryTotals.totalReceipts.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
           </div>
         </div>
 
