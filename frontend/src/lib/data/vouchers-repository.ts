@@ -19,6 +19,8 @@ export interface VoucherQueryResult {
   page: number;
   pageSize: number;
   totalPages: number;
+  offset: number;
+  hasMore: boolean;
   isLocal: boolean;
   totalPayments?: number;
   totalReceipts?: number;
@@ -31,7 +33,7 @@ export class VouchersRepository {
    */
   async getVouchers(companyId: string, options: VoucherQueryOptions = {}): Promise<VoucherQueryResult> {
     if (!companyId) {
-      return { data: [], totalCount: 0, page: 1, pageSize: options.pageSize || 50, totalPages: 0, isLocal: true };
+      return { data: [], totalCount: 0, page: 1, pageSize: options.pageSize || 50, totalPages: 0, offset: 0, hasMore: false, isLocal: true };
     }
 
     const page = Math.max(1, options.page || 1);
@@ -190,12 +192,16 @@ export class VouchersRepository {
       .filter((v) => v.type === "RECEIPT" || v.voucherType === "RECEIPT")
       .reduce((sum, v) => sum + (Number(v.total_amount || v.totalAmount) || 0), 0);
 
+    const hasMore = page < totalPages;
+
     return {
       data: pagedData,
       totalCount,
       page,
       pageSize,
       totalPages,
+      offset,
+      hasMore,
       isLocal: true,
       totalPayments,
       totalReceipts,

@@ -78,8 +78,10 @@ export default function PurchaseInvoiceList() {
       setPagination({
         page: result.page,
         limit: result.pageSize,
+        offset: result.offset ?? (targetPage - 1) * pageSize,
         total_count: result.totalCount,
         total_pages: result.totalPages,
+        has_more: result.hasMore ?? (targetPage < result.totalPages),
       });
       setPage(targetPage);
       setFetchError(null);
@@ -562,9 +564,9 @@ export default function PurchaseInvoiceList() {
               {pagination && pagination.total_count > 0 && (
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-border/60 bg-muted/20 text-xs text-muted-foreground">
                   <div className="font-mono">
-                    Showing <span className="font-semibold text-foreground">{pagination.offset + 1}</span> to{' '}
+                    Showing <span className="font-semibold text-foreground">{pagination.total_count === 0 ? 0 : ((pagination.offset ?? (page - 1) * pageSize) + 1)}</span> to{' '}
                     <span className="font-semibold text-foreground">
-                      {Math.min(pagination.offset + pagination.limit, pagination.total_count)}
+                      {Math.min((pagination.offset ?? (page - 1) * pageSize) + (pagination.limit ?? pageSize), pagination.total_count)}
                     </span>{' '}
                     of <span className="font-semibold text-foreground">{pagination.total_count}</span> purchase invoices
                   </div>
@@ -587,7 +589,7 @@ export default function PurchaseInvoiceList() {
                     <button
                       type="button"
                       onClick={() => fetchInvoices(page + 1)}
-                      disabled={!pagination.has_more || page >= pagination.total_pages || loading}
+                      disabled={page >= (pagination.total_pages || 1) || loading}
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-card text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer font-medium"
                     >
                       <span>Next</span>
