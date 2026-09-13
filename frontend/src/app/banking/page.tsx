@@ -132,7 +132,7 @@ export default function BankingPage() {
   const [summary, setSummary] = useState<ReconciliationSummary | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"NEEDS_REVIEW" | "UNRESOLVED" | "MATCHED" | "EXCLUDED" | "ALL">("NEEDS_REVIEW");
+  const [activeTab, setActiveTab] = useState<"NEEDS_REVIEW" | "UNRESOLVED" | "MATCHED" | "EXCLUDED" | "ALL">("UNRESOLVED");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
   // Upload Modal State
@@ -831,11 +831,13 @@ export default function BankingPage() {
           <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                Select Bank Account
+                Bank Account
               </label>
-              <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                {bankLedgers.length} Accounts
-              </span>
+              {bankLedgers.length > 1 && (
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  {bankLedgers.length} Accounts
+                </span>
+              )}
             </div>
 
             <SearchableSelect
@@ -846,20 +848,41 @@ export default function BankingPage() {
               searchPlaceholder="Search bank accounts..."
             />
 
-            {bankLedgers.find((b) => b.id === selectedBankId) && (
-              <div className="text-xs space-y-1 text-muted-foreground bg-muted/20 p-3 rounded-xl border border-border/30 font-mono">
-                <div>IFSC: {bankLedgers.find((b) => b.id === selectedBankId)?.bank_ifsc || "Not Set"}</div>
-                <div>UPI: {bankLedgers.find((b) => b.id === selectedBankId)?.upi_id || "Not Set"}</div>
-              </div>
-            )}
+            {(() => {
+              const selectedBank = bankLedgers.find((b) => b.id === selectedBankId);
+              if (!selectedBank) return null;
+              const bal = selectedBank.currentBalance !== undefined ? selectedBank.currentBalance : selectedBank.current_balance;
+              const hasDetails = selectedBank.bank_ifsc || selectedBank.upi_id;
+              return (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold text-sm shrink-0">
+                      {selectedBank.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] text-muted-foreground">Book Balance</div>
+                      <div className="text-lg font-black font-mono tabular-nums text-foreground">
+                        ₹{(bal ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  </div>
+                  {hasDetails && (
+                    <div className="flex items-center gap-3 text-[11px] text-muted-foreground font-mono">
+                      {selectedBank.bank_ifsc && <span>IFSC: {selectedBank.bank_ifsc}</span>}
+                      {selectedBank.bank_ifsc && selectedBank.upi_id && <span className="text-border">•</span>}
+                      {selectedBank.upi_id && <span>UPI: {selectedBank.upi_id}</span>}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
-          {/* Balance Comparison & Gap Card */}
           <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
             <div className="flex items-center justify-between">
               <div>
                 <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">
-                  BOOK VS BANK
+                  Reconciliation
                 </span>
                 {summary?.statement_cutoff_date && (
                   <span className="text-[11px] font-mono text-primary font-medium">
@@ -868,114 +891,122 @@ export default function BankingPage() {
                 )}
               </div>
               {summary?.reconciliation_state === "FULLY_RECONCILED" ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  Fully Reconciled
+                  Reconciled
                 </span>
               ) : summary?.is_balanced ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  Balances Match
+                  Balanced
                 </span>
               ) : summary?.reconciliation_state === "TRANSACTIONS_REVIEWED" ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   Reviewed
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
                   <AlertCircle className="w-3.5 h-3.5" />
-                  Gap: ₹{parseFloat(summary?.reconciliation_gap || "0").toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  Unreconciled
                 </span>
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 bg-muted/30 rounded-xl border border-border/30">
-                <div className="text-[11px] text-muted-foreground">Book Balance</div>
-                <div className="text-base sm:text-lg font-bold font-mono tabular-nums text-foreground">
+            <div className="grid grid-cols-2 gap-0">
+              <div className="p-3 bg-muted/20 rounded-l-xl border border-border/30 border-r-0">
+                <div className="text-[11px] text-muted-foreground font-medium">Book</div>
+                <div className="text-base font-bold font-mono tabular-nums text-foreground">
                   ₹{parseFloat(summary?.book_closing_balance || "0").toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">As of cutoff date</div>
               </div>
-              <div className="p-3 bg-muted/30 rounded-xl border border-border/30">
-                <div className="text-[11px] text-muted-foreground">Statement Balance</div>
-                <div className="text-base sm:text-lg font-bold font-mono tabular-nums text-foreground">
+              <div className="p-3 bg-muted/20 rounded-r-xl border border-border/30">
+                <div className="text-[11px] text-muted-foreground font-medium">Statement</div>
+                <div className="text-base font-bold font-mono tabular-nums text-foreground">
                   ₹{parseFloat(summary?.statement_closing_balance || "0").toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">Statement closing</div>
               </div>
             </div>
 
-            <p className="text-[11px] text-muted-foreground">
-              {summary?.is_balanced
-                ? "Books match bank statement as of cutoff date."
-                : `${summary?.unresolved_count || 0} unresolved items awaiting review to balance.`}
-            </p>
+            {!summary?.is_balanced && (summary?.reconciliation_gap || summary?.unresolved_count) ? (
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/15">
+                <span className="text-[11px] font-medium text-amber-500">
+                  Gap: ₹{parseFloat(summary?.reconciliation_gap || "0").toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  {summary?.unresolved_count || 0} items to review
+                </span>
+              </div>
+            ) : (
+              <p className="text-[11px] text-emerald-500/80 font-medium">
+                ✓ Books match bank statement
+              </p>
+            )}
           </div>
 
-          {/* Quick Stats Grid */}
-          <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm grid grid-cols-2 gap-3">
-            <div className="p-3 bg-rose-500/5 rounded-xl border border-rose-500/20 space-y-1">
-              <div className="text-[11px] font-semibold text-rose-500 flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" />
-                Needs Attention
-              </div>
-              <div className="text-2xl font-black font-mono text-foreground">
-                {summary?.unresolved_count || 0}
-              </div>
-              <div className="text-[10px] text-muted-foreground">Requires attention</div>
+          <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                Overview
+              </span>
+              <span className="text-[11px] font-mono text-muted-foreground">
+                {summary?.total_transactions || 0} total
+              </span>
             </div>
 
-            <div className="p-3 bg-amber-500/5 rounded-xl border border-amber-500/20 space-y-1">
-              <div className="text-[11px] font-semibold text-amber-500 flex items-center gap-1">
-                <Sparkles className="w-3 h-3" />
-                Ready to Confirm
-              </div>
-              <div className="text-2xl font-black font-mono text-foreground">
-                {summary?.needs_review_count || 0}
-              </div>
-              <div className="text-[10px] text-muted-foreground">Suggested match</div>
-            </div>
+            <div className="space-y-3">
+              <button onClick={() => setActiveTab("UNRESOLVED")} className="flex items-center justify-between w-full group cursor-pointer">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
+                  <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">Needs Attention</span>
+                </div>
+                <span className="text-sm font-bold font-mono tabular-nums text-foreground">{summary?.unresolved_count || 0}</span>
+              </button>
 
-            <div className="p-3 bg-emerald-500/5 rounded-xl border border-emerald-500/20 space-y-1">
-              <div className="text-[11px] font-semibold text-emerald-500 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" />
-                Completed
-              </div>
-              <div className="text-2xl font-black font-mono text-foreground">
-                {(summary?.matched_count || 0) + (summary?.reconciled_count || 0)}
-              </div>
-              <div className="text-[10px] text-muted-foreground">Verified & reconciled</div>
-            </div>
+              <button onClick={() => setActiveTab("NEEDS_REVIEW")} className="flex items-center justify-between w-full group cursor-pointer">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" />
+                  <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">Ready to Confirm</span>
+                </div>
+                <span className="text-sm font-bold font-mono tabular-nums text-foreground">{summary?.needs_review_count || 0}</span>
+              </button>
 
-            <div className="p-3 bg-muted/40 rounded-xl border border-border/40 space-y-1">
-              <div className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1">
-                <Layers className="w-3 h-3" />
-                Excluded
-              </div>
-              <div className="text-2xl font-black font-mono text-foreground">
-                {summary?.excluded_count || 0}
-              </div>
-              <div className="text-[10px] text-muted-foreground">Non-business items</div>
+              <button onClick={() => setActiveTab("MATCHED")} className="flex items-center justify-between w-full group cursor-pointer">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                  <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">Completed</span>
+                </div>
+                <span className="text-sm font-bold font-mono tabular-nums text-foreground">{(summary?.matched_count || 0) + (summary?.reconciled_count || 0)}</span>
+              </button>
+
+              {(summary?.excluded_count || 0) > 0 && (
+                <button onClick={() => setActiveTab("EXCLUDED")} className="flex items-center justify-between w-full group cursor-pointer">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-muted-foreground/40 shrink-0" />
+                    <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">Excluded</span>
+                  </div>
+                  <span className="text-sm font-bold font-mono tabular-nums text-foreground">{summary?.excluded_count || 0}</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
 
         {/* Filter Tabs & Search Bar */}
         <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
-          <div className="flex items-center gap-1 p-1 bg-muted/40 border border-border/40 rounded-xl flex-wrap">
+          <div className="flex items-center gap-1.5 p-1 bg-muted/30 border border-border/40 rounded-xl flex-wrap">
             <button
               onClick={() => setActiveTab("UNRESOLVED")}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
                 activeTab === "UNRESOLVED"
                   ? "bg-card text-foreground shadow-sm border border-border/60"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              <span>Needs Attention</span>
+              <div className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+              <span>Attention</span>
               {(summary?.unresolved_count || 0) > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-500">
+                <span className="px-1.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-rose-500/15 text-rose-500 leading-none">
                   {summary?.unresolved_count}
                 </span>
               )}
@@ -983,15 +1014,16 @@ export default function BankingPage() {
 
             <button
               onClick={() => setActiveTab("NEEDS_REVIEW")}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
                 activeTab === "NEEDS_REVIEW"
                   ? "bg-card text-foreground shadow-sm border border-border/60"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              <span>Ready to Confirm</span>
+              <div className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+              <span>Review</span>
               {(summary?.needs_review_count || 0) > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-500">
+                <span className="px-1.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-amber-500/15 text-amber-500 leading-none">
                   {summary?.needs_review_count}
                 </span>
               )}
@@ -999,15 +1031,16 @@ export default function BankingPage() {
 
             <button
               onClick={() => setActiveTab("MATCHED")}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
                 activeTab === "MATCHED"
                   ? "bg-card text-foreground shadow-sm border border-border/60"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              <span>Completed</span>
+              <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+              <span>Done</span>
               {((summary?.matched_count || 0) + (summary?.reconciled_count || 0)) > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-500">
+                <span className="px-1.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-emerald-500/15 text-emerald-500 leading-none">
                   {(summary?.matched_count || 0) + (summary?.reconciled_count || 0)}
                 </span>
               )}
@@ -1015,7 +1048,7 @@ export default function BankingPage() {
 
             <button
               onClick={() => setActiveTab("EXCLUDED")}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
                 activeTab === "EXCLUDED"
                   ? "bg-card text-foreground shadow-sm border border-border/60"
                   : "text-muted-foreground hover:text-foreground"
@@ -1023,7 +1056,7 @@ export default function BankingPage() {
             >
               <span>Excluded</span>
               {(summary?.excluded_count || 0) > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-muted text-muted-foreground border border-border">
+                <span className="px-1.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-muted text-muted-foreground leading-none">
                   {summary?.excluded_count}
                 </span>
               )}
@@ -1031,13 +1064,13 @@ export default function BankingPage() {
 
             <button
               onClick={() => setActiveTab("ALL")}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeTab === "ALL"
                   ? "bg-card text-foreground shadow-sm border border-border/60"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              All ({summary?.total_transactions || 0})
+              All
             </button>
           </div>
 
@@ -1060,35 +1093,76 @@ export default function BankingPage() {
             <p className="text-xs text-muted-foreground">Loading bank transactions...</p>
           </div>
         ) : filteredTransactions.length === 0 ? (
-          <div className="bg-card border border-border/40 rounded-2xl p-12 text-center space-y-3 shadow-sm">
-            <div className="w-12 h-12 rounded-full bg-muted/60 text-muted-foreground flex items-center justify-center mx-auto">
-              <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+          <div className="bg-card border border-border/40 rounded-2xl p-16 text-center space-y-4 shadow-sm">
+            <div className="w-14 h-14 rounded-2xl bg-muted/60 text-muted-foreground flex items-center justify-center mx-auto">
+              {activeTab === "UNRESOLVED" ? (
+                <AlertCircle className="w-7 h-7 text-rose-400" />
+              ) : activeTab === "NEEDS_REVIEW" ? (
+                <Sparkles className="w-7 h-7 text-amber-400" />
+              ) : activeTab === "MATCHED" ? (
+                <CheckCircle2 className="w-7 h-7 text-emerald-500" />
+              ) : activeTab === "EXCLUDED" ? (
+                <EyeOff className="w-7 h-7 text-muted-foreground" />
+              ) : (
+                <Landmark className="w-7 h-7 text-blue-400" />
+              )}
             </div>
-            <h3 className="text-base font-bold text-foreground">No Transactions In This Category</h3>
-            <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-              {activeTab === "NEEDS_REVIEW"
-                ? "No pending AI suggestions. Upload another bank statement or view all transactions."
-                : "No matching records found for current filters."}
-            </p>
-            <button
-              onClick={() => setIsUploadOpen(true)}
-              className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-all cursor-pointer inline-flex items-center gap-2"
-            >
-              <UploadCloud className="w-4 h-4" />
-              <span>Upload Statement Now</span>
-            </button>
+            <div>
+              <h3 className="text-base font-bold text-foreground">
+                {activeTab === "UNRESOLVED" ? "All Caught Up!" :
+                 activeTab === "NEEDS_REVIEW" ? "No Pending Suggestions" :
+                 activeTab === "MATCHED" ? "No Completed Items" :
+                 activeTab === "EXCLUDED" ? "Nothing Excluded" :
+                 "No Transactions Found"}
+              </h3>
+              <p className="text-xs text-muted-foreground max-w-xs mx-auto mt-1.5">
+                {activeTab === "UNRESOLVED"
+                  ? "There are no transactions requiring your attention. Upload a new statement to import more."
+                  : activeTab === "NEEDS_REVIEW"
+                  ? "Vouch hasn't found any AI-suggested matches. Upload another statement or check the Attention tab."
+                  : activeTab === "MATCHED"
+                  ? "No transactions have been matched yet. Start by reviewing items in the Attention or Review tabs."
+                  : activeTab === "EXCLUDED"
+                  ? "No transactions have been excluded from the books."
+                  : "No transactions match your search or filter criteria."}
+              </p>
+            </div>
+            {(activeTab === "UNRESOLVED" || activeTab === "NEEDS_REVIEW" || activeTab === "ALL") && (
+              <button
+                onClick={() => setIsUploadOpen(true)}
+                className="px-4 py-2.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-all cursor-pointer inline-flex items-center gap-2 shadow-sm"
+              >
+                <UploadCloud className="w-4 h-4" />
+                <span>Upload Statement</span>
+              </button>
+            )}
           </div>
         ) : (
-          <div className="space-y-3">
-            {filteredTransactions.map((tx) => {
+          <div className="space-y-2">
+            {filteredTransactions.map((tx, idx) => {
               const isCredit = parseFloat(tx.credit_amount) > 0;
               const amountVal = isCredit ? parseFloat(tx.credit_amount) : parseFloat(tx.debit_amount);
+              const prevDate = idx > 0 ? filteredTransactions[idx - 1].transaction_date : null;
+              const showDateHeader = tx.transaction_date !== prevDate;
 
               return (
+                <React.Fragment key={tx.id}>
+                  {showDateHeader && (
+                    <div className={`flex items-center gap-3 ${idx > 0 ? "pt-3" : ""}`}>
+                      <span className="text-[11px] font-bold text-muted-foreground font-mono whitespace-nowrap">
+                        {(() => {
+                          try {
+                            const d = new Date(tx.transaction_date);
+                            if (isNaN(d.getTime())) return tx.transaction_date;
+                            return d.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+                          } catch { return tx.transaction_date; }
+                        })()}
+                      </span>
+                      <div className="flex-1 h-px bg-border/40" />
+                    </div>
+                  )}
                 <div
-                  key={tx.id}
-                  className="bg-card border border-border/40 hover:border-border/80 transition-all rounded-2xl p-4 sm:p-5 shadow-sm space-y-3"
-                >
+                  className="bg-card border border-border/40 hover:border-border/80 transition-all rounded-2xl p-4 shadow-sm space-y-2.5">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <div className="flex items-start gap-3">
                       <div
@@ -1101,9 +1175,6 @@ export default function BankingPage() {
 
                       <div className="space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-xs font-bold text-muted-foreground">
-                            {tx.transaction_date}
-                          </span>
                           {tx.reference_number && (
                             <span className="font-mono text-[10px] px-2 py-0.5 bg-muted/60 text-muted-foreground rounded border border-border/40">
                               Ref: {tx.reference_number}
@@ -1145,9 +1216,6 @@ export default function BankingPage() {
                           </div>
                         )}
 
-                        <div className="text-[11px] text-muted-foreground font-mono">
-                          Normalized: {tx.normalized_narration}
-                        </div>
                       </div>
                     </div>
 
@@ -1167,30 +1235,25 @@ export default function BankingPage() {
                     </div>
                   </div>
 
-                  {/* AI Suggestion Card if match found */}
                   {tx.matched_party && !tx.is_excluded && tx.status !== "EXCLUDED" && (
-                    <div className="bg-muted/30 border border-border/50 rounded-xl p-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                      <div className="flex items-center gap-2.5">
-                        <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400">
-                          <Sparkles className="w-4 h-4" />
-                        </div>
+                    <div className="border-l-2 border-indigo-500/40 bg-muted/20 rounded-r-xl p-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                      <div className="flex items-start gap-2.5">
+                        <Sparkles className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
                         <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-foreground">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-semibold text-foreground">
                               {isCredit
-                                ? `Looks like a customer receipt from ${tx.matched_party.name}`
-                                : `Looks like a supplier payment to ${tx.matched_party.name}`}
+                                ? `Receipt from ${tx.matched_party.name}`
+                                : `Payment to ${tx.matched_party.name}`}
                             </span>
-                            <span
-                              className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${
-                                tx.match_confidence >= 80
-                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
-                                  : tx.match_confidence >= 50
-                                  ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
-                                  : "bg-muted text-muted-foreground border-border"
-                              }`}
-                            >
-                              {tx.match_confidence >= 80 ? "Verified Match" : tx.match_confidence >= 50 ? "Suggested" : "Needs Review"}
+                            <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                              tx.match_confidence >= 80
+                                ? "text-emerald-500"
+                                : tx.match_confidence >= 50
+                                ? "text-amber-500"
+                                : "text-muted-foreground"
+                            }`}>
+                              {tx.match_confidence}%
                             </span>
                           </div>
                           {(() => {
@@ -1212,8 +1275,8 @@ export default function BankingPage() {
                               if (parts.length > 0) {
                                 return (
                                   <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                                    {parts.map((p, idx) => (
-                                      <span key={idx} className="text-[10px] px-2 py-0.5 rounded-md bg-muted/60 text-muted-foreground border border-border/40 font-mono">
+                                    {parts.map((p, pidx) => (
+                                      <span key={pidx} className="text-[10px] px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground font-mono">
                                         {p}
                                       </span>
                                     ))}
@@ -1227,24 +1290,24 @@ export default function BankingPage() {
                       </div>
 
                       {tx.status !== "MATCHED" && tx.status !== "RECONCILED" && (
-                        <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+                        <div className="flex items-center gap-2 w-full sm:w-auto">
                           <button
                             onClick={() => openActionModal(tx, "MATCH_PARTY")}
-                            className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold transition-colors cursor-pointer w-full sm:w-auto text-center"
+                            className="px-3.5 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold transition-colors cursor-pointer flex-1 sm:flex-initial text-center"
                           >
-                            {isCredit ? "Confirm Receipt" : "Confirm Supplier Payment"}
+                            {isCredit ? "Confirm" : "Confirm"}
                           </button>
                           <button
                             onClick={() => openActionModal(tx, "RECORD_PAYMENT")}
-                            className="px-2.5 py-1.5 rounded-lg border border-border/60 hover:bg-card text-foreground text-xs font-semibold cursor-pointer"
+                            className="px-2.5 py-1.5 rounded-lg border border-border/60 hover:bg-muted text-foreground text-xs font-medium cursor-pointer"
                           >
-                            Choose Different Party
+                            Change
                           </button>
                           <button
                             onClick={() => openActionModal(tx, "IGNORE")}
-                            className="px-2 py-1.5 rounded-lg hover:bg-rose-500/10 text-muted-foreground hover:text-rose-400 text-xs font-medium cursor-pointer"
+                            className="px-2 py-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground text-xs cursor-pointer"
                           >
-                            Ignore
+                            Skip
                           </button>
                         </div>
                       )}
@@ -1287,10 +1350,9 @@ export default function BankingPage() {
                     </div>
                   )}
 
-                  {/* Quick Action Toolbar (Unresolved / Review) */}
-                  {!tx.is_excluded && tx.status !== "EXCLUDED" && tx.status !== "MATCHED" && tx.status !== "RECONCILED" && (
+                  {/* Quick Action Toolbar — only when no AI suggestion card shown */}
+                  {!tx.is_excluded && tx.status !== "EXCLUDED" && tx.status !== "MATCHED" && tx.status !== "RECONCILED" && !tx.matched_party && (
                     <div className="flex items-center gap-2 pt-2 border-t border-border/30 flex-wrap">
-                      <span className="text-[11px] font-bold text-muted-foreground mr-1">Actions:</span>
 
                       <button
                         onClick={() => openActionModal(tx, "MATCH_PARTY")}
@@ -1303,7 +1365,7 @@ export default function BankingPage() {
                         onClick={() => openActionModal(tx, "RECORD_PAYMENT")}
                         className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-muted hover:bg-muted/80 text-foreground border border-border/40 transition-colors cursor-pointer"
                       >
-                        {isCredit || tx.matched_party?.ledger_type === "CUSTOMER" ? "Customer Receipt" : "Supplier Payment"}
+                        {isCredit ? "Customer Receipt" : "Supplier Payment"}
                       </button>
 
                       {!isCredit && (
@@ -1349,6 +1411,7 @@ export default function BankingPage() {
                     </div>
                   )}
                 </div>
+                </React.Fragment>
               );
             })}
           </div>
