@@ -4,21 +4,46 @@ from django.db.models import Sum
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
 from apps.accounting.models import Voucher, PaymentAllocation
-from apps.common.money import to_decimal, quantize_money
+from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
+
+def quantize_money(amount) -> Decimal:
+    if amount is None:
+        return Decimal('0.00')
+    return Decimal(str(amount)).quantize(Decimal('0.00'))
 
 class PaymentAllocationService:
     @staticmethod
-    def get_voucher_allocated_amount(voucher: Voucher) -> Decimal:
+    def is_party_customer(party: Ledger) -> bool:
         """
-        Calculates how much of an invoice has already been paid via PaymentAllocations.
+        Determines whether party is a Customer (receivable) or Supplier (payable)
+        using canonical role first, group name nature second, normal balance third.
+        Never relies on opening_balance_type which is just an opening balance sign.
         """
+        if not party:
+            return True
+        role = getattr(party, 'canonical_role', None)
+        if role == 'CUSTOMER':
+            return True
+        if role == 'SUPPLIER':
+            return False
+        
+        group_name = (party.group.name or '').lower() if getattr(party, 'group', None) else ''
+        if any(k in group_name for k in ['debtor', 'customer', 'receivable']):
+            return True
+        if any(k in group_name for k in ['creditor', 'supplier', 'payable']):
+            return False
+            
+        return getattr(party, 'normal_balance', 'DEBIT') == 'DEBIT'
+
+    @staticmethod
+    def get_invoice_allocated_amount(voucher: Voucher) -> Decimal:
         alloc = PaymentAllocation.objects.filter(invoice_voucher=voucher).aggregate(
             total=Sum('allocated_amount')
         )['total']
         return quantize_money(alloc or Decimal('0.00'))
 
-    @staticmethod
-    def get_unpaid_invoices_for_party(company: Company, party_ledger: Ledger) -> list:
+    @classmethod
+    def get_unpaid_invoices_for_party(cls, company: Company, party_ledger: Ledger) -> list:
         """
         Returns all posted invoices for a party that have remaining unpaid balances,
         ordered by voucher_date ascending (FIFO order).
@@ -27,15 +52,14 @@ class PaymentAllocationService:
         if not party_ledger:
             return []
 
-        # Canonical party role: CUSTOMER (receivable) vs SUPPLIER (payable)
-        is_customer = (party_ledger.canonical_role == 'CUSTOMER') or (party_ledger.opening_balance_type == 'DEBIT')
+        is_customer = cls.is_party_customer(party_ledger)
         target_vtypes = ['SALES', 'OPENING_INVOICE'] if is_customer else ['PURCHASE', 'OPENING_BILL']
 
         invoices = list(Voucher.objects.filter(
             company=company,
             party_ledger=party_ledger,
             voucher_type__in=target_vtypes,
-            status='POSTED'
+            status__in=EffectiveVoucherService.ACTIVE_STATUSES
         ).order_by('due_date', 'voucher_date', 'created_at'))
 
         if not invoices:
@@ -72,42 +96,43 @@ class PaymentAllocationService:
         """
         Automatically performs reference-aware and FIFO allocation of a Payment or Receipt voucher
         against the party's outstanding invoices.
-        Uses select_for_update() row locks to prevent concurrent over-allocation.
+        Uses select_for_update() row locks on both payment and invoices to prevent concurrent over-allocation.
         Any remaining unallocated amount represents an Advance.
         Enforces strict cross-company isolation invariant.
         """
         if payment_voucher.voucher_type not in ['PAYMENT', 'RECEIPT']:
             return []
 
-        party = payment_voucher.party_ledger
+        # Lock the payment voucher row
+        pv = Voucher.objects.select_for_update().get(id=payment_voucher.id)
+        party = pv.party_ledger
         if not party:
             return []
 
         # Delete any prior allocations for this payment voucher
-        PaymentAllocation.objects.filter(payment_voucher=payment_voucher).delete()
+        PaymentAllocation.objects.filter(payment_voucher=pv).delete()
 
-        rem_funds = quantize_money(payment_voucher.total_amount)
+        rem_funds = quantize_money(pv.total_amount)
         if rem_funds <= Decimal('0.00'):
             return []
 
-        # Canonical party role: CUSTOMER (receivable) vs SUPPLIER (payable)
-        is_customer = (party.canonical_role == 'CUSTOMER') or (party.opening_balance_type == 'DEBIT')
+        is_customer = cls.is_party_customer(party)
         target_vtypes = ['SALES', 'OPENING_INVOICE'] if is_customer else ['PURCHASE', 'OPENING_BILL']
 
         # Determine candidate invoices
         candidate_qs = Voucher.objects.filter(
-            company=payment_voucher.company,
+            company=pv.company,
             party_ledger=party,
             voucher_type__in=target_vtypes,
-            status='POSTED'
+            status__in=EffectiveVoucherService.ACTIVE_STATUSES
         ).order_by('due_date', 'voucher_date', 'created_at')
 
         # Check for explicit invoice reference match in reference_number
         preferred_inv = None
         if preferred_invoice_id:
             preferred_inv = candidate_qs.filter(id=preferred_invoice_id).first()
-        elif payment_voucher.reference_number:
-            ref = str(payment_voucher.reference_number).strip()
+        elif pv.reference_number:
+            ref = str(pv.reference_number).strip()
             preferred_inv = candidate_qs.filter(voucher_number__iexact=ref).first()
 
         ordered_candidates = []
@@ -126,7 +151,7 @@ class PaymentAllocationService:
 
             # Lock candidate invoice row
             inv = Voucher.objects.select_for_update().get(id=candidate.id)
-            if inv.company_id != payment_voucher.company_id:
+            if inv.company_id != pv.company_id:
                 from rest_framework.exceptions import ValidationError
                 raise ValidationError("Cross-company payment allocation is strictly prohibited.")
 
@@ -141,8 +166,8 @@ class PaymentAllocationService:
 
             alloc_amt = min(rem_funds, inv_due)
             alloc = PaymentAllocation.objects.create(
-                company=payment_voucher.company,
-                payment_voucher=payment_voucher,
+                company=pv.company,
+                payment_voucher=pv,
                 invoice_voucher=inv,
                 allocated_amount=alloc_amt
             )
@@ -171,12 +196,24 @@ class PaymentAllocationService:
             from rest_framework.exceptions import ValidationError
             raise ValidationError("Allocated amount must be greater than zero.")
 
-        # Lock invoice row to prevent concurrent over-allocation
+        # Lock both payment and invoice rows to prevent concurrent over-allocation
+        pv = Voucher.objects.select_for_update().get(id=payment_voucher.id)
         inv = Voucher.objects.select_for_update().get(id=invoice_voucher.id)
+
+        # Check payment capacity
+        other_pv_alloc = PaymentAllocation.objects.filter(
+            payment_voucher=pv
+        ).exclude(invoice_voucher=inv).aggregate(total=Sum('allocated_amount'))['total'] or Decimal('0.00')
+        pv_capacity = max(Decimal('0.00'), quantize_money(pv.total_amount - other_pv_alloc))
+        if alloc_amt > pv_capacity:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                f"Cannot allocate ₹{alloc_amt}: remaining unallocated funds on payment {pv.voucher_number} is only ₹{pv_capacity}."
+            )
 
         currently_paid = PaymentAllocation.objects.filter(
             invoice_voucher=inv
-        ).exclude(payment_voucher=payment_voucher).aggregate(total=Sum('allocated_amount'))['total'] or Decimal('0.00')
+        ).exclude(payment_voucher=pv).aggregate(total=Sum('allocated_amount'))['total'] or Decimal('0.00')
 
         remaining_capacity = max(Decimal('0.00'), quantize_money(inv.total_amount - currently_paid))
         if alloc_amt > remaining_capacity:
@@ -186,11 +223,11 @@ class PaymentAllocationService:
             )
 
         # Remove existing allocation for this pair if any
-        PaymentAllocation.objects.filter(payment_voucher=payment_voucher, invoice_voucher=inv).delete()
+        PaymentAllocation.objects.filter(payment_voucher=pv, invoice_voucher=inv).delete()
 
         alloc = PaymentAllocation.objects.create(
-            company=payment_voucher.company,
-            payment_voucher=payment_voucher,
+            company=pv.company,
+            payment_voucher=pv,
             invoice_voucher=inv,
             allocated_amount=alloc_amt
         )

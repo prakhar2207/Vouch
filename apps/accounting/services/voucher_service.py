@@ -179,7 +179,7 @@ class VoucherService:
             if not ledger:
                 continue
             current_bal = ledger.current_balance if ledger.current_balance is not None else Decimal('0.00')
-            if ledger.opening_balance_type == 'DEBIT':
+            if ledger.normal_balance == 'DEBIT':
                 ledger.current_balance = current_bal - entry.debit_amount + entry.credit_amount
             else:
                 ledger.current_balance = current_bal - entry.credit_amount + entry.debit_amount
@@ -305,10 +305,12 @@ class VoucherService:
 
         locked_ledger = Ledger.objects.select_for_update().get(id=ledger.id)
         
+        from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
+
         # Check if double-entry opening vouchers exist for this ledger
         has_opening_entries = LedgerEntry.objects.filter(
             ledger=locked_ledger,
-            voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED'],
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
             voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
         ).exists()
 
@@ -325,7 +327,7 @@ class VoucherService:
         # POSTED vouchers and explicit REVERSED/CORRECTED balancing history affect accounting balances
         totals = LedgerEntry.objects.filter(
             ledger=locked_ledger,
-            voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED']
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
         ).aggregate(
             total_dr=Sum('debit_amount'),
             total_cr=Sum('credit_amount')

@@ -138,6 +138,19 @@ export default function EditPaymentReceiptModal({
     ? partyLedgers
     : ledgers.filter((l: any) => (l.group || "").includes("Debtor") || (l.group || "").includes("Creditor") || (l.group || "").includes("Expense"));
 
+  const getLedgerBalanceType = (l: any): string => {
+    if (l.balance_direction && l.balance_direction !== "NONE") {
+      return l.balance_direction === "DEBIT" ? "Dr" : "Cr";
+    }
+    const bal = parseFloat(l.current_balance || 0);
+    const normal = l.normal_balance || (l.canonical_role === "SUPPLIER" ? "CREDIT" : "DEBIT");
+    if (normal === "DEBIT") {
+      return bal >= 0 ? "Dr" : "Cr";
+    } else {
+      return bal >= 0 ? "Cr" : "Dr";
+    }
+  };
+
   const partyOptions: SearchableOption[] = effectivePartyLedgers.map((l: any) => {
     const isExp = (l.group || "").toLowerCase().includes("expense") || (l.nature || "").toUpperCase() === "EXPENSE";
     return {
@@ -145,7 +158,7 @@ export default function EditPaymentReceiptModal({
       name: l.name,
       group: l.group,
       balance: l.current_balance,
-      balanceType: l.opening_balance_type === "DEBIT" ? "Dr" : "Cr",
+      balanceType: getLedgerBalanceType(l),
       subtitle: isExp ? (l.group || "Expense Account") : (l.gstin ? `GSTIN: ${l.gstin}` : undefined),
     };
   });
@@ -171,7 +184,7 @@ export default function EditPaymentReceiptModal({
     name: l.name,
     group: l.group,
     balance: l.current_balance,
-    balanceType: l.opening_balance_type === "DEBIT" ? "Dr" : "Cr",
+    balanceType: getLedgerBalanceType(l),
   }));
 
   const handlePaymentModeChange = (mode: PaymentMode) => {

@@ -116,6 +116,19 @@ export default function NewVoucherPage() {
         (l.group || '').includes('Expense')
       );
 
+  const getLedgerBalanceType = (l: any): string => {
+    if (l.balance_direction && l.balance_direction !== 'NONE') {
+      return l.balance_direction === 'DEBIT' ? 'Dr' : 'Cr';
+    }
+    const bal = parseFloat(l.current_balance || 0);
+    const normal = l.normal_balance || (l.canonical_role === 'SUPPLIER' ? 'CREDIT' : 'DEBIT');
+    if (normal === 'DEBIT') {
+      return bal >= 0 ? 'Dr' : 'Cr';
+    } else {
+      return bal >= 0 ? 'Cr' : 'Dr';
+    }
+  };
+
   const partyOptions: SearchableOption[] = effectivePartyLedgers.map((l: any) => {
     const isExp = (l.group || '').toLowerCase().includes('expense') || (l.nature || '').toUpperCase() === 'EXPENSE';
     return {
@@ -123,7 +136,7 @@ export default function NewVoucherPage() {
       name: l.name,
       group: l.group,
       balance: l.current_balance,
-      balanceType: l.opening_balance_type === 'DEBIT' ? 'Dr' : 'Cr',
+      balanceType: getLedgerBalanceType(l),
       subtitle: isExp 
         ? (l.group || 'Expense Account')
         : (l.gstin ? `GSTIN: ${l.gstin}` : (l.phone ? `Ph: ${l.phone}` : undefined)),
@@ -156,7 +169,7 @@ export default function NewVoucherPage() {
     name: l.name,
     group: l.group,
     balance: l.current_balance,
-    balanceType: l.opening_balance_type === 'DEBIT' ? 'Dr' : 'Cr',
+    balanceType: getLedgerBalanceType(l),
   }));
 
   // Automatically switch account when paymentMode changes

@@ -1,5 +1,6 @@
 import uuid
 from django.db import models
+from django.db.models import Q
 from apps.companies.models import Company
 from apps.accounts.models import User
 from apps.ledgers.models import Ledger
@@ -452,6 +453,25 @@ class BankTransaction(models.Model):
             models.Index(fields=['company', 'reference_number']),
             models.Index(fields=['company', 'bank_ledger', 'transaction_date']),
             models.Index(fields=['company', 'fingerprint']),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(debit_amount__gte=0) & Q(credit_amount__gte=0),
+                name='bank_tx_non_negative_amounts'
+            ),
+            models.CheckConstraint(
+                condition=~Q(debit_amount__gt=0, credit_amount__gt=0),
+                name='bank_tx_not_both_debit_and_credit'
+            ),
+            models.CheckConstraint(
+                condition=Q(debit_amount__gt=0) | Q(credit_amount__gt=0),
+                name='bank_tx_at_least_one_positive_amount'
+            ),
+            models.UniqueConstraint(
+                fields=['company', 'bank_ledger', 'fingerprint'],
+                condition=Q(fingerprint__isnull=False) & ~Q(fingerprint=''),
+                name='unique_company_bank_tx_fingerprint'
+            )
         ]
 
     def __str__(self):

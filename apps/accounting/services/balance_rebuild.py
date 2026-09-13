@@ -4,24 +4,27 @@ from django.db.models import Sum
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
 from apps.accounting.models import LedgerEntry
+from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
 
 class BalanceRebuildService:
     @staticmethod
     @transaction.atomic
-    def rebuild_company_ledger_balances(company: Company) -> dict:
+    def rebuild_company_ledger_balances(company: Company, user=None) -> dict:
         """
         Reconstructs every ledger's current_balance from scratch by evaluating
-        its opening balance and aggregating all immutable POSTED ledger entries.
+        its opening balance and aggregating all immutable accounting-effective ledger entries.
+        Acquires row-level locks on all company ledgers to prevent race conditions.
         Uses batch queries to eliminate N+1 latency across remote database connections.
-        Eliminates any data drift.
+        Logs any balance discrepancies to the AuditLog.
         """
-        ledgers = list(Ledger.objects.filter(company=company).select_related('group'))
+        ledgers = list(Ledger.objects.select_for_update().filter(company=company).select_related('group'))
         if not ledgers:
             return {
                 "success": True,
                 "company_id": str(company.id),
                 "company_name": company.name,
                 "rebuilt_ledgers_count": 0,
+                "discrepancies_count": 0,
                 "balances": {}
             }
 
@@ -32,7 +35,7 @@ class BalanceRebuildService:
             LedgerEntry.objects.filter(
                 ledger_id__in=ledger_ids,
                 voucher__company=company,
-                voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED'],
+                voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
                 voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
             ).values_list('ledger_id', flat=True).distinct()
         )
@@ -41,7 +44,7 @@ class BalanceRebuildService:
         totals_qs = LedgerEntry.objects.filter(
             ledger_id__in=ledger_ids,
             voucher__company=company,
-            voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED']
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
         ).values('ledger_id').annotate(
             total_dr=Sum('debit_amount'),
             total_cr=Sum('credit_amount')
@@ -50,6 +53,7 @@ class BalanceRebuildService:
 
         results = {}
         to_update = []
+        discrepancies = []
 
         for ledger in ledgers:
             has_op = ledger.id in ledgers_with_opening
@@ -74,6 +78,16 @@ class BalanceRebuildService:
             else:
                 new_bal = total_dr - total_cr
 
+            old_bal = ledger.current_balance if ledger.current_balance is not None else Decimal('0.00')
+            if old_bal != new_bal:
+                discrepancies.append({
+                    "ledger_id": str(ledger.id),
+                    "ledger_name": ledger.name,
+                    "old_balance": str(old_bal),
+                    "new_balance": str(new_bal),
+                    "drift": str(new_bal - old_bal)
+                })
+
             ledger.current_balance = new_bal
             to_update.append(ledger)
             results[str(ledger.id)] = {
@@ -83,10 +97,41 @@ class BalanceRebuildService:
 
         Ledger.objects.bulk_update(to_update, ['current_balance'])
 
+        # Audit log if discrepancies found or rebuild requested
+        try:
+            from apps.audit.services.audit_service import AuditService
+            AuditService.log_action(
+                company=company,
+                user=user,
+                action='REBUILD_BALANCES',
+                model_name='Company',
+                record_id=company.id,
+                changes={
+                    "total_ledgers": len(to_update),
+                    "discrepancies_count": len(discrepancies),
+                    "discrepancies": discrepancies[:50]  # Cap summary
+                }
+            )
+        except Exception:
+            pass
+
         return {
             "success": True,
             "company_id": str(company.id),
             "company_name": company.name,
             "rebuilt_ledgers_count": len(to_update),
+            "discrepancies_count": len(discrepancies),
+            "discrepancies": discrepancies,
             "balances": results
         }
+
+    @staticmethod
+    def rebuild_ledger_balance(ledger: Ledger) -> Decimal:
+        """
+        Recalculates a single ledger's balance via canonical VoucherService logic.
+        """
+        from apps.accounting.services.voucher_service import VoucherService
+        return VoucherService.recalculate_ledger_balance(ledger)
+
+rebuild_ledger_balances = BalanceRebuildService.rebuild_company_ledger_balances
+

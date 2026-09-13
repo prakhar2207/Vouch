@@ -231,3 +231,80 @@ class StockService:
                     if product.stock_quantity < 0 and not allow_negative:
                         raise ValidationError(f"Cannot cancel voucher. {product.name} stock would fall below zero ({product.stock_quantity}).")
                 product.save(update_fields=['stock_quantity', 'updated_at'])
+
+    @classmethod
+    @transaction.atomic
+    def rebuild_company_stock(cls, company, user=None) -> dict:
+        """
+        Reconstructs every product's stock_quantity from authoritative InventoryEntry history.
+        Acquires select_for_update() row locks on all company products.
+        Sums IN movements minus OUT movements for active vouchers.
+        Audit logs any discrepancies detected.
+        """
+        from django.db.models import Sum
+        from apps.audit.services.audit_service import AuditService
+
+        products = list(Product.objects.select_for_update().filter(company=company))
+        if not products:
+            return {"success": True, "rebuilt_products_count": 0, "discrepancies_count": 0, "discrepancies": []}
+
+        prod_ids = [p.id for p in products]
+
+        totals = InventoryEntry.objects.filter(
+            company=company,
+            product_id__in=prod_ids
+        ).values('product_id', 'movement_type').annotate(total_qty=Sum('quantity'))
+
+        qty_map = {}
+        for row in totals:
+            pid = row['product_id']
+            if pid not in qty_map:
+                qty_map[pid] = {'IN': Decimal('0.00'), 'OUT': Decimal('0.00')}
+            mtype = row['movement_type']
+            qty_map[pid][mtype] = Decimal(str(row['total_qty'] or '0.00'))
+
+        discrepancies = []
+        to_update = []
+
+        for p in products:
+            m = qty_map.get(p.id, {'IN': Decimal('0.00'), 'OUT': Decimal('0.00')})
+            new_qty = (m['IN'] - m['OUT']).quantize(Decimal('0.01'))
+
+            old_qty = Decimal(str(p.stock_quantity or '0.00')).quantize(Decimal('0.01'))
+            if old_qty != new_qty:
+                discrepancies.append({
+                    "product_id": str(p.id),
+                    "product_name": p.name,
+                    "old_quantity": str(old_qty),
+                    "new_quantity": str(new_qty),
+                    "drift": str(new_qty - old_qty)
+                })
+            p.stock_quantity = new_qty
+            to_update.append(p)
+
+        Product.objects.bulk_update(to_update, ['stock_quantity'])
+
+        try:
+            AuditService.log_action(
+                company=company,
+                user=user,
+                action='REBUILD_STOCK',
+                model_name='Product',
+                record_id=company.id,
+                changes={
+                    "total_products": len(to_update),
+                    "discrepancies_count": len(discrepancies),
+                    "discrepancies": discrepancies[:50]
+                }
+            )
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "company_id": str(company.id),
+            "rebuilt_products_count": len(to_update),
+            "discrepancies_count": len(discrepancies),
+            "discrepancies": discrepancies
+        }
+

@@ -14,6 +14,7 @@ from apps.accounting.services.sequence_service import InvoiceSequenceService
 from apps.accounting.services.allocation_service import PaymentAllocationService
 from apps.accounting.services.party_intelligence_service import PartyIntelligenceService
 from apps.audit.services.audit_service import AuditService
+from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
 
 class BankReconciliationService:
     """
@@ -33,19 +34,21 @@ class BankReconciliationService:
         user=None
     ) -> Dict[str, Any]:
         """
-        Executes a deterministic resolution action on an unresolved or suggested bank transaction.
-        Action types:
-        - MATCH_PARTY: Link to party, auto-create voucher, allocate to invoices, learn mapping.
-        - RECORD_PAYMENT: Formal payment/receipt creation with optional manual allocations.
-        - RECORD_EXPENSE: Post expense against an expense ledger (e.g. Bank Charges).
-        - RECORD_TRANSFER: Contra fund transfer between bank/cash ledgers.
-        - OWNER_DRAWING: Equity drawings/capital transaction.
-        - IGNORE: Flag as ignored with reason.
+        Executes a deterministic resolution action on an bank transaction.
+        Enforces immutable source direction:
+        - Money IN (statement credit) can ONLY debit Bank ledger.
+        - Money OUT (statement debit) can ONLY credit Bank ledger.
         """
         company = bank_tx.company
         amount = bank_tx.credit_amount if bank_tx.credit_amount > Decimal('0.00') else bank_tx.debit_amount
         is_money_in = bank_tx.credit_amount > Decimal('0.00')
         bank_ledger = bank_tx.bank_ledger
+
+        # Strict direction invariant validation
+        if is_money_in and bank_tx.credit_amount <= Decimal('0.00'):
+            raise ValidationError("Invalid bank transaction: deposit must have positive credit amount.")
+        if not is_money_in and bank_tx.debit_amount <= Decimal('0.00'):
+            raise ValidationError("Invalid bank transaction: withdrawal must have positive debit amount.")
 
         if bank_tx.status == 'RECONCILED':
             if bank_tx.matched_voucher:
@@ -75,16 +78,15 @@ class BankReconciliationService:
                 raise ValidationError("Party ID is required to match transaction.")
             party = Ledger.objects.get(id=party_id, company=company)
 
-            # Bank statement truth is immutable evidence:
-            # We NEVER mutate bank_tx.credit_amount or bank_tx.debit_amount based on party type.
-            # Money IN (credit on bank statement) is ALWAYS a deposit into Bank (Dr Bank, Cr Party).
-            # Money OUT (debit on bank statement) is ALWAYS a withdrawal from Bank (Dr Party, Cr Bank).
+            explicit_intent = payload.get('intent') or action_type
+            is_supplier = (party.canonical_role == 'SUPPLIER') or (party.ledger_type == 'SUPPLIER') or ('SUPPLIER' in explicit_intent)
+            
+            # Canonical voucher type based on direction
             v_type = 'RECEIPT' if is_money_in else 'PAYMENT'
             v_num, _ = InvoiceSequenceService.get_next_number(company, v_type, bank_tx.transaction_date)
 
-            is_supplier = party.ledger_type == 'SUPPLIER' or (party.canonical_role == 'SUPPLIER')
             if is_money_in:
-                if is_supplier:
+                if is_supplier or explicit_intent == 'CONFIRM_SUPPLIER_REFUND':
                     narration = f"Supplier refund / recovery from {party.name} via {bank_ledger.name}: {bank_tx.description}"
                 else:
                     narration = f"Customer receipt from {party.name} via {bank_ledger.name}: {bank_tx.description}"
@@ -109,7 +111,7 @@ class BankReconciliationService:
             )
 
             if is_money_in:
-                # Deposit: Dr Bank, Cr Party (Receipt or Supplier Refund)
+                # Immutable direction: Deposit ALWAYS debits Bank, credits Party
                 LedgerEntry.objects.create(
                     company=company,
                     voucher=created_voucher,
@@ -127,7 +129,7 @@ class BankReconciliationService:
                     narration=f"Receipt from {party.name}" if not is_supplier else f"Refund from {party.name}"
                 )
             else:
-                # Withdrawal: Dr Party, Cr Bank (Payment or Customer Refund)
+                # Immutable direction: Withdrawal ALWAYS debits Party, credits Bank
                 LedgerEntry.objects.create(
                     company=company,
                     voucher=created_voucher,
@@ -201,6 +203,43 @@ class BankReconciliationService:
                 "voucher_id": str(created_voucher.id),
                 "voucher_number": created_voucher.voucher_number,
                 "allocations": allocations
+            }
+
+        elif action_type == 'MATCH_EXISTING_VOUCHER':
+            voucher_id = payload.get('voucher_id')
+            if not voucher_id:
+                raise ValidationError("voucher_id is required to match an existing voucher.")
+            vch = Voucher.objects.get(id=voucher_id, company=company)
+            if vch.status not in EffectiveVoucherService.ACCOUNTING_STATUSES:
+                raise ValidationError(f"Cannot match voucher with status '{vch.status}'. Only posted vouchers can be matched.")
+            
+            bank_entries = vch.ledger_entries.filter(ledger=bank_ledger)
+            if not bank_entries.exists():
+                raise ValidationError(f"Voucher {vch.voucher_number} does not affect bank ledger '{bank_ledger.name}'.")
+            
+            if is_money_in:
+                if not bank_entries.filter(debit_amount__gt=Decimal('0.00')).exists():
+                    raise ValidationError(
+                        f"Direction mismatch: Bank transaction is a Deposit (Money IN), but voucher {vch.voucher_number} does not debit {bank_ledger.name}."
+                    )
+            else:
+                if not bank_entries.filter(credit_amount__gt=Decimal('0.00')).exists():
+                    raise ValidationError(
+                        f"Direction mismatch: Bank transaction is a Withdrawal (Money OUT), but voucher {vch.voucher_number} does not credit {bank_ledger.name}."
+                    )
+
+            bank_tx.matched_voucher = vch
+            if vch.party_ledger:
+                bank_tx.matched_party = vch.party_ledger
+            bank_tx.status = 'RECONCILED'
+            bank_tx.match_confidence = 1.0
+            bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'match_confidence', 'updated_at'])
+
+            return {
+                "status": "SUCCESS",
+                "voucher_id": str(vch.id),
+                "voucher_number": vch.voucher_number,
+                "message": f"Successfully matched transaction to voucher {vch.voucher_number}"
             }
 
         elif action_type == 'RECORD_EXPENSE':
@@ -279,7 +318,7 @@ class BankReconciliationService:
             )
 
             if is_money_in:
-                # Deposit into this bank from target (e.g. Cash Deposit or Transfer in): Dr Bank, Cr Target
+                # Deposit into this bank from target: Dr Bank, Cr Target
                 LedgerEntry.objects.create(company=company, voucher=created_voucher, ledger=bank_ledger, debit_amount=amount, credit_amount=Decimal('0.00'))
                 LedgerEntry.objects.create(company=company, voucher=created_voucher, ledger=target_ledger, debit_amount=Decimal('0.00'), credit_amount=amount)
             else:
@@ -363,7 +402,7 @@ class BankReconciliationService:
 
         has_opening_entries = LedgerEntry.objects.filter(
             ledger=bank_ledger,
-            voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED'],
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
             voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
         ).exists()
 
@@ -378,7 +417,7 @@ class BankReconciliationService:
 
         entry_filter = {
             'ledger': bank_ledger,
-            'voucher__status__in': ['POSTED', 'REVERSED', 'CORRECTED'],
+            'voucher__status__in': EffectiveVoucherService.ACCOUNTING_STATUSES,
         }
         if cutoff_date:
             entry_filter['voucher__voucher_date__lte'] = cutoff_date
@@ -464,11 +503,37 @@ class BankReconciliationService:
 
         # Calculate book closing balance as of statement cutoff date
         book_closing_balance = None
+        uncleared_deposits = Decimal('0.00')
+        unpresented_payments = Decimal('0.00')
+        
         if valid_bank_id:
             bank_ledger = Ledger.objects.filter(id=valid_bank_id, company=company).first()
             if bank_ledger:
                 book_bal = cls.get_bank_balance_as_of(bank_ledger, statement_cutoff_date)
                 book_closing_balance = str(book_bal)
+
+                if statement_cutoff_date:
+                    rec_voucher_ids = set(
+                        BankTransaction.objects.filter(
+                            company=company,
+                            bank_ledger_id=valid_bank_id,
+                            status='RECONCILED',
+                            matched_voucher__isnull=False
+                        ).values_list('matched_voucher_id', flat=True)
+                    )
+                    unreconciled_book = LedgerEntry.objects.filter(
+                        ledger=bank_ledger,
+                        voucher__company=company,
+                        voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
+                        voucher__voucher_date__lte=statement_cutoff_date
+                    ).exclude(voucher_id__in=rec_voucher_ids).exclude(
+                        voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
+                    ).aggregate(
+                        unrec_dr=Sum('debit_amount'),
+                        unrec_cr=Sum('credit_amount')
+                    )
+                    uncleared_deposits = Decimal(str(unreconciled_book['unrec_dr'] or '0.00'))
+                    unpresented_payments = Decimal(str(unreconciled_book['unrec_cr'] or '0.00'))
 
         reconciliation_gap = None
         is_balanced = False
@@ -511,7 +576,11 @@ class BankReconciliationService:
             "book_closing_balance": book_closing_balance or "0.00",
             "reconciliation_gap": reconciliation_gap or "0.00",
             "is_balanced": is_balanced,
-            "reconciliation_state": reconciliation_state
+            "reconciliation_state": reconciliation_state,
+            "uncleared_deposits": str(uncleared_deposits),
+            "unpresented_payments": str(unpresented_payments),
+            "unmatched_statement_credits": str(stats['unrec_credit'] or Decimal('0.00')),
+            "unmatched_statement_debits": str(stats['unrec_debit'] or Decimal('0.00'))
         }
 
     @classmethod

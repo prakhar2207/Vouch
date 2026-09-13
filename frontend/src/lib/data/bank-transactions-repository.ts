@@ -189,6 +189,66 @@ export class BankTransactionsRepository {
       });
     }
   }
+
+  async getByBankLedger(bankLedgerId: string): Promise<any[]> {
+    const txs = await offlineDb.syncedBankTransactions
+      .where("bankLedgerId")
+      .equals(bankLedgerId)
+      .toArray();
+    return txs.map((t) => ({
+      id: t.id,
+      transaction_date: t.transactionDate,
+      value_date: t.valueDate,
+      description: t.description,
+      normalized_narration: t.normalizedNarration,
+      reference_number: t.referenceNumber,
+      debit_amount: String(t.debitAmount),
+      credit_amount: String(t.creditAmount),
+      balance: t.balance !== null ? String(t.balance) : null,
+      status: t.status,
+      is_excluded: Boolean(t.isExcluded),
+      exclusion_reason: t.exclusionReason || null,
+      bank_ledger: { id: t.bankLedgerId, name: t.bankLedgerName || "Bank" },
+      matched_party: t.matchedPartyId
+        ? { id: t.matchedPartyId, name: t.matchedPartyName, ledger_type: t.matchedPartyType || "CUSTOMER" }
+        : null,
+      matched_voucher: t.matchedVoucherId
+        ? { id: t.matchedVoucherId, voucher_number: t.matchedVoucherNumber }
+        : null,
+      match_confidence: t.matchConfidence,
+      match_notes: t.matchNotes,
+    }));
+  }
+
+  async bulkUpsert(transactions: any[]): Promise<void> {
+    if (!transactions || transactions.length === 0) return;
+    const toPut: SyncedBankTransaction[] = transactions.map((t) => ({
+      id: String(t.id),
+      companyId: t.companyId || "",
+      bankLedgerId: t.bank_ledger?.id || t.bank_ledger || t.bankLedgerId || "",
+      bankLedgerName: t.bank_ledger?.name || t.bankLedgerName || "",
+      transactionDate: t.transaction_date || t.transactionDate || "",
+      valueDate: t.value_date || t.valueDate || null,
+      description: t.description || "",
+      normalizedNarration: t.normalized_narration || t.normalizedNarration || "",
+      referenceNumber: t.reference_number || t.referenceNumber || "",
+      debitAmount: Number(t.debit_amount || t.debitAmount) || 0,
+      creditAmount: Number(t.credit_amount || t.creditAmount) || 0,
+      balance: t.balance !== null && t.balance !== undefined ? Number(t.balance) : null,
+      status: t.status || "UNRESOLVED",
+      isExcluded: Boolean(t.is_excluded || t.isExcluded),
+      exclusionReason: t.exclusion_reason || t.exclusionReason || null,
+      matchedPartyId: t.matched_party?.id || t.matchedPartyId || null,
+      matchedPartyName: t.matched_party?.name || t.matchedPartyName || null,
+      matchedPartyType: t.matched_party?.ledger_type || t.matchedPartyType || null,
+      matchedVoucherId: t.matched_voucher?.id || t.matchedVoucherId || null,
+      matchedVoucherNumber: t.matched_voucher?.voucher_number || t.matchedVoucherNumber || null,
+      matchConfidence: t.match_confidence || t.matchConfidence || 0,
+      matchNotes: t.match_notes || t.matchNotes || "",
+      serverUpdatedAt: Date.now(),
+    }));
+    await offlineDb.syncedBankTransactions.bulkPut(toPut);
+  }
 }
 
 export const bankTransactionsRepository = new BankTransactionsRepository();

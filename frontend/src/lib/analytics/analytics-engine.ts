@@ -777,7 +777,7 @@ export class LocalAnalyticsEngine {
         payments: Math.round(partyMap[pId].payments * 100) / 100,
         invoiceCount: partyMap[pId].invoiceCount,
         lastTransactionDate: partyMap[pId].lastDate,
-        outstanding: Math.round((partyMap[pId].sales - partyMap[pId].receipts) * 100) / 100,
+        outstanding: Math.round(partyMap[pId].outstanding * 100) / 100,
       }));
 
       await offlineDb.analyticsDaily.bulkPut(dailyEntries);
@@ -845,6 +845,17 @@ export class LocalAnalyticsEngine {
 
     // 2. Update only affected Party aggregates
     const partyUpdates = [];
+    const allAllocations = await offlineDb.syncedPaymentAllocations
+      .where("companyId")
+      .equals(companyId)
+      .toArray();
+
+    const allCompanyVouchers = await offlineDb.syncedVouchers
+      .where("companyId")
+      .equals(companyId)
+      .toArray();
+    const effectiveVouchersMap = new Map(this.resolveEffectiveVouchers(allCompanyVouchers).map(v => [v.id, v]));
+
     for (const pId of affectedPartyIds) {
       const pVouchers = await offlineDb.syncedVouchers
         .where("companyId")
@@ -855,6 +866,7 @@ export class LocalAnalyticsEngine {
       let sales = 0, purchases = 0, receipts = 0, payments = 0, invoiceCount = 0;
       let lastDate = "";
       let pName = "";
+      let outstanding = 0;
 
       for (const v of pVouchers) {
         const amt = Number(v.totalAmount) || 0;
@@ -864,6 +876,7 @@ export class LocalAnalyticsEngine {
         if (v.voucherType === "SALES") {
           sales += amt;
           invoiceCount += 1;
+          outstanding += this.calculateInvoiceOutstanding(v, allAllocations, effectiveVouchersMap);
         } else if (v.voucherType === "PURCHASE") {
           purchases += amt;
         } else if (v.voucherType === "RECEIPT") {
@@ -884,7 +897,7 @@ export class LocalAnalyticsEngine {
         payments: Math.round(payments * 100) / 100,
         invoiceCount,
         lastTransactionDate: lastDate,
-        outstanding: Math.round((sales - receipts) * 100) / 100,
+        outstanding: Math.round(outstanding * 100) / 100,
       });
     }
 

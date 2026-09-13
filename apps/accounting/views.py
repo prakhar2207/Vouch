@@ -1201,18 +1201,36 @@ class VoucherAttachmentAPIView(APIView):
 class LedgerStatementAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
     
-    def get(self, request, company_id, ledger_id):
+    def get(self, request, *args, **kwargs):
+        company_id = kwargs.get('company_id')
+        ledger_id = kwargs.get('ledger_id')
+        if not company_id and len(args) == 2:
+            company_id, ledger_id = args
+        elif not company_id and len(args) == 1:
+            ledger_id = args[0]
+
         try:
             from apps.accounting.models import LedgerEntry, Voucher
             from apps.ledgers.models import Ledger
             from apps.companies.models import Company
             from apps.accounting.services.party_balance_service import PartyBalanceService
+            from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
             from decimal import Decimal
             from datetime import datetime
             import collections
             from django.db.models import Sum
 
-            company = Company.objects.get(id=company_id, users__user=request.user)
+            if not company_id:
+                cid = request.headers.get('X-Company-ID') or request.query_params.get('company_id')
+                if cid:
+                    company = Company.objects.get(id=cid, users__user=request.user)
+                else:
+                    company = Company.objects.filter(users__user=request.user).first()
+            else:
+                company = Company.objects.get(id=company_id, users__user=request.user)
+
+            if not company:
+                return Response({"success": False, "error": "Company not found or access denied."}, status=404)
             
             # REMOVED: SalesInvoiceService.reassign_misallocated_tax_entries(company)
             # A read-only statement request must remain read-only.

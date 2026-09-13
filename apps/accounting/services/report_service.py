@@ -20,13 +20,13 @@ class ReportService:
         
         for ledger in ledgers:
             # Determine if current balance is a Debit or Credit
-            # If opening_balance_type is DEBIT: Positive current_balance means Debit, Negative means Credit
-            # If opening_balance_type is CREDIT: Positive current_balance means Credit, Negative means Debit
+            # If normal_balance is DEBIT: Positive current_balance means Debit, Negative means Credit
+            # If normal_balance is CREDIT: Positive current_balance means Credit, Negative means Debit
             
             dr_amount = Decimal('0.00')
             cr_amount = Decimal('0.00')
             
-            if ledger.opening_balance_type == 'DEBIT':
+            if ledger.normal_balance == 'DEBIT':
                 if ledger.current_balance > 0:
                     dr_amount = ledger.current_balance
                 else:

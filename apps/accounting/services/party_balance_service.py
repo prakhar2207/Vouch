@@ -63,11 +63,17 @@ class PartyBalanceService:
         return {
             'signed_balance': signed_bal,
             'display_amount': disp_amt,
+            'display_balance': disp_amt,
             'balance_state': state,
+            'state': state,
             'owner_headline': owner_headline,
             'explanation': explanation,
             'normal_balance_type': normal_bal,
-            'balance_direction': 'DEBIT' if net_dr > 0 else ('CREDIT' if net_dr < 0 else 'NONE')
+            'normal_balance': normal_bal,
+            'balance_direction': 'DEBIT' if net_dr > 0 else ('CREDIT' if net_dr < 0 else 'NONE'),
+            'canonical_role': role,
+            'is_payable': (state == 'TO_PAY'),
+            'is_receivable': (state == 'TO_COLLECT'),
         }
 
     @staticmethod
@@ -145,9 +151,18 @@ class PartyBalanceService:
         return {
             'signed_balance': signed_bal,
             'display_amount': disp_amt,
+            'display_balance': disp_amt,
             'balance_state': state,
+            'state': state,
             'owner_headline': owner_headline,
             'explanation': explanation,
             'normal_balance_type': normal_balance,
-            'balance_direction': direction
+            'normal_balance': normal_balance,
+            'balance_direction': direction,
+            'canonical_role': role,
+            'is_payable': (state == 'TO_PAY'),
+            'is_receivable': (state == 'TO_COLLECT'),
         }
+
+    get_party_balance_interpretation = get_party_balance
+

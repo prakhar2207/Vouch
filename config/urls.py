@@ -43,7 +43,7 @@ def root_health_view(request):
             import subprocess
             commit_sha = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], stderr=subprocess.DEVNULL).decode('ascii').strip()
         except Exception:
-            commit_sha = "dfec534"
+            commit_sha = "unknown"
     else:
         commit_sha = commit_sha[:7]
 
@@ -108,7 +108,8 @@ urlpatterns = [
         path('<uuid:pk>/audit/', apps.accounting.fy_views.FinancialYearPreCloseAuditAPIView.as_view(), name='financial_year_audit'),
         path('<uuid:pk>/close/', apps.accounting.fy_views.FinancialYearCloseAPIView.as_view(), name='financial_year_close'),
     ])),
-    path('api/v1/ledgers/<uuid:ledger_id>/statement/', apps.accounting.fy_views.LedgerStatementAPIView.as_view(), name='ledger_statement_detail'),
+    path('api/v1/ledgers/<uuid:ledger_id>/statement/', apps.accounting.views.LedgerStatementAPIView.as_view(), name='ledger_statement_detail'),
+    path('api/v1/accounting/ledgers/<uuid:ledger_id>/statement/', apps.accounting.views.LedgerStatementAPIView.as_view(), name='accounting_ledger_statement_detail'),
 
     # Tally-Style Continuous Period & Split Company Endpoints
     path('api/v1/accounting/period-statement/<uuid:ledger_id>/', apps.accounting.period_views.PeriodLedgerStatementAPIView.as_view(), name='period_statement'),

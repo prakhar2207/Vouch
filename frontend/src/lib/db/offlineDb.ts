@@ -62,6 +62,8 @@ export interface SyncedLedger {
   nature?: string;
   balanceState?: string;
   displayAmount?: number;
+  normalBalance?: string;
+  balanceDirection?: string;
   serverUpdatedAt: number;
 }
 
