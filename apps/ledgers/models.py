@@ -70,35 +70,18 @@ class Ledger(models.Model):
 
     @property
     def balance_state(self):
-        """
-        Determines semantic balance state:
-        - CUSTOMER: >0 TO_COLLECT, <0 ADVANCE_RECEIVED, ==0 SETTLED
-        - SUPPLIER: >0 TO_PAY, <0 ADVANCE_PAID, ==0 SETTLED
-        - BOTH: >0 TO_COLLECT, <0 TO_PAY, ==0 SETTLED
-        - OTHER: based on opening_balance_type
-        """
-        from decimal import Decimal
-        bal = Decimal(str(self.current_balance or 0))
-        if bal == Decimal('0.00'):
-            return 'SETTLED'
-
-        role = self.canonical_role
-        if role == 'CUSTOMER':
-            return 'TO_COLLECT' if bal > 0 else 'ADVANCE_RECEIVED'
-        elif role == 'SUPPLIER':
-            return 'TO_PAY' if bal > 0 else 'ADVANCE_PAID'
-        elif role == 'BOTH':
-            return 'TO_COLLECT' if bal > 0 else 'TO_PAY'
-        else:
-            if self.opening_balance_type == 'DEBIT':
-                return 'TO_COLLECT' if bal > 0 else 'ADVANCE_RECEIVED'
-            else:
-                return 'TO_PAY' if bal > 0 else 'ADVANCE_PAID'
+        from apps.accounting.services.party_balance_service import PartyBalanceService
+        return PartyBalanceService.get_party_balance(self)['balance_state']
 
     @property
     def display_amount(self):
-        from decimal import Decimal
-        return abs(Decimal(str(self.current_balance or 0)))
+        from apps.accounting.services.party_balance_service import PartyBalanceService
+        return PartyBalanceService.get_party_balance(self)['display_amount']
+        
+    @property
+    def balance_direction(self):
+        from apps.accounting.services.party_balance_service import PartyBalanceService
+        return PartyBalanceService.get_party_balance(self)['balance_direction']
 
     @property
     def initial_opening_balance(self):

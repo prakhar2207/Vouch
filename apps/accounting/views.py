@@ -1205,14 +1205,17 @@ class LedgerStatementAPIView(APIView):
         try:
             from apps.accounting.models import LedgerEntry, Voucher
             from apps.ledgers.models import Ledger
+            from apps.companies.models import Company
+            from apps.accounting.services.party_balance_service import PartyBalanceService
             from decimal import Decimal
             from datetime import datetime
             import collections
+            from django.db.models import Sum
 
             company = Company.objects.get(id=company_id, users__user=request.user)
             
-            # Enforce strict GST separation & auto-heal historical misallocated entries
-            SalesInvoiceService.reassign_misallocated_tax_entries(company)
+            # REMOVED: SalesInvoiceService.reassign_misallocated_tax_entries(company)
+            # A read-only statement request must remain read-only.
 
             ledger = Ledger.objects.select_related('group').get(id=ledger_id, company=company)
 
@@ -1244,48 +1247,38 @@ class LedgerStatementAPIView(APIView):
             except (ValueError, TypeError):
                 offset = 0
 
-            from django.db.models import Sum
-
-            # Determine normal balance type
-            # Asset and Expense are Debit-normal; Liability, Equity, Income are Credit-normal.
-            ledger_nature = ledger.group.nature if ledger.group else 'ASSET'
-            is_debit_normal = ledger_nature in ['ASSET', 'EXPENSE'] or ledger.opening_balance_type == 'DEBIT'
-            normal_balance_type = 'DEBIT' if is_debit_normal else 'CREDIT'
-
-            # Calculate Period Opening Balance:
-            # Starts with ledger.opening_balance (and opening_balance_type)
-            # If from_date is provided, accumulate all transactions strictly BEFORE from_date into opening balance
-            initial_op_amount = Decimal(str(ledger.opening_balance or '0.00'))
-            initial_op_type = ledger.opening_balance_type or ('DEBIT' if is_debit_normal else 'CREDIT')
-
-            # Convert initial opening balance to signed net based on ledger's normal type
-            if is_debit_normal:
-                period_running = initial_op_amount if initial_op_type == 'DEBIT' else -initial_op_amount
-            else:
-                period_running = initial_op_amount if initial_op_type == 'CREDIT' else -initial_op_amount
-
+            role = ledger.canonical_role
+            
+            # 1. Opening Balance Calculation (Optimized with DB Aggregation)
+            # Pre-period transactions
+            pre_period_dr = Decimal('0.00')
+            pre_period_cr = Decimal('0.00')
+            
             if from_date:
-                prior_entries = LedgerEntry.objects.filter(
+                pre_agg = LedgerEntry.objects.filter(
                     ledger=ledger,
                     voucher__company=company,
                     voucher__voucher_date__lt=from_date
-                ).values_list('debit_amount', 'credit_amount')
-                for dr, cr in prior_entries:
-                    dr_dec = Decimal(str(dr or '0.00'))
-                    cr_dec = Decimal(str(cr or '0.00'))
-                    if is_debit_normal:
-                        period_running += (dr_dec - cr_dec)
-                    else:
-                        period_running += (cr_dec - dr_dec)
+                ).aggregate(
+                    dr=Sum('debit_amount'),
+                    cr=Sum('credit_amount')
+                )
+                pre_period_dr = Decimal(str(pre_agg['dr'] or '0.00'))
+                pre_period_cr = Decimal(str(pre_agg['cr'] or '0.00'))
 
-            if is_debit_normal:
-                period_opening_amount = abs(period_running)
-                period_opening_type = 'DEBIT' if period_running >= 0 else 'CREDIT'
+            # Initial opening balance
+            initial_op = Decimal(str(ledger.opening_balance or '0.00'))
+            if ledger.opening_balance_type == 'CREDIT':
+                pre_period_cr += initial_op
             else:
-                period_opening_amount = abs(period_running)
-                period_opening_type = 'CREDIT' if period_running >= 0 else 'DEBIT'
+                pre_period_dr += initial_op
 
-            # Base query of entries within period
+            # Period Opening Balance
+            op_balance_info = PartyBalanceService.get_balance_from_components(role, pre_period_dr, pre_period_cr)
+            period_opening_amount = op_balance_info['display_amount']
+            period_opening_type = op_balance_info['balance_direction']
+
+            # 2. Period Transactions Query
             entries_qs = LedgerEntry.objects.filter(
                 ledger=ledger,
                 voucher__company=company
@@ -1298,7 +1291,7 @@ class LedgerStatementAPIView(APIView):
 
             entries_qs = entries_qs.order_by('voucher__voucher_date', 'created_at', 'id')
 
-            # Aggregate total period debit & credit in single fast SQL query
+            # Aggregate total period debit & credit
             total_count = entries_qs.count()
             period_agg = entries_qs.aggregate(
                 total_dr=Sum('debit_amount'),
@@ -1307,39 +1300,27 @@ class LedgerStatementAPIView(APIView):
             total_period_debit = Decimal(str(period_agg['total_dr'] or '0.00'))
             total_period_credit = Decimal(str(period_agg['total_cr'] or '0.00'))
 
-            if is_debit_normal:
-                period_net = total_period_debit - total_period_credit
-                closing_signed = period_running + period_net
-                closing_amount = abs(closing_signed)
-                closing_type = 'DEBIT' if closing_signed >= 0 else 'CREDIT'
-            else:
-                period_net = total_period_credit - total_period_debit
-                closing_signed = period_running + period_net
-                closing_amount = abs(closing_signed)
-                closing_type = 'CREDIT' if closing_signed >= 0 else 'DEBIT'
+            # 3. Closing Balance Calculation
+            total_cumulative_dr = pre_period_dr + total_period_debit
+            total_cumulative_cr = pre_period_cr + total_period_credit
+            
+            cl_balance_info = PartyBalanceService.get_balance_from_components(role, total_cumulative_dr, total_cumulative_cr)
+            closing_amount = cl_balance_info['display_amount']
+            closing_type = cl_balance_info['balance_direction']
+            semantic_state = cl_balance_info['balance_state']
 
-            # Calculate running balance at the start of current page (offset > 0)
-            running_signed = period_running
+            # 4. Running balance at start of page (Offset > 0)
+            page_cumulative_dr = pre_period_dr
+            page_cumulative_cr = pre_period_cr
+            
             if offset > 0 and total_count > 0:
                 prior_ids = entries_qs.values('id')[:offset]
                 prior_offset_agg = LedgerEntry.objects.filter(id__in=prior_ids).aggregate(
                     prior_dr=Sum('debit_amount'),
                     prior_cr=Sum('credit_amount')
                 )
-                p_dr = Decimal(str(prior_offset_agg['prior_dr'] or '0.00'))
-                p_cr = Decimal(str(prior_offset_agg['prior_cr'] or '0.00'))
-                if is_debit_normal:
-                    running_signed += (p_dr - p_cr)
-                else:
-                    running_signed += (p_cr - p_dr)
-
-            # Page Opening Balance
-            if is_debit_normal:
-                page_opening_amount = abs(running_signed)
-                page_opening_type = 'DEBIT' if running_signed >= 0 else 'CREDIT'
-            else:
-                page_opening_amount = abs(running_signed)
-                page_opening_type = 'CREDIT' if running_signed >= 0 else 'DEBIT'
+                page_cumulative_dr += Decimal(str(prior_offset_agg['prior_dr'] or '0.00'))
+                page_cumulative_cr += Decimal(str(prior_offset_agg['prior_cr'] or '0.00'))
 
             # Project ONLY required table columns (strictly exclude attachment_data)
             projected_qs = entries_qs.only(
@@ -1349,7 +1330,7 @@ class LedgerStatementAPIView(APIView):
             )
             entries = list(projected_qs[offset:offset+limit])
 
-            # Batch fetch opposing entries for ONLY the current page's vouchers
+            # Batch fetch opposing entries
             voucher_ids = [e.voucher_id for e in entries if e.voucher_id]
             siblings = LedgerEntry.objects.filter(
                 voucher_id__in=voucher_ids
@@ -1362,20 +1343,21 @@ class LedgerStatementAPIView(APIView):
             for s in siblings:
                 voucher_entries_map[s.voucher_id].append(s)
 
-            # Build statement rows with continuous running balance
+            # Build statement rows
             statement_rows = []
+            
+            # Tracker for running balance
+            running_dr = page_cumulative_dr
+            running_cr = page_cumulative_cr
+            
             for e in entries:
                 dr = Decimal(str(e.debit_amount or '0.00'))
                 cr = Decimal(str(e.credit_amount or '0.00'))
 
-                if is_debit_normal:
-                    running_signed += (dr - cr)
-                    row_bal = abs(running_signed)
-                    row_bal_type = 'DR' if running_signed >= 0 else 'CR'
-                else:
-                    running_signed += (cr - dr)
-                    row_bal = abs(running_signed)
-                    row_bal_type = 'CR' if running_signed >= 0 else 'DR'
+                running_dr += dr
+                running_cr += cr
+                
+                row_bal_info = PartyBalanceService.get_balance_from_components(role, running_dr, running_cr)
 
                 # Opposing ledger logic:
                 v_sibs = voucher_entries_map.get(e.voucher_id, [])
@@ -1389,78 +1371,64 @@ class LedgerStatementAPIView(APIView):
 
                 prefix = "To " if dr > 0 else "By "
                 opposing_details = []
-                for o in opp:
-                    amt = o.credit_amount if dr > 0 else o.debit_amount
+                for s in opp:
+                    amt = s.credit_amount if dr > 0 else s.debit_amount
                     opposing_details.append({
-                        "ledger_id": str(o.ledger_id),
-                        "ledger_name": o.ledger.name,
-                        "amount": float(amt)
+                        "ledger_name": s.ledger.name if s.ledger else "Unknown",
+                        "amount": str(amt)
                     })
 
-                if len(opp) == 0:
-                    particulars = e.narration or "Adjustment"
-                elif len(opp) == 1:
-                    opp_name = opp[0].ledger.name
-                    if opp[0].ledger.ledger_type == 'CASH' and e.voucher and e.voucher.buyer_name:
-                        opp_name = f"{opp_name} ({e.voucher.buyer_name})"
-                    particulars = f"{prefix}{opp_name}"
+                if not opposing_details:
+                    particulars = e.narration or (e.voucher.narration if e.voucher else "")
+                elif len(opposing_details) == 1:
+                    particulars = f"{prefix}{opposing_details[0]['ledger_name']}"
                 else:
-                    main_opp = opp[0].ledger.name
-                    particulars = f"{prefix}{main_opp} (+ {len(opp) - 1} other{'s' if len(opp) > 2 else ''})"
+                    particulars = f"{prefix}As per details"
 
                 statement_rows.append({
                     "id": str(e.id),
-                    "voucher_id": str(e.voucher_id) if e.voucher_id else None,
-                    "date": e.voucher.voucher_date.strftime('%Y-%m-%d') if (e.voucher and e.voucher.voucher_date) else None,
+                    "date": e.voucher.voucher_date.strftime('%Y-%m-%d') if e.voucher and e.voucher.voucher_date else "",
+                    "voucher_id": str(e.voucher.id) if e.voucher else None,
+                    "voucher_number": e.voucher.voucher_number if e.voucher else "",
+                    "voucher_type": e.voucher.voucher_type if e.voucher else "",
                     "particulars": particulars,
-                    "opposing_ledger_name": opp[0].ledger.name if opp else "As per details",
-                    "opposing_details": opposing_details,
-                    "voucher_number": e.voucher.voucher_number if e.voucher else "Opening Balance",
-                    "voucher_type": e.voucher.voucher_type if e.voucher else "-",
                     "narration": e.narration or (e.voucher.narration if e.voucher else ""),
-                    "debit": float(dr),
-                    "credit": float(cr),
-                    "running_balance": float(row_bal),
-                    "running_balance_type": row_bal_type,
+                    "debit": str(dr),
+                    "credit": str(cr),
+                    "running_balance": f"{Decimal(str(row_bal_info['display_amount'])).quantize(Decimal('0.00'))}",
+                    "running_balance_type": row_bal_info['balance_direction'],
+                    "opposing_details": opposing_details
                 })
 
             return Response({
-                "success": True,
-                "data": {
-                    "ledger_id": str(ledger.id),
-                    "ledger_name": ledger.name,
-                    "group_name": ledger.group.name if ledger.group else "",
-                    "nature": ledger_nature,
-                    "normal_balance_type": normal_balance_type,
-                    "gstin": ledger.gstin or "",
-                    "state_code": ledger.state_code or "",
-                    "phone": ledger.phone or "",
-                    "email": ledger.email or "",
-                    "from_date": from_date_str or None,
-                    "to_date": to_date_str or None,
-                    "period_opening_balance": float(period_opening_amount),
-                    "period_opening_type": period_opening_type,
-                    "page_opening_balance": float(page_opening_amount),
-                    "page_opening_type": page_opening_type,
-                    "total_debit": float(total_period_debit),
-                    "total_credit": float(total_period_credit),
-                    "net_movement": float(period_net),
-                    "closing_balance": float(closing_amount),
-                    "closing_type": closing_type,
-                    "entries": statement_rows,
-                    "pagination": {
-                        "total_count": total_count,
-                        "limit": limit,
-                        "offset": offset,
-                        "has_more": (offset + limit) < total_count,
-                        "page": (offset // limit) + 1,
-                        "total_pages": max(1, (total_count + limit - 1) // limit)
-                    }
+                "ledger": {
+                    "id": ledger.id,
+                    "name": ledger.name,
+                    "ledger_type": ledger.ledger_type,
+                    "current_balance": str(ledger.current_balance),
+                    "balance_type": ledger.opening_balance_type
+                },
+                "party_role": role,
+                "opening_balance": f"{Decimal(str(period_opening_amount)).quantize(Decimal('0.00'))}",
+                "opening_balance_type": period_opening_type,
+                "period_debit": f"{Decimal(str(total_period_debit)).quantize(Decimal('0.00'))}",
+                "period_credit": f"{Decimal(str(total_period_credit)).quantize(Decimal('0.00'))}",
+                "closing_balance": f"{Decimal(str(closing_amount)).quantize(Decimal('0.00'))}",
+                "closing_balance_type": closing_type,
+                "semantic_state": semantic_state,
+                "display_amount": f"{Decimal(str(closing_amount)).quantize(Decimal('0.00'))}",
+                "entries": statement_rows,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "total_count": total_count,
+                    "has_more": (offset + limit) < total_count
                 }
             })
         except Exception as e:
-            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
+            import traceback
+            traceback.print_exc()
+            return Response({"error": str(e)}, status=400)
 
 class CreatePaymentReceiptAPIView(APIView):
     """

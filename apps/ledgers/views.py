@@ -85,8 +85,7 @@ class LedgerListView(APIView):
             company = get_authorized_company(request, company_id)
             
             # Enforce strict GST separation & auto-heal historical entries
-            from apps.accounting.services.sales_service import SalesInvoiceService
-            SalesInvoiceService.reassign_misallocated_tax_entries(company)
+            # REMOVED: SalesInvoiceService.reassign_misallocated_tax_entries(company)
 
             qs = Ledger.objects.filter(company=company).select_related('group')
             
@@ -617,18 +616,20 @@ class PartyKhataView(APIView):
                     not_due_items.append(item_data)
 
             # Business-friendly terminology
-            role = ledger.canonical_role
-            curr_bal = Decimal(str(ledger.current_balance or 0))
-            if role == 'CUSTOMER' or ledger.opening_balance_type == 'DEBIT':
-                if curr_bal >= Decimal('0.00'):
-                    balance_label = "To Collect"
-                else:
-                    balance_label = "Advance Received"
-            else:
-                if curr_bal >= Decimal('0.00'):
-                    balance_label = "To Pay"
-                else:
-                    balance_label = "Advance Paid"
+            from apps.accounting.services.party_balance_service import PartyBalanceService
+            bal_info = PartyBalanceService.get_party_balance(ledger)
+
+            # Map the semantic state back to the UI labels
+            state_label_map = {
+                'TO_COLLECT': 'To Collect',
+                'ADVANCE_RECEIVED': 'Advance Received',
+                'TO_PAY': 'To Pay',
+                'ADVANCE_PAID': 'Advance Paid',
+                'SETTLED': 'Settled',
+                'DR': 'Debit',
+                'CR': 'Credit'
+            }
+            balance_label = state_label_map.get(bal_info['balance_state'], bal_info['balance_state'])
 
             return Response({
                 "success": True,
@@ -637,11 +638,12 @@ class PartyKhataView(APIView):
                     "name": ledger.name,
                     "gstin": ledger.gstin or "",
                     "phone": ledger.phone or "",
-                    "role": role,
-                    "current_balance": str(abs(curr_bal)),
-                    "raw_balance": str(curr_bal),
+                    "role": ledger.canonical_role,
+                    "current_balance": str(bal_info['display_amount']),
+                    "raw_balance": str(bal_info['signed_balance']),
                     "balance_label": balance_label,
-                    "balance_type": ledger.opening_balance_type,
+                    "balance_type": bal_info['balance_direction'],
+                    "semantic_state": bal_info['balance_state'],
                     "credit_limit": str(ledger.credit_limit) if ledger.credit_limit else None,
                     "credit_period_days": ledger.credit_period_days,
                     "aging": {

@@ -51,14 +51,17 @@ export default function LedgerStatementPage() {
           <div className="flex items-center gap-3 sm:gap-4">
             <button
               onClick={() => router.back()}
-              className="text-gray-400 hover:text-white transition-colors p-1 cursor-pointer"
+              className="text-muted-foreground hover:text-foreground transition-colors p-1 cursor-pointer"
               title="Go Back"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
             </button>
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold">{statementData?.ledger_name} Statement</h1>
-              <p className="text-gray-400 mt-0.5 text-xs sm:text-sm">Ledger Account Statement</p>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">{statementData?.ledger?.name || "Ledger"} Statement</h1>
+                {statementData?.party_role && <span className="bg-primary/10 text-primary text-xs px-2 py-1 rounded font-semibold tracking-wider">{statementData.party_role}</span>}
+              </div>
+              <p className="text-muted-foreground mt-0.5 text-xs sm:text-sm">Ledger Account Statement</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -73,18 +76,32 @@ export default function LedgerStatementPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6">
-            <div className="bg-card border border-border rounded-xl p-4 sm:p-6 text-center shadow-sm">
-                <p className="text-gray-400 text-xs sm:text-sm mb-1 uppercase tracking-wider font-medium">Opening Balance</p>
-                <p className="text-2xl sm:text-3xl font-bold text-white font-mono">₹{parseFloat(statementData?.opening_balance || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})} <span className="text-xs sm:text-sm font-medium text-gray-500">{statementData?.opening_balance_type}</span></p>
+        <div className="bg-card border border-border rounded-xl p-6 shadow-sm mb-6 flex flex-col sm:flex-row items-center justify-between">
+          <div>
+             <p className="text-muted-foreground text-sm font-medium mb-1 uppercase tracking-wider">Amount Due</p>
+             <div className="flex items-end gap-3">
+               <p className="text-3xl font-bold text-foreground font-mono">₹{parseFloat(statementData?.display_amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+               <span className="mb-1 bg-primary/10 text-primary px-2 py-0.5 rounded text-xs font-semibold uppercase">{statementData?.semantic_state?.replace('_', ' ')}</span>
+             </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+            <div className="bg-card border border-border/40 rounded-lg p-4 text-center shadow-sm">
+                <p className="text-muted-foreground text-xs mb-1 uppercase tracking-wider font-medium">Opening Balance</p>
+                <p className="text-xl font-bold text-foreground font-mono">₹{parseFloat(statementData?.opening_balance || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})} <span className="text-xs font-medium text-muted-foreground">{statementData?.opening_balance_type}</span></p>
             </div>
-            <div className="bg-card border border-border rounded-xl p-4 sm:p-6 text-center shadow-sm">
-                <p className="text-gray-400 text-xs sm:text-sm mb-1 uppercase tracking-wider font-medium">Total Debit (In)</p>
-                <p className="text-2xl sm:text-3xl font-bold text-red-400 font-mono">₹{statementData?.entries.reduce((a:any, b:any) => a + parseFloat(b.debit || 0), 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+            <div className="bg-card border border-border/40 rounded-lg p-4 text-center shadow-sm">
+                <p className="text-muted-foreground text-xs mb-1 uppercase tracking-wider font-medium">Debit</p>
+                <p className="text-xl font-bold text-red-400 font-mono">₹{parseFloat(statementData?.period_debit || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
             </div>
-            <div className="bg-card border border-border rounded-xl p-4 sm:p-6 text-center shadow-sm">
-                <p className="text-gray-400 text-xs sm:text-sm mb-1 uppercase tracking-wider font-medium">Total Credit (Out)</p>
-                <p className="text-2xl sm:text-3xl font-bold text-green-400 font-mono">₹{statementData?.entries.reduce((a:any, b:any) => a + parseFloat(b.credit || 0), 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+            <div className="bg-card border border-border/40 rounded-lg p-4 text-center shadow-sm">
+                <p className="text-muted-foreground text-xs mb-1 uppercase tracking-wider font-medium">Credit</p>
+                <p className="text-xl font-bold text-green-400 font-mono">₹{parseFloat(statementData?.period_credit || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+            </div>
+            <div className="bg-card border border-border/40 rounded-lg p-4 text-center shadow-sm">
+                <p className="text-muted-foreground text-xs mb-1 uppercase tracking-wider font-medium">Closing Balance</p>
+                <p className="text-xl font-bold text-foreground font-mono">₹{parseFloat(statementData?.closing_balance || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})} <span className="text-xs font-medium text-muted-foreground">{statementData?.closing_balance_type}</span></p>
             </div>
         </div>
         
@@ -101,29 +118,38 @@ export default function LedgerStatementPage() {
             ) : (
                 <>
                     {/* Mobile Cards (< md) */}
-                    <div className="block md:hidden divide-y divide-zinc-800">
+                    <div className="block md:hidden divide-y divide-border/40">
                         {statementData?.entries.map((entry: any) => (
                             <div key={entry.id} className="p-4 space-y-2">
                                 <div className="flex items-center justify-between gap-2">
-                                    <span className="font-mono text-xs text-gray-400">{entry.date || '-'}</span>
-                                    <span className="bg-zinc-800 text-gray-300 text-[10px] px-2 py-0.5 rounded font-medium">{entry.voucher_type}</span>
+                                    <span className="font-mono text-xs text-muted-foreground">{entry.date || '-'}</span>
+                                    <span className="bg-muted text-muted-foreground text-[10px] px-2 py-0.5 rounded font-medium">{entry.voucher_type}</span>
                                 </div>
-                                <div className="flex items-center justify-between">
+                                <div className="flex flex-col gap-1">
                                     <span className="font-mono font-medium text-blue-400 text-sm">{entry.voucher_number}</span>
-                                    {parseFloat(entry.debit) > 0 && (
-                                        <span className="font-mono font-bold text-red-400 text-base">
-                                            Dr ₹{parseFloat(entry.debit).toLocaleString('en-IN', {minimumFractionDigits: 2})}
-                                        </span>
-                                    )}
-                                    {parseFloat(entry.credit) > 0 && (
-                                        <span className="font-mono font-bold text-green-400 text-base">
-                                            Cr ₹{parseFloat(entry.credit).toLocaleString('en-IN', {minimumFractionDigits: 2})}
-                                        </span>
-                                    )}
+                                    <p className="text-sm font-medium text-foreground">{entry.particulars}</p>
+                                    {entry.narration && entry.narration !== entry.particulars && <p className="text-xs text-muted-foreground">{entry.narration}</p>}
                                 </div>
-                                {entry.narration && (
-                                    <p className="text-xs text-gray-400 truncate">{entry.narration}</p>
-                                )}
+                                <div className="flex items-center justify-between pt-1 border-t border-border/20 mt-2">
+                                    <div className="flex flex-col">
+                                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Amount</span>
+                                        {parseFloat(entry.debit) > 0 ? (
+                                            <span className="font-mono font-bold text-red-400/90 text-sm">
+                                                Dr ₹{parseFloat(entry.debit).toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                                            </span>
+                                        ) : (
+                                            <span className="font-mono font-bold text-green-400/90 text-sm">
+                                                Cr ₹{parseFloat(entry.credit).toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex flex-col text-right">
+                                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Balance</span>
+                                        <span className="font-mono font-medium text-foreground text-sm">
+                                            ₹{parseFloat(entry.running_balance).toLocaleString('en-IN', {minimumFractionDigits: 2})} {entry.running_balance_type}
+                                        </span>
+                                    </div>
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -131,30 +157,37 @@ export default function LedgerStatementPage() {
                     {/* Desktop Table (>= md) */}
                     <div className="hidden md:block overflow-x-auto">
                         <table className="w-full text-left border-collapse">
-                            <thead className="bg-zinc-900/80 text-gray-400 text-xs uppercase tracking-wider">
+                            <thead className="bg-muted/30 text-muted-foreground text-xs uppercase tracking-wider">
                                 <tr>
-                                    <th className="p-4 font-medium border-b border-zinc-800">Date</th>
-                                    <th className="p-4 font-medium border-b border-zinc-800">Voucher No.</th>
-                                    <th className="p-4 font-medium border-b border-zinc-800">Type</th>
-                                    <th className="p-4 font-medium border-b border-zinc-800">Narration</th>
-                                    <th className="p-4 font-medium border-b border-zinc-800 text-right">Debit (₹)</th>
-                                    <th className="p-4 font-medium border-b border-zinc-800 text-right">Credit (₹)</th>
+                                    <th className="p-4 font-medium border-b border-border/40">Date</th>
+                                    <th className="p-4 font-medium border-b border-border/40">Voucher No.</th>
+                                    <th className="p-4 font-medium border-b border-border/40">Type</th>
+                                    <th className="p-4 font-medium border-b border-border/40">Particulars</th>
+                                    <th className="p-4 font-medium border-b border-border/40 text-right">Debit (₹)</th>
+                                    <th className="p-4 font-medium border-b border-border/40 text-right">Credit (₹)</th>
+                                    <th className="p-4 font-medium border-b border-border/40 text-right">Balance (₹)</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-zinc-800">
+                            <tbody className="divide-y divide-border/40">
                                 {statementData?.entries.map((entry: any) => (
-                                    <tr key={entry.id} className="hover:bg-zinc-800/30 transition-colors">
-                                        <td className="p-4 whitespace-nowrap text-gray-300">{entry.date || '-'}</td>
+                                    <tr key={entry.id} className="hover:bg-muted/20 transition-colors">
+                                        <td className="p-4 whitespace-nowrap text-foreground/80">{entry.date || '-'}</td>
                                         <td className="p-4 whitespace-nowrap font-medium text-blue-400">{entry.voucher_number}</td>
                                         <td className="p-4 whitespace-nowrap">
-                                            <span className="bg-zinc-800 text-gray-300 text-xs px-2 py-1 rounded">{entry.voucher_type}</span>
+                                            <span className="bg-muted text-muted-foreground text-xs px-2 py-1 rounded">{entry.voucher_type}</span>
                                         </td>
-                                        <td className="p-4 text-gray-400 max-w-md truncate" title={entry.narration}>{entry.narration || '-'}</td>
-                                        <td className="p-4 text-right text-red-400 font-medium font-mono">
+                                        <td className="p-4 text-foreground/80 max-w-md truncate" title={entry.narration || entry.particulars}>
+                                            <p className="font-medium">{entry.particulars || '-'}</p>
+                                            {entry.narration && entry.narration !== entry.particulars && <p className="text-xs text-muted-foreground mt-0.5">{entry.narration}</p>}
+                                        </td>
+                                        <td className="p-4 text-right text-red-400/90 font-medium font-mono">
                                             {parseFloat(entry.debit) > 0 ? parseFloat(entry.debit).toLocaleString('en-IN', {minimumFractionDigits: 2}) : '-'}
                                         </td>
-                                        <td className="p-4 text-right text-green-400 font-medium font-mono">
+                                        <td className="p-4 text-right text-green-400/90 font-medium font-mono">
                                             {parseFloat(entry.credit) > 0 ? parseFloat(entry.credit).toLocaleString('en-IN', {minimumFractionDigits: 2}) : '-'}
+                                        </td>
+                                        <td className="p-4 text-right font-medium font-mono text-foreground">
+                                            {parseFloat(entry.running_balance).toLocaleString('en-IN', {minimumFractionDigits: 2})} <span className="text-xs text-muted-foreground">{entry.running_balance_type}</span>
                                         </td>
                                     </tr>
                                 ))}
@@ -164,11 +197,11 @@ export default function LedgerStatementPage() {
                 </>
             )}
             
-            <div className="p-4 sm:p-6 border-t border-border bg-zinc-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <span className="text-gray-500 text-xs sm:text-sm">Showing {statementData?.entries?.length || 0} transactions</span>
-                <div className="text-sm sm:text-lg text-gray-400 uppercase tracking-wider font-medium flex items-center justify-between sm:justify-end gap-3">
+            <div className="p-4 sm:p-6 border-t border-border/40 bg-muted/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <span className="text-muted-foreground text-xs sm:text-sm">Showing {statementData?.entries?.length || 0} transactions (Total: {statementData?.pagination?.total_count || 0})</span>
+                <div className="text-sm sm:text-lg text-muted-foreground uppercase tracking-wider font-medium flex items-center justify-between sm:justify-end gap-3">
                     <span>Closing Balance:</span>
-                    <span className="text-white font-bold font-mono text-2xl sm:text-3xl">₹{parseFloat(statementData?.current_balance || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</span>
+                    <span className="text-foreground font-bold font-mono text-2xl sm:text-3xl">₹{parseFloat(statementData?.closing_balance || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})} <span className="text-sm">{statementData?.closing_balance_type}</span></span>
                 </div>
             </div>
         </div>
