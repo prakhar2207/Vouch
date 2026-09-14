@@ -8,7 +8,8 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import StateSelect from '@/components/StateSelect';
 import { useToast } from '@/context/ToastContext';
-import { Plus, Trash2, AlertCircle, CheckCircle2, ArrowLeft } from 'lucide-react';
+import { Plus, Trash2, AlertCircle, CheckCircle2, ArrowLeft, Sparkles, Loader2, ShieldCheck } from 'lucide-react';
+import { gstApi, GSTTaxpayerDetails } from '@/lib/api/gst';
 
 interface PendingBill {
   bill_number: string;
@@ -41,6 +42,46 @@ export default function NewSupplierPage() {
     credit_limit: '',
     credit_period_days: '0',
   });
+
+  // GSTIN Lookup State
+  const [fetchingGst, setFetchingGst] = useState(false);
+  const [gstDetails, setGstDetails] = useState<GSTTaxpayerDetails | null>(null);
+
+  const handleLookupGst = async (overrideGstin?: string) => {
+    const targetGstin = (overrideGstin || formData.gstin || '').trim().toUpperCase();
+    if (!targetGstin) {
+      toast.warning('Please enter a GSTIN first');
+      return;
+    }
+    if (targetGstin.length !== 15) {
+      toast.warning('GSTIN must be exactly 15 characters');
+      return;
+    }
+
+    setFetchingGst(true);
+    try {
+      const res = await gstApi.lookupGSTIN(targetGstin, companyId);
+      if (res.success) {
+        setGstDetails(res);
+        setFormData(prev => ({
+          ...prev,
+          name: prev.name ? prev.name : (res.trade_name || res.legal_name),
+          state_code: res.state_code || prev.state_code,
+          address: prev.address ? prev.address : res.address,
+        }));
+        toast.success(
+          'GST Details Fetched!',
+          `${res.trade_name || res.legal_name} • ${res.status}`
+        );
+      } else {
+        toast.error('GST Lookup Failed', res.error || 'Could not fetch GST details');
+      }
+    } catch (err: any) {
+      toast.error('GST Lookup Failed', err.response?.data?.error || err.message || 'Could not fetch GST details');
+    } finally {
+      setFetchingGst(false);
+    }
+  };
 
   // Opening balance state (Simple Mode)
   const [hasOpeningBalance, setHasOpeningBalance] = useState(false);
@@ -185,16 +226,88 @@ export default function NewSupplierPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-foreground mb-1.5">GSTIN (Optional)</label>
-                <input 
-                  type="text" 
-                  maxLength={15}
-                  placeholder="15-digit GSTIN" 
-                  value={formData.gstin} 
-                  onChange={e => setFormData({...formData, gstin: e.target.value.toUpperCase()})} 
-                  className="w-full bg-muted/40 border border-input text-foreground p-3 rounded-xl focus:ring-2 focus:ring-red-500 outline-none transition-all font-mono uppercase" 
-                />
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-sm font-medium text-foreground">GSTIN (Optional)</label>
+                  {formData.gstin.length === 15 && (
+                    <span className="text-[11px] text-muted-foreground font-mono">15 digits</span>
+                  )}
+                </div>
+                <div className="relative flex items-center">
+                  <input 
+                    type="text" 
+                    maxLength={15}
+                    placeholder="15-digit GSTIN (e.g. 27AADCB2230M1ZT)" 
+                    value={formData.gstin} 
+                    onChange={e => {
+                      const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+                      setFormData({...formData, gstin: val});
+                      if (val.length === 15 && val !== gstDetails?.gstin) {
+                        if (gstDetails) setGstDetails(null);
+                      }
+                    }} 
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleLookupGst();
+                      }
+                    }}
+                    className="w-full bg-muted/40 border border-input text-foreground p-3 pr-28 rounded-xl focus:ring-2 focus:ring-primary outline-none transition-all font-mono uppercase" 
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleLookupGst()}
+                    disabled={fetchingGst || formData.gstin.length !== 15}
+                    className="absolute right-2 px-3 py-1.5 bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:hover:bg-primary text-primary-foreground text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+                  >
+                    {fetchingGst ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Fetching...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Fetch GST</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
+
+              {gstDetails && (
+                <div className="sm:col-span-2 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 text-xs space-y-2 animate-in fade-in slide-in-from-top-2">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                      <span className="font-semibold text-foreground text-sm">
+                        {gstDetails.legal_name || gstDetails.trade_name}
+                      </span>
+                      {gstDetails.status === 'Active' ? (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 font-bold text-[10px] border border-emerald-500/20">
+                          ACTIVE TAXPAYER
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 font-bold text-[10px] border border-amber-500/20">
+                          {gstDetails.status.toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-muted-foreground font-mono text-[11px]">
+                      {gstDetails.taxpayer_type || 'Regular'} • Center: {gstDetails.center_jurisdiction || 'N/A'}
+                    </span>
+                  </div>
+                  {gstDetails.trade_name && gstDetails.trade_name !== gstDetails.legal_name && (
+                    <div className="text-muted-foreground">
+                      <span className="font-medium text-foreground">Trade Name:</span> {gstDetails.trade_name}
+                    </div>
+                  )}
+                  {gstDetails.address && (
+                    <div className="text-muted-foreground line-clamp-2">
+                      <span className="font-medium text-foreground">Registered Address:</span> {gstDetails.address}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <StateSelect

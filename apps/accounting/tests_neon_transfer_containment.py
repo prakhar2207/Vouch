@@ -255,3 +255,46 @@ class NeonTransferContainmentTests(APITestCase):
             sql_lower = q["sql"].lower()
             if "accounting_voucher" in sql_lower:
                 self.assertNotIn("attachment_data", sql_lower)
+
+    def test_universal_voucher_post_purchase_invoice(self):
+        """
+        Verifies POST /api/vouchers/ creates and posts a purchase invoice without 405 Method Not Allowed.
+        """
+        cred_grp, _ = LedgerGroup.objects.get_or_create(company=self.company, name="Sundry Creditors", defaults={"nature": "LIABILITY"})
+        supplier = Ledger.objects.create(
+            company=self.company,
+            group=cred_grp,
+            name="Supplier Satyam & Co",
+            ledger_type="SUPPLIER",
+            gstin="09ACHFS9225Q1Z7",
+            state_code="09"
+        )
+        payload = {
+            "company_id": str(self.company.id),
+            "voucher_type": "PURCHASE",
+            "voucher_date": "2026-09-14",
+            "voucher_number": "BILL-TEST-405",
+            "party_ledger_id": str(supplier.id),
+            "items": [
+                {
+                    "product_name": "Test Belt",
+                    "hsn_code": "4010",
+                    "quantity": 2,
+                    "rate": 250.0,
+                    "unit": "PCS",
+                    "discount_percent": 0,
+                    "gst_rate": 18,
+                }
+            ],
+            "narration": "Test Bill from Supplier",
+            "attachment_data": "data:text/plain;base64,VGVzdEF0dGFjaG1lbnQ=",
+            "attachment_mime": "text/plain",
+        }
+        resp = self.client.post("/api/vouchers/", payload, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(resp.data["success"])
+        from apps.accounting.models import Voucher
+        v = Voucher.objects.get(id=resp.data["voucher_id"])
+        self.assertEqual(v.external_invoice_number, "BILL-TEST-405")
+        self.assertTrue(bool(v.attachment_mime))
+

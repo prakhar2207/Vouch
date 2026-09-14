@@ -1,10 +1,12 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { getAccessToken } from "@/utils/auth";
 import StateSelect from "@/components/StateSelect";
+import { Sparkles, Loader2 } from "lucide-react";
+import { gstApi } from "@/lib/api/gst";
 
 export default function QuickCreateModal() {
   const { isAltCOpen, setIsAltCOpen, altCEntityType, notifyAltCCreated } = useShortcuts();
@@ -12,6 +14,7 @@ export default function QuickCreateModal() {
   const [activeTab, setActiveTab] = useState<"LEDGER" | "PRODUCT">("LEDGER");
   const [companyId, setCompanyId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [fetchingGst, setFetchingGst] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Ledger Form
@@ -20,6 +23,30 @@ export default function QuickCreateModal() {
   const [ledgerType, setLedgerType] = useState("CUSTOMER");
   const [gstin, setGstin] = useState("");
   const [stateCode, setStateCode] = useState("09");
+
+  const handleLookupGst = async () => {
+    const targetGstin = gstin.trim().toUpperCase();
+    if (targetGstin.length !== 15) return;
+    setFetchingGst(true);
+    setError(null);
+    try {
+      const res = await gstApi.lookupGSTIN(targetGstin, companyId);
+      if (res.success) {
+        if (!ledgerName || ledgerName.trim() === '') {
+          setLedgerName(res.trade_name || res.legal_name);
+        }
+        if (res.state_code) {
+          setStateCode(res.state_code);
+        }
+      } else {
+        setError(res.error || "Could not fetch GST details");
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.error || err.message || "Failed to lookup GSTIN");
+    } finally {
+      setFetchingGst(false);
+    }
+  };
 
   // Product Form
   const [productName, setProductName] = useState("");
@@ -210,14 +237,39 @@ export default function QuickCreateModal() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">GSTIN (Optional)</label>
-                <input
-                  type="text"
-                  value={gstin}
-                  onChange={(e) => setGstin(e.target.value.toUpperCase())}
-                  placeholder="2-Digit State + PAN..."
-                  className="w-full bg-zinc-950 border border-input text-foreground p-2.5 rounded-lg text-sm font-mono uppercase outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase">GSTIN (Optional)</label>
+                  {gstin.length === 15 && (
+                    <button
+                      type="button"
+                      onClick={handleLookupGst}
+                      disabled={fetchingGst}
+                      className="text-[11px] text-blue-400 hover:text-blue-300 font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      {fetchingGst ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      Fetch GST
+                    </button>
+                  )}
+                </div>
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    maxLength={15}
+                    value={gstin}
+                    onChange={(e) => setGstin(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                    placeholder="2-Digit State + PAN..."
+                    className="w-full bg-zinc-950 border border-input text-foreground p-2.5 rounded-lg text-sm font-mono uppercase outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {gstin.length === 15 && !fetchingGst && (
+                    <button
+                      type="button"
+                      onClick={handleLookupGst}
+                      className="absolute right-2 px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-medium cursor-pointer"
+                    >
+                      Fetch
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 

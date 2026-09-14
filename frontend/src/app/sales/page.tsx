@@ -10,7 +10,8 @@ import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
 import EditSalesInvoiceModal from '@/components/modals/EditSalesInvoiceModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
-import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight, CloudOff, CheckCircle, AlertTriangle, RefreshCw } from 'lucide-react';
+import EWayBillModal from '@/components/gst/EWayBillModal';
+import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight, CloudOff, CheckCircle, AlertTriangle, RefreshCw, Truck } from 'lucide-react';
 import { offlineDb } from '@/lib/db/offlineDb';
 import { retryFailedVoucher } from '@/lib/sync/sync-worker';
 import { vouchersRepository } from '@/lib/data';
@@ -30,6 +31,10 @@ export default function SalesInvoiceList() {
   const [editingVoucher, setEditingVoucher] = useState<any | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleteConfirmParams, setDeleteConfirmParams] = useState<{ id: string; number: string } | null>(null);
+
+  // E-Way Bill state
+  const [ewayVoucher, setEwayVoucher] = useState<any | null>(null);
+  const [isEwayModalOpen, setIsEwayModalOpen] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -394,6 +399,18 @@ export default function SalesInvoiceList() {
                         <td className="p-4 text-right">
                           <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                             <button
+                              onClick={() => {
+                                setEwayVoucher(inv);
+                                setIsEwayModalOpen(true);
+                              }}
+                              className="px-3 py-1.5 bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-500 rounded-lg text-xs font-semibold border border-emerald-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+                              title="Generate or View GST E-Way Bill"
+                            >
+                              <Truck className="w-3.5 h-3.5" />
+                              <span>E-Way Bill</span>
+                            </button>
+
+                            <button
                               onClick={() => handleStartEdit(inv)}
                               className="px-3 py-1.5 bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                               title="Edit Sales Invoice"
@@ -519,6 +536,18 @@ export default function SalesInvoiceList() {
           }}
           voucher={editingVoucher}
           onUpdateSuccess={fetchInvoices}
+        />
+
+        {/* GST E-Way Bill Modal */}
+        <EWayBillModal
+          isOpen={isEwayModalOpen}
+          onClose={() => {
+            setIsEwayModalOpen(false);
+            setEwayVoucher(null);
+          }}
+          voucher={ewayVoucher}
+          companyId={activeCompanyId || undefined}
+          onSuccess={() => fetchInvoices(page)}
         />
 
         {/* Confirm Delete Modal */}

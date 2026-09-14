@@ -499,7 +499,16 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         attachment_mime: fileMimeType,
       };
 
-      const res = await axios.post(`${API_BASE_URL}/api/vouchers/`, payload, { headers });
+      let res;
+      try {
+        res = await axios.post(`${API_BASE_URL}/api/vouchers/`, payload, { headers });
+      } catch (postErr: any) {
+        if (postErr.response?.status === 405) {
+          res = await axios.post(`${API_BASE_URL}/api/v1/accounting/purchase-invoice/`, payload, { headers });
+        } else {
+          throw postErr;
+        }
+      }
 
       toast.success(
         `Purchase Invoice #${res.data.voucher_number || res.data.data?.voucher_number} posted!`,

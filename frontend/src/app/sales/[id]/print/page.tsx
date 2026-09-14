@@ -5,6 +5,7 @@ import axios from 'axios';
 import { useParams, useRouter } from 'next/navigation';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import QRCode from 'react-qr-code';
+import { gstApi, EWayBillData } from '@/lib/api/gst';
 
 function numberToWords(numAmount: number): string {
   const a = ['','One ','Two ','Three ','Four ', 'Five ','Six ','Seven ','Eight ','Nine ','Ten ','Eleven ','Twelve ','Thirteen ','Fourteen ','Fifteen ','Sixteen ','Seventeen ','Eighteen ','Nineteen '];
@@ -68,6 +69,7 @@ export default function PrintInvoicePage() {
   const router = useRouter();
   const invoiceId = params.id as string;
   const [invoice, setInvoice] = useState<any>(null);
+  const [ewayBill, setEwayBill] = useState<EWayBillData | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
@@ -80,6 +82,15 @@ export default function PrintInvoicePage() {
       const headers = { Authorization: `Bearer ${token}` };
       const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/detail/${invoiceId}/`, { headers });
       setInvoice(res.data.data);
+
+      try {
+        const ewayRes = await gstApi.getEWayBillForVoucher(invoiceId);
+        if (ewayRes.success && ewayRes.data && ewayRes.data.status !== 'CAN') {
+          setEwayBill(ewayRes.data);
+        }
+      } catch (e) {
+        // E-Way Bill is optional
+      }
     } catch (err) {
       console.error(err);
     }
@@ -207,10 +218,22 @@ export default function PrintInvoicePage() {
                   <div className="p-2">
                       <table className="w-full">
                           <tbody>
-                              <tr><td className="w-32">GR/RR No.</td><td>: </td></tr>
-                              <tr><td>Transport</td><td>: </td></tr>
-                              <tr><td>Vehicle No.</td><td>: </td></tr>
-                              <tr><td>E-Way Bill No.</td><td>: </td></tr>
+                              <tr>
+                                <td className="w-32">GR/RR No.</td>
+                                <td>: {ewayBill?.trans_doc_no || 'N/A'}</td>
+                              </tr>
+                              <tr>
+                                <td>Transport</td>
+                                <td>: {ewayBill?.transporter_name || ewayBill?.trans_mode_display || 'Road'}</td>
+                              </tr>
+                              <tr>
+                                <td>Vehicle No.</td>
+                                <td className="font-bold">: {ewayBill?.vehicle_no || 'N/A'}</td>
+                              </tr>
+                              <tr>
+                                <td>E-Way Bill No.</td>
+                                <td className="font-bold">: {ewayBill?.eway_bill_number ? `${ewayBill.eway_bill_number} (Exp: ${new Date(ewayBill.valid_upto).toLocaleDateString('en-IN')})` : 'N/A'}</td>
+                              </tr>
                           </tbody>
                       </table>
                   </div>

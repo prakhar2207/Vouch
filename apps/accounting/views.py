@@ -240,6 +240,14 @@ class CreatePurchaseInvoiceAPIView(APIView):
                     cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
                     cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None
                 )
+
+                att_data = data.get('attachment_data') or data.get('file_base64')
+                att_mime = data.get('attachment_mime') or data.get('mime_type', 'application/pdf')
+                if att_data:
+                    compressed_data, final_mime = compress_and_clean_attachment(att_data, att_mime)
+                    voucher.attachment_data = compressed_data
+                    voucher.attachment_mime = final_mime
+                    voucher.save(update_fields=['attachment_data', 'attachment_mime'])
                 
                 if data.get('post_immediately', True):
                     VoucherService.post_voucher(voucher)
@@ -1806,6 +1814,301 @@ class UniversalVoucherAPIView(APIView):
                     "total_pages": max(1, (total_count + limit - 1) // limit)
                 }
             })
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def post(self, request):
+        """
+        Universal Voucher Creation Engine.
+        Supports:
+        1. Structured items provided (SALES or PURCHASE vouchers with auto-GST calculation & stock update)
+        2. Generic double-entry ledger rows (entries / ledger_entries from Journal, Contra, Payment, Receipt, etc.)
+        """
+        data = request.data
+        try:
+            from apps.accounting.models import Voucher, LedgerEntry
+            from apps.ledgers.models import Ledger, LedgerGroup
+            from apps.accounting.services.sequence_service import InvoiceSequenceService
+            from decimal import Decimal
+            from django.utils import timezone
+            import datetime
+
+            company_id = data.get('company_id')
+            if not company_id:
+                company = Company.objects.filter(users__user=request.user).first()
+            else:
+                company = Company.objects.get(id=company_id, users__user=request.user)
+
+            if not company:
+                return Response({"success": False, "error": "Company not found"}, status=status.HTTP_400_BAD_REQUEST)
+
+            voucher_type = str(data.get('voucher_type', data.get('type', 'JOURNAL'))).upper()
+            voucher_date = data.get('voucher_date', data.get('date', timezone.now().date()))
+            narration = data.get('narration', '')
+            manual_vnum = data.get('voucher_number')
+
+            with transaction.atomic():
+                # Case 1: Structured Items provided (Sales or Purchase)
+                if 'items' in data and len(data['items']) > 0:
+                    party_ledger_id = data.get('party_ledger_id')
+                    party_ledger = Ledger.objects.get(id=party_ledger_id, company=company) if party_ledger_id else None
+
+                    if voucher_type == 'SALES':
+                        # Resolve sales ledger
+                        sales_ledger = None
+                        sales_ledger_id = data.get('sales_ledger_id')
+                        if sales_ledger_id and str(sales_ledger_id).strip():
+                            try:
+                                sales_ledger = Ledger.objects.filter(id=sales_ledger_id, company=company).first()
+                            except Exception:
+                                sales_ledger = None
+                        if not sales_ledger:
+                            sales_ledger = Ledger.objects.filter(company=company, ledger_type='SALES').first() or \
+                                           Ledger.objects.filter(company=company, name__icontains='Sales').first()
+                            if not sales_ledger:
+                                income_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Sales Accounts', defaults={'nature': 'INCOME'})
+                                sales_ledger, _ = Ledger.objects.get_or_create(company=company, name='Sales Account', defaults={'group': income_grp, 'ledger_type': 'SALES'})
+
+                        cgst_ledger = None
+                        cgst_id = data.get('cgst_ledger_id')
+                        if cgst_id and str(cgst_id).strip():
+                            try:
+                                cgst_ledger = Ledger.objects.filter(id=cgst_id, company=company).first()
+                            except Exception:
+                                cgst_ledger = None
+                        if not cgst_ledger or 'input' in cgst_ledger.name.lower():
+                            cgst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'CGST')
+
+                        sgst_ledger = None
+                        sgst_id = data.get('sgst_ledger_id')
+                        if sgst_id and str(sgst_id).strip():
+                            try:
+                                sgst_ledger = Ledger.objects.filter(id=sgst_id, company=company).first()
+                            except Exception:
+                                sgst_ledger = None
+                        if not sgst_ledger or 'input' in sgst_ledger.name.lower():
+                            sgst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'SGST')
+
+                        igst_ledger = None
+                        igst_id = data.get('igst_ledger_id')
+                        if igst_id and str(igst_id).strip():
+                            try:
+                                igst_ledger = Ledger.objects.filter(id=igst_id, company=company).first()
+                            except Exception:
+                                igst_ledger = None
+                        if not igst_ledger or 'input' in igst_ledger.name.lower():
+                            igst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'IGST')
+
+                        voucher = SalesInvoiceService.generate_sales_invoice(
+                            company=company,
+                            user=request.user,
+                            party_ledger=party_ledger,
+                            items_data=data['items'],
+                            sales_ledger=sales_ledger,
+                            cgst_ledger=cgst_ledger,
+                            sgst_ledger=sgst_ledger,
+                            igst_ledger=igst_ledger,
+                            manual_voucher_number=manual_vnum,
+                            manual_voucher_date=voucher_date,
+                            buyer_name=data.get('buyer_name'),
+                            buyer_address=data.get('buyer_address'),
+                            buyer_gstin=data.get('buyer_gstin'),
+                            buyer_state_code=data.get('buyer_state_code'),
+                            buyer_phone=data.get('buyer_phone'),
+                            cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
+                            cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None
+                        )
+                    else:  # PURCHASE
+                        purchase_ledger = None
+                        purchase_id = data.get('purchase_ledger_id')
+                        if purchase_id and str(purchase_id).strip():
+                            try:
+                                purchase_ledger = Ledger.objects.filter(id=purchase_id, company=company).first()
+                            except Exception:
+                                purchase_ledger = None
+                        if not purchase_ledger:
+                            purchase_ledger = Ledger.objects.filter(company=company, ledger_type='PURCHASE').first() or \
+                                              Ledger.objects.filter(company=company, name__icontains='Purchase').first()
+                            if not purchase_ledger:
+                                exp_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Purchase Accounts', defaults={'nature': 'EXPENSE'})
+                                purchase_ledger, _ = Ledger.objects.get_or_create(company=company, name='Purchase Account', defaults={'group': exp_grp, 'ledger_type': 'PURCHASE'})
+
+                        input_cgst = None
+                        input_cgst_id = data.get('input_cgst_ledger_id') or data.get('cgst_ledger_id')
+                        if input_cgst_id and str(input_cgst_id).strip():
+                            try:
+                                input_cgst = Ledger.objects.filter(id=input_cgst_id, company=company).first()
+                            except Exception:
+                                input_cgst = None
+                        if not input_cgst or 'output' in input_cgst.name.lower():
+                            input_cgst = PurchaseInvoiceService._get_or_create_input_tax_ledger(company, 'CGST')
+
+                        input_sgst = None
+                        input_sgst_id = data.get('input_sgst_ledger_id') or data.get('sgst_ledger_id')
+                        if input_sgst_id and str(input_sgst_id).strip():
+                            try:
+                                input_sgst = Ledger.objects.filter(id=input_sgst_id, company=company).first()
+                            except Exception:
+                                input_sgst = None
+                        if not input_sgst or 'output' in input_sgst.name.lower():
+                            input_sgst = PurchaseInvoiceService._get_or_create_input_tax_ledger(company, 'SGST')
+
+                        input_igst = None
+                        input_igst_id = data.get('input_igst_ledger_id') or data.get('igst_ledger_id')
+                        if input_igst_id and str(input_igst_id).strip():
+                            try:
+                                input_igst = Ledger.objects.filter(id=input_igst_id, company=company).first()
+                            except Exception:
+                                input_igst = None
+                        if not input_igst or 'output' in input_igst.name.lower():
+                            input_igst = PurchaseInvoiceService._get_or_create_input_tax_ledger(company, 'IGST')
+
+                        voucher = PurchaseInvoiceService.generate_purchase_invoice(
+                            company=company,
+                            user=request.user,
+                            party_ledger=party_ledger,
+                            items_data=data['items'],
+                            purchase_ledger=purchase_ledger,
+                            input_cgst_ledger=input_cgst,
+                            input_sgst_ledger=input_sgst,
+                            input_igst_ledger=input_igst,
+                            supplier_invoice_number=manual_vnum or data.get('supplier_invoice_number'),
+                            voucher_date=voucher_date,
+                            cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
+                            cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None
+                        )
+
+                    # Save attachment if provided (auto-compressed under 2MB)
+                    att_data = data.get('attachment_data') or data.get('file_base64')
+                    att_mime = data.get('attachment_mime') or data.get('mime_type', 'application/pdf')
+                    if att_data:
+                        compressed_data, final_mime = compress_and_clean_attachment(att_data, att_mime)
+                        voucher.attachment_data = compressed_data
+                        voucher.attachment_mime = final_mime
+                        voucher.save(update_fields=['attachment_data', 'attachment_mime'])
+
+                    if narration:
+                        voucher.narration = narration
+                        voucher.save(update_fields=['narration'])
+
+                    if data.get('post_immediately', True):
+                        VoucherService.post_voucher(voucher)
+
+                    return Response({
+                        "success": True,
+                        "message": f"{voucher_type.title()} voucher created and posted successfully.",
+                        "id": str(voucher.id),
+                        "voucher_id": str(voucher.id),
+                        "voucher_number": voucher.voucher_number,
+                        "total_amount": str(voucher.total_amount),
+                        "has_attachment": bool(voucher.attachment_mime),
+                        "voucher": {
+                            "id": str(voucher.id),
+                            "voucher_type": voucher.voucher_type,
+                            "voucher_number": voucher.voucher_number,
+                            "voucher_date": str(voucher.voucher_date),
+                            "due_date": str(voucher.due_date) if voucher.due_date else None,
+                            "party_ledger_id": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
+                            "party_name": voucher.party_ledger.name if voucher.party_ledger else '',
+                            "status": voucher.status,
+                            "total_amount": str(voucher.total_amount or '0.00'),
+                            "narration": voucher.narration or '',
+                            "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
+                        }
+                    }, status=status.HTTP_201_CREATED)
+
+                # Case 2: Generic Double-Entry Rows (e.g. from AG Grid / Journal / Contra)
+                entries_data = data.get('entries', data.get('ledger_entries', []))
+                if not entries_data:
+                    return Response({"success": False, "error": "Either 'items' or 'entries' must be provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+                v_date = voucher_date if voucher_date else timezone.now().date()
+                if isinstance(v_date, str):
+                    v_date = datetime.date.fromisoformat(v_date)
+
+                v_num, fy = InvoiceSequenceService.get_next_number(company, voucher_type, v_date)
+                if manual_vnum and str(manual_vnum).strip():
+                    v_num = str(manual_vnum).strip()
+
+                party_ledger = None
+                party_ledger_id = data.get('party_ledger_id')
+                if party_ledger_id:
+                    party_ledger = Ledger.objects.filter(id=party_ledger_id, company=company).first()
+
+                voucher = Voucher.objects.create(
+                    company=company,
+                    financial_year=fy,
+                    voucher_type=voucher_type,
+                    voucher_number=v_num,
+                    voucher_date=v_date,
+                    party_ledger=party_ledger,
+                    narration=narration,
+                    status='DRAFT',
+                    created_by=request.user
+                )
+
+                total_dr = Decimal('0.00')
+                total_cr = Decimal('0.00')
+
+                for entry in entries_data:
+                    ledger_id = entry.get('ledger_id') or entry.get('ledger')
+                    ledger = Ledger.objects.get(id=ledger_id, company=company)
+                    dr = Decimal(str(entry.get('debit_amount', 0) or 0))
+                    cr = Decimal(str(entry.get('credit_amount', 0) or 0))
+
+                    if dr > 0 and cr > 0:
+                        raise ValidationError(f"Ledger {ledger.name} cannot have both Debit and Credit amounts.")
+
+                    total_dr += dr
+                    total_cr += cr
+
+                    LedgerEntry.objects.create(
+                        voucher=voucher,
+                        ledger=ledger,
+                        debit_amount=dr,
+                        credit_amount=cr,
+                        narration=entry.get('narration', '')
+                    )
+
+                if total_dr != total_cr:
+                    raise ValidationError(f"Double-entry mismatch! Total Debit ({total_dr}) must equal Total Credit ({total_cr}).")
+                if total_dr == 0:
+                    raise ValidationError("Total voucher amount cannot be 0.00.")
+
+                voucher.total_amount = total_dr
+
+                att_data = data.get('attachment_data') or data.get('file_base64')
+                att_mime = data.get('attachment_mime') or data.get('mime_type', 'application/pdf')
+                if att_data:
+                    compressed_data, final_mime = compress_and_clean_attachment(att_data, att_mime)
+                    voucher.attachment_data = compressed_data
+                    voucher.attachment_mime = final_mime
+
+                voucher.save()
+
+                if data.get('post_immediately', True):
+                    VoucherService.post_voucher(voucher)
+
+                return Response({
+                    "success": True,
+                    "message": "Voucher created and posted successfully.",
+                    "id": str(voucher.id),
+                    "voucher_id": str(voucher.id),
+                    "voucher_number": voucher.voucher_number,
+                    "total_amount": str(voucher.total_amount),
+                    "voucher": {
+                        "id": str(voucher.id),
+                        "voucher_type": voucher.voucher_type,
+                        "voucher_number": voucher.voucher_number,
+                        "voucher_date": str(voucher.voucher_date),
+                        "status": voucher.status,
+                        "total_amount": str(voucher.total_amount or '0.00'),
+                        "party_name": voucher.party_ledger.name if voucher.party_ledger else '',
+                        "narration": voucher.narration or '',
+                        "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
+                    }
+                }, status=status.HTTP_201_CREATED)
+
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
