@@ -661,12 +661,20 @@ class VoucherDetailAPIView(APIView):
                 if voucher.status in ['POSTED', 'VALIDATING']:
                     from apps.accounting.services.sales_service import SalesInvoiceService
                     from apps.accounting.services.purchase_service import PurchaseInvoiceService
+                    from apps.inventory.services.stock_service import StockService
+                    from rest_framework.exceptions import ValidationError
 
                     correction_reason = str(data.get('correction_reason') or data.get('reason') or "Voucher correction").strip()
                     correction_type = str(data.get('correction_type') or "CLERICAL").strip()
 
-                    # Reverse original voucher via explicit Reversal voucher
-                    VoucherService.create_reversal_voucher(voucher, user=request.user, reason=f"Correction Reversal: {correction_reason}")
+                    # Reverse original voucher via explicit Reversal voucher (defer stock & allocations to differential reconciler)
+                    VoucherService.create_reversal_voucher(
+                        voucher, 
+                        user=request.user, 
+                        reason=f"Correction Reversal: {correction_reason}",
+                        revert_stock=False,
+                        revert_allocations=False
+                    )
 
                     # Prepare items data (use updated items if provided, otherwise preserve original items)
                     if 'items' in data and isinstance(data['items'], list):
@@ -688,6 +696,9 @@ class VoucherDetailAPIView(APIView):
                             }
                             for it in voucher.items.select_related('product', 'product__category').all()
                         ]
+
+                    if not items_payload:
+                        raise ValidationError("Invoice must contain at least one line item.")
 
                     # Generate new corrected voucher with updated party and items
                     if voucher.voucher_type == 'SALES':
@@ -724,11 +735,44 @@ class VoucherDetailAPIView(APIView):
                             exclude_voucher_id=voucher.id
                         )
                     else:
-                        from rest_framework.exceptions import ValidationError
                         raise ValidationError(f"Voucher type {voucher.voucher_type} correction not supported via item patch.")
 
-                    # Post the new corrected voucher
-                    VoucherService.post_voucher(new_v)
+                    # Preserve custom narration if explicitly updated
+                    if 'narration' in data and data['narration'] is not None:
+                        new_v.narration = str(data['narration']).strip()
+                        new_v.save(update_fields=['narration'])
+
+                    # Intelligently reconcile stock via net differential (prevents artificial intermediate negative stock dips)
+                    total_cogs = StockService.adjust_voucher_stock_differential(voucher, new_v)
+
+                    # For sales invoices, attach COGS and Inventory journal entries if applicable
+                    if new_v.voucher_type == 'SALES' and total_cogs > Decimal('0.00'):
+                        cogs_ledger, inv_ledger = VoucherService._get_or_create_cogs_and_inventory_ledgers(company)
+                        if not new_v.ledger_entries.filter(ledger=cogs_ledger).exists():
+                            LedgerEntry.objects.create(
+                                voucher=new_v,
+                                company=company,
+                                ledger=cogs_ledger,
+                                debit_amount=total_cogs,
+                                credit_amount=Decimal('0.00'),
+                                narration=f"COGS for {new_v.voucher_number}"
+                            )
+                            LedgerEntry.objects.create(
+                                voucher=new_v,
+                                company=company,
+                                ledger=inv_ledger,
+                                debit_amount=Decimal('0.00'),
+                                credit_amount=total_cogs,
+                                narration=f"Inventory reduction for {new_v.voucher_number}"
+                            )
+
+                    # Post the new corrected voucher (skipping duplicate stock processing since differential already applied)
+                    VoucherService.post_voucher(new_v, process_stock=False)
+
+                    # Seamlessly preserve payment allocations by transferring them to new_v
+                    from apps.accounting.models import PaymentAllocation
+                    PaymentAllocation.objects.filter(invoice_voucher=voucher).update(invoice_voucher=new_v)
+                    PaymentAllocation.objects.filter(payment_voucher=voucher).update(payment_voucher=new_v)
 
                     # Link revision fields & update status
                     voucher.status = 'SUPERSEDED'

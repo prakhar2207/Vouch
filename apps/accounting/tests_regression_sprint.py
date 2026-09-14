@@ -324,3 +324,208 @@ class SprintRegressionTestCase(TestCase):
         supplier.current_balance = Decimal("0.00")
         supplier.save()
         self.assertEqual(supplier.balance_state, "SETTLED")
+
+    def test_edit_purchase_invoice_date_when_stock_zero_succeeds(self):
+        """
+        Regression Test: Editing purchase invoice date when purchased stock is 0
+        MUST NOT raise negative stock error. Net delta is zero.
+        """
+        import datetime
+        from apps.accounting.services.purchase_service import PurchaseInvoiceService
+
+        # 1. Create a product with 0 stock
+        prod = Product.objects.create(
+            company=self.comp_a,
+            name="Bearing B 65",
+            sku="B65-001",
+            hsn_code="8482",
+            gst_rate=Decimal("18.00"),
+            purchase_price=Decimal("150.00"),
+            stock_quantity=Decimal("0.00")
+        )
+
+        supplier = Ledger.objects.create(
+            company=self.comp_a,
+            group=self.grp_creditors_a,
+            name="SKF Bearings Ltd",
+            ledger_type="SUPPLIER"
+        )
+
+        # 2. Record Purchase Invoice for 60 units
+        invoice = PurchaseInvoiceService.generate_purchase_invoice(
+            company=self.comp_a,
+            user=self.user_a,
+            party_ledger=supplier,
+            supplier_invoice_number="BILL-9901",
+            voucher_date=datetime.date(2026, 9, 10),
+            items_data=[{
+                "product_id": str(prod.id),
+                "quantity": 60,
+                "rate": Decimal("150.00")
+            }]
+        )
+        VoucherService.post_voucher(invoice)
+        prod.refresh_from_db()
+        self.assertEqual(prod.stock_quantity, Decimal("60.00"))
+
+        # 3. Simulate all 60 units sold or consumed -> stock is 0
+        prod.stock_quantity = Decimal("0.00")
+        prod.save(update_fields=['stock_quantity'])
+
+        # 4. User edits the purchase invoice date to 2026-09-05 (items/stock unchanged)
+        self.client.force_authenticate(user=self.user_a)
+        url = f"/api/vouchers/{invoice.id}/"
+        payload = {
+            "voucher_number": "BILL-9901",
+            "voucher_date": "2026-09-05",
+            "party_name": "SKF Bearings Ltd",
+            "narration": "Updated invoice date",
+            "items": [{
+                "product_id": str(prod.id),
+                "product_name": "Bearing B 65",
+                "quantity": 60,
+                "rate": 150.00,
+                "unit": "PCS",
+                "gst_rate": 18
+            }]
+        }
+        res = self.client.patch(url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK, getattr(res, 'data', None))
+        self.assertTrue(res.data.get("success"))
+
+        # 5. Verify product stock is still 0 (no negative dip, no crash)
+        prod.refresh_from_db()
+        self.assertEqual(prod.stock_quantity, Decimal("0.00"))
+
+        # 6. Verify original voucher is superseded and new voucher has the updated date
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, "SUPERSEDED")
+        self.assertIsNotNone(invoice.superseded_by)
+        new_v = invoice.superseded_by
+        self.assertEqual(str(new_v.voucher_date), "2026-09-05")
+        self.assertEqual(new_v.status, "POSTED")
+        self.assertEqual(new_v.external_invoice_number, "BILL-9901")
+
+    def test_edit_purchase_invoice_quantity_reduction_differential(self):
+        """
+        Regression Test: Reducing quantity by 5 when available stock is 10 succeeds.
+        Net delta: 55 - 60 = -5. New stock: 10 - 5 = 5.
+        """
+        import datetime
+        from apps.accounting.services.purchase_service import PurchaseInvoiceService
+
+        prod = Product.objects.create(
+            company=self.comp_a,
+            name="Shaft S 20",
+            sku="S20-001",
+            hsn_code="8483",
+            gst_rate=Decimal("18.00"),
+            purchase_price=Decimal("200.00"),
+            stock_quantity=Decimal("0.00")
+        )
+        supplier = Ledger.objects.create(
+            company=self.comp_a,
+            group=self.grp_creditors_a,
+            name="Steel Works Ltd",
+            ledger_type="SUPPLIER"
+        )
+        invoice = PurchaseInvoiceService.generate_purchase_invoice(
+            company=self.comp_a,
+            user=self.user_a,
+            party_ledger=supplier,
+            supplier_invoice_number="BILL-8801",
+            voucher_date=datetime.date(2026, 9, 10),
+            items_data=[{
+                "product_id": str(prod.id),
+                "quantity": 60,
+                "rate": Decimal("200.00")
+            }]
+        )
+        VoucherService.post_voucher(invoice)
+
+        # Set available stock to 10 (50 units consumed)
+        prod.stock_quantity = Decimal("10.00")
+        prod.save(update_fields=['stock_quantity'])
+
+        # Reduce invoice quantity from 60 to 55 (delta = -5)
+        self.client.force_authenticate(user=self.user_a)
+        url = f"/api/vouchers/{invoice.id}/"
+        payload = {
+            "voucher_number": "BILL-8801",
+            "voucher_date": "2026-09-10",
+            "items": [{
+                "product_id": str(prod.id),
+                "product_name": "Shaft S 20",
+                "quantity": 55,
+                "rate": 200.00,
+                "unit": "PCS",
+                "gst_rate": 18
+            }]
+        }
+        res = self.client.patch(url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK, getattr(res, 'data', None))
+
+        prod.refresh_from_db()
+        # 10 - 5 = 5 remaining
+        self.assertEqual(prod.stock_quantity, Decimal("5.00"))
+
+    def test_edit_purchase_invoice_quantity_reduction_exceeding_stock_fails(self):
+        """
+        Regression Test: Reducing quantity by 10 when available stock is only 3 fails
+        with a clear validation error preventing stock from falling below zero.
+        """
+        import datetime
+        from apps.accounting.services.purchase_service import PurchaseInvoiceService
+
+        prod = Product.objects.create(
+            company=self.comp_a,
+            name="Valve V 10",
+            sku="V10-001",
+            hsn_code="8481",
+            gst_rate=Decimal("18.00"),
+            purchase_price=Decimal("100.00"),
+            stock_quantity=Decimal("0.00")
+        )
+        supplier = Ledger.objects.create(
+            company=self.comp_a,
+            group=self.grp_creditors_a,
+            name="Valve Corp",
+            ledger_type="SUPPLIER"
+        )
+        invoice = PurchaseInvoiceService.generate_purchase_invoice(
+            company=self.comp_a,
+            user=self.user_a,
+            party_ledger=supplier,
+            supplier_invoice_number="BILL-7701",
+            voucher_date=datetime.date(2026, 9, 10),
+            items_data=[{
+                "product_id": str(prod.id),
+                "quantity": 60,
+                "rate": Decimal("100.00")
+            }]
+        )
+        VoucherService.post_voucher(invoice)
+
+        # Set available stock to 3 (57 consumed)
+        prod.stock_quantity = Decimal("3.00")
+        prod.save(update_fields=['stock_quantity'])
+
+        # Try to reduce invoice quantity from 60 to 50 (delta = -10, but only 3 available!)
+        self.client.force_authenticate(user=self.user_a)
+        url = f"/api/vouchers/{invoice.id}/"
+        payload = {
+            "voucher_number": "BILL-7701",
+            "voucher_date": "2026-09-10",
+            "items": [{
+                "product_id": str(prod.id),
+                "product_name": "Valve V 10",
+                "quantity": 50,
+                "rate": 100.00,
+                "unit": "PCS",
+                "gst_rate": 18
+            }]
+        }
+        res = self.client.patch(url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("stock would fall below zero", res.data.get("error", ""))
+

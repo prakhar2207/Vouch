@@ -234,6 +234,135 @@ class StockService:
 
     @classmethod
     @transaction.atomic
+    def adjust_voucher_stock_differential(cls, old_voucher: Voucher, new_voucher: Voucher) -> Decimal:
+        """
+        Safely reconciles stock movements between an original voucher and its superseding revision.
+        Instead of blindly reverting all old stock (causing artificial intermediate negative stock dips),
+        this computes the net delta (new_qty - old_qty) for each affected product.
+        
+        - For PURCHASE: delta = new_qty - old_qty.
+          If delta > 0: product.stock_quantity increases by delta.
+          If delta < 0: verifies product.stock_quantity >= abs(delta) before deducting.
+          If delta == 0: stock_quantity is NOT touched.
+          
+        - For SALES: delta = old_qty - new_qty.
+          If delta > 0: product.stock_quantity increases by delta (fewer items sold).
+          If delta < 0: verifies product.stock_quantity >= abs(delta) before deducting (more items sold).
+          If delta == 0: stock_quantity is NOT touched.
+          
+        Replaces old InventoryEntry records with new InventoryEntry records tied to new_voucher.
+        Returns total COGS value for SALES vouchers.
+        """
+        from collections import defaultdict
+        
+        if new_voucher.voucher_type not in ['SALES', 'PURCHASE']:
+            return Decimal('0.00')
+
+        old_items = list(old_voucher.items.select_related('product', 'warehouse').all())
+        new_items = list(new_voucher.items.select_related('product', 'warehouse').all())
+        
+        prod_ids = {it.product_id for it in old_items if it.product_id} | {it.product_id for it in new_items if it.product_id}
+        if not prod_ids:
+            return Decimal('0.00')
+
+        # Row lock all affected products
+        locked_products = {
+            p.id: p for p in Product.objects.select_for_update().filter(id__in=prod_ids, company=new_voucher.company)
+        }
+
+        old_qty_map = defaultdict(Decimal)
+        for it in old_items:
+            if it.product_id:
+                old_qty_map[it.product_id] += Decimal(str(it.quantity))
+
+        new_qty_map = defaultdict(Decimal)
+        for it in new_items:
+            if it.product_id:
+                new_qty_map[it.product_id] += Decimal(str(it.quantity))
+
+        company_settings = getattr(new_voucher.company, 'settings', None)
+        allow_negative = getattr(company_settings, 'allow_negative_stock', False)
+
+        for pid in prod_ids:
+            product = locked_products.get(pid)
+            if not product:
+                continue
+
+            old_q = old_qty_map[pid]
+            new_q = new_qty_map[pid]
+
+            if new_voucher.voucher_type == 'PURCHASE':
+                delta = new_q - old_q
+            elif new_voucher.voucher_type == 'SALES':
+                delta = old_q - new_q
+            else:
+                delta = Decimal('0.00')
+
+            if delta != Decimal('0.00'):
+                current_stock = Decimal(str(product.stock_quantity or '0.00'))
+                if delta < Decimal('0.00') and not allow_negative:
+                    needed = abs(delta)
+                    if current_stock < needed:
+                        action_desc = "reducing purchase quantity" if new_voucher.voucher_type == 'PURCHASE' else "increasing sales quantity"
+                        raise ValidationError(
+                            f"Cannot update voucher: '{product.name}' stock would fall below zero ({current_stock - needed}). "
+                            f"Current stock is {current_stock}, but {action_desc} requires reducing stock by {needed}."
+                        )
+                product.stock_quantity = current_stock + delta
+                product.save(update_fields=['stock_quantity', 'updated_at'])
+
+        # Replace InventoryEntry records: remove old voucher's entries and create new voucher's entries
+        InventoryEntry.objects.filter(voucher_id=old_voucher.id).delete()
+
+        fallback_wh = Warehouse.objects.filter(company=new_voucher.company, is_active=True).first()
+        if not fallback_wh:
+            fallback_wh = Warehouse.objects.create(
+                company=new_voucher.company,
+                name="Main Godown",
+                is_active=True
+            )
+
+        movement_type = 'OUT' if new_voucher.voucher_type == 'SALES' else 'IN'
+        total_cogs = Decimal('0.00')
+
+        for item in new_items:
+            if not item.product_id:
+                continue
+            product = locked_products.get(item.product_id)
+            if not product:
+                continue
+            qty = Decimal(str(item.quantity))
+            line_wh = item.warehouse or fallback_wh
+
+            if movement_type == 'OUT':
+                line_cogs, unit_cost = cls.calculate_cogs_valuation(product, qty, exclude_voucher_id=new_voucher.id)
+                total_cogs += line_cogs
+                entry_rate = unit_cost
+                entry_total = line_cogs
+            else:
+                taxable_amt = Decimal(str(getattr(item, 'taxable_amount', 0) or 0))
+                if taxable_amt <= Decimal('0.00'):
+                    rate_val = Decimal(str(item.rate))
+                    disc_pct = Decimal(str(getattr(item, 'discount_percent', 0) or 0))
+                    taxable_amt = (qty * rate_val * (Decimal('100') - disc_pct) / Decimal('100')).quantize(Decimal('0.01'))
+                entry_total = taxable_amt
+                entry_rate = (entry_total / qty).quantize(Decimal('0.01')) if qty > Decimal('0.00') else Decimal('0.00')
+
+            InventoryEntry.objects.create(
+                company=new_voucher.company,
+                product=product,
+                warehouse=line_wh,
+                voucher_id=new_voucher.id,
+                movement_type=movement_type,
+                quantity=qty,
+                rate=entry_rate,
+                total_value=entry_total
+            )
+
+        return total_cogs
+
+    @classmethod
+    @transaction.atomic
     def rebuild_company_stock(cls, company, user=None) -> dict:
         """
         Reconstructs every product's stock_quantity from authoritative InventoryEntry history.

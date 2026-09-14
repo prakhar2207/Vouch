@@ -46,7 +46,7 @@ class VoucherService:
 
     @staticmethod
     @transaction.atomic
-    def post_voucher(voucher: Voucher):
+    def post_voucher(voucher: Voucher, process_stock=True):
         if voucher.status == 'POSTED':
             raise ValidationError("Voucher is already posted.")
         if voucher.status == 'CANCELLED':
@@ -58,31 +58,32 @@ class VoucherService:
         # 1. Process Stock & calculate COGS
         from apps.inventory.services.stock_service import StockService
         
-        if voucher.voucher_type == 'SALES':
-            total_cogs = StockService.process_voucher_stock(voucher)
-            # 2. Record perpetual inventory journal (Dr COGS / Cr Inventory)
-            if total_cogs > Decimal('0.00'):
-                cogs_ledger, inv_ledger = VoucherService._get_or_create_cogs_and_inventory_ledgers(voucher.company)
-                # Check if COGS lines already exist
-                if not voucher.ledger_entries.filter(ledger=cogs_ledger).exists():
-                    LedgerEntry.objects.create(
-                        voucher=voucher,
-                        company=voucher.company,
-                        ledger=cogs_ledger,
-                        debit_amount=total_cogs,
-                        credit_amount=Decimal('0.00'),
-                        narration=f"COGS for {voucher.voucher_number}"
-                    )
-                    LedgerEntry.objects.create(
-                        voucher=voucher,
-                        company=voucher.company,
-                        ledger=inv_ledger,
-                        debit_amount=Decimal('0.00'),
-                        credit_amount=total_cogs,
-                        narration=f"Inventory reduction for {voucher.voucher_number}"
-                    )
-        elif voucher.voucher_type == 'PURCHASE':
-            StockService.process_voucher_stock(voucher)
+        if process_stock:
+            if voucher.voucher_type == 'SALES':
+                total_cogs = StockService.process_voucher_stock(voucher)
+                # 2. Record perpetual inventory journal (Dr COGS / Cr Inventory)
+                if total_cogs > Decimal('0.00'):
+                    cogs_ledger, inv_ledger = VoucherService._get_or_create_cogs_and_inventory_ledgers(voucher.company)
+                    # Check if COGS lines already exist
+                    if not voucher.ledger_entries.filter(ledger=cogs_ledger).exists():
+                        LedgerEntry.objects.create(
+                            voucher=voucher,
+                            company=voucher.company,
+                            ledger=cogs_ledger,
+                            debit_amount=total_cogs,
+                            credit_amount=Decimal('0.00'),
+                            narration=f"COGS for {voucher.voucher_number}"
+                        )
+                        LedgerEntry.objects.create(
+                            voucher=voucher,
+                            company=voucher.company,
+                            ledger=inv_ledger,
+                            debit_amount=Decimal('0.00'),
+                            credit_amount=total_cogs,
+                            narration=f"Inventory reduction for {voucher.voucher_number}"
+                        )
+            elif voucher.voucher_type == 'PURCHASE':
+                StockService.process_voucher_stock(voucher)
         
         # 3. Process Accounting Ledger Entries with Concurrency Locks
         entries = list(voucher.ledger_entries.select_related('ledger').all())
@@ -207,7 +208,7 @@ class VoucherService:
 
     @staticmethod
     @transaction.atomic
-    def create_reversal_voucher(voucher: Voucher, user=None, reason="Correction Reversal") -> Voucher:
+    def create_reversal_voucher(voucher: Voucher, user=None, reason="Correction Reversal", revert_stock=True, revert_allocations=True) -> Voucher:
         """
         P0-4 & P0-5: Strictly immutable posted transaction reversal.
         Creates an explicit balancing reversal Journal voucher that posts opposite debits & credits,
@@ -221,16 +222,17 @@ class VoucherService:
         from apps.inventory.services.stock_service import StockService
         from apps.audit.services.audit_service import AuditService
 
-        # 1. Revert Stock atomically
-        if voucher.voucher_type in ['SALES', 'PURCHASE']:
+        # 1. Revert Stock atomically (if requested)
+        if revert_stock and voucher.voucher_type in ['SALES', 'PURCHASE']:
             StockService.revert_voucher_stock(voucher)
 
-        # 2. Revert Payment Allocations
-        from apps.accounting.models import PaymentAllocation
-        from django.db.models import Q
-        PaymentAllocation.objects.filter(
-            Q(payment_voucher=voucher) | Q(invoice_voucher=voucher)
-        ).delete()
+        # 2. Revert Payment Allocations (if requested)
+        if revert_allocations:
+            from apps.accounting.models import PaymentAllocation
+            from django.db.models import Q
+            PaymentAllocation.objects.filter(
+                Q(payment_voucher=voucher) | Q(invoice_voucher=voucher)
+            ).delete()
 
         # 3. Create explicit Reversal Voucher
         rev_num = f"REV-{voucher.voucher_number}"
