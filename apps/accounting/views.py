@@ -527,6 +527,7 @@ class VoucherDetailAPIView(APIView):
                     "buyer_phone": voucher.buyer_phone or "",
                 },
                 "party": {
+                    "id": str(voucher.party_ledger.id) if voucher.party_ledger else None,
                     "name": voucher.buyer_name if voucher.buyer_name else (voucher.party_ledger.name if voucher.party_ledger else "N/A"),
                     "settlement_ledger": voucher.party_ledger.name if voucher.party_ledger else "N/A",
                     "address": voucher.buyer_address if voucher.buyer_address else (voucher.party_ledger.address if voucher.party_ledger else ""),
@@ -649,12 +650,17 @@ class VoucherDetailAPIView(APIView):
                     if not voucher.party_ledger or voucher.party_ledger.name.strip().upper() != new_party_name.upper():
                         target_group_name = 'Sundry Debtors' if voucher.voucher_type == 'SALES' else 'Sundry Creditors'
                         nature = 'ASSET' if voucher.voucher_type == 'SALES' else 'LIABILITY'
-                        grp, _ = LedgerGroup.objects.get_or_create(company=company, name=target_group_name, defaults={'nature': nature})
-                        target_party, _ = Ledger.objects.get_or_create(
-                            company=company,
-                            name=new_party_name,
-                            defaults={'group': grp, 'ledger_type': 'CUSTOMER' if voucher.voucher_type == 'SALES' else 'SUPPLIER'}
-                        )
+                        grp = LedgerGroup.objects.filter(company=company, name=target_group_name).first()
+                        if not grp:
+                            grp = LedgerGroup.objects.create(company=company, name=target_group_name, nature=nature)
+                        target_party = Ledger.objects.filter(company=company, name__iexact=new_party_name).first()
+                        if not target_party:
+                            target_party = Ledger.objects.create(
+                                company=company,
+                                name=new_party_name,
+                                group=grp,
+                                ledger_type='CUSTOMER' if voucher.voucher_type == 'SALES' else 'SUPPLIER'
+                            )
 
                 # 2. If voucher is POSTED or VALIDATING, NEVER destroy original accounting state.
                 # Create an explicit auditable superseding revision.

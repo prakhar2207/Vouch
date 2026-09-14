@@ -17,6 +17,7 @@ import {
   Package,
   Layers,
   Calculator,
+  Search,
 } from "lucide-react";
 
 interface EditableItem {
@@ -36,6 +37,8 @@ interface EditableItem {
 interface CategoryOption {
   id: string;
   name: string;
+  hsn_code?: string;
+  gst_rate?: number | string;
 }
 
 interface EditPurchaseInvoiceModalProps {
@@ -56,51 +59,77 @@ export default function EditPurchaseInvoiceModal({
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceDate, setInvoiceDate] = useState("");
+  const [partyLedgerId, setPartyLedgerId] = useState("");
   const [partyName, setPartyName] = useState("");
+  const [isCustomParty, setIsCustomParty] = useState(false);
   const [narration, setNarration] = useState("");
   const [items, setItems] = useState<EditableItem[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [ledgers, setLedgers] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [activeSearchIdx, setActiveSearchIdx] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (isOpen && voucher?.id) {
       loadFullVoucher();
-      fetchCategories();
     }
   }, [isOpen, voucher?.id]);
 
-  const fetchCategories = async (companyId?: string) => {
-    try {
-      try {
-        const cached = await offlineDb.masters.get("categories");
-        if (cached?.data?.length) {
-          setCategories(cached.data);
-        }
-      } catch (err) {
-        // ignore cache error
-      }
+  const fetchMasters = async (companyId?: string) => {
+    const cid = companyId || voucher?.company_id || voucher?.company?.id;
 
-      const cid = companyId || voucher?.company_id || voucher?.company?.id;
+    // 1. Try reading from offline cache
+    try {
+      const [cachedCats, cachedLedgers, cachedProds] = await Promise.all([
+        offlineDb.masters.get("categories"),
+        offlineDb.masters.get("ledgers"),
+        offlineDb.masters.get("products"),
+      ]);
+      if (cachedCats?.data?.length) setCategories(cachedCats.data);
+      if (cachedLedgers?.data?.length) setLedgers(cachedLedgers.data);
+      if (cachedProds?.data?.length) setProducts(cachedProds.data);
+    } catch (cacheErr) {
+      // ignore
+    }
+
+    // 2. Fetch fresh masters from API
+    try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
 
-      if (cid) {
-        const res = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cid}/`, { headers });
-        if (res.data?.data) {
-          setCategories(res.data.data);
-        }
-      } else {
+      let targetCid = cid;
+      if (!targetCid) {
         const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-        const activeComp = compRes.data?.data?.[0];
-        if (activeComp?.id) {
-          const res = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${activeComp.id}/`, { headers });
-          if (res.data?.data) {
-            setCategories(res.data.data);
-          }
+        targetCid = compRes.data?.data?.[0]?.id;
+      }
+
+      if (targetCid) {
+        const [catsRes, ledgersRes, prodsRes] = await Promise.all([
+          axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${targetCid}/`, { headers }).catch(() => ({ data: { data: [] } })),
+          axios.get(`${API_BASE_URL}/api/v1/ledgers/${targetCid}/`, { headers }).catch(() => ({ data: { data: [] } })),
+          axios.get(`${API_BASE_URL}/api/v1/inventory/products/${targetCid}/`, { headers }).catch(() => ({ data: { data: [] } })),
+        ]);
+
+        const catList = catsRes.data?.data || [];
+        const ledgerList = ledgersRes.data?.data || [];
+        const prodList = prodsRes.data?.data || [];
+
+        if (catList.length) {
+          setCategories(catList);
+          offlineDb.masters.put({ key: "categories", data: catList, updatedAt: Date.now() }).catch(() => {});
+        }
+        if (ledgerList.length) {
+          setLedgers(ledgerList);
+          offlineDb.masters.put({ key: "ledgers", data: ledgerList, updatedAt: Date.now() }).catch(() => {});
+        }
+        if (prodList.length) {
+          setProducts(prodList);
+          offlineDb.masters.put({ key: "products", data: prodList, updatedAt: Date.now() }).catch(() => {});
         }
       }
     } catch (e) {
-      console.error("Failed to load categories", e);
+      console.error("Failed to load masters in purchase edit modal", e);
     }
   };
 
@@ -113,12 +142,15 @@ export default function EditPurchaseInvoiceModal({
 
       if (res.data.success && res.data.data) {
         const v = res.data.data;
-        if (v.company?.id || v.company_id) {
-          fetchCategories(v.company?.id || v.company_id);
-        }
+        const targetCid = v.company?.id || v.company_id;
+        fetchMasters(targetCid);
+
         setInvoiceNumber(v.voucher_number || "");
         setInvoiceDate(v.date || "");
+        const partyId = v.party_ledger_id || v.party?.id || "";
+        setPartyLedgerId(partyId);
         setPartyName(v.party?.name || "");
+        setIsCustomParty(!partyId && Boolean(v.party?.name));
         setNarration(v.narration || "");
 
         const loadedItems: EditableItem[] = (v.items || []).map((item: any) => ({
@@ -193,6 +225,82 @@ export default function EditPurchaseInvoiceModal({
     setItems((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // Master Lookups & Computed
+  const supplierLedgers = ledgers.filter(
+    (l: any) =>
+      l.group?.includes("Creditor") ||
+      l.group?.includes("Cash") ||
+      l.group?.includes("Bank") ||
+      l.ledger_type === "SUPPLIER" ||
+      l.ledger_type === "PARTY" ||
+      l.ledger_type === "BOTH" ||
+      l.ledger_type === "CASH" ||
+      l.ledger_type === "BANK" ||
+      l.name?.toLowerCase().includes("cash") ||
+      l.name?.toLowerCase().includes("supplier")
+  );
+  const displaySuppliers = supplierLedgers.length > 0 ? supplierLedgers : ledgers;
+
+  const handlePartyChange = (selectedId: string) => {
+    setPartyLedgerId(selectedId);
+    if (!selectedId) {
+      setIsCustomParty(true);
+      return;
+    }
+    setIsCustomParty(false);
+    const selected = ledgers.find((l: any) => l.id === selectedId);
+    if (selected) {
+      setPartyName(selected.name);
+    }
+  };
+
+  const selectProduct = (idx: number, prod: any) => {
+    setItems((prev) => {
+      const copy = [...prev];
+      const current = copy[idx];
+      const targetCatId = prod.category_id || current.category_id;
+      const matchedCat = categories.find((c) => c.id === targetCatId);
+      const catName = prod.category?.name || matchedCat?.name || current.category_name || "Unassigned";
+      const hsn = prod.hsn_code || matchedCat?.hsn_code || current.hsn_code || "";
+      const gst =
+        Number(prod.gst_rate) ||
+        (matchedCat?.gst_rate ? Number(matchedCat.gst_rate) : current.gst_rate) ||
+        18;
+      const price = parseFloat(String(prod.purchase_price || prod.selling_price || 0)) || current.rate || 0;
+
+      copy[idx] = {
+        ...current,
+        product_id: prod.id,
+        product_name: prod.name,
+        brand: prod.brand || current.brand || "",
+        category_id: targetCatId || undefined,
+        category_name: catName,
+        hsn_code: hsn,
+        unit: prod.unit || current.unit || "PCS",
+        rate: price,
+        gst_rate: gst,
+      };
+      return copy;
+    });
+    setActiveSearchIdx(null);
+  };
+
+  const handleCategoryChange = (idx: number, selectedId: string) => {
+    const selectedCat = categories.find((c) => c.id === selectedId);
+    setItems((prev) => {
+      const copy = [...prev];
+      const current = copy[idx];
+      copy[idx] = {
+        ...current,
+        category_id: selectedId || undefined,
+        category_name: selectedCat ? selectedCat.name : "Unassigned",
+        hsn_code: current.hsn_code || selectedCat?.hsn_code || "",
+        gst_rate: selectedCat?.gst_rate ? Number(selectedCat.gst_rate) : current.gst_rate,
+      };
+      return copy;
+    });
+  };
+
   // Calculations
   const taxableTotal = items.reduce((acc, item) => acc + (item.quantity * item.rate), 0);
   const totalTax = items.reduce(
@@ -237,10 +345,11 @@ export default function EditPurchaseInvoiceModal({
       const payload = {
         voucher_number: invoiceNumber.trim(),
         voucher_date: invoiceDate,
+        party_ledger_id: isCustomParty ? null : (partyLedgerId || null),
         party_name: partyName.trim(),
         narration: narration.trim(),
         items: items.map((it) => ({
-          product_id: it.product_id,
+          product_id: it.product_id || null,
           product_name: it.product_name.trim(),
           category_id: it.category_id || null,
           category_name: it.category_name || "",
@@ -344,17 +453,48 @@ export default function EditPurchaseInvoiceModal({
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-muted-foreground uppercase flex items-center gap-1.5 mb-1">
-                  <User className="w-3.5 h-3.5 text-blue-400" />
-                  Supplier / Party Name *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={partyName}
-                  onChange={(e) => setPartyName(e.target.value)}
-                  className="w-full bg-muted/40 border border-border/70 text-foreground text-xs px-3 py-1.5 rounded-lg outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
-                />
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-blue-400" />
+                    Supplier / Party *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextCustom = !isCustomParty;
+                      setIsCustomParty(nextCustom);
+                      if (nextCustom) {
+                        setPartyLedgerId("");
+                      }
+                    }}
+                    className="text-[11px] text-blue-400 hover:text-blue-300 font-medium cursor-pointer"
+                  >
+                    {isCustomParty ? "← Select from List" : "+ Enter Custom Name"}
+                  </button>
+                </div>
+                {isCustomParty ? (
+                  <input
+                    type="text"
+                    required
+                    placeholder="Enter custom supplier name..."
+                    value={partyName}
+                    onChange={(e) => setPartyName(e.target.value)}
+                    className="w-full bg-muted/40 border border-border/70 text-foreground text-xs px-3 py-1.5 rounded-lg outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                  />
+                ) : (
+                  <select
+                    value={partyLedgerId}
+                    onChange={(e) => handlePartyChange(e.target.value)}
+                    className="w-full bg-muted/40 border border-border/70 text-foreground text-xs px-3 py-1.5 rounded-lg outline-none focus:ring-1 focus:ring-blue-500 font-semibold cursor-pointer"
+                  >
+                    <option value="" className="bg-background text-foreground">-- Select Supplier / Creditor --</option>
+                    {displaySuppliers.map((l: any) => (
+                      <option key={l.id} value={l.id} className="bg-background text-foreground">
+                        {l.name} {l.group ? `[${l.group}]` : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
             </div>
 
@@ -377,12 +517,12 @@ export default function EditPurchaseInvoiceModal({
                 </button>
               </div>
 
-              <div className="border border-border/70 rounded-xl overflow-x-auto">
+              <div className="border border-border/70 rounded-xl overflow-visible">
                 <table className="w-full min-w-[620px] text-xs text-left border-collapse">
                   <thead className="bg-muted/60 border-b border-border text-muted-foreground uppercase text-xs tracking-wider font-semibold">
                     <tr>
                       <th className="p-2.5 w-6 text-center">#</th>
-                      <th className="p-2.5 min-w-[130px]">Item Name / Size</th>
+                      <th className="p-2.5 min-w-[150px]">Item Name / Size</th>
                       <th className="p-2.5 w-32">Category</th>
                       <th className="p-2.5 w-24">Brand</th>
                       <th className="p-2.5 w-20">HSN Code</th>
@@ -404,28 +544,126 @@ export default function EditPurchaseInvoiceModal({
                         <tr key={idx} className="hover:bg-muted/30 transition-colors">
                           <td className="p-2 text-muted-foreground font-mono tabular-nums text-center text-xs font-semibold">{idx + 1}</td>
                           
-                          {/* Item Name */}
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              required
-                              placeholder="e.g. A-18 V-Belt"
-                              value={item.product_name}
-                              onChange={(e) => updateItemField(idx, "product_name", e.target.value)}
-                              className="w-full min-h-[32px] bg-background/50 border border-border/60 text-foreground font-medium px-2.5 py-1 rounded-md outline-none focus:border-primary focus:bg-background"
-                            />
+                          {/* Item Name with Product Autocomplete Popover */}
+                          <td className="p-2 relative">
+                            <div className="relative">
+                              <input
+                                type="text"
+                                required
+                                placeholder="Search catalog or type item..."
+                                value={item.product_name}
+                                onChange={(e) => {
+                                  updateItemField(idx, "product_name", e.target.value);
+                                  setActiveSearchIdx(idx);
+                                }}
+                                onFocus={() => setActiveSearchIdx(idx)}
+                                onBlur={() => setTimeout(() => setActiveSearchIdx(null), 250)}
+                                className="w-full min-h-[32px] bg-background/50 border border-border/60 text-foreground font-medium px-2.5 py-1 rounded-md outline-none focus:border-primary focus:bg-background"
+                              />
+
+                              {/* Autocomplete Dropdown Popover */}
+                              {activeSearchIdx === idx && (
+                                <div
+                                  className="absolute left-0 top-full mt-1 z-50 w-full min-w-[340px] max-w-[480px] bg-card border border-border rounded-xl shadow-2xl overflow-hidden max-h-64 overflow-y-auto"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                >
+                                  {(() => {
+                                    const query = String(item.product_name || "").trim().toLowerCase();
+                                    const queryAlpha = query.replace(/[\s\-_/.]/g, "");
+                                    const filteredProds = products.filter((p: any) => {
+                                      if (item.category_id && p.category_id && p.category_id !== item.category_id) {
+                                        if (!query) return false;
+                                      }
+                                      if (!query) return true;
+                                      const pName = (p.name || "").toLowerCase();
+                                      const pAlpha = pName.replace(/[\s\-_/.]/g, "");
+                                      const pBrand = (p.brand || "").toLowerCase();
+                                      const pAlias = (p.alias || "").toLowerCase();
+                                      const pSku = (p.sku || "").toLowerCase();
+                                      return (
+                                        pName.includes(query) ||
+                                        pAlpha.includes(queryAlpha) ||
+                                        pBrand.includes(query) ||
+                                        pAlias.includes(query) ||
+                                        pSku.includes(query)
+                                      );
+                                    });
+
+                                    if (filteredProds.length === 0) {
+                                      return (
+                                        <div className="p-3 text-xs text-muted-foreground italic">
+                                          No catalog product found. Enter details manually.
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <div className="divide-y divide-border/60">
+                                        <div className="bg-muted/80 px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex justify-between">
+                                          <span>Catalog Products</span>
+                                          <span>{filteredProds.length} match{filteredProds.length > 1 ? "es" : ""}</span>
+                                        </div>
+                                        {filteredProds.slice(0, 30).map((p: any) => {
+                                          const isSelected = item.product_id === p.id;
+                                          const price = parseFloat(String(p.purchase_price || p.selling_price || 0)) || 0;
+                                          const stock = Number(p.stock_quantity ?? 0);
+                                          return (
+                                            <button
+                                              key={p.id}
+                                              type="button"
+                                              onClick={() => selectProduct(idx, p)}
+                                              className={`w-full text-left p-2.5 hover:bg-muted/60 flex items-center justify-between gap-3 cursor-pointer transition-colors ${
+                                                isSelected ? "bg-blue-500/10 border-l-2 border-blue-500" : ""
+                                              }`}
+                                            >
+                                              <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                  <span className="font-semibold text-foreground text-xs truncate">
+                                                    {p.name}
+                                                  </span>
+                                                  {p.brand && (
+                                                    <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded font-medium">
+                                                      {p.brand}
+                                                    </span>
+                                                  )}
+                                                  {p.category?.name && (
+                                                    <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
+                                                      {p.category.name}
+                                                    </span>
+                                                  )}
+                                                </div>
+                                                <div className="text-[11px] text-muted-foreground flex items-center gap-3 mt-0.5">
+                                                  {p.hsn_code && <span>HSN: {p.hsn_code}</span>}
+                                                  <span>GST: {Number(p.gst_rate || 18)}%</span>
+                                                  <span className={stock > 0 ? "text-emerald-400" : "text-amber-400"}>
+                                                    Stock: {stock} {p.unit || "PCS"}
+                                                  </span>
+                                                </div>
+                                              </div>
+                                              <div className="text-right whitespace-nowrap">
+                                                <div className="font-bold text-foreground text-xs">
+                                                  ₹{price.toFixed(2)}
+                                                </div>
+                                                <div className="text-[10px] text-muted-foreground">
+                                                  per {p.unit || "PCS"}
+                                                </div>
+                                              </div>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              )}
+                            </div>
                           </td>
 
                           {/* Category */}
                           <td className="p-2">
                             <select
                               value={item.category_id || ""}
-                              onChange={(e) => {
-                                const selectedId = e.target.value;
-                                const selectedCat = categories.find((c) => c.id === selectedId);
-                                updateItemField(idx, "category_id", selectedId || undefined);
-                                updateItemField(idx, "category_name", selectedCat ? selectedCat.name : "Unassigned");
-                              }}
+                              onChange={(e) => handleCategoryChange(idx, e.target.value)}
                               className="w-full min-h-[32px] bg-background/50 border border-border/60 text-foreground text-xs px-2 py-1 rounded-md outline-none focus:border-primary focus:bg-background font-medium cursor-pointer"
                             >
                               <option value="" className="bg-background text-foreground">Unassigned</option>

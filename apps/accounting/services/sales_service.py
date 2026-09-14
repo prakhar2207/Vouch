@@ -168,18 +168,44 @@ class SalesInvoiceService:
                 if category:
                     defaults_dict['category'] = category
                     defaults_dict['hsn_code'] = category.hsn_code
-                    defaults_dict['gst_rate'] = category.gst_rate
+                item_brand = (item.get('brand') or '').strip()
+                if item_brand:
+                    defaults_dict['brand'] = item_brand
+                    product = Product.objects.filter(
+                        company=company,
+                        name__iexact=name,
+                        brand__iexact=item_brand
+                    ).first()
                 
-                product, created = Product.objects.get_or_create(
-                    company=company,
-                    name=name,
-                    defaults=defaults_dict
-                )
-                if not created and category_specified:
-                    target_cat_id = category.id if category else None
-                    if product.category_id != target_cat_id:
-                        product.category = category
-                        product.save(update_fields=['category'])
+                if not product:
+                    product = Product.objects.filter(
+                        company=company,
+                        name__iexact=name
+                    ).first()
+
+                if not product:
+                    product = Product.objects.create(
+                        company=company,
+                        name=name,
+                        **defaults_dict
+                    )
+                    created = True
+                else:
+                    created = False
+                    update_fields = []
+                    if category_specified:
+                        target_cat_id = category.id if category else None
+                        if product.category_id != target_cat_id:
+                            product.category = category
+                            update_fields.append('category')
+                    if item_brand and not product.brand:
+                        product.brand = item_brand
+                        update_fields.append('brand')
+                    if item.get('hsn_code') and not product.hsn_code:
+                        product.hsn_code = str(item['hsn_code']).strip()
+                        update_fields.append('hsn_code')
+                    if update_fields:
+                        product.save(update_fields=update_fields)
 
             qty = Decimal(str(item['quantity']))
             rate = Decimal(str(item.get('rate', '0.00')))
