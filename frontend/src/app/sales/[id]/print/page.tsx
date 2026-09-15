@@ -97,9 +97,16 @@ export default function PrintInvoicePage() {
   const [isAuth, setIsAuth] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [copiedMessage, setCopiedMessage] = useState<boolean>(false);
+  const [preferredWhatsAppClient, setPreferredWhatsAppClient] = useState<'web' | 'app'>('web');
 
   useEffect(() => {
     setIsAuth(isAuthenticated());
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('vouch_preferred_wa_client') as 'web' | 'app';
+      if (saved === 'web' || saved === 'app') {
+        setPreferredWhatsAppClient(saved);
+      }
+    }
     fetchInvoice();
   }, [invoiceId]);
 
@@ -345,6 +352,10 @@ export default function PrintInvoicePage() {
   };
 
   const handleOpenExplicitWhatsApp = async (target: 'web' | 'app') => {
+    setPreferredWhatsAppClient(target);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('vouch_preferred_wa_client', target);
+    }
     setIsGeneratingPdf(true);
     try {
       const pdfResult = await generateInvoicePdf();
@@ -353,9 +364,15 @@ export default function PrintInvoicePage() {
         triggerPdfDownload(pdfResult.blobUrl, filename);
       }
       const { appUrl, webUrl } = getWhatsAppUrls();
-      const url = target === 'web' ? webUrl : appUrl;
-      window.open(url, '_blank');
-      setShareStatusMessage(`Opening ${target === 'web' ? 'WhatsApp Web' : 'WhatsApp App'}... Press Ctrl+V in the chat or drag & drop the downloaded PDF!`);
+      if (target === 'web') {
+        window.open(webUrl, '_blank');
+        setShareStatusMessage(`Opening WhatsApp Web... Invoice PDF (${filename}) downloaded! Press Ctrl+V in chat to paste image.`);
+      } else {
+        try {
+          window.location.href = appUrl;
+        } catch (e) {}
+        setShareStatusMessage(`Launching WhatsApp Desktop App... Invoice PDF (${filename}) downloaded! Press Ctrl+V in chat to paste image.`);
+      }
       setTimeout(() => setShareStatusMessage(null), 8000);
     } catch (e) {
       console.error('Failed to prepare PDF for WhatsApp:', e);
@@ -442,9 +459,15 @@ export default function PrintInvoicePage() {
       // 1. Download the PDF with the exact invoice number filename
       triggerPdfDownload(blobUrl, filename);
 
-      // 2. Automatically detect if WhatsApp Desktop Application is installed:
-      // If yes, opens WhatsApp app. If not, automatically opens WhatsApp Web with prefilled message & link!
-      openDesktopWithAutoFallback(phone, filename);
+      // 2. Open according to user's preference
+      if (preferredWhatsAppClient === 'web') {
+        const { webUrl } = getWhatsAppUrls();
+        window.open(webUrl, '_blank');
+        setShareStatusMessage(`WhatsApp Web opened! Invoice PDF (${filename}) downloaded. Press Ctrl+V in chat to paste image.`);
+        setTimeout(() => setShareStatusMessage(null), 8000);
+      } else {
+        openDesktopWithAutoFallback(phone, filename);
+      }
 
     } catch (err: any) {
       console.error('Failed to share PDF:', err);
@@ -670,21 +693,39 @@ export default function PrintInvoicePage() {
               <button
                 onClick={() => handleOpenExplicitWhatsApp('web')}
                 disabled={isGeneratingPdf}
-                className="flex flex-col items-center text-center p-4 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-750 hover:border-emerald-500/60 transition-all cursor-pointer group disabled:opacity-50"
+                className={`flex flex-col items-center text-center p-4 rounded-xl border transition-all cursor-pointer group disabled:opacity-50 relative ${
+                  preferredWhatsAppClient === 'web'
+                    ? 'border-emerald-500 bg-emerald-500/10'
+                    : 'border-slate-700 bg-slate-800 hover:bg-slate-750 hover:border-emerald-500/60'
+                }`}
               >
+                {preferredWhatsAppClient === 'web' && (
+                  <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">
+                    Default
+                  </span>
+                )}
                 <div className="p-3 rounded-xl bg-blue-500/10 text-blue-400 group-hover:bg-blue-500/20 mb-2">
                   <Globe className="w-6 h-6" />
                 </div>
                 <span className="text-sm font-bold text-white">WhatsApp Web</span>
-                <span className="text-[11px] text-slate-400 mt-1">Open web.whatsapp.com with prefilled message & link</span>
+                <span className="text-[11px] text-slate-400 mt-1">Directly opens web.whatsapp.com in Chrome/Edge</span>
               </button>
 
               {/* WhatsApp Application */}
               <button
                 onClick={() => handleOpenExplicitWhatsApp('app')}
                 disabled={isGeneratingPdf}
-                className="flex flex-col items-center text-center p-4 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-750 hover:border-emerald-500/60 transition-all cursor-pointer group disabled:opacity-50"
+                className={`flex flex-col items-center text-center p-4 rounded-xl border transition-all cursor-pointer group disabled:opacity-50 relative ${
+                  preferredWhatsAppClient === 'app'
+                    ? 'border-emerald-500 bg-emerald-500/10'
+                    : 'border-slate-700 bg-slate-800 hover:bg-slate-750 hover:border-emerald-500/60'
+                }`}
               >
+                {preferredWhatsAppClient === 'app' && (
+                  <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">
+                    Default
+                  </span>
+                )}
                 <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500/20 mb-2">
                   <Laptop className="w-6 h-6" />
                 </div>

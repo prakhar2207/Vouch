@@ -574,7 +574,7 @@ class PublicVoucherDetailAPIView(APIView):
         try:
             from apps.accounting.models import Voucher
             voucher = Voucher.objects.select_related('company', 'party_ledger').defer('attachment_data').filter(
-                id=voucher_id, voucher_type='SALES'
+                id=voucher_id
             ).first()
             if not voucher:
                 return Response({"success": False, "error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
