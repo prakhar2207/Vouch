@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Search } from "lucide-react";
+import { Search, Sparkles } from "lucide-react";
 import { ReconciliationSummary, BankingActiveTab } from "./types";
 
 interface ReconciliationStatsBarProps {
@@ -10,6 +10,8 @@ interface ReconciliationStatsBarProps {
   onTabChange: (tab: BankingActiveTab) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  onBulkResolve?: () => void;
+  isBulkResolving?: boolean;
 }
 
 export default function ReconciliationStatsBar({
@@ -18,6 +20,8 @@ export default function ReconciliationStatsBar({
   onTabChange,
   searchQuery,
   onSearchChange,
+  onBulkResolve,
+  isBulkResolving = false,
 }: ReconciliationStatsBarProps) {
   return (
     <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
@@ -101,15 +105,29 @@ export default function ReconciliationStatsBar({
         </button>
       </div>
 
-      <div className="relative min-w-[260px]">
-        <Search className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search narration, ref #, or party..."
-          className="w-full bg-card border border-border/60 rounded-xl pl-10 pr-4 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-        />
+      <div className="flex items-center gap-2 flex-wrap">
+        {onBulkResolve && (summary?.needs_review_count || 0) > 0 && (
+          <button
+            onClick={onBulkResolve}
+            disabled={isBulkResolving}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50"
+            title="Auto-confirm all high-confidence suggested matches in 1-click"
+          >
+            <Sparkles className={`w-3.5 h-3.5 ${isBulkResolving ? "animate-spin" : ""}`} />
+            <span>{isBulkResolving ? "Resolving..." : `Auto-Confirm All (${summary?.needs_review_count})`}</span>
+          </button>
+        )}
+
+        <div className="relative min-w-[260px]">
+          <Search className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search narration, ref #, or party..."
+            className="w-full bg-card border border-border/60 rounded-xl pl-10 pr-4 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          />
+        </div>
       </div>
     </div>
   );

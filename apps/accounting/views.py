@@ -287,6 +287,37 @@ class TrialBalanceAPIView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+class ProfitAndLossReportAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        from apps.accounts.permissions import get_authorized_company
+        from apps.accounting.services.financial_statements_service import FinancialStatementsService
+        company_id = kwargs.get('company_id')
+        company = get_authorized_company(request, company_id=company_id)
+        from_date = request.query_params.get('from_date')
+        to_date = request.query_params.get('to_date')
+        try:
+            data = FinancialStatementsService.generate_profit_and_loss(company, from_date, to_date)
+            return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class BalanceSheetReportAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        from apps.accounts.permissions import get_authorized_company
+        from apps.accounting.services.financial_statements_service import FinancialStatementsService
+        company_id = kwargs.get('company_id')
+        company = get_authorized_company(request, company_id=company_id)
+        as_of_date = request.query_params.get('as_of_date') or request.query_params.get('to_date')
+        try:
+            data = FinancialStatementsService.generate_balance_sheet(company, as_of_date)
+            return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 class ListVouchersAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
     

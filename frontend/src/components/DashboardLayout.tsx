@@ -298,6 +298,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       </div>
                     </Link>
                     <Link
+                      href="/reports/profit-and-loss"
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      onClick={() => setIsMoreDropdownOpen(false)}
+                    >
+                      <div>
+                        <div className="font-medium">Profit & Loss</div>
+                        <div className="text-xs text-muted-foreground">Trading & P&L statement</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/reports/balance-sheet"
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      onClick={() => setIsMoreDropdownOpen(false)}
+                    >
+                      <div>
+                        <div className="font-medium">Balance Sheet</div>
+                        <div className="text-xs text-muted-foreground">Financial position & net worth</div>
+                      </div>
+                    </Link>
+                    <Link
                       href="/export/tally"
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
@@ -707,6 +727,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 }`}
               >
                 <span>Trial Balance</span>
+              </Link>
+              <Link
+                href="/reports/profit-and-loss"
+                onClick={() => setIsMobileNavOpen(false)}
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                  pathname.startsWith("/reports/profit-and-loss") ? "bg-muted font-semibold text-foreground" : "text-muted-foreground hover:bg-muted/60"
+                }`}
+              >
+                <span>Profit & Loss</span>
+              </Link>
+              <Link
+                href="/reports/balance-sheet"
+                onClick={() => setIsMobileNavOpen(false)}
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                  pathname.startsWith("/reports/balance-sheet") ? "bg-muted font-semibold text-foreground" : "text-muted-foreground hover:bg-muted/60"
+                }`}
+              >
+                <span>Balance Sheet</span>
               </Link>
               <Link
                 href="/audit"

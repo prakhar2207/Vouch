@@ -91,6 +91,7 @@ export default function BankingPage() {
   const [actionRemarks, setActionRemarks] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [directionTogglingId, setDirectionTogglingId] = useState<string | null>(null);
+  const [isBulkResolving, setIsBulkResolving] = useState<boolean>(false);
 
   const [confirmModalConfig, setConfirmModalConfig] = useState<{
     isOpen: boolean;
@@ -714,6 +715,45 @@ export default function BankingPage() {
     }
   };
 
+  const handleBulkResolve = async () => {
+    if (!summary?.needs_review_count || summary.needs_review_count === 0) {
+      toast.info("No Transactions", "There are no suggested transactions pending review.");
+      return;
+    }
+
+    if (!window.confirm(`Auto-confirm and reconcile all ${summary.needs_review_count} suggested bank matches?`)) {
+      return;
+    }
+
+    setIsBulkResolving(true);
+    try {
+      const headers = getHeaders();
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/accounting/banking/transactions/bulk-resolve/`,
+        { company_id: companyId, min_confidence: 75 },
+        { headers }
+      );
+
+      if (res.data?.success) {
+        toast.success(
+          "Bulk Reconciliation Complete",
+          `Successfully auto-confirmed ${res.data.resolved_count} transactions (Total: ₹${res.data.total_amount}).`
+        );
+        fetchTransactionsAndSummary();
+      } else {
+        toast.error("Bulk Reconciliation", res.data?.message || "No transactions resolved.");
+      }
+    } catch (err: any) {
+      console.error("Bulk resolve error:", err);
+      toast.error(
+        "Bulk Reconciliation Failed",
+        err.response?.data?.error || err.message || "Could not bulk-resolve transactions."
+      );
+    } finally {
+      setIsBulkResolving(false);
+    }
+  };
+
   const filteredTransactions = useMemo(() => {
     if (!searchQuery.trim()) return transactions;
     const q = searchQuery.toLowerCase();
@@ -941,6 +981,8 @@ export default function BankingPage() {
           onTabChange={setActiveTab}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          onBulkResolve={handleBulkResolve}
+          isBulkResolving={isBulkResolving}
         />
 
         {/* Transactions Card List */}

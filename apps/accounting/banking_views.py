@@ -260,6 +260,81 @@ class BankTransactionResolveAPIView(APIView):
             return Response({"error": f"Resolution failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class BankTransactionBulkResolveAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        """
+        Bulk resolves all qualifying bank transactions in an atomic transaction.
+        Payload options:
+        - transaction_ids: list of UUIDs to resolve
+        - min_confidence: threshold (default 85) to auto-select suggested matches
+        """
+        company = get_authorized_company(request)
+        tx_ids = request.data.get('transaction_ids', [])
+        min_confidence = float(request.data.get('min_confidence', 80))
+
+        from django.db import transaction
+        from decimal import Decimal
+
+        qs = BankTransaction.objects.filter(
+            company=company,
+            is_excluded=False
+        ).exclude(status__in=['MATCHED', 'RECONCILED'])
+
+        if tx_ids:
+            qs = qs.filter(id__in=tx_ids)
+        else:
+            confidence_threshold = min_confidence / 100.0 if min_confidence > 1 else min_confidence
+            qs = qs.filter(
+                matched_party__isnull=False,
+                match_confidence__gte=confidence_threshold
+            )
+
+        transactions_to_resolve = list(qs)
+        if not transactions_to_resolve:
+            return Response({
+                "success": True,
+                "resolved_count": 0,
+                "total_amount": "0.00",
+                "message": "No matching transactions eligible for bulk reconciliation."
+            }, status=status.HTTP_200_OK)
+
+        resolved_count = 0
+        total_amount = Decimal('0.00')
+        errors = []
+
+        with transaction.atomic():
+            for tx in transactions_to_resolve:
+                try:
+                    action_type = "RECORD_EXPENSE" if tx.matched_party.ledger_type == "EXPENSE" else "MATCH_PARTY"
+                    payload = {}
+                    if action_type == "RECORD_EXPENSE":
+                        payload["expense_ledger_id"] = str(tx.matched_party.id)
+                    else:
+                        payload["party_id"] = str(tx.matched_party.id)
+
+                    res = BankReconciliationService.resolve_transaction(
+                        bank_tx=tx,
+                        action_type=action_type,
+                        payload=payload,
+                        user=request.user
+                    )
+                    resolved_count += 1
+                    amount_val = tx.credit_amount if tx.credit_amount > Decimal('0.00') else tx.debit_amount
+                    total_amount += amount_val
+                except Exception as e:
+                    errors.append(f"Tx {tx.id}: {str(e)}")
+
+        return Response({
+            "success": True,
+            "resolved_count": resolved_count,
+            "total_amount": str(total_amount),
+            "errors": errors if errors else None,
+            "message": f"Successfully auto-confirmed {resolved_count} transactions (Total: ₹{total_amount:.2f})."
+        }, status=status.HTTP_200_OK)
+
+
 class PartyMappingListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 

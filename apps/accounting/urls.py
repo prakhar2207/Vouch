@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (
     CreateSalesInvoiceAPIView, CreatePurchaseInvoiceAPIView, TrialBalanceAPIView, 
+    ProfitAndLossReportAPIView, BalanceSheetReportAPIView,
     ListVouchersAPIView, VoucherDetailAPIView, VoucherAttachmentAPIView, LedgerStatementAPIView, 
     CreatePaymentReceiptAPIView, ListPaymentReceiptAPIView, UniversalVoucherAPIView,
     SyncTaxLedgersAPIView, PartyRatesAPIView, RebuildBalancesAPIView
@@ -22,6 +23,10 @@ urlpatterns = [
     path('payment-receipt/', CreatePaymentReceiptAPIView.as_view(), name='create_payment_receipt'),
     path('payment-receipts/<uuid:company_id>/', ListPaymentReceiptAPIView.as_view(), name='list_payment_receipts'),
     path('reports/trial-balance/<uuid:company_id>/', TrialBalanceAPIView.as_view(), name='trial_balance'),
+    path('reports/profit-and-loss/', ProfitAndLossReportAPIView.as_view(), name='profit_and_loss_report'),
+    path('reports/profit-and-loss/<uuid:company_id>/', ProfitAndLossReportAPIView.as_view(), name='profit_and_loss_report_company'),
+    path('reports/balance-sheet/', BalanceSheetReportAPIView.as_view(), name='balance_sheet_report'),
+    path('reports/balance-sheet/<uuid:company_id>/', BalanceSheetReportAPIView.as_view(), name='balance_sheet_report_company'),
     path('vouchers/detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='voucher_detail'),
     path('voucher-detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='voucher_detail_alias'),
     path('vouchers/<uuid:voucher_id>/attachment/', VoucherAttachmentAPIView.as_view(), name='voucher_attachment'),
@@ -56,6 +61,7 @@ urlpatterns = [
     path('banking/transactions/<uuid:pk>/', apps.accounting.banking_views.BankTransactionDetailAPIView.as_view(), name='banking_transaction_detail'),
     path('banking/transactions/<uuid:pk>/toggle-direction/', apps.accounting.banking_views.BankTransactionToggleDirectionAPIView.as_view(), name='banking_transaction_toggle_direction'),
     path('banking/transactions/<uuid:pk>/resolve/', apps.accounting.banking_views.BankTransactionResolveAPIView.as_view(), name='banking_transaction_resolve'),
+    path('banking/transactions/bulk-resolve/', apps.accounting.banking_views.BankTransactionBulkResolveAPIView.as_view(), name='banking_transaction_bulk_resolve'),
     path('banking/mappings/', apps.accounting.banking_views.PartyMappingListAPIView.as_view(), name='banking_mappings'),
     path('banking/mappings/<uuid:pk>/', apps.accounting.banking_views.PartyMappingListAPIView.as_view(), name='banking_mapping_detail'),
     path('banking/summary/', apps.accounting.banking_views.BankSummaryAPIView.as_view(), name='banking_summary'),
