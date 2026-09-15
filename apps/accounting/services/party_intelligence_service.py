@@ -177,12 +177,49 @@ class PartyIntelligenceService:
                     "is_cash_deposit": True
                 }
 
-        # Fetch active party ledgers for the company
+        # Check for Bank Expense / Interest / Charges on Debit transactions
+        bank_expense_match = not is_receipt and bool(re.search(
+            r'\b(?:DEBIT\s+INTEREST|INTEREST\s+CAPITALIZED|INT(?:EREST)?\.?\s*(?:PD|COLL|DR|DEBIT)|'
+            r'BANK\s+CHARGES?|SERVICE\s+CHARGES?|SMS\s*(?:ALERT)?\s*CH(?:AR)?G(?:ES)?|'
+            r'FOLIO\s*CH(?:AR)?G(?:ES)?|CONSOLIDATED\s*(?:CHG|CHARGES?)|'
+            r'ANNUAL\s*(?:MAINTENANCE\s*)?FEE|AMC\s*CH(?:AR)?G(?:ES)?|'
+            r'MIN(?:IMUM)?\s*BAL(?:ANCE)?\s*CH(?:AR)?G(?:ES)?|ATM\s*CH(?:AR)?G(?:ES)?|'
+            r'INSPECTION\s*CH(?:AR)?G(?:ES)?|PROCESSING\s*FEE)\b',
+            norm_narration,
+            re.IGNORECASE
+        ))
+        if bank_expense_match:
+            exp_ledger = None
+            if 'INTEREST' in norm_narration:
+                exp_ledger = Ledger.objects.filter(company=company, name__icontains='interest', is_archived=False).first()
+            if not exp_ledger:
+                exp_ledger = Ledger.objects.filter(company=company, name__icontains='charge', is_archived=False).first()
+            if not exp_ledger:
+                exp_ledger = Ledger.objects.filter(company=company, group__nature='EXPENSE', is_archived=False).first()
+
+            if exp_ledger:
+                signals_triggered.append(f"Detected Bank Expense: {exp_ledger.name}")
+                return {
+                    "matched_party": exp_ledger,
+                    "matched_invoice": None,
+                    "confidence": 0.95,
+                    "signals": signals_triggered,
+                    "suggested_matches": [{
+                        "party_id": str(exp_ledger.id),
+                        "party_name": exp_ledger.name,
+                        "confidence": 95.0,
+                        "outstanding": str(exp_ledger.current_balance),
+                        "rationale": "Bank expense pattern match"
+                    }],
+                    "is_bank_expense": True
+                }
+
+        # Fetch active party ledgers for the company (excluding expense accounts)
         parties = list(Ledger.objects.filter(
             company=company,
             ledger_type__in=['CUSTOMER', 'SUPPLIER', 'GENERAL'],
             is_archived=False
-        ))
+        ).exclude(group__nature='EXPENSE'))
 
         gstin_in_text = cls.extract_gstin(norm_narration)
         phone_in_text = cls.extract_phone(norm_narration)

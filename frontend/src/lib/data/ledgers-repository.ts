@@ -147,6 +147,44 @@ export class LedgersRepository {
     return { data: result, isLocal: true };
   }
 
+  async refreshLedgers(companyId: string): Promise<SyncedLedger[]> {
+    if (!companyId) return [];
+    try {
+      const token = getAccessToken();
+      if (!token) return [];
+      const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
+      const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${companyId}/`, { headers, timeout: 5000 });
+      const raw = res.data?.data || (Array.isArray(res.data) ? res.data : []);
+      if (raw.length > 0) {
+        const toPut: SyncedLedger[] = raw.map((l: any) => ({
+          id: String(l.id),
+          companyId,
+          name: l.name,
+          ledgerType: l.ledger_type || l.canonical_role || "GENERAL",
+          group: l.group || l.group_name || "",
+          group_id: l.group_id || "",
+          nature: l.nature || "ASSET",
+          gstin: l.gstin || "",
+          stateCode: l.state_code || "",
+          currentBalance: Number(l.current_balance) || 0,
+          openingBalance: Number(l.opening_balance) || 0,
+          openingBalanceType: l.opening_balance_type || "DEBIT",
+          phone: l.phone || "",
+          balanceState: l.balance_state,
+          displayAmount: Number(l.display_amount) || 0,
+          normalBalance: l.normal_balance,
+          balanceDirection: l.balance_direction,
+          serverUpdatedAt: Date.now(),
+        }));
+        await offlineDb.syncedLedgers.bulkPut(toPut);
+        return toPut;
+      }
+    } catch (err) {
+      console.warn("[LedgersRepo] Refresh failed:", err);
+    }
+    return [];
+  }
+
   async saveLedgers(companyId: string, ledgers: SyncedLedger[]): Promise<void> {
     if (!ledgers || ledgers.length === 0) return;
     await offlineDb.syncedLedgers.bulkPut(ledgers);

@@ -295,6 +295,31 @@ class BankIntelligenceAndAccountingHealthTests(APITestCase):
         self.assertEqual(next_match['matched_party'], self.customer)
         self.assertEqual(next_match['confidence'], 1.0)
 
+    def test_09b_bank_expense_interest_and_charges_detection(self):
+        """Scenario 9b: Debit interest and bank charges are detected as bank expenses, not parties."""
+        int_ledger = Ledger.objects.create(
+            company=self.company, group=self.exp_grp, name="Bank Interest", ledger_type="EXPENSE"
+        )
+        chg_ledger = Ledger.objects.create(
+            company=self.company, group=self.exp_grp, name="Bank Charges", ledger_type="EXPENSE"
+        )
+
+        res_interest = PartyIntelligenceService.match_transaction(
+            company=self.company,
+            narration="CASA DEBIT INTEREST CAPITALIZED Chq: -",
+            debit_amount=Decimal('452.00')
+        )
+        self.assertTrue(res_interest.get('is_bank_expense'))
+        self.assertEqual(res_interest['matched_party'], int_ledger)
+
+        res_charges = PartyIntelligenceService.match_transaction(
+            company=self.company,
+            narration="CONSOLIDATED CHARGES FOR AMC Q2",
+            debit_amount=Decimal('118.00')
+        )
+        self.assertTrue(res_charges.get('is_bank_expense'))
+        self.assertEqual(res_charges['matched_party'], chg_ledger)
+
     # -------------------------------------------------------------
     # 3. Reconciliation & Auto-Allocation Tests
     # -------------------------------------------------------------

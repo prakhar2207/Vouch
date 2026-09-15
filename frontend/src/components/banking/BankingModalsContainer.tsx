@@ -41,6 +41,7 @@ interface BankingModalsContainerProps {
 
   selectedTx: BankTransactionItem | null;
   actionType: BankingActionType | null;
+  onActionTypeChange?: (type: BankingActionType) => void;
   onCloseAction: () => void;
   actionTargetPartyId: string;
   onTargetPartyChange: (id: string) => void;
@@ -103,6 +104,7 @@ export default function BankingModalsContainer({
   onDeleteMapping,
   selectedTx,
   actionType,
+  onActionTypeChange,
   onCloseAction,
   actionTargetPartyId,
   onTargetPartyChange,
@@ -350,7 +352,7 @@ export default function BankingModalsContainer({
                     (parseFloat(selectedTx.credit_amount) > 0 ? "Confirm Customer Receipt & Save Rule" : "Confirm Supplier Payment & Save Rule")}
                   {actionType === "RECORD_PAYMENT" &&
                     (parseFloat(selectedTx.credit_amount) > 0 ? "Record Customer Receipt" : "Record Supplier Payment")}
-                  {actionType === "RECORD_EXPENSE" && "Record Bank Expense"}
+                  {actionType === "RECORD_EXPENSE" && "Record Business Expense (Interest / Charges / Bills)"}
                   {actionType === "RECORD_TRANSFER" && "Contra Transfer (Bank / Cash)"}
                   {actionType === "OWNER_DRAWING" && "Record Owner Drawing"}
                   {actionType === "IGNORE" && "Ignore Transaction"}
@@ -363,6 +365,71 @@ export default function BankingModalsContainer({
                 </button>
               </div>
               <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{selectedTx.description}</p>
+
+              {/* Classification Switcher Tabs */}
+              {onActionTypeChange && (
+                <div className="flex items-center gap-1.5 mt-3 p-1 bg-muted/60 rounded-xl border border-border/40 overflow-x-auto">
+                  <button
+                    type="button"
+                    onClick={() => onActionTypeChange("RECORD_PAYMENT")}
+                    className={`flex-1 min-w-[75px] py-1.5 px-2 text-[11px] font-semibold rounded-lg transition-all text-center cursor-pointer ${
+                      actionType === "RECORD_PAYMENT" || actionType === "MATCH_PARTY"
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {parseFloat(selectedTx.credit_amount) > 0 ? "Customer" : "Supplier"}
+                  </button>
+                  {parseFloat(selectedTx.debit_amount) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => onActionTypeChange("RECORD_EXPENSE")}
+                      className={`flex-1 min-w-[75px] py-1.5 px-2 text-[11px] font-semibold rounded-lg transition-all text-center cursor-pointer ${
+                        actionType === "RECORD_EXPENSE"
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                      }`}
+                    >
+                      Expense
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onActionTypeChange("RECORD_TRANSFER")}
+                    className={`flex-1 min-w-[75px] py-1.5 px-2 text-[11px] font-semibold rounded-lg transition-all text-center cursor-pointer ${
+                      actionType === "RECORD_TRANSFER"
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                    }`}
+                  >
+                    Transfer
+                  </button>
+                  {parseFloat(selectedTx.debit_amount) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => onActionTypeChange("OWNER_DRAWING")}
+                      className={`flex-1 min-w-[75px] py-1.5 px-2 text-[11px] font-semibold rounded-lg transition-all text-center cursor-pointer ${
+                        actionType === "OWNER_DRAWING"
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                      }`}
+                    >
+                      Drawing
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onActionTypeChange("IGNORE")}
+                    className={`flex-1 min-w-[55px] py-1.5 px-2 text-[11px] font-semibold rounded-lg transition-all text-center cursor-pointer ${
+                      actionType === "IGNORE"
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                    }`}
+                  >
+                    Skip
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="p-5 space-y-4">
@@ -378,6 +445,20 @@ export default function BankingModalsContainer({
                     placeholder="-- Choose Party --"
                     searchPlaceholder="Search party name, GSTIN, phone..."
                   />
+
+                  {parseFloat(selectedTx.debit_amount) > 0 && onActionTypeChange && (
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-2 px-1">
+                      <span>Is this Bank Interest, Bank Charges, or Fee?</span>
+                      <button
+                        type="button"
+                        onClick={() => onActionTypeChange("RECORD_EXPENSE")}
+                        className="text-primary hover:underline font-semibold cursor-pointer"
+                      >
+                        Classify as Expense →
+                      </button>
+                    </div>
+                  )}
+
                   <div className="p-2.5 rounded-lg bg-primary/5 border border-primary/20 text-[11px] text-muted-foreground mt-2 space-y-1">
                     <div className="font-semibold text-foreground flex items-center gap-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-primary" />
@@ -394,16 +475,66 @@ export default function BankingModalsContainer({
 
               {actionType === "RECORD_EXPENSE" && (
                 <div>
-                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1.5">
-                    Select Expense Ledger
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">
+                      Select Expense Ledger
+                    </label>
+                    <span className="text-[10px] text-muted-foreground">
+                      {expenseOptions.length} available
+                    </span>
+                  </div>
                   <SearchableSelect
                     value={actionExpenseLedgerId}
                     onChange={onExpenseLedgerChange}
                     options={expenseOptions}
-                    placeholder="-- Choose Expense Account --"
+                    placeholder="-- Choose Expense Account (Bank Charges, Interest, etc.) --"
                     searchPlaceholder="Search expense category or ledger..."
                   />
+
+                  {/* Quick Pick Chips for popular expenses */}
+                  {expenseOptions.length > 0 && (
+                    <div className="mt-2.5">
+                      <div className="text-[10px] font-medium text-muted-foreground mb-1.5">Quick Pick:</div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {expenseOptions
+                          .filter((opt) => {
+                            const n = opt.name.toLowerCase();
+                            return (
+                              n.includes("interest") ||
+                              n.includes("charge") ||
+                              n.includes("fee") ||
+                              n.includes("rent") ||
+                              n.includes("sms")
+                            );
+                          })
+                          .slice(0, 5)
+                          .map((opt) => (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => onExpenseLedgerChange(opt.id)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                                actionExpenseLedgerId === opt.id
+                                  ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
+                                  : "bg-muted/50 border-border/60 text-foreground hover:bg-muted"
+                              }`}
+                            >
+                              {opt.name}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-[11px] text-muted-foreground mt-3 space-y-1">
+                    <div className="font-semibold text-foreground flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>Direct Accounting Impact</span>
+                    </div>
+                    <p>
+                      Creates a balanced Payment Voucher immediately debiting the selected expense account and crediting this bank account.
+                    </p>
+                  </div>
                 </div>
               )}
 

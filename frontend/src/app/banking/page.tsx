@@ -178,6 +178,19 @@ export default function BankingPage() {
       if (banks.length > 0 && !selectedBankId) {
         setSelectedBankId(banks[0].id);
       }
+
+      // Background fresh sync from server to ensure latest expense accounts and groups
+      ledgersRepository.refreshLedgers(cid).then((refreshed) => {
+        if (refreshed && refreshed.length > 0) {
+          setAllLedgers(refreshed as any[]);
+          const freshBanks = (refreshed as any[]).filter(
+            (l: any) => l.ledgerType === "BANK" || l.ledger_type === "BANK"
+          );
+          if (freshBanks.length > 0) {
+            setBankLedgers(freshBanks as any[]);
+          }
+        }
+      });
     } catch (err: any) {
       console.error(err);
       toast.error("Initialization Failed", err.message || "Failed to load bank accounts.");
@@ -455,15 +468,81 @@ export default function BankingPage() {
     type: BankingActionType
   ) => {
     setSelectedTx(tx);
-    setActionType(type);
     setActionRemarks("");
-    if (tx.matched_party) {
+
+    const isDebit = parseFloat(tx.debit_amount) > 0;
+    const desc = (tx.description || tx.normalized_narration || "").toLowerCase();
+    const isExpenseCue = isDebit && (
+      desc.includes("interest") ||
+      desc.includes("charge") ||
+      desc.includes("chg") ||
+      desc.includes("fee") ||
+      desc.includes("sms") ||
+      desc.includes("amc") ||
+      desc.includes("tax") ||
+      desc.includes("gst") ||
+      desc.includes("capitalized")
+    );
+    const isExpenseMatch =
+      tx.matched_party?.ledger_type === "EXPENSE" ||
+      (typeof tx.match_notes === "object" && (tx.match_notes as any)?.is_bank_expense);
+
+    let effectiveType = type;
+    if (isExpenseMatch || (isExpenseCue && (type === "RECORD_PAYMENT" || (type === "MATCH_PARTY" && (tx.match_confidence || 0) < 85)))) {
+      effectiveType = "RECORD_EXPENSE";
+    }
+
+    setActionType(effectiveType);
+
+    if (tx.matched_party && !isExpenseMatch && effectiveType !== "RECORD_EXPENSE") {
       setActionTargetPartyId(tx.matched_party.id);
     } else {
       setActionTargetPartyId("");
     }
-    setActionExpenseLedgerId("");
+
+    // Auto-select smart expense ledger if applicable
+    let matchedExpId = "";
+    if (isExpenseMatch && tx.matched_party) {
+      matchedExpId = tx.matched_party.id;
+    } else if (effectiveType === "RECORD_EXPENSE" || isExpenseCue) {
+      if (desc.includes("interest")) {
+        const intLedger = expenseLedgers.find((l) => l.name.toLowerCase().includes("interest"));
+        if (intLedger) matchedExpId = intLedger.id;
+      }
+      if (!matchedExpId && (desc.includes("charge") || desc.includes("chg") || desc.includes("fee") || desc.includes("sms"))) {
+        const chgLedger = expenseLedgers.find((l) =>
+          l.name.toLowerCase().includes("charge") || l.name.toLowerCase().includes("fee")
+        );
+        if (chgLedger) matchedExpId = chgLedger.id;
+      }
+      if (!matchedExpId && expenseLedgers.length > 0) {
+        matchedExpId = expenseLedgers[0].id;
+      }
+    }
+    setActionExpenseLedgerId(matchedExpId);
     setActionTransferLedgerId("");
+  };
+
+  const handleActionTypeChange = (newType: BankingActionType) => {
+    setActionType(newType);
+    if (newType === "RECORD_EXPENSE" && !actionExpenseLedgerId && selectedTx) {
+      const desc = (selectedTx.description || selectedTx.normalized_narration || "").toLowerCase();
+      let matchedExpId = "";
+      if (desc.includes("interest")) {
+        const intLedger = expenseLedgers.find((l) => l.name.toLowerCase().includes("interest"));
+        if (intLedger) matchedExpId = intLedger.id;
+      }
+      if (!matchedExpId && (desc.includes("charge") || desc.includes("chg") || desc.includes("fee") || desc.includes("sms"))) {
+        const chgLedger = expenseLedgers.find((l) =>
+          l.name.toLowerCase().includes("charge") || l.name.toLowerCase().includes("fee")
+        );
+        if (chgLedger) matchedExpId = chgLedger.id;
+      }
+      if (!matchedExpId && expenseLedgers.length > 0) {
+        matchedExpId = expenseLedgers[0].id;
+      }
+      if (matchedExpId) setActionExpenseLedgerId(matchedExpId);
+    }
   };
 
   const closeActionModal = () => {
@@ -562,8 +641,10 @@ export default function BankingPage() {
 
   const customerAndSupplierLedgers = useMemo(() => {
     return allLedgers.filter((l) => {
-      const type = l.ledgerType || l.ledger_type;
-      const role = l.canonical_role;
+      const type = (l.ledgerType || l.ledger_type || "").toUpperCase();
+      const role = (l.canonical_role || "").toUpperCase();
+      const nature = (l.nature || "").toUpperCase();
+      if (nature === "EXPENSE") return false;
       return (
         type === "CUSTOMER" ||
         type === "SUPPLIER" ||
@@ -582,12 +663,42 @@ export default function BankingPage() {
 
   const expenseLedgers = useMemo(() => {
     return allLedgers.filter((l) => {
-      const type = l.ledgerType || l.ledger_type;
-      return (
-        type === "EXPENSE" ||
-        l.nature === "EXPENSE" ||
-        (l.group && l.group.toLowerCase().includes("expense"))
-      );
+      const type = (l.ledgerType || l.ledger_type || "").toUpperCase();
+      const nature = (l.nature || "").toUpperCase();
+      const group = (l.group || l.group_name || "").toLowerCase();
+      const name = (l.name || "").toLowerCase();
+
+      if (type === "EXPENSE" || nature === "EXPENSE") return true;
+      if (group.includes("expense") || group.includes("exp")) return true;
+      if (group.includes("indirect") || group.includes("direct")) return true;
+
+      // Common business expense keywords if not explicitly a customer, supplier, bank, or cash
+      const isLiquidOrParty =
+        type === "CUSTOMER" ||
+        type === "SUPPLIER" ||
+        type === "BANK" ||
+        type === "CASH" ||
+        (l.canonical_role && (l.canonical_role === "CUSTOMER" || l.canonical_role === "SUPPLIER"));
+
+      if (!isLiquidOrParty) {
+        if (
+          name.includes("interest") ||
+          name.includes("charge") ||
+          name.includes("fee") ||
+          name.includes("tax") ||
+          name.includes("rent") ||
+          name.includes("salary") ||
+          name.includes("commission") ||
+          name.includes("cartage") ||
+          name.includes("freight") ||
+          name.includes("amc") ||
+          name.includes("depreciation")
+        ) {
+          return true;
+        }
+      }
+
+      return false;
     });
   }, [allLedgers]);
 
@@ -833,6 +944,7 @@ export default function BankingPage() {
           onDeleteMapping={deleteMapping}
           selectedTx={selectedTx}
           actionType={actionType}
+          onActionTypeChange={handleActionTypeChange}
           onCloseAction={closeActionModal}
           actionTargetPartyId={actionTargetPartyId}
           onTargetPartyChange={setActionTargetPartyId}

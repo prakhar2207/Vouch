@@ -1467,7 +1467,8 @@ class BankStatementService:
                     match_notes={
                         "is_duplicate": False,
                         "signals": match_res.get('signals', []),
-                        "suggested_matches": match_res.get('suggested_matches', [])
+                        "suggested_matches": match_res.get('suggested_matches', []),
+                        "is_bank_expense": match_res.get('is_bank_expense', False)
                     }
                 )
 

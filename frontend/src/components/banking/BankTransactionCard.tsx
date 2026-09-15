@@ -29,7 +29,23 @@ export default function BankTransactionCard({
   onViewVouchers,
 }: BankTransactionCardProps) {
   const isCredit = parseFloat(tx.credit_amount) > 0;
+  const isDebit = !isCredit;
   const amountVal = isCredit ? parseFloat(tx.credit_amount) : parseFloat(tx.debit_amount);
+  const descLower = (tx.description || tx.normalized_narration || "").toLowerCase();
+  const isLikelyExpense = isDebit && (
+    descLower.includes("interest") ||
+    descLower.includes("charge") ||
+    descLower.includes("chg") ||
+    descLower.includes("fee") ||
+    descLower.includes("sms") ||
+    descLower.includes("amc") ||
+    descLower.includes("tax") ||
+    descLower.includes("gst") ||
+    descLower.includes("capitalized")
+  );
+  const isExpenseMatch =
+    tx.matched_party?.ledger_type === "EXPENSE" ||
+    (typeof tx.match_notes === "object" && (tx.match_notes as any)?.is_bank_expense);
 
   return (
     <React.Fragment>
@@ -128,7 +144,9 @@ export default function BankTransactionCard({
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs font-semibold text-foreground">
-                    {isCredit
+                    {isExpenseMatch
+                      ? `Bank Expense: ${tx.matched_party.name}`
+                      : isCredit
                       ? `Receipt from ${tx.matched_party.name}`
                       : `Payment to ${tx.matched_party.name}`}
                   </span>
@@ -141,6 +159,11 @@ export default function BankTransactionCard({
                   }`}>
                     {tx.match_confidence}%
                   </span>
+                  {isLikelyExpense && !isExpenseMatch && (
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                      Possible Expense
+                    </span>
+                  )}
                 </div>
                 {(() => {
                   if (!tx.match_notes) return null;
@@ -176,9 +199,9 @@ export default function BankTransactionCard({
             </div>
 
             {tx.status !== "MATCHED" && tx.status !== "RECONCILED" && (
-              <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
                 <button
-                  onClick={() => onOpenActionModal(tx, "MATCH_PARTY")}
+                  onClick={() => onOpenActionModal(tx, isExpenseMatch ? "RECORD_EXPENSE" : "MATCH_PARTY")}
                   className="px-3.5 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold transition-colors cursor-pointer flex-1 sm:flex-initial text-center"
                 >
                   Confirm
@@ -189,6 +212,19 @@ export default function BankTransactionCard({
                 >
                   Change
                 </button>
+                {isDebit && (
+                  <button
+                    onClick={() => onOpenActionModal(tx, "RECORD_EXPENSE")}
+                    className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
+                      isLikelyExpense
+                        ? "bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25"
+                        : "border-border/60 hover:bg-muted text-foreground"
+                    }`}
+                    title="Classify as Bank Interest, Charges, or Business Expense"
+                  >
+                    Expense
+                  </button>
+                )}
                 <button
                   onClick={() => onOpenActionModal(tx, "IGNORE")}
                   className="px-2 py-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground text-xs cursor-pointer"
@@ -258,9 +294,13 @@ export default function BankTransactionCard({
             {!isCredit && (
               <button
                 onClick={() => onOpenActionModal(tx, "RECORD_EXPENSE")}
-                className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-muted hover:bg-muted/80 text-foreground border border-border/40 transition-colors cursor-pointer"
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                  isLikelyExpense
+                    ? "bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400 font-bold hover:bg-amber-500/25"
+                    : "bg-muted hover:bg-muted/80 text-foreground border border-border/40"
+                }`}
               >
-                Record Expense
+                Record Expense {isLikelyExpense ? "★" : ""}
               </button>
             )}
 
