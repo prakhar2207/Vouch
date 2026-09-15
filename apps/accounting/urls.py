@@ -2,7 +2,7 @@ from django.urls import path
 from .views import (
     CreateSalesInvoiceAPIView, CreatePurchaseInvoiceAPIView, TrialBalanceAPIView, 
     ProfitAndLossReportAPIView, BalanceSheetReportAPIView,
-    ListVouchersAPIView, VoucherDetailAPIView, VoucherAttachmentAPIView, LedgerStatementAPIView, 
+    ListVouchersAPIView, VoucherDetailAPIView, PublicVoucherDetailAPIView, VoucherAttachmentAPIView, LedgerStatementAPIView, 
     CreatePaymentReceiptAPIView, ListPaymentReceiptAPIView, UniversalVoucherAPIView,
     SyncTaxLedgersAPIView, PartyRatesAPIView, RebuildBalancesAPIView
 )
@@ -29,6 +29,7 @@ urlpatterns = [
     path('reports/balance-sheet/<uuid:company_id>/', BalanceSheetReportAPIView.as_view(), name='balance_sheet_report_company'),
     path('vouchers/detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='voucher_detail'),
     path('voucher-detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='voucher_detail_alias'),
+    path('vouchers/public/<uuid:voucher_id>/', PublicVoucherDetailAPIView.as_view(), name='public_voucher_detail'),
     path('vouchers/<uuid:voucher_id>/attachment/', VoucherAttachmentAPIView.as_view(), name='voucher_attachment'),
     path('reports/ledger-statement/<uuid:company_id>/<uuid:ledger_id>/', LedgerStatementAPIView.as_view(), name='ledger_statement'),
     

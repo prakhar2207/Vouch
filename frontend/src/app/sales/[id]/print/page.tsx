@@ -94,17 +94,31 @@ export default function PrintInvoicePage() {
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState<boolean>(false);
   const [copiedToClipboard, setCopiedToClipboard] = useState<boolean>(false);
   const [shareStatusMessage, setShareStatusMessage] = useState<string | null>(null);
+  const [isAuth, setIsAuth] = useState<boolean>(false);
+  const [copiedLink, setCopiedLink] = useState<boolean>(false);
+  const [copiedMessage, setCopiedMessage] = useState<boolean>(false);
 
   useEffect(() => {
-    if (!isAuthenticated()) { router.push('/login'); return; }
+    setIsAuth(isAuthenticated());
     fetchInvoice();
   }, [invoiceId]);
 
   const fetchInvoice = async () => {
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/detail/${invoiceId}/`, { headers });
+      let res;
+      if (isAuthenticated()) {
+        const token = getAccessToken();
+        const headers = { Authorization: `Bearer ${token}` };
+        try {
+          res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/detail/${invoiceId}/`, { headers });
+        } catch (authErr) {
+          // Fallback to public endpoint if user lacks direct company permissions
+          res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/`);
+        }
+      } else {
+        // Public viewing for recipients without an account
+        res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/`);
+      }
       setInvoice(res.data.data);
 
       try {
@@ -116,9 +130,19 @@ export default function PrintInvoicePage() {
         // E-Way Bill is optional
       }
     } catch (err) {
-      console.error(err);
+      console.error('Failed to load invoice:', err);
     }
   };
+
+  // Auto-download PDF if URL contains ?download=true or ?auto_download=true
+  useEffect(() => {
+    if (invoice && typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('download') === 'true' || urlParams.get('auto_download') === 'true') {
+        handleDownloadPdf();
+      }
+    }
+  }, [invoice]);
 
   if (!invoice) return <div className="p-10 text-center font-mono">Loading Invoice Data...</div>;
 
@@ -254,14 +278,48 @@ export default function PrintInvoicePage() {
     document.body.removeChild(downloadLink);
   };
 
-  const openDesktopWithAutoFallback = (phone: string, filename: string) => {
+  const buildWhatsAppTextMessage = () => {
+    if (!invoice) return '';
+    const invoiceNo = invoice.voucher_number || 'Invoice';
+    const companyName = invoice.company?.name || 'Our Company';
+    const partyName = invoice.party?.name || 'Valued Customer';
+    const total = Number(invoice.total_amount || 0).toLocaleString('en-IN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const publicInvoiceUrl = `${origin}/sales/${invoiceId}/print`;
+
+    return (
+      `*TAX INVOICE: ${invoiceNo}*\n` +
+      `*Company:* ${companyName}\n` +
+      `*Customer:* ${partyName}\n` +
+      `*Total Amount:* ₹${total}\n\n` +
+      `📄 *View & Download Official PDF Invoice:*\n` +
+      `${publicInvoiceUrl}\n\n` +
+      `Thank you for your business!`
+    );
+  };
+
+  const getWhatsAppUrls = () => {
+    const phone = getCleanPhone();
+    const message = buildWhatsAppTextMessage();
+    const encoded = encodeURIComponent(message);
+
     const appUrl = phone 
-      ? `whatsapp://send?phone=${phone}` 
-      : `whatsapp://send`;
+      ? `whatsapp://send?phone=${phone}&text=${encoded}` 
+      : `whatsapp://send?text=${encoded}`;
 
     const webUrl = phone 
-      ? `https://web.whatsapp.com/send?phone=${phone}` 
-      : `https://web.whatsapp.com/`;
+      ? `https://web.whatsapp.com/send?phone=${phone}&text=${encoded}` 
+      : `https://web.whatsapp.com/send?text=${encoded}`;
+
+    return { appUrl, webUrl, message };
+  };
+
+  const openDesktopWithAutoFallback = (phone: string, filename: string) => {
+    const { appUrl, webUrl } = getWhatsAppUrls();
 
     let appOpened = false;
     const onBlur = () => {
@@ -269,8 +327,8 @@ export default function PrintInvoicePage() {
     };
     window.addEventListener('blur', onBlur, { once: true });
 
-    setShareStatusMessage(`Opening WhatsApp... Invoice ${filename} is ready.`);
-    setTimeout(() => setShareStatusMessage(null), 6000);
+    setShareStatusMessage(`Opening WhatsApp with invoice details & PDF link...`);
+    setTimeout(() => setShareStatusMessage(null), 8000);
 
     // Attempt to launch installed desktop WhatsApp application
     try {
@@ -286,14 +344,40 @@ export default function PrintInvoicePage() {
     }, 1500);
   };
 
-  const handleOpenExplicitWhatsApp = (target: 'web' | 'app') => {
-    const phone = getCleanPhone();
-    const url = target === 'web'
-      ? (phone ? `https://web.whatsapp.com/send?phone=${phone}` : `https://web.whatsapp.com/`)
-      : (phone ? `whatsapp://send?phone=${phone}` : `whatsapp://send`);
+  const handleOpenExplicitWhatsApp = async (target: 'web' | 'app') => {
+    setIsGeneratingPdf(true);
+    try {
+      const pdfResult = await generateInvoicePdf();
+      const filename = getCleanInvoiceFilename();
+      if (pdfResult) {
+        triggerPdfDownload(pdfResult.blobUrl, filename);
+      }
+      const { appUrl, webUrl } = getWhatsAppUrls();
+      const url = target === 'web' ? webUrl : appUrl;
+      window.open(url, '_blank');
+      setShareStatusMessage(`Opening ${target === 'web' ? 'WhatsApp Web' : 'WhatsApp App'}... Press Ctrl+V in the chat or drag & drop the downloaded PDF!`);
+      setTimeout(() => setShareStatusMessage(null), 8000);
+    } catch (e) {
+      console.error('Failed to prepare PDF for WhatsApp:', e);
+    } finally {
+      setIsGeneratingPdf(false);
+      setIsWhatsAppModalOpen(false);
+    }
+  };
 
-    window.open(url, '_blank');
-    setIsWhatsAppModalOpen(false);
+  const handleCopyInvoiceLink = () => {
+    if (typeof window === 'undefined') return;
+    const publicUrl = `${window.location.origin}/sales/${invoiceId}/print`;
+    navigator.clipboard.writeText(publicUrl);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 3000);
+  };
+
+  const handleCopyMessageText = () => {
+    const text = buildWhatsAppTextMessage();
+    navigator.clipboard.writeText(text);
+    setCopiedMessage(true);
+    setTimeout(() => setCopiedMessage(false), 3000);
   };
 
   const handleWhatsAppShareClick = async () => {
@@ -332,9 +416,9 @@ export default function PrintInvoicePage() {
           }
         }
 
-        // If Web Share API is not available on mobile, launch WhatsApp directly via mobile scheme
-        const mobileUrl = phone ? `whatsapp://send?phone=${phone}` : `whatsapp://send`;
-        window.location.href = mobileUrl;
+        // If Web Share API is not available on mobile, launch WhatsApp with prefilled text and public link
+        const { appUrl } = getWhatsAppUrls();
+        window.location.href = appUrl;
         return;
       }
 
@@ -359,7 +443,7 @@ export default function PrintInvoicePage() {
       triggerPdfDownload(blobUrl, filename);
 
       // 2. Automatically detect if WhatsApp Desktop Application is installed:
-      // If yes, opens WhatsApp app. If not, automatically opens WhatsApp Web!
+      // If yes, opens WhatsApp app. If not, automatically opens WhatsApp Web with prefilled message & link!
       openDesktopWithAutoFallback(phone, filename);
 
     } catch (err: any) {
@@ -439,13 +523,20 @@ export default function PrintInvoicePage() {
       {/* Print Controls Bar (Hidden on Print) */}
       <div className="print:hidden p-3 bg-slate-900 text-white flex flex-wrap gap-3 justify-between items-center sticky top-0 z-50 shadow-md">
         <div className="flex items-center gap-2">
-          <button 
-            onClick={() => router.back()} 
-            className="text-slate-300 hover:text-white px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Back</span>
-          </button>
+          {isAuth ? (
+            <button 
+              onClick={() => router.back()} 
+              className="text-slate-300 hover:text-white px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Back</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded-lg text-xs font-semibold text-slate-200 border border-slate-700">
+              <FileText className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Invoice {invoice.voucher_number}</span>
+            </div>
+          )}
 
           {/* Layout Toggle: A4 vs 80mm POS Thermal */}
           <div className="flex items-center p-1 bg-slate-800 rounded-xl border border-slate-700 text-xs font-semibold">
@@ -520,10 +611,10 @@ export default function PrintInvoicePage() {
       {/* WHATSAPP MANUAL SELECTION MODAL */}
       {isWhatsAppModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs print:hidden animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-slate-700 text-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 relative">
+          <div className="bg-slate-900 border border-slate-700 text-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 relative">
             <button
               onClick={() => setIsWhatsAppModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -535,7 +626,7 @@ export default function PrintInvoicePage() {
               <div>
                 <h3 className="text-base font-bold text-white">Share Invoice on WhatsApp</h3>
                 <p className="text-xs text-slate-400">
-                  Select your preferred WhatsApp platform
+                  Send PDF & invoice link directly to {invoice.party?.name || 'customer'}
                 </p>
               </div>
             </div>
@@ -545,19 +636,32 @@ export default function PrintInvoicePage() {
               <div className="flex items-center gap-2 text-emerald-400">
                 <Check className="w-4 h-4 shrink-0" />
                 <span>
-                  <strong>{filename}</strong> ready for sending
+                  Invoice PDF <strong>{filename}</strong> generated & ready
                 </span>
               </div>
               <div className="flex items-center gap-2 text-slate-300">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>Customer: <strong>{invoice.party?.name}</strong> {invoice.party?.phone ? `(${invoice.party.phone})` : ''}</span>
               </div>
-              {copiedToClipboard && (
-                <div className="flex items-center gap-2 text-blue-400">
-                  <Copy className="w-3.5 h-3.5 shrink-0" />
-                  <span>Invoice preview copied to clipboard (Press Ctrl+V to paste)</span>
-                </div>
-              )}
+              <div className="flex items-center gap-2 text-blue-400">
+                <Globe className="w-3.5 h-3.5 shrink-0" />
+                <span>Public direct-view & download link included in message</span>
+              </div>
+            </div>
+
+            {/* 3 WAYS TO SHARE EXPLANATION BOX */}
+            <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 space-y-1.5 text-xs text-slate-300">
+              <p className="font-semibold text-white flex items-center gap-1.5">
+                <span>💡 How WhatsApp Web Sharing Works:</span>
+              </p>
+              <p className="text-[11px] text-slate-400">
+                Due to browser security policies, WhatsApp Web cannot automatically attach files from external websites. We have made sharing effortless with 3 methods:
+              </p>
+              <ul className="text-[11px] space-y-1 text-slate-300 list-disc list-inside">
+                <li><strong>Direct PDF Link:</strong> The WhatsApp chat will already contain the secure link for your customer to view & download this PDF directly.</li>
+                <li><strong>Drag & Drop PDF:</strong> <strong>{filename}</strong> is downloaded to your browser — simply drag it into the WhatsApp chat.</li>
+                <li><strong>Instant Image Paste:</strong> Press <strong>Ctrl + V</strong> in the WhatsApp chat to paste the invoice image.</li>
+              </ul>
             </div>
 
             {/* Selection Options */}
@@ -565,31 +669,46 @@ export default function PrintInvoicePage() {
               {/* WhatsApp Web */}
               <button
                 onClick={() => handleOpenExplicitWhatsApp('web')}
-                className="flex flex-col items-center text-center p-4 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-750 hover:border-emerald-500/60 transition-all cursor-pointer group"
+                disabled={isGeneratingPdf}
+                className="flex flex-col items-center text-center p-4 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-750 hover:border-emerald-500/60 transition-all cursor-pointer group disabled:opacity-50"
               >
                 <div className="p-3 rounded-xl bg-blue-500/10 text-blue-400 group-hover:bg-blue-500/20 mb-2">
                   <Globe className="w-6 h-6" />
                 </div>
                 <span className="text-sm font-bold text-white">WhatsApp Web</span>
-                <span className="text-[11px] text-slate-400 mt-1">Open web.whatsapp.com in browser tab</span>
+                <span className="text-[11px] text-slate-400 mt-1">Open web.whatsapp.com with prefilled message & link</span>
               </button>
 
               {/* WhatsApp Application */}
               <button
                 onClick={() => handleOpenExplicitWhatsApp('app')}
-                className="flex flex-col items-center text-center p-4 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-750 hover:border-emerald-500/60 transition-all cursor-pointer group"
+                disabled={isGeneratingPdf}
+                className="flex flex-col items-center text-center p-4 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-750 hover:border-emerald-500/60 transition-all cursor-pointer group disabled:opacity-50"
               >
                 <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500/20 mb-2">
                   <Laptop className="w-6 h-6" />
                 </div>
-                <span className="text-sm font-bold text-white">WhatsApp App</span>
-                <span className="text-[11px] text-slate-400 mt-1">Launch installed Windows/Mac app</span>
+                <span className="text-sm font-bold text-white">WhatsApp Desktop App</span>
+                <span className="text-[11px] text-slate-400 mt-1">Launch installed Windows/Mac WhatsApp app</span>
               </button>
             </div>
 
-            {/* Instruction Footer */}
-            <div className="text-[11px] text-slate-400 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800 text-center">
-              💡 The PDF <strong>{filename}</strong> is saved in your Downloads. In WhatsApp, click <strong>Attach &gt; Document</strong> or press <strong>Ctrl + V</strong> in the chat.
+            {/* Quick Copy Action Buttons */}
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={handleCopyInvoiceLink}
+                className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-medium text-slate-200 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedLink ? 'Link Copied!' : 'Copy PDF Link'}</span>
+              </button>
+              <button
+                onClick={handleCopyMessageText}
+                className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-medium text-slate-200 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                {copiedMessage ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <FileText className="w-3.5 h-3.5" />}
+                <span>{copiedMessage ? 'Message Copied!' : 'Copy Text Summary'}</span>
+              </button>
             </div>
           </div>
         </div>

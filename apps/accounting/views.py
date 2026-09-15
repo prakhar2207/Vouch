@@ -1,6 +1,6 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -423,6 +423,168 @@ class ListVouchersAPIView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+def serialize_voucher_detail(voucher, include_attachment=False):
+    from apps.accounting.models import VoucherItem, PaymentAllocation
+    items = VoucherItem.objects.filter(voucher=voucher).select_related('product', 'product__category')
+    
+    items_data = []
+    for item in items:
+        items_data.append({
+            "id": str(item.id),
+            "product_id": str(item.product.id) if item.product else None,
+            "product_name": item.product.name if item.product else "Unnamed Product",
+            "category_id": str(item.product.category_id) if item.product and item.product.category_id else None,
+            "category_name": item.product.category.name if item.product and item.product.category else "Unassigned",
+            "brand": item.product.brand or "" if item.product else "",
+            "hsn_code": item.product.hsn_code if item.product else "",
+            "quantity": item.quantity,
+            "unit": item.product.unit if item.product else "PCS",
+            "rate": item.rate,
+            "discount_percent": item.discount_percent,
+            "discount_amount": item.discount_amount,
+            "taxable_amount": item.taxable_amount,
+            "gst_rate": item.gst_rate,
+            "total_amount": item.total_amount
+        })
+    
+    # Signature data URL
+    sig_data = None
+    if voucher.company.proprietor_signature:
+        import base64
+        try:
+            sig_data = f"data:image/png;base64,{base64.b64encode(voucher.company.proprietor_signature).decode('utf-8')}"
+        except Exception:
+            pass
+
+    cartage_amount = Decimal('0.00')
+    round_off_amount = Decimal('0.00')
+    payment_ledger_obj = None
+    for entry in voucher.ledger_entries.select_related('ledger').all():
+        lname = entry.ledger.name.lower()
+        if 'cartage' in lname or 'freight' in lname:
+            amt = entry.credit_amount if voucher.voucher_type == 'SALES' else entry.debit_amount
+            if amt > 0:
+                cartage_amount += amt
+        elif 'round off' in lname or entry.ledger.ledger_type == 'ROUND_OFF':
+            if voucher.voucher_type == 'SALES':
+                round_off_amount += (entry.credit_amount - entry.debit_amount)
+            else:
+                round_off_amount += (entry.debit_amount - entry.credit_amount)
+        elif voucher.voucher_type in ['PAYMENT', 'RECEIPT']:
+            if entry.ledger_id != voucher.party_ledger_id:
+                payment_ledger_obj = entry.ledger
+
+    allocations_data = []
+    paid_amount_total = Decimal('0.00')
+    if voucher.voucher_type in ['SALES', 'PURCHASE']:
+        alloc_qs = PaymentAllocation.objects.filter(invoice_voucher=voucher).select_related('payment_voucher').only(
+            'id', 'allocated_amount', 'payment_voucher_id',
+            'payment_voucher__id', 'payment_voucher__voucher_number',
+            'payment_voucher__voucher_type', 'payment_voucher__voucher_date'
+        )
+        for alloc in alloc_qs:
+            paid_amount_total += alloc.allocated_amount
+            allocations_data.append({
+                "id": str(alloc.id),
+                "voucher_id": str(alloc.payment_voucher_id),
+                "voucher_number": alloc.payment_voucher.voucher_number,
+                "voucher_type": alloc.payment_voucher.voucher_type,
+                "date": alloc.payment_voucher.voucher_date.strftime('%Y-%m-%d'),
+                "allocated_amount": float(alloc.allocated_amount)
+            })
+    elif voucher.voucher_type in ['PAYMENT', 'RECEIPT']:
+        alloc_qs = PaymentAllocation.objects.filter(payment_voucher=voucher).select_related('invoice_voucher').only(
+            'id', 'allocated_amount', 'invoice_voucher_id',
+            'invoice_voucher__id', 'invoice_voucher__voucher_number',
+            'invoice_voucher__voucher_type', 'invoice_voucher__voucher_date'
+        )
+        for alloc in alloc_qs:
+            paid_amount_total += alloc.allocated_amount
+            allocations_data.append({
+                "id": str(alloc.id),
+                "voucher_id": str(alloc.invoice_voucher_id),
+                "voucher_number": alloc.invoice_voucher.voucher_number,
+                "voucher_type": alloc.invoice_voucher.voucher_type,
+                "date": alloc.invoice_voucher.voucher_date.strftime('%Y-%m-%d'),
+                "allocated_amount": float(alloc.allocated_amount)
+            })
+
+    return {
+        "id": str(voucher.id),
+        "voucher_number": voucher.voucher_number,
+        "type": voucher.voucher_type,
+        "date": voucher.voucher_date.strftime('%Y-%m-%d'),
+        "status": voucher.status,
+        "total_amount": voucher.total_amount,
+        "paid_amount": float(paid_amount_total),
+        "unallocated_amount": float(max(Decimal('0.00'), (voucher.total_amount or Decimal('0.00')) - paid_amount_total)),
+        "allocations": allocations_data,
+        "cartage_amount": float(cartage_amount),
+        "round_off_amount": float(round_off_amount),
+        "narration": voucher.narration,
+        "reference_number": voucher.reference_number or "",
+        "party_ledger_id": str(voucher.party_ledger.id) if voucher.party_ledger else None,
+        "payment_ledger_id": str(payment_ledger_obj.id) if payment_ledger_obj else None,
+        "payment_ledger_name": payment_ledger_obj.name if payment_ledger_obj else None,
+        "company_id": str(voucher.company.id),
+        "company": {
+            "id": str(voucher.company.id),
+            "name": voucher.company.name,
+            "address": voucher.company.address,
+            "city": voucher.company.city,
+            "gstin": voucher.company.gstin,
+            "state_code": voucher.company.state_code,
+            "state_name": voucher.company.state_name,
+            "phone": voucher.company.phone,
+            "email": voucher.company.email,
+            "tagline": voucher.company.tagline,
+            "proprietor_signature": sig_data,
+            "bank_name": voucher.company.bank_name,
+            "bank_account_number": voucher.company.bank_account_number,
+            "bank_ifsc": voucher.company.bank_ifsc,
+            "bank_branch": voucher.company.bank_branch,
+        },
+        "buyer_details": {
+            "buyer_name": voucher.buyer_name or "",
+            "buyer_address": voucher.buyer_address or "",
+            "buyer_gstin": voucher.buyer_gstin or "",
+            "buyer_state_code": voucher.buyer_state_code or "",
+            "buyer_phone": voucher.buyer_phone or "",
+        },
+        "party": {
+            "id": str(voucher.party_ledger.id) if voucher.party_ledger else None,
+            "name": voucher.buyer_name if voucher.buyer_name else (voucher.party_ledger.name if voucher.party_ledger else "N/A"),
+            "settlement_ledger": voucher.party_ledger.name if voucher.party_ledger else "N/A",
+            "address": voucher.buyer_address if voucher.buyer_address else (voucher.party_ledger.address if voucher.party_ledger else ""),
+            "gstin": voucher.buyer_gstin if voucher.buyer_gstin else (voucher.party_ledger.gstin if voucher.party_ledger else ""),
+            "state_code": voucher.buyer_state_code if voucher.buyer_state_code else (voucher.party_ledger.state_code if voucher.party_ledger else ""),
+            "phone": voucher.buyer_phone if voucher.buyer_phone else (voucher.party_ledger.phone if voucher.party_ledger else ""),
+        } if voucher.party_ledger else None,
+        "has_attachment": bool(voucher.attachment_mime or (hasattr(voucher, 'attachment_data') and voucher.attachment_data)),
+        "attachment_data": voucher.attachment_data if include_attachment else None,
+        "attachment_mime": voucher.attachment_mime,
+        "items": items_data
+    }
+
+
+class PublicVoucherDetailAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, voucher_id):
+        try:
+            from apps.accounting.models import Voucher
+            voucher = Voucher.objects.select_related('company', 'party_ledger').defer('attachment_data').filter(
+                id=voucher_id, voucher_type='SALES'
+            ).first()
+            if not voucher:
+                return Response({"success": False, "error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
+            
+            data = serialize_voucher_detail(voucher, include_attachment=False)
+            return Response({"success": True, "data": data})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 class VoucherDetailAPIView(APIView):
     def get_permissions(self):
         if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
@@ -431,153 +593,13 @@ class VoucherDetailAPIView(APIView):
     
     def get(self, request, voucher_id):
         try:
-            from apps.accounting.models import Voucher, VoucherItem
+            from apps.accounting.models import Voucher
             include_attachment = request.query_params.get('include_attachment', 'false').lower() == 'true'
             voucher_qs = Voucher.objects.select_related('company', 'party_ledger')
             if not include_attachment:
                 voucher_qs = voucher_qs.defer('attachment_data')
             voucher = voucher_qs.get(id=voucher_id, company__users__user=request.user)
-            items = VoucherItem.objects.filter(voucher=voucher).select_related('product', 'product__category')
-            
-            items_data = []
-            for item in items:
-                items_data.append({
-                    "id": str(item.id),
-                    "product_id": str(item.product.id) if item.product else None,
-                    "product_name": item.product.name if item.product else "Unnamed Product",
-                    "category_id": str(item.product.category_id) if item.product and item.product.category_id else None,
-                    "category_name": item.product.category.name if item.product and item.product.category else "Unassigned",
-                    "brand": item.product.brand or "" if item.product else "",
-                    "hsn_code": item.product.hsn_code if item.product else "",
-                    "quantity": item.quantity,
-                    "unit": item.product.unit if item.product else "PCS",
-                    "rate": item.rate,
-                    "discount_percent": item.discount_percent,
-                    "discount_amount": item.discount_amount,
-                    "taxable_amount": item.taxable_amount,
-                    "gst_rate": item.gst_rate,
-                    "total_amount": item.total_amount
-                })
-            
-            # Signature data URL
-            sig_data = None
-            if voucher.company.proprietor_signature:
-                import base64
-                try:
-                    sig_data = f"data:image/png;base64,{base64.b64encode(voucher.company.proprietor_signature).decode('utf-8')}"
-                except Exception:
-                    pass
-
-            cartage_amount = Decimal('0.00')
-            round_off_amount = Decimal('0.00')
-            payment_ledger_obj = None
-            for entry in voucher.ledger_entries.select_related('ledger').all():
-                lname = entry.ledger.name.lower()
-                if 'cartage' in lname or 'freight' in lname:
-                    amt = entry.credit_amount if voucher.voucher_type == 'SALES' else entry.debit_amount
-                    if amt > 0:
-                        cartage_amount += amt
-                elif 'round off' in lname or entry.ledger.ledger_type == 'ROUND_OFF':
-                    if voucher.voucher_type == 'SALES':
-                        round_off_amount += (entry.credit_amount - entry.debit_amount)
-                    else:
-                        round_off_amount += (entry.debit_amount - entry.credit_amount)
-                elif voucher.voucher_type in ['PAYMENT', 'RECEIPT']:
-                    if entry.ledger_id != voucher.party_ledger_id:
-                        payment_ledger_obj = entry.ledger
-
-            from apps.accounting.models import PaymentAllocation
-            allocations_data = []
-            paid_amount_total = Decimal('0.00')
-            if voucher.voucher_type in ['SALES', 'PURCHASE']:
-                alloc_qs = PaymentAllocation.objects.filter(invoice_voucher=voucher).select_related('payment_voucher').only(
-                    'id', 'allocated_amount', 'payment_voucher_id',
-                    'payment_voucher__id', 'payment_voucher__voucher_number',
-                    'payment_voucher__voucher_type', 'payment_voucher__voucher_date'
-                )
-                for alloc in alloc_qs:
-                    paid_amount_total += alloc.allocated_amount
-                    allocations_data.append({
-                        "id": str(alloc.id),
-                        "voucher_id": str(alloc.payment_voucher_id),
-                        "voucher_number": alloc.payment_voucher.voucher_number,
-                        "voucher_type": alloc.payment_voucher.voucher_type,
-                        "date": alloc.payment_voucher.voucher_date.strftime('%Y-%m-%d'),
-                        "allocated_amount": float(alloc.allocated_amount)
-                    })
-            elif voucher.voucher_type in ['PAYMENT', 'RECEIPT']:
-                alloc_qs = PaymentAllocation.objects.filter(payment_voucher=voucher).select_related('invoice_voucher').only(
-                    'id', 'allocated_amount', 'invoice_voucher_id',
-                    'invoice_voucher__id', 'invoice_voucher__voucher_number',
-                    'invoice_voucher__voucher_type', 'invoice_voucher__voucher_date'
-                )
-                for alloc in alloc_qs:
-                    paid_amount_total += alloc.allocated_amount
-                    allocations_data.append({
-                        "id": str(alloc.id),
-                        "voucher_id": str(alloc.invoice_voucher_id),
-                        "voucher_number": alloc.invoice_voucher.voucher_number,
-                        "voucher_type": alloc.invoice_voucher.voucher_type,
-                        "date": alloc.invoice_voucher.voucher_date.strftime('%Y-%m-%d'),
-                        "allocated_amount": float(alloc.allocated_amount)
-                    })
-
-            data = {
-                "id": str(voucher.id),
-                "voucher_number": voucher.voucher_number,
-                "type": voucher.voucher_type,
-                "date": voucher.voucher_date.strftime('%Y-%m-%d'),
-                "status": voucher.status,
-                "total_amount": voucher.total_amount,
-                "paid_amount": float(paid_amount_total),
-                "unallocated_amount": float(max(Decimal('0.00'), (voucher.total_amount or Decimal('0.00')) - paid_amount_total)),
-                "allocations": allocations_data,
-                "cartage_amount": float(cartage_amount),
-                "round_off_amount": float(round_off_amount),
-                "narration": voucher.narration,
-                "reference_number": voucher.reference_number or "",
-                "party_ledger_id": str(voucher.party_ledger.id) if voucher.party_ledger else None,
-                "payment_ledger_id": str(payment_ledger_obj.id) if payment_ledger_obj else None,
-                "payment_ledger_name": payment_ledger_obj.name if payment_ledger_obj else None,
-                "company_id": str(voucher.company.id),
-                "company": {
-                    "id": str(voucher.company.id),
-                    "name": voucher.company.name,
-                    "address": voucher.company.address,
-                    "city": voucher.company.city,
-                    "gstin": voucher.company.gstin,
-                    "state_code": voucher.company.state_code,
-                    "state_name": voucher.company.state_name,
-                    "phone": voucher.company.phone,
-                    "email": voucher.company.email,
-                    "tagline": voucher.company.tagline,
-                    "proprietor_signature": sig_data,
-                    "bank_name": voucher.company.bank_name,
-                    "bank_account_number": voucher.company.bank_account_number,
-                    "bank_ifsc": voucher.company.bank_ifsc,
-                    "bank_branch": voucher.company.bank_branch,
-                },
-                "buyer_details": {
-                    "buyer_name": voucher.buyer_name or "",
-                    "buyer_address": voucher.buyer_address or "",
-                    "buyer_gstin": voucher.buyer_gstin or "",
-                    "buyer_state_code": voucher.buyer_state_code or "",
-                    "buyer_phone": voucher.buyer_phone or "",
-                },
-                "party": {
-                    "id": str(voucher.party_ledger.id) if voucher.party_ledger else None,
-                    "name": voucher.buyer_name if voucher.buyer_name else (voucher.party_ledger.name if voucher.party_ledger else "N/A"),
-                    "settlement_ledger": voucher.party_ledger.name if voucher.party_ledger else "N/A",
-                    "address": voucher.buyer_address if voucher.buyer_address else (voucher.party_ledger.address if voucher.party_ledger else ""),
-                    "gstin": voucher.buyer_gstin if voucher.buyer_gstin else (voucher.party_ledger.gstin if voucher.party_ledger else ""),
-                    "state_code": voucher.buyer_state_code if voucher.buyer_state_code else (voucher.party_ledger.state_code if voucher.party_ledger else ""),
-                    "phone": voucher.buyer_phone if voucher.buyer_phone else (voucher.party_ledger.phone if voucher.party_ledger else ""),
-                } if voucher.party_ledger else None,
-                "has_attachment": bool(voucher.attachment_mime or (hasattr(voucher, 'attachment_data') and voucher.attachment_data)),
-                "attachment_data": voucher.attachment_data if include_attachment else None,
-                "attachment_mime": voucher.attachment_mime,
-                "items": items_data
-            }
+            data = serialize_voucher_detail(voucher, include_attachment=include_attachment)
             return Response({"success": True, "data": data})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

@@ -291,3 +291,48 @@ class CorsAndSyncSprintTestCase(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('error', response.data)
+
+    # --------------------------------------------------------------------------
+    # 5. Public Sales Invoice View (Unauthenticated WhatsApp Link Access)
+    # --------------------------------------------------------------------------
+    def test_public_sales_invoice_detail_success_without_auth(self):
+        """External customer clicking WhatsApp link can view sales invoice without logging in."""
+        # Create a SALES voucher
+        sales_voucher = Voucher.objects.create(
+            company=self.comp_a,
+            voucher_type='SALES',
+            voucher_number='INV-TEST-001',
+            voucher_date=timezone.now().date(),
+            party_ledger=self.party_a,
+            total_amount=Decimal('1500.00'),
+            buyer_name='Alpha Retailers Mumbai',
+            buyer_phone='9876543210',
+            created_by=self.user_a
+        )
+
+        # Anonymous client (no authentication)
+        anon_client = APIClient()
+        response = anon_client.get(f'/api/v1/accounting/vouchers/public/{sales_voucher.id}/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data.get('success'))
+        data = response.data.get('data')
+        self.assertEqual(data['voucher_number'], 'INV-TEST-001')
+        self.assertEqual(data['company']['name'], 'Vouch Apex Technologies')
+        self.assertEqual(data['buyer_details']['buyer_name'], 'Alpha Retailers Mumbai')
+
+    def test_public_voucher_detail_rejects_non_sales_vouchers(self):
+        """Public endpoint strictly rejects non-sales vouchers (e.g. PURCHASE, PAYMENT) with 404."""
+        purchase_voucher = Voucher.objects.create(
+            company=self.comp_a,
+            voucher_type='PURCHASE',
+            voucher_number='PUR-TEST-001',
+            voucher_date=timezone.now().date(),
+            party_ledger=self.party_a,
+            total_amount=Decimal('2500.00'),
+            created_by=self.user_a
+        )
+
+        anon_client = APIClient()
+        response = anon_client.get(f'/api/v1/accounting/vouchers/public/{purchase_voucher.id}/')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
