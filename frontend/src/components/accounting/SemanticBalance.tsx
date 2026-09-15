@@ -53,6 +53,8 @@ export default function SemanticBalance({
   else if (state === 'TO_PAY') colorClass = 'text-amber-600 dark:text-amber-400 font-semibold';
   else if (state === 'ADVANCE_RECEIVED') colorClass = 'text-purple-600 dark:text-purple-400 font-medium';
   else if (state === 'ADVANCE_PAID') colorClass = 'text-blue-600 dark:text-blue-400 font-medium';
+  else if (state === 'DR') colorClass = 'text-blue-600 dark:text-blue-400 font-semibold';
+  else if (state === 'CR') colorClass = 'text-amber-600 dark:text-amber-400 font-semibold';
   else colorClass = 'text-muted-foreground';
 
   const amountSizeClass = 

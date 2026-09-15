@@ -164,6 +164,11 @@ export default function LedgersPage() {
             opening_balance_type: l.openingBalanceType || l.opening_balance_type || 'DEBIT',
             discount_percent: Number(l.discount_percent) || 0,
             is_active: l.is_active ?? true,
+            canonical_role: l.canonical_role || l.canonicalRole,
+            balance_state: l.balance_state || l.balanceState,
+            display_amount: (l.display_amount ?? l.displayAmount) !== undefined ? Number(l.display_amount ?? l.displayAmount) : undefined,
+            normal_balance: l.normal_balance || l.normalBalance,
+            balance_direction: l.balance_direction || l.balanceDirection,
           };
         });
         setLedgers(mappedLocal);
@@ -195,11 +200,16 @@ export default function LedgersPage() {
             opening_balance_type: l.opening_balance_type || 'DEBIT',
             discount_percent: Number(l.discount_percent) || 0,
             is_active: l.is_active ?? true,
+            canonical_role: l.canonical_role,
+            balance_state: l.balance_state,
+            display_amount: l.display_amount !== undefined ? Number(l.display_amount) : undefined,
+            normal_balance: l.normal_balance,
+            balance_direction: l.balance_direction,
           };
         });
         setLedgers(serverLedgers);
 
-        // Update local Dexie cache with full nature & group
+        // Update local Dexie cache with full nature & group & balances
         const toPut: SyncedLedger[] = serverLedgers.map((l) => ({
           id: l.id,
           companyId: cid!,
@@ -214,6 +224,11 @@ export default function LedgersPage() {
           openingBalance: l.opening_balance || 0,
           openingBalanceType: l.opening_balance_type || 'DEBIT',
           phone: l.phone,
+          canonical_role: l.canonical_role,
+          balanceState: l.balance_state,
+          displayAmount: l.display_amount,
+          normalBalance: l.normal_balance,
+          balanceDirection: l.balance_direction,
           serverUpdatedAt: Date.now(),
         }));
         await offlineDb.syncedLedgers.bulkPut(toPut).catch(() => {});
@@ -406,24 +421,61 @@ export default function LedgersPage() {
       if (!isTax) return;
       taxLedgersCount++;
 
-      const isCreditType = l.opening_balance_type === 'CREDIT';
       const raw = Number(l.current_balance || 0);
-      const netDebit = isCreditType ? -raw : raw;
-      const netCredit = isCreditType ? raw : -raw;
       const name = l.name.toLowerCase();
+      const isInputName = name.includes('input');
+      const isOutputName = name.includes('output');
 
-      if (name.includes('input') || (!name.includes('output') && netDebit > 0)) {
-        const val = Math.max(0, netDebit);
+      // Determine true net debit and net credit balance based on normal_balance / nature or balance_direction
+      const isNormalCredit = l.normal_balance
+        ? l.normal_balance === 'CREDIT'
+        : (l.nature === 'LIABILITY' || l.nature === 'INCOME' || l.nature === 'EQUITY');
+
+      // On a credit account: positive raw is credit (sales tax liability), negative raw is debit (ITC).
+      // On a debit account: positive raw is debit (ITC), negative raw is credit.
+      let netDebit = 0;
+      let netCredit = 0;
+
+      if (l.balance_direction === 'DEBIT') {
+        netDebit = Math.abs(raw);
+        netCredit = -netDebit;
+      } else if (l.balance_direction === 'CREDIT') {
+        netCredit = Math.abs(raw);
+        netDebit = -netCredit;
+      } else {
+        netCredit = isNormalCredit ? raw : -raw;
+        netDebit = -netCredit;
+      }
+
+      if (isInputName) {
+        // Explicit input tax ledger (Input CGST, Input SGST, Input IGST)
+        const val = netDebit > 0 ? netDebit : Math.abs(raw);
         if (name.includes('cgst')) inputCgst += val;
         else if (name.includes('sgst') || name.includes('utgst')) inputSgst += val;
         else if (name.includes('igst')) inputIgst += val;
         else otherInput += val;
-      } else if (name.includes('output') || (!name.includes('input') && netCredit > 0)) {
-        const val = Math.max(0, netCredit);
+      } else if (isOutputName) {
+        // Explicit output tax ledger (Output CGST, Output SGST, Output IGST)
+        const val = netCredit > 0 ? netCredit : Math.abs(raw);
         if (name.includes('cgst')) outputCgst += val;
         else if (name.includes('sgst') || name.includes('utgst')) outputSgst += val;
         else if (name.includes('igst')) outputIgst += val;
         else otherOutput += val;
+      } else {
+        // Generic tax account without 'input' or 'output' in name
+        if (netCredit > 0) {
+          const val = netCredit;
+          if (name.includes('cgst')) outputCgst += val;
+          else if (name.includes('sgst') || name.includes('utgst')) outputSgst += val;
+          else if (name.includes('igst')) outputIgst += val;
+          else otherOutput += val;
+        } else if (netDebit > 0) {
+          const val = netDebit;
+          if (name.includes('cgst')) inputCgst += val;
+          else if (name.includes('sgst') || name.includes('utgst')) inputSgst += val;
+          else if (name.includes('igst')) inputIgst += val;
+          else otherInput += val;
+        }
       }
     });
 
