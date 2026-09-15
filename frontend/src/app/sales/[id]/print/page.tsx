@@ -17,7 +17,13 @@ import {
   MessageCircle,
   Download,
   Loader2,
-  ExternalLink
+  ExternalLink,
+  Globe,
+  Laptop,
+  Check,
+  Copy,
+  X,
+  ChevronDown
 } from 'lucide-react';
 
 function numberToWords(numAmount: number): string {
@@ -85,6 +91,9 @@ export default function PrintInvoicePage() {
   const [ewayBill, setEwayBill] = useState<EWayBillData | null>(null);
   const [layoutMode, setLayoutMode] = useState<'A4' | 'THERMAL'>('A4');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState<boolean>(false);
+  const [rememberPreference, setRememberPreference] = useState<boolean>(false);
+  const [copiedToClipboard, setCopiedToClipboard] = useState<boolean>(false);
 
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
@@ -166,7 +175,12 @@ export default function PrintInvoicePage() {
     return `${API_BASE_URL}${sig.startsWith('/') ? '' : '/'}${sig}`;
   };
 
-  const generateInvoicePdf = async (): Promise<File | null> => {
+  const getCleanInvoiceFilename = () => {
+    const rawInvoiceNo = invoice?.voucher_number || 'INVOICE';
+    return `${rawInvoiceNo.replace(/[/\\:*?"<>|]/g, '-').trim()}.pdf`;
+  };
+
+  const generateInvoicePdf = async (): Promise<{ file: File; blobUrl: string } | null> => {
     const element = document.getElementById('invoice-sheet');
     if (!element) return null;
 
@@ -179,6 +193,19 @@ export default function PrintInvoicePage() {
       logging: false,
       backgroundColor: '#ffffff',
     });
+
+    // Also copy canvas image to clipboard if supported so user can paste (Ctrl+V) into WhatsApp
+    try {
+      canvas.toBlob((blob: Blob | null) => {
+        if (blob && typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+          navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob })
+          ]).then(() => setCopiedToClipboard(true)).catch(() => {});
+        }
+      }, 'image/png');
+    } catch (e) {
+      // Clipboard copy optional
+    }
 
     const imgData = canvas.toDataURL('image/png');
     const pdfWidth = isThermal ? 80 : 210;
@@ -193,70 +220,104 @@ export default function PrintInvoicePage() {
 
     pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, imgHeight);
 
-    // Sanitize invoice number for clean legal filename: e.g. "INV-001.pdf"
-    const rawInvoiceNo = invoice.voucher_number || 'INVOICE';
-    const cleanInvoiceNo = rawInvoiceNo.replace(/[/\\:*?"<>|]/g, '-').trim();
-    const filename = `${cleanInvoiceNo}.pdf`;
-
+    const filename = getCleanInvoiceFilename();
     const pdfBlob = pdf.output('blob');
-    return new File([pdfBlob], filename, { type: 'application/pdf' });
+    const file = new File([pdfBlob], filename, { type: 'application/pdf' });
+    const blobUrl = URL.createObjectURL(file);
+
+    return { file, blobUrl };
   };
 
-  const handleWhatsAppShare = async () => {
+  const triggerPdfDownload = (blobUrl: string, filename: string) => {
+    const downloadLink = document.createElement('a');
+    downloadLink.href = blobUrl;
+    downloadLink.download = filename;
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    document.body.removeChild(downloadLink);
+  };
+
+  const buildWhatsAppTextMessage = () => {
+    const filename = getCleanInvoiceFilename();
+    return `*Invoice: ${invoice.voucher_number}* from *${invoice.company.name}*\nTotal Amount: *₹${Number(finalGrandTotal).toFixed(2)}*\n\n(PDF file *${filename}* is attached. Thank you for your business!)`;
+  };
+
+  const getCleanPhone = () => {
+    let phone = invoice?.party?.phone || invoice?.party?.mobile || '';
+    phone = phone.replace(/[^0-9]/g, '');
+    if (phone.length === 10) {
+      phone = '91' + phone;
+    }
+    return phone;
+  };
+
+  const handleOpenWhatsApp = (target: 'web' | 'app') => {
+    const text = buildWhatsAppTextMessage();
+    const phone = getCleanPhone();
+
+    if (rememberPreference && typeof window !== 'undefined') {
+      localStorage.setItem('vouch_whatsapp_preference', target);
+    }
+
+    let url = '';
+    if (target === 'web') {
+      // Direct WhatsApp Web URL
+      url = phone
+        ? `https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(text)}`
+        : `https://web.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+    } else {
+      // WhatsApp Application URL protocol
+      url = phone
+        ? `whatsapp://send?phone=${phone}&text=${encodeURIComponent(text)}`
+        : `whatsapp://send?text=${encodeURIComponent(text)}`;
+    }
+
+    window.open(url, '_blank');
+    setIsWhatsAppModalOpen(false);
+  };
+
+  const handleWhatsAppShareClick = async () => {
     if (!invoice) return;
     setIsGeneratingPdf(true);
 
     try {
-      const pdfFile = await generateInvoicePdf();
-      if (!pdfFile) {
+      const pdfResult = await generateInvoicePdf();
+      if (!pdfResult) {
         alert('Could not render invoice PDF. Please try again.');
         return;
       }
 
-      const rawInvoiceNo = invoice.voucher_number || 'INVOICE';
-      const cleanInvoiceNo = rawInvoiceNo.replace(/[/\\:*?"<>|]/g, '-').trim();
-      const filename = `${cleanInvoiceNo}.pdf`;
+      const { file, blobUrl } = pdfResult;
+      const filename = getCleanInvoiceFilename();
 
-      let phone = invoice.party?.phone || invoice.party?.mobile || '';
-      phone = phone.replace(/[^0-9]/g, '');
-      if (phone.length === 10) {
-        phone = '91' + phone;
-      }
-
-      // 1. Native Web Share API (attaches PDF directly on Mobile/Supporting browsers)
-      if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+      // Check for Mobile / Web Share API with file attachment support
+      const isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (isMobileDevice && navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({
-            files: [pdfFile],
+            files: [file],
             title: `Invoice ${invoice.voucher_number}`,
             text: `Invoice ${invoice.voucher_number} from ${invoice.company.name}`,
           });
           return;
         } catch (shareErr: any) {
           if (shareErr?.name === 'AbortError') {
-            return; // User cancelled share sheet
+            return;
           }
-          console.warn('navigator.share failed, falling back to download + WhatsApp Web:', shareErr);
         }
       }
 
-      // 2. Desktop Fallback: Download the PDF named with the invoice number, then open WhatsApp Web
-      const blobUrl = URL.createObjectURL(pdfFile);
-      const downloadLink = document.createElement('a');
-      downloadLink.href = blobUrl;
-      downloadLink.download = filename;
-      document.body.appendChild(downloadLink);
-      downloadLink.click();
-      document.body.removeChild(downloadLink);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+      // Automatically download the PDF named with the invoice number
+      triggerPdfDownload(blobUrl, filename);
 
-      const msg = `*Invoice: ${invoice.voucher_number}* from *${invoice.company.name}*\nTotal Amount: *₹${Number(finalGrandTotal).toFixed(2)}*\n\n(PDF file *${filename}* has been downloaded to your device. Please attach it to this chat.)`;
-
-      const waUrl = phone
-        ? `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`
-        : `https://wa.me/?text=${encodeURIComponent(msg)}`;
-
-      window.open(waUrl, '_blank');
+      // Check if user already set a preference for Web vs App
+      const savedPref = typeof window !== 'undefined' ? localStorage.getItem('vouch_whatsapp_preference') : null;
+      if (savedPref === 'web' || savedPref === 'app') {
+        handleOpenWhatsApp(savedPref as 'web' | 'app');
+      } else {
+        // Open choice modal to pick between WhatsApp Web or WhatsApp Desktop Application
+        setIsWhatsAppModalOpen(true);
+      }
     } catch (err: any) {
       console.error('Failed to share PDF:', err);
       alert(`Could not share invoice PDF: ${err.message || err}`);
@@ -269,27 +330,18 @@ export default function PrintInvoicePage() {
     if (!invoice) return;
     setIsGeneratingPdf(true);
     try {
-      const pdfFile = await generateInvoicePdf();
-      if (!pdfFile) return;
-
-      const rawInvoiceNo = invoice.voucher_number || 'INVOICE';
-      const cleanInvoiceNo = rawInvoiceNo.replace(/[/\\:*?"<>|]/g, '-').trim();
-      const filename = `${cleanInvoiceNo}.pdf`;
-
-      const blobUrl = URL.createObjectURL(pdfFile);
-      const downloadLink = document.createElement('a');
-      downloadLink.href = blobUrl;
-      downloadLink.download = filename;
-      document.body.appendChild(downloadLink);
-      downloadLink.click();
-      document.body.removeChild(downloadLink);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+      const pdfResult = await generateInvoicePdf();
+      if (!pdfResult) return;
+      const filename = getCleanInvoiceFilename();
+      triggerPdfDownload(pdfResult.blobUrl, filename);
     } catch (err: any) {
       console.error('PDF download failed:', err);
     } finally {
       setIsGeneratingPdf(false);
     }
   };
+
+  const filename = invoice ? getCleanInvoiceFilename() : 'INVOICE.pdf';
 
   return (
     <div className="bg-white text-black min-h-screen">
@@ -360,7 +412,7 @@ export default function PrintInvoicePage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Download PDF Button */}
           <button
             onClick={handleDownloadPdf}
@@ -372,20 +424,29 @@ export default function PrintInvoicePage() {
             <span>Download PDF</span>
           </button>
 
-          {/* WhatsApp Share PDF Button */}
-          <button
-            onClick={handleWhatsAppShare}
-            disabled={isGeneratingPdf}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all cursor-pointer disabled:opacity-50"
-            title="Share PDF of this invoice via WhatsApp"
-          >
-            {isGeneratingPdf ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <MessageCircle className="w-4 h-4 fill-current" />
-            )}
-            <span>{isGeneratingPdf ? 'Generating PDF...' : 'Share PDF on WhatsApp'}</span>
-          </button>
+          {/* WhatsApp Share Button with Split / Options */}
+          <div className="inline-flex rounded-xl shadow-sm">
+            <button
+              onClick={handleWhatsAppShareClick}
+              disabled={isGeneratingPdf}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-l-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+              title="Share PDF of this invoice via WhatsApp Web or Application"
+            >
+              {isGeneratingPdf ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <MessageCircle className="w-4 h-4 fill-current" />
+              )}
+              <span>{isGeneratingPdf ? 'Rendering PDF...' : 'Share on WhatsApp'}</span>
+            </button>
+            <button
+              onClick={() => setIsWhatsAppModalOpen(true)}
+              className="bg-emerald-700 hover:bg-emerald-600 text-white px-2 py-2 rounded-r-xl border-l border-emerald-800 text-xs transition-colors cursor-pointer"
+              title="Choose WhatsApp Web or Desktop Application"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+          </div>
 
           {/* Print Button */}
           <button
@@ -397,6 +458,108 @@ export default function PrintInvoicePage() {
           </button>
         </div>
       </div>
+
+      {/* WHATSAPP DESTINATION MODAL (Web vs App) */}
+      {isWhatsAppModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs print:hidden animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700 text-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 relative">
+            <button
+              onClick={() => setIsWhatsAppModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400">
+                <MessageCircle className="w-6 h-6 fill-current" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Share Invoice on WhatsApp</h3>
+                <p className="text-xs text-slate-400">
+                  Select your preferred WhatsApp platform
+                </p>
+              </div>
+            </div>
+
+            {/* Status Checklist */}
+            <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/80 space-y-2 text-xs">
+              <div className="flex items-center gap-2 text-emerald-400">
+                <Check className="w-4 h-4 shrink-0" />
+                <span>
+                  <strong>{filename}</strong> ready for sending
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-slate-300">
+                <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Customer: <strong>{invoice.party?.name}</strong> {invoice.party?.phone ? `(${invoice.party.phone})` : ''}</span>
+              </div>
+              {copiedToClipboard && (
+                <div className="flex items-center gap-2 text-blue-400">
+                  <Copy className="w-3.5 h-3.5 shrink-0" />
+                  <span>Invoice preview copied to clipboard (Press Ctrl+V to paste)</span>
+                </div>
+              )}
+            </div>
+
+            {/* Selection Options */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              {/* WhatsApp Web */}
+              <button
+                onClick={() => handleOpenWhatsApp('web')}
+                className="flex flex-col items-center text-center p-4 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-750 hover:border-emerald-500/60 transition-all cursor-pointer group"
+              >
+                <div className="p-3 rounded-xl bg-blue-500/10 text-blue-400 group-hover:bg-blue-500/20 mb-2">
+                  <Globe className="w-6 h-6" />
+                </div>
+                <span className="text-sm font-bold text-white">WhatsApp Web</span>
+                <span className="text-[11px] text-slate-400 mt-1">Open web.whatsapp.com in browser tab</span>
+              </button>
+
+              {/* WhatsApp Application */}
+              <button
+                onClick={() => handleOpenWhatsApp('app')}
+                className="flex flex-col items-center text-center p-4 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-750 hover:border-emerald-500/60 transition-all cursor-pointer group"
+              >
+                <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500/20 mb-2">
+                  <Laptop className="w-6 h-6" />
+                </div>
+                <span className="text-sm font-bold text-white">WhatsApp App</span>
+                <span className="text-[11px] text-slate-400 mt-1">Launch installed Windows/Mac app</span>
+              </button>
+            </div>
+
+            {/* Remember Preference Checkbox */}
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs text-slate-400">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={rememberPreference}
+                  onChange={(e) => setRememberPreference(e.target.checked)}
+                  className="rounded border-slate-700 text-emerald-500 focus:ring-0 cursor-pointer"
+                />
+                <span>Remember my choice next time</span>
+              </label>
+              {typeof window !== 'undefined' && localStorage.getItem('vouch_whatsapp_preference') && (
+                <button
+                  onClick={() => {
+                    localStorage.removeItem('vouch_whatsapp_preference');
+                    alert('Preference reset.');
+                  }}
+                  className="text-slate-500 hover:text-slate-300 underline text-[11px]"
+                >
+                  Reset saved
+                </button>
+              )}
+            </div>
+
+            {/* Instruction Footer */}
+            <div className="text-[11px] text-slate-400 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800 text-center">
+              💡 The PDF <strong>{filename}</strong> is saved in your Downloads. Simply click <strong>Attach &gt; Document</strong> or press <strong>Ctrl+V</strong> in the chat.
+            </div>
+          </div>
+        </div>
+      )}
 
       {layoutMode === 'THERMAL' ? (
         /* ================= 80MM POS THERMAL RECEIPT LAYOUT ================= */
