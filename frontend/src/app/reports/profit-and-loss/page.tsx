@@ -385,7 +385,7 @@ export default function ProfitAndLossPage() {
                       <div className="px-4 py-2.5 flex justify-between items-center hover:bg-muted/20 transition-colors">
                         <div>
                           <div className="font-semibold text-foreground">To Opening Stock</div>
-                          <div className="text-[11px] text-muted-foreground">Inventory at start of fiscal year</div>
+                          <div className="text-[11px] text-muted-foreground">Calculated from un-invoiced stock (Current + Sold − Purchased)</div>
                         </div>
                         <span className="font-mono font-bold text-foreground">
                           {formatINR(trading?.opening_stock || 0)}

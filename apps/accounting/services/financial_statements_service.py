@@ -35,6 +35,57 @@ class FinancialStatementsService:
         return total_val.quantize(Decimal('0.01'))
 
     @classmethod
+    def calculate_opening_stock_valuation(cls, company: Company, as_of_date=None) -> Decimal:
+        """
+        Calculates opening stock valuation derived from total stock not invoiced across all invoices:
+        Formula: Opening Stock = Current Stock + Sold Stock - Purchased Stock
+        For each product:
+          opening_qty = max(0, current_stock_qty + total_sold_qty - total_purchased_qty)
+          opening_val = opening_qty * purchase_price
+        Includes all invoices.
+        """
+        from apps.accounting.models import VoucherItem
+        from django.db.models import Sum
+
+        sales_qs = VoucherItem.objects.filter(
+            voucher__company=company,
+            voucher__voucher_type='SALES',
+            voucher__status='POSTED'
+        )
+        pur_qs = VoucherItem.objects.filter(
+            voucher__company=company,
+            voucher__voucher_type='PURCHASE',
+            voucher__status='POSTED'
+        )
+
+        if as_of_date:
+            sales_qs = sales_qs.filter(voucher__voucher_date__lte=as_of_date)
+            pur_qs = pur_qs.filter(voucher__voucher_date__lte=as_of_date)
+
+        sales_by_prod = {
+            row['product_id']: Decimal(str(row['tot_qty'] or 0))
+            for row in sales_qs.values('product_id').annotate(tot_qty=Sum('quantity'))
+        }
+        pur_by_prod = {
+            row['product_id']: Decimal(str(row['tot_qty'] or 0))
+            for row in pur_qs.values('product_id').annotate(tot_qty=Sum('quantity'))
+        }
+
+        products = Product.objects.filter(company=company, is_active=True)
+        total_opening_val = Decimal('0.00')
+
+        for p in products:
+            cost = Decimal(str(p.purchase_price or '0.00'))
+            curr_qty = Decimal(str(p.stock_quantity or '0.00'))
+            sold_qty = sales_by_prod.get(p.id, Decimal('0.00'))
+            pur_qty = pur_by_prod.get(p.id, Decimal('0.00'))
+
+            opening_qty = max(Decimal('0.00'), curr_qty + sold_qty - pur_qty)
+            total_opening_val += (opening_qty * cost)
+
+        return total_opening_val.quantize(Decimal('0.01'))
+
+    @classmethod
     def generate_profit_and_loss(cls, company: Company, from_date=None, to_date=None) -> Dict[str, Any]:
         d_to = cls.parse_date(to_date) or datetime.date.today()
         d_from = cls.parse_date(from_date) or cls.get_fiscal_year_start(d_to)
@@ -61,7 +112,7 @@ class FinancialStatementsService:
             grp_name = (ledger.group.name if ledger.group else '').upper()
             l_name = ledger.name.upper()
 
-            if 'STOCK' in grp_name or 'STOCK IN HAND' in l_name:
+            if 'STOCK' in grp_name or 'STOCK IN HAND' in l_name or 'STOCK-IN-HAND' in l_name:
                 bal_data = PeriodBalanceService.calculate_ledger_period_balance(ledger, d_from, d_to)
                 stock_in_hand_ledger_val += Decimal(bal_data['closing_balance'])
                 continue
@@ -109,6 +160,12 @@ class FinancialStatementsService:
                 ledger_expense = p_dr - p_cr
                 row_item["amount"] = str(ledger_expense)
 
+                # Do not duplicate Cost of Goods Sold ledger in Trading Account direct expenses
+                # because the Trading Account already accounts for COGS via:
+                # Opening Stock + Purchases - Closing Stock.
+                if 'COST OF GOODS SOLD' in l_name or 'COGS' in l_name:
+                    continue
+
                 is_direct_expense = (
                     'DIRECT' in grp_name or
                     'PURCHASE' in grp_name or
@@ -126,11 +183,11 @@ class FinancialStatementsService:
                     indirect_expense_rows.append(row_item)
                     total_indirect_expense += ledger_expense
 
-        closing_stock = stock_in_hand_ledger_val
-        if closing_stock == Decimal('0.00'):
-            closing_stock = cls.get_inventory_valuation(company)
+        # Live inventory valuation representing true physical stock on hand
+        closing_stock = cls.get_inventory_valuation(company)
 
-        opening_stock = Decimal('0.00')
+        # Calculate opening stock from total stock not invoiced across all invoices
+        opening_stock = cls.calculate_opening_stock_valuation(company, as_of_date=d_to)
         gross_profit = (total_direct_income + closing_stock) - (opening_stock + total_direct_expense)
         net_profit = gross_profit + total_indirect_income - total_indirect_expense
 
@@ -183,6 +240,7 @@ class FinancialStatementsService:
 
         pl_data = cls.generate_profit_and_loss(company, from_date=fy_start, to_date=d_as_of)
         net_profit = Decimal(pl_data['profit_and_loss']['net_profit'])
+        opening_stock = Decimal(pl_data['trading_account']['opening_stock'])
 
         ledgers = Ledger.objects.filter(
             company=company,
@@ -248,7 +306,7 @@ class FinancialStatementsService:
                     current_liability_rows.append(row_item)
 
             elif nature == 'ASSET':
-                if 'STOCK' in grp_name or 'STOCK IN HAND' in l_name:
+                if 'STOCK' in grp_name or 'STOCK IN HAND' in l_name or 'STOCK-IN-HAND' in l_name:
                     stock_in_hand_val += cl_bal
                     continue
 
@@ -262,9 +320,7 @@ class FinancialStatementsService:
                     total_current_assets += cl_bal
                     current_asset_rows.append(row_item)
 
-        closing_stock = stock_in_hand_val
-        if closing_stock == Decimal('0.00'):
-            closing_stock = cls.get_inventory_valuation(company)
+        closing_stock = cls.get_inventory_valuation(company)
 
         if closing_stock > Decimal('0.00'):
             current_asset_rows.insert(0, {
@@ -276,7 +332,7 @@ class FinancialStatementsService:
             })
             total_current_assets += closing_stock
 
-        effective_equity = total_capital + net_profit - total_drawings
+        effective_equity = total_capital + opening_stock + net_profit - total_drawings
         total_liabilities = effective_equity + total_loans + total_current_liabilities
         total_assets = total_fixed_assets + total_current_assets + total_bank_cash
 
@@ -297,6 +353,7 @@ class FinancialStatementsService:
                 "equity": {
                     "capital_rows": capital_rows,
                     "total_capital": str(total_capital),
+                    "opening_stock": str(opening_stock),
                     "total_drawings": str(total_drawings),
                     "net_profit": str(net_profit),
                     "effective_equity": str(effective_equity)

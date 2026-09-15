@@ -46,6 +46,7 @@ interface BalanceSheetData {
     equity: {
       capital_rows: LedgerRow[];
       total_capital: string;
+      opening_stock?: string;
       total_drawings: string;
       net_profit: string;
       effective_equity: string;
@@ -450,6 +451,17 @@ export default function BalanceSheetPage() {
                               </span>
                             </Link>
                           ))}
+
+                          {/* Opening Stock (Inventory Equity Contribution) */}
+                          {parseFloat(data.liabilities_and_equity.equity.opening_stock || '0') > 0 && (
+                            <div className="px-4 py-2 flex justify-between items-center bg-blue-500/5 font-semibold text-blue-400">
+                              <div>
+                                <div>Add: Opening Stock (Inventory Equity)</div>
+                                <div className="text-[11px] font-normal text-blue-400/80">Un-invoiced opening inventory contribution</div>
+                              </div>
+                              <span className="font-mono">{formatINR(data.liabilities_and_equity.equity.opening_stock || 0)}</span>
+                            </div>
+                          )}
 
                           {/* Dynamic Net Profit Line */}
                           <div className="px-4 py-2 flex justify-between items-center bg-emerald-500/5 font-semibold text-emerald-500">

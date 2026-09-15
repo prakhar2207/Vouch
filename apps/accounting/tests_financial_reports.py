@@ -141,3 +141,68 @@ class FinancialStatementsAndBulkResolveTests(TestCase):
         tx2.refresh_from_db()
         self.assertEqual(tx1.status, 'RECONCILED')
         self.assertEqual(tx2.status, 'RECONCILED')
+
+    def test_05_calculate_opening_stock_from_uninvoiced_stock(self):
+        """
+        P0 Test: Verifies Opening Stock calculation from un-invoiced stock:
+        Formula: Opening Stock = Current Stock + Sold Stock - Purchased Stock
+        """
+        from apps.inventory.models import Product
+        from apps.accounting.models import VoucherItem
+
+        # Create Product A: Current stock = 10, purchase_price = 100
+        prod_a = Product.objects.create(
+            company=self.company,
+            name="Timing Belt A",
+            sku="TB-A",
+            stock_quantity=Decimal('10.00'),
+            purchase_price=Decimal('100.00'),
+            is_active=True
+        )
+
+        # Create Product B: Current stock = 15, purchase_price = 200
+        # Purchased in this period: 5 units
+        # Sold in this period: 2 units
+        # Expected Opening = 15 + 2 - 5 = 12 units @ 200 = 2,400
+        prod_b = Product.objects.create(
+            company=self.company,
+            name="V-Belt B",
+            sku="VB-B",
+            stock_quantity=Decimal('15.00'),
+            purchase_price=Decimal('200.00'),
+            is_active=True
+        )
+
+        # Sales Voucher for Product B (2 units sold)
+        v_sale = Voucher.objects.create(
+            company=self.company, financial_year=self.fy, voucher_type='SALES',
+            voucher_number='INV-TEST-B', voucher_date='2026-06-01', status='POSTED',
+            total_amount=Decimal('600.00'), created_by=self.user
+        )
+        VoucherItem.objects.create(
+            voucher=v_sale, product=prod_b, quantity=Decimal('2.00'), rate=Decimal('300.00'),
+            taxable_amount=Decimal('600.00'), total_amount=Decimal('600.00')
+        )
+
+        # Purchase Voucher for Product B (5 units bought)
+        v_pur = Voucher.objects.create(
+            company=self.company, financial_year=self.fy, voucher_type='PURCHASE',
+            voucher_number='PUR-TEST-B', voucher_date='2026-06-05', status='POSTED',
+            total_amount=Decimal('1000.00'), created_by=self.user
+        )
+        VoucherItem.objects.create(
+            voucher=v_pur, product=prod_b, quantity=Decimal('5.00'), rate=Decimal('200.00'),
+            taxable_amount=Decimal('1000.00'), total_amount=Decimal('1000.00')
+        )
+
+        # Expected:
+        # Product A: 10 + 0 - 0 = 10 units @ 100 = 1,000.00
+        # Product B: 15 + 2 - 5 = 12 units @ 200 = 2,400.00
+        # Total Opening Stock = 3,400.00
+        calculated_op = FinancialStatementsService.calculate_opening_stock_valuation(self.company)
+        self.assertEqual(calculated_op, Decimal('3400.00'))
+
+        # Verify Trading Account P&L reflects Opening Stock
+        pl_data = FinancialStatementsService.generate_profit_and_loss(self.company)
+        self.assertEqual(Decimal(pl_data['trading_account']['opening_stock']), Decimal('3400.00'))
+
