@@ -233,14 +233,47 @@ export default function PrintInvoicePage() {
     if (!element) return null;
 
     const isThermal = layoutMode === 'THERMAL';
-    
-    const canvas = await (html2canvas as any)(element, {
-      scale: 2,
-      useCORS: true,
-      allowTaint: true,
-      logging: false,
-      backgroundColor: '#ffffff',
-    });
+    // Standard A4 width: 210mm = 794px at 96 DPI
+    // Standard 80mm thermal width: 80mm = 302px at 96 DPI
+    const targetWidthPx = isThermal ? 302 : 794;
+
+    // Create an isolated off-screen sandbox container with fixed desktop width.
+    // This completely prevents mobile phone viewports (360-412px) from squishing or wrapping A4 tables!
+    const sandbox = document.createElement('div');
+    sandbox.style.position = 'fixed';
+    sandbox.style.left = '-99999px';
+    sandbox.style.top = '0';
+    sandbox.style.width = `${targetWidthPx}px`;
+    sandbox.style.minWidth = `${targetWidthPx}px`;
+    sandbox.style.maxWidth = `${targetWidthPx}px`;
+    sandbox.style.zIndex = '-9999';
+    sandbox.style.backgroundColor = '#ffffff';
+    sandbox.style.overflow = 'visible';
+
+    const clone = element.cloneNode(true) as HTMLElement;
+    clone.style.width = `${targetWidthPx}px`;
+    clone.style.minWidth = `${targetWidthPx}px`;
+    clone.style.maxWidth = `${targetWidthPx}px`;
+    if (!isThermal) {
+      clone.style.minHeight = '1123px'; // Standard A4 height (297mm at 96 DPI)
+    }
+    sandbox.appendChild(clone);
+    document.body.appendChild(sandbox);
+
+    let canvas;
+    try {
+      canvas = await (html2canvas as any)(clone, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: isThermal ? 400 : 1200,
+        width: targetWidthPx,
+      });
+    } finally {
+      document.body.removeChild(sandbox);
+    }
 
     // Copy canvas image to clipboard for instant Ctrl+V pasting in WhatsApp Web or Desktop App
     try {
@@ -256,17 +289,47 @@ export default function PrintInvoicePage() {
     }
 
     const imgData = canvas.toDataURL('image/png');
-    const pdfWidth = isThermal ? 80 : 210;
-    const imgHeight = (canvas.height * pdfWidth) / canvas.width;
-    const pdfHeight = isThermal ? imgHeight : Math.max(297, imgHeight);
+    let pdf: jsPDF;
 
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: isThermal ? [pdfWidth, pdfHeight] : 'a4',
-    });
+    if (isThermal) {
+      const pdfWidth = 80;
+      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+      pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: [pdfWidth, Math.max(100, imgHeight)],
+      });
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, imgHeight);
+    } else {
+      // Standard A4 PDF (strictly 210mm x 297mm)
+      pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4',
+      });
+      const a4Width = 210;
+      const a4Height = 297;
+      const imgHeight = (canvas.height * a4Width) / canvas.width;
 
-    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, imgHeight);
+      if (imgHeight <= a4Height) {
+        // Fits comfortably on a single standard A4 sheet
+        pdf.addImage(imgData, 'PNG', 0, 0, a4Width, imgHeight);
+      } else {
+        // Multi-page standard A4 splitting
+        let heightLeft = imgHeight;
+        let position = 0;
+
+        pdf.addImage(imgData, 'PNG', 0, position, a4Width, imgHeight);
+        heightLeft -= a4Height;
+
+        while (heightLeft > 0) {
+          position -= a4Height;
+          pdf.addPage('a4', 'portrait');
+          pdf.addImage(imgData, 'PNG', 0, position, a4Width, imgHeight);
+          heightLeft -= a4Height;
+        }
+      }
+    }
 
     const filename = getCleanInvoiceFilename();
     const pdfBlob = pdf.output('blob');
@@ -904,7 +967,7 @@ export default function PrintInvoicePage() {
       ) : (
         /* ================= A4 STANDARD TAX INVOICE LAYOUT ================= */
         <div className="w-full overflow-x-auto p-4 sm:p-8 flex justify-center bg-slate-200 print:bg-white print:p-0">
-          <div id="invoice-sheet" className="w-[210mm] min-h-[297mm] print:min-h-[95vh] bg-white p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none print:p-6 print:pt-10 flex flex-col mx-auto">
+          <div id="invoice-sheet" className="w-[210mm] min-w-[210mm] max-w-[210mm] shrink-0 min-h-[297mm] print:min-h-[95vh] bg-white p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none print:p-6 print:pt-10 flex flex-col mx-auto">
           
           {/* Main Border Box */}
           <div className="border-2 border-black flex-1 flex flex-col justify-between">
@@ -963,7 +1026,7 @@ export default function PrintInvoicePage() {
                 </div>
 
                 {/* Party Grid */}
-                <div className="grid grid-cols-2 border-b-2 border-black text-sm h-32">
+                <div className="grid grid-cols-2 border-b-2 border-black text-sm min-h-32">
                     <div className="p-2 border-r-2 border-black flex flex-col">
                         <span className="italic mb-1">Billed to :</span>
                         <strong className="text-base">{invoice.party.name}</strong>
@@ -986,28 +1049,28 @@ export default function PrintInvoicePage() {
                 <div className="flex-1 flex flex-col">
                     <table className="w-full h-full text-sm border-collapse">
                         <thead>
-                            <tr className="border-b-2 border-black text-center h-8">
-                                <th className="w-12 border-r border-black">S.N.</th>
-                                <th className="border-r border-black text-left pl-2">Description of Goods</th>
-                                <th className="w-20 border-r border-black">HSN</th>
-                                <th className="w-16 border-r border-black">Qty.</th>
-                                <th className="w-12 border-r border-black">Unit</th>
-                                <th className="w-20 border-r border-black">Price</th>
-                                <th className="w-16 border-r border-black">Disc%</th>
-                                <th className="w-28 text-right pr-2">Amount(Rs.)</th>
+                            <tr className="border-b-2 border-black text-center min-h-9">
+                                <th className="w-12 border-r border-black py-1.5 px-1">S.N.</th>
+                                <th className="border-r border-black text-left py-1.5 pl-2">Description of Goods</th>
+                                <th className="w-20 border-r border-black py-1.5 px-1 whitespace-nowrap">HSN</th>
+                                <th className="w-16 border-r border-black py-1.5 px-1 whitespace-nowrap">Qty.</th>
+                                <th className="w-12 border-r border-black py-1.5 px-1 whitespace-nowrap">Unit</th>
+                                <th className="w-20 border-r border-black py-1.5 px-1 whitespace-nowrap">Price</th>
+                                <th className="w-20 border-r border-black py-1.5 px-1 whitespace-nowrap">Disc%</th>
+                                <th className="w-28 text-right py-1.5 pr-2 whitespace-nowrap">Amount(Rs.)</th>
                             </tr>
                         </thead>
                         <tbody>
                             {invoice.items.map((item: any, idx: number) => (
-                                <tr key={idx} className="h-10 align-top">
-                                    <td className="border-r border-black text-center pt-2">{idx + 1}</td>
-                                    <td className="border-r border-black text-left pl-2 pt-2 font-medium">{item.product_name}</td>
-                                    <td className="border-r border-black text-center pt-2">{item.hsn_code}</td>
-                                    <td className="border-r border-black text-right pr-1 pt-2">{Number(item.quantity).toFixed(2)}</td>
-                                    <td className="border-r border-black text-center pt-2">{item.unit}</td>
-                                    <td className="border-r border-black text-right pr-1 pt-2">{Number(item.rate).toFixed(2)}</td>
-                                    <td className="border-r border-black text-center pt-2">{Number(item.discount_percent).toFixed(2)} %</td>
-                                    <td className="text-right pr-2 pt-2 font-medium">{Number(item.taxable_amount).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                                <tr key={idx} className="align-top">
+                                    <td className="border-r border-black text-center py-2 px-1">{idx + 1}</td>
+                                    <td className="border-r border-black text-left py-2 pl-2 font-medium">{item.product_name}</td>
+                                    <td className="border-r border-black text-center py-2 px-1 whitespace-nowrap">{item.hsn_code}</td>
+                                    <td className="border-r border-black text-right py-2 pr-1 whitespace-nowrap">{Number(item.quantity).toFixed(2)}</td>
+                                    <td className="border-r border-black text-center py-2 px-1 whitespace-nowrap">{item.unit}</td>
+                                    <td className="border-r border-black text-right py-2 pr-1 whitespace-nowrap">{Number(item.rate).toFixed(2)}</td>
+                                    <td className="border-r border-black text-center py-2 px-1 whitespace-nowrap">{Number(item.discount_percent).toFixed(2)}%</td>
+                                    <td className="text-right py-2 pr-2 font-medium whitespace-nowrap">{Number(item.taxable_amount).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                                 </tr>
                             ))}
                             {/* Filler Row */}
