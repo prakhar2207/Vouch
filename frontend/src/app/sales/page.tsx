@@ -32,6 +32,9 @@ export default function SalesInvoiceList() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleteConfirmParams, setDeleteConfirmParams] = useState<{ id: string; number: string } | null>(null);
 
+  // Status Filter state
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'SUPERSEDED'>('ALL');
+
   // E-Way Bill state
   const [ewayVoucher, setEwayVoucher] = useState<any | null>(null);
   const [isEwayModalOpen, setIsEwayModalOpen] = useState(false);
@@ -42,7 +45,7 @@ export default function SalesInvoiceList() {
       return;
     }
     fetchInvoices(1);
-  }, [router, activeCompanyId]);
+  }, [router, activeCompanyId, statusFilter]);
 
   const fetchInvoices = async (targetPage: number = page) => {
     setLoading(true);
@@ -64,6 +67,7 @@ export default function SalesInvoiceList() {
         const result = await vouchersRepository.getSalesInvoices(companyId, {
           page: targetPage,
           pageSize,
+          status: statusFilter,
         });
         setInvoices(result.data);
         setPagination({
@@ -230,8 +234,40 @@ export default function SalesInvoiceList() {
         </div>
         
         <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/40 flex-1 overflow-hidden flex flex-col">
-          <div className="px-5 py-3.5 border-b border-border/40 bg-muted/30 flex items-center justify-between">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Previous Invoices</span>
+          <div className="px-5 py-3 border-b border-border/40 bg-muted/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            {/* Status Filter Tabs */}
+            <div className="flex items-center gap-1 bg-muted/80 p-1 rounded-xl border border-border/50 text-xs">
+              <button
+                onClick={() => setStatusFilter('ALL')}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                  statusFilter === 'ALL'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                All Invoices
+              </button>
+              <button
+                onClick={() => setStatusFilter('ACTIVE')}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                  statusFilter === 'ACTIVE'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Active Only
+              </button>
+              <button
+                onClick={() => setStatusFilter('SUPERSEDED')}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                  statusFilter === 'SUPERSEDED'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Superseded &amp; Cancelled
+              </button>
+            </div>
             <span className="text-xs text-muted-foreground hidden sm:inline">Use ↑ / ↓ arrow keys to navigate, Ctrl+Enter to edit, Enter to print</span>
           </div>
           {loading ? (
@@ -241,10 +277,10 @@ export default function SalesInvoiceList() {
               <svg className="w-20 h-20 text-muted-foreground dark:text-gray-600 mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
               </svg>
-              <h3 className="text-2xl font-bold mb-2">No Sales Invoices Yet</h3>
-              <p className="text-muted-foreground max-w-md mx-auto mb-8">It looks like you haven't created any sales invoices. Create your first invoice to start tracking your revenue and updating your inventory automatically.</p>
+              <h3 className="text-2xl font-bold mb-2">No Invoices Found</h3>
+              <p className="text-muted-foreground max-w-md mx-auto mb-8">No invoices found matching the current filter.</p>
               <Link href="/sales/new" className="bg-blue-600 text-foreground px-6 py-2.5 rounded-lg shadow hover:bg-blue-700 transition-colors font-medium">
-                + Create First Invoice
+                + Create Invoice
               </Link>
             </div>
           ) : (
@@ -256,7 +292,15 @@ export default function SalesInvoiceList() {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-bold text-foreground text-sm">{inv.voucher_number}</span>
-                        {inv.syncStatus === 'SYNC_FAILED' ? (
+                        {inv.status === 'SUPERSEDED' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30" title="This invoice was superseded/corrected by a newer revision">
+                            SUPERSEDED
+                          </span>
+                        ) : inv.status === 'CANCELLED' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30" title="This invoice was cancelled and reversed">
+                            CANCELLED
+                          </span>
+                        ) : inv.syncStatus === 'SYNC_FAILED' ? (
                           <div className="flex items-center gap-1">
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30" title={inv.errorMessage || "Action requires attention"}>
                               <AlertTriangle className="w-2.5 h-2.5" />
@@ -378,7 +422,21 @@ export default function SalesInvoiceList() {
                           )}
                         </td>
                         <td className="p-4 text-center">
-                          {inv.syncStatus === 'SYNC_FAILED' ? (
+                          {inv.status === 'SUPERSEDED' ? (
+                            <span
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30"
+                              title="This invoice was superseded and corrected by a newer revision"
+                            >
+                              SUPERSEDED
+                            </span>
+                          ) : inv.status === 'CANCELLED' ? (
+                            <span
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30"
+                              title="This invoice was cancelled and reversed"
+                            >
+                              CANCELLED
+                            </span>
+                          ) : inv.syncStatus === 'SYNC_FAILED' ? (
                             <div className="flex items-center gap-1.5 justify-center">
                               <span
                                 className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30"

@@ -133,12 +133,14 @@ export class VouchersRepository {
       filtered = filtered.filter((v) => types.includes(v.voucherType));
     }
 
-    if (options.status && options.status !== "ALL") {
-      filtered = filtered.filter((v) => v.status === options.status);
-    } else if (!options.status) {
-      // By default hide cancelled/reversed/superseded from regular active views
+    if (options.status === "ACTIVE") {
       filtered = filtered.filter((v) => v.status !== "CANCELLED" && v.status !== "REVERSED" && v.status !== "SUPERSEDED");
+    } else if (options.status === "SUPERSEDED" || options.status === "CANCELLED_OR_SUPERSEDED") {
+      filtered = filtered.filter((v) => v.status === "CANCELLED" || v.status === "REVERSED" || v.status === "SUPERSEDED");
+    } else if (options.status && options.status !== "ALL") {
+      filtered = filtered.filter((v) => v.status === options.status);
     }
+    // If options.status === "ALL" or undefined, all vouchers are retained for complete sequential register
 
     if (options.startDate) {
       filtered = filtered.filter((v) => v.voucherDate >= options.startDate!);
