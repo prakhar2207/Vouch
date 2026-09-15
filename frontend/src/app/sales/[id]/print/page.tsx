@@ -6,6 +6,8 @@ import { useParams, useRouter } from 'next/navigation';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import QRCode from 'react-qr-code';
 import { gstApi, EWayBillData } from '@/lib/api/gst';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import { 
   Printer, 
   ArrowLeft, 
@@ -13,6 +15,8 @@ import {
   FileText, 
   Receipt,
   MessageCircle,
+  Download,
+  Loader2,
   ExternalLink
 } from 'lucide-react';
 
@@ -80,6 +84,7 @@ export default function PrintInvoicePage() {
   const [invoice, setInvoice] = useState<any>(null);
   const [ewayBill, setEwayBill] = useState<EWayBillData | null>(null);
   const [layoutMode, setLayoutMode] = useState<'A4' | 'THERMAL'>('A4');
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
 
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
@@ -146,7 +151,6 @@ export default function PrintInvoicePage() {
   const integerPart = Math.floor(subtotalWithTaxes);
   const decimalPart = Math.round((subtotalWithTaxes - integerPart) * 100) / 100;
 
-  // If the invoice was saved with unrounded amount (or round off was not applied at creation)
   if (Math.abs(roundOff) < 0.005 && decimalPart > 0) {
     finalGrandTotal = decimalPart < 0.5 ? integerPart : integerPart + 1;
     roundOff = Math.round((finalGrandTotal - subtotalWithTaxes) * 100) / 100;
@@ -162,36 +166,129 @@ export default function PrintInvoicePage() {
     return `${API_BASE_URL}${sig.startsWith('/') ? '' : '/'}${sig}`;
   };
 
-  const handleWhatsAppShare = () => {
+  const generateInvoicePdf = async (): Promise<File | null> => {
+    const element = document.getElementById('invoice-sheet');
+    if (!element) return null;
+
+    const isThermal = layoutMode === 'THERMAL';
+    
+    const canvas = await (html2canvas as any)(element, {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      logging: false,
+      backgroundColor: '#ffffff',
+    });
+
+    const imgData = canvas.toDataURL('image/png');
+    const pdfWidth = isThermal ? 80 : 210;
+    const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+    const pdfHeight = isThermal ? imgHeight : Math.max(297, imgHeight);
+
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: isThermal ? [pdfWidth, pdfHeight] : 'a4',
+    });
+
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, imgHeight);
+
+    // Sanitize invoice number for clean legal filename: e.g. "INV-001.pdf"
+    const rawInvoiceNo = invoice.voucher_number || 'INVOICE';
+    const cleanInvoiceNo = rawInvoiceNo.replace(/[/\\:*?"<>|]/g, '-').trim();
+    const filename = `${cleanInvoiceNo}.pdf`;
+
+    const pdfBlob = pdf.output('blob');
+    return new File([pdfBlob], filename, { type: 'application/pdf' });
+  };
+
+  const handleWhatsAppShare = async () => {
     if (!invoice) return;
+    setIsGeneratingPdf(true);
 
-    const itemsSummary = invoice.items
-      .map((item: any) => {
-        const qty = Number(item.quantity).toFixed(2);
-        const rate = Number(item.rate).toFixed(2);
-        const amt = Number(item.taxable_amount).toFixed(2);
-        return `• *${item.product_name}* (${qty} ${item.unit || 'pcs'} x ₹${rate}) = ₹${amt}`;
-      })
-      .join('\n');
+    try {
+      const pdfFile = await generateInvoicePdf();
+      if (!pdfFile) {
+        alert('Could not render invoice PDF. Please try again.');
+        return;
+      }
 
-    const totalTax = isInterState ? totalIgst : (totalCgst + totalSgst);
-    const bankSection = invoice.company?.bank_account_number
-      ? `\n\n*Bank Details for NEFT/IMPS/UPI:*\nBank: ${invoice.company.bank_name || ''}\nA/C: ${invoice.company.bank_account_number}\nIFSC: ${invoice.company.bank_ifsc || ''}`
-      : '';
+      const rawInvoiceNo = invoice.voucher_number || 'INVOICE';
+      const cleanInvoiceNo = rawInvoiceNo.replace(/[/\\:*?"<>|]/g, '-').trim();
+      const filename = `${cleanInvoiceNo}.pdf`;
 
-    const text = `*TAX INVOICE: ${invoice.voucher_number}*\nDate: ${invoice.date}\n\n*Billed To:* ${invoice.party.name}\n*From:* ${invoice.company.name}\n\n*Item Details:*\n${itemsSummary}\n\n-----------------------------\n*Taxable Amount:* ₹${totalTaxable.toFixed(2)}\n*GST Amount:* ₹${totalTax.toFixed(2)}${cartageAmount > 0 ? `\n*Cartage:* ₹${cartageAmount.toFixed(2)}` : ''}\n*Net Payable:* *₹${finalGrandTotal.toFixed(2)}*\n-----------------------------${bankSection}\n\nThank you for doing business with us!`;
+      let phone = invoice.party?.phone || invoice.party?.mobile || '';
+      phone = phone.replace(/[^0-9]/g, '');
+      if (phone.length === 10) {
+        phone = '91' + phone;
+      }
 
-    let phone = invoice.party?.phone || invoice.party?.mobile || '';
-    phone = phone.replace(/[^0-9]/g, '');
-    if (phone.length === 10) {
-      phone = '91' + phone;
+      // 1. Native Web Share API (attaches PDF directly on Mobile/Supporting browsers)
+      if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+        try {
+          await navigator.share({
+            files: [pdfFile],
+            title: `Invoice ${invoice.voucher_number}`,
+            text: `Invoice ${invoice.voucher_number} from ${invoice.company.name}`,
+          });
+          return;
+        } catch (shareErr: any) {
+          if (shareErr?.name === 'AbortError') {
+            return; // User cancelled share sheet
+          }
+          console.warn('navigator.share failed, falling back to download + WhatsApp Web:', shareErr);
+        }
+      }
+
+      // 2. Desktop Fallback: Download the PDF named with the invoice number, then open WhatsApp Web
+      const blobUrl = URL.createObjectURL(pdfFile);
+      const downloadLink = document.createElement('a');
+      downloadLink.href = blobUrl;
+      downloadLink.download = filename;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+
+      const msg = `*Invoice: ${invoice.voucher_number}* from *${invoice.company.name}*\nTotal Amount: *₹${Number(finalGrandTotal).toFixed(2)}*\n\n(PDF file *${filename}* has been downloaded to your device. Please attach it to this chat.)`;
+
+      const waUrl = phone
+        ? `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`
+        : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+
+      window.open(waUrl, '_blank');
+    } catch (err: any) {
+      console.error('Failed to share PDF:', err);
+      alert(`Could not share invoice PDF: ${err.message || err}`);
+    } finally {
+      setIsGeneratingPdf(false);
     }
+  };
 
-    const waUrl = phone
-      ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}`
-      : `https://wa.me/?text=${encodeURIComponent(text)}`;
+  const handleDownloadPdf = async () => {
+    if (!invoice) return;
+    setIsGeneratingPdf(true);
+    try {
+      const pdfFile = await generateInvoicePdf();
+      if (!pdfFile) return;
 
-    window.open(waUrl, '_blank');
+      const rawInvoiceNo = invoice.voucher_number || 'INVOICE';
+      const cleanInvoiceNo = rawInvoiceNo.replace(/[/\\:*?"<>|]/g, '-').trim();
+      const filename = `${cleanInvoiceNo}.pdf`;
+
+      const blobUrl = URL.createObjectURL(pdfFile);
+      const downloadLink = document.createElement('a');
+      downloadLink.href = blobUrl;
+      downloadLink.download = filename;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    } catch (err: any) {
+      console.error('PDF download failed:', err);
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   return (
@@ -264,14 +361,30 @@ export default function PrintInvoicePage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* WhatsApp Share Button */}
+          {/* Download PDF Button */}
+          <button
+            onClick={handleDownloadPdf}
+            disabled={isGeneratingPdf}
+            className="bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+            title="Download PDF directly to your device"
+          >
+            {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin text-primary" /> : <Download className="w-4 h-4" />}
+            <span>Download PDF</span>
+          </button>
+
+          {/* WhatsApp Share PDF Button */}
           <button
             onClick={handleWhatsAppShare}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all cursor-pointer"
-            title="Share formatted invoice bill via WhatsApp"
+            disabled={isGeneratingPdf}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+            title="Share PDF of this invoice via WhatsApp"
           >
-            <MessageCircle className="w-4 h-4 fill-current" />
-            <span>Share on WhatsApp</span>
+            {isGeneratingPdf ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <MessageCircle className="w-4 h-4 fill-current" />
+            )}
+            <span>{isGeneratingPdf ? 'Generating PDF...' : 'Share PDF on WhatsApp'}</span>
           </button>
 
           {/* Print Button */}
@@ -288,7 +401,7 @@ export default function PrintInvoicePage() {
       {layoutMode === 'THERMAL' ? (
         /* ================= 80MM POS THERMAL RECEIPT LAYOUT ================= */
         <div className="w-full overflow-x-auto p-4 flex justify-center bg-slate-200 print:bg-white print:p-0">
-          <div className="w-[80mm] max-w-[340px] bg-white p-3 font-mono text-black shadow-lg print:shadow-none mx-auto text-xs leading-tight">
+          <div id="invoice-sheet" className="w-[80mm] max-w-[340px] bg-white p-3 font-mono text-black shadow-lg print:shadow-none mx-auto text-xs leading-tight">
             {/* Store Header */}
             <div className="text-center pb-2 border-b border-dashed border-black">
               <h1 className="text-base font-black tracking-wider uppercase">{invoice.company.name}</h1>
@@ -434,7 +547,7 @@ export default function PrintInvoicePage() {
       ) : (
         /* ================= A4 STANDARD TAX INVOICE LAYOUT ================= */
         <div className="w-full overflow-x-auto p-4 sm:p-8 flex justify-center bg-slate-200 print:bg-white print:p-0">
-          <div className="w-[210mm] min-h-[297mm] print:min-h-[95vh] bg-white p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none print:p-6 print:pt-10 flex flex-col mx-auto">
+          <div id="invoice-sheet" className="w-[210mm] min-h-[297mm] print:min-h-[95vh] bg-white p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none print:p-6 print:pt-10 flex flex-col mx-auto">
           
           {/* Main Border Box */}
           <div className="border-2 border-black flex-1 flex flex-col justify-between">
@@ -729,6 +842,7 @@ export default function PrintInvoicePage() {
                           <div className="flex justify-end w-full my-auto">
                               {invoice.company?.proprietor_signature && (
                                   <img 
+                                      crossOrigin="anonymous"
                                       src={getSignatureUrl(invoice.company.proprietor_signature)} 
                                       alt="Signature" 
                                       className="h-14 object-contain" 
