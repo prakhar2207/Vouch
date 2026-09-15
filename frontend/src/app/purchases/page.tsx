@@ -12,7 +12,7 @@ import EditPurchaseInvoiceModal from "@/components/modals/EditPurchaseInvoiceMod
 import ConfirmModal from "@/components/modals/ConfirmModal";
 import { Edit2, Trash2, Eye, FileText, Plus, ChevronLeft, ChevronRight, AlertCircle, RefreshCw, CheckCircle, AlertTriangle, CloudOff } from "lucide-react";
 import { offlineDb } from "@/lib/db/offlineDb";
-import { retryFailedVoucher } from "@/lib/sync/sync-worker";
+import { retryFailedVoucher, pullIncrementalChanges } from "@/lib/sync/sync-worker";
 import { vouchersRepository } from "@/lib/data";
 
 export default function PurchaseInvoiceList() {
@@ -85,6 +85,23 @@ export default function PurchaseInvoiceList() {
       });
       setPage(targetPage);
       setFetchError(null);
+
+      // Background incremental sync to ensure any server-side cancellations/reversals update IndexedDB
+      pullIncrementalChanges(companyId).then((pullRes) => {
+        if (pullRes.success && pullRes.totalRecords > 0) {
+          vouchersRepository.getPurchaseInvoices(companyId, { page: targetPage, pageSize }).then((fresh) => {
+            setInvoices(fresh.data);
+            setPagination({
+              page: fresh.page,
+              limit: fresh.pageSize,
+              offset: fresh.offset ?? (targetPage - 1) * pageSize,
+              total_count: fresh.totalCount,
+              total_pages: fresh.totalPages,
+              has_more: fresh.hasMore ?? (targetPage < fresh.totalPages),
+            });
+          });
+        }
+      }).catch(() => {});
     } catch (err: any) {
       console.error("fetchInvoices error:", err);
       const errorMsg = err.response?.data?.error || err.response?.data?.message || err.message || "Failed to load purchase invoices";
@@ -138,6 +155,8 @@ export default function PurchaseInvoiceList() {
       if (res.data.success) {
         toast.success(res.data.message || `Invoice deleted and reversed successfully!`);
         setInvoices((prev) => prev.filter((i) => i.id !== voucherId));
+        await vouchersRepository.deleteVoucher(voucherId);
+        setDeleteConfirmParams(null);
         if (selectedVoucher?.id === voucherId) {
           setSelectedVoucher(null);
         }

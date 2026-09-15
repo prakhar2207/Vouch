@@ -13,7 +13,7 @@ import ConfirmModal from '@/components/modals/ConfirmModal';
 import EWayBillModal from '@/components/gst/EWayBillModal';
 import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight, CloudOff, CheckCircle, AlertTriangle, RefreshCw, Truck } from 'lucide-react';
 import { offlineDb } from '@/lib/db/offlineDb';
-import { retryFailedVoucher } from '@/lib/sync/sync-worker';
+import { retryFailedVoucher, pullIncrementalChanges } from '@/lib/sync/sync-worker';
 import { vouchersRepository } from '@/lib/data';
 
 export default function SalesInvoiceList() {
@@ -75,6 +75,23 @@ export default function SalesInvoiceList() {
           has_more: result.hasMore ?? (targetPage < result.totalPages),
         });
         setPage(targetPage);
+
+        // Background incremental sync to ensure server cancellations/reversals sync to IndexedDB
+        pullIncrementalChanges(companyId).then((pullRes) => {
+          if (pullRes.success && pullRes.totalRecords > 0) {
+            vouchersRepository.getSalesInvoices(companyId, { page: targetPage, pageSize }).then((fresh) => {
+              setInvoices(fresh.data);
+              setPagination({
+                page: fresh.page,
+                limit: fresh.pageSize,
+                offset: fresh.offset ?? (targetPage - 1) * pageSize,
+                total_count: fresh.totalCount,
+                total_pages: fresh.totalPages,
+                has_more: fresh.hasMore ?? (targetPage < fresh.totalPages),
+              });
+            });
+          }
+        }).catch(() => {});
       }
     } catch (err) {
       console.error(err);
@@ -101,6 +118,7 @@ export default function SalesInvoiceList() {
       if (res.data.success) {
         toast.success(res.data.message || 'Sales invoice deleted and reversed successfully!');
         setInvoices((prev) => prev.filter((i) => i.id !== voucherId));
+        await vouchersRepository.deleteVoucher(voucherId);
         setDeleteConfirmParams(null);
       } else {
         toast.error('Failed to delete invoice', res.data.error);

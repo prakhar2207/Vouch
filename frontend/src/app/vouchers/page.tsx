@@ -11,6 +11,7 @@ import { ChevronLeft, ChevronRight, Edit2, Trash2 } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
 import { vouchersRepository } from '@/lib/data';
+import { pullIncrementalChanges } from '@/lib/sync/sync-worker';
 import EditPaymentReceiptModal from '@/components/modals/EditPaymentReceiptModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 
@@ -76,6 +77,24 @@ export default function VouchersPage() {
         totalCount: result.totalCount ?? 0,
       });
       setPage(targetPage);
+
+      // Background incremental sync to ensure server cancellations/reversals sync to IndexedDB
+      pullIncrementalChanges(companyId).then((pullRes) => {
+        if (pullRes.success && pullRes.totalRecords > 0) {
+          const typeOpt = typeFilter === 'ALL' ? ['PAYMENT', 'RECEIPT'] : typeFilter;
+          vouchersRepository.getPaymentReceipts(companyId, { page: targetPage, pageSize, type: typeOpt }).then((fresh) => {
+            setVouchers(fresh.data);
+            setPagination({
+              page: fresh.page,
+              limit: fresh.pageSize,
+              offset: fresh.offset ?? (targetPage - 1) * pageSize,
+              total_count: fresh.totalCount,
+              total_pages: fresh.totalPages,
+              has_more: fresh.hasMore ?? (targetPage < fresh.totalPages),
+            });
+          });
+        }
+      }).catch(() => {});
     } catch (err) {
       console.error(err);
     } finally {
@@ -106,6 +125,7 @@ export default function VouchersPage() {
       if (res.data.success) {
         toast.success(res.data.message || 'Voucher deleted and reversed successfully!');
         setVouchers((prev) => prev.filter((v) => v.id !== voucherId));
+        await vouchersRepository.deleteVoucher(voucherId);
         setDeleteConfirmParams(null);
       } else {
         toast.error('Failed to delete voucher', res.data.error);

@@ -136,8 +136,8 @@ export class VouchersRepository {
     if (options.status && options.status !== "ALL") {
       filtered = filtered.filter((v) => v.status === options.status);
     } else if (!options.status) {
-      // By default hide cancelled/reversed from regular active views
-      filtered = filtered.filter((v) => v.status !== "CANCELLED" && v.status !== "REVERSED");
+      // By default hide cancelled/reversed/superseded from regular active views
+      filtered = filtered.filter((v) => v.status !== "CANCELLED" && v.status !== "REVERSED" && v.status !== "SUPERSEDED");
     }
 
     if (options.startDate) {
@@ -274,6 +274,14 @@ export class VouchersRepository {
   async getPaymentReceipts(companyId: string, options: VoucherQueryOptions = {}): Promise<VoucherQueryResult> {
     const type = options.type || ["PAYMENT", "RECEIPT"];
     return this.getVouchers(companyId, { ...options, type });
+  }
+
+  async deleteVoucher(voucherId: string): Promise<void> {
+    try {
+      await offlineDb.syncedVouchers.delete(voucherId);
+    } catch (e) {
+      console.warn("[VouchersRepo] Failed to delete local voucher:", e);
+    }
   }
 }
 

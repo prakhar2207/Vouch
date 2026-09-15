@@ -311,6 +311,13 @@ class ListVouchersAPIView(APIView):
             if v_type:
                 vouchers = vouchers.filter(voucher_type=v_type.upper())
 
+            v_status = request.query_params.get('status')
+            include_inactive = request.query_params.get('include_inactive', 'false').lower() == 'true'
+            if v_status and v_status.upper() != 'ALL':
+                vouchers = vouchers.filter(status=v_status.upper())
+            elif not include_inactive and not v_status:
+                vouchers = vouchers.exclude(status__in=['CANCELLED', 'REVERSED', 'SUPERSEDED'])
+
             total_count = vouchers.count()
 
             vouchers = vouchers.annotate(
