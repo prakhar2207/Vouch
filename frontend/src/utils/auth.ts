@@ -1,13 +1,29 @@
 import Cookies from 'js-cookie';
 import { jwtDecode } from 'jwt-decode';
 
-export const setTokens = (access: string, refresh: string) => {
-  Cookies.set('access_token', access, { expires: 1 });
-  Cookies.set('refresh_token', refresh, { expires: 7 });
+export const setTokens = (access: string, refresh?: string) => {
+  if (access && access !== 'undefined' && access !== 'null') {
+    Cookies.set('access_token', access, { expires: 1, sameSite: 'lax' });
+  }
+  if (refresh && refresh !== 'undefined' && refresh !== 'null') {
+    Cookies.set('refresh_token', refresh, { expires: 30, sameSite: 'lax' });
+  }
 };
 
-export const getAccessToken = () => {
-  return Cookies.get('access_token');
+export const getAccessToken = (): string | undefined => {
+  const token = Cookies.get('access_token');
+  if (!token || token === 'undefined' || token === 'null' || token.trim() === '') {
+    return undefined;
+  }
+  return token;
+};
+
+export const getRefreshToken = (): string | undefined => {
+  const token = Cookies.get('refresh_token');
+  if (!token || token === 'undefined' || token === 'null' || token.trim() === '') {
+    return undefined;
+  }
+  return token;
 };
 
 export const removeTokens = () => {
@@ -15,14 +31,32 @@ export const removeTokens = () => {
   Cookies.remove('refresh_token');
 };
 
-export const isAuthenticated = () => {
-  const token = getAccessToken();
-  if (!token) return false;
-  
+export const isTokenExpired = (token?: string): boolean => {
+  if (!token || token === 'undefined' || token === 'null' || token.trim() === '') return true;
   try {
     const decoded: any = jwtDecode(token);
-    return decoded.exp * 1000 > Date.now();
-  } catch (e) {
-    return false;
+    if (!decoded || !decoded.exp) return true;
+    // Buffer by 10 seconds to preempt edge-of-expiry network races
+    return decoded.exp * 1000 <= Date.now() + 10000;
+  } catch {
+    return true;
   }
+};
+
+export const isAuthenticated = (): boolean => {
+  const token = getAccessToken();
+  const refreshToken = getRefreshToken();
+  if (!token && !refreshToken) return false;
+
+  // If access token is still fresh, user is fully authenticated
+  if (token && !isTokenExpired(token)) {
+    return true;
+  }
+
+  // If access token expired but refresh token is still valid, session is restorable via refresh
+  if (refreshToken && !isTokenExpired(refreshToken)) {
+    return true;
+  }
+
+  return false;
 };

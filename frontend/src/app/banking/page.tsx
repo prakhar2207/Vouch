@@ -132,10 +132,13 @@ export default function BankingPage() {
 
   const getHeaders = () => {
     const token = getAccessToken();
-    return {
-      Authorization: `Bearer ${token}`,
+    const headers: Record<string, string> = {
       "X-Company-ID": companyId,
     };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    return headers;
   };
 
   const initializeData = async () => {
