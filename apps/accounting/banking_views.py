@@ -430,3 +430,128 @@ class BankStatementImportDetailAPIView(APIView):
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": f"Failed to exclude statement: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class BankTransactionToggleDirectionAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, *args, **kwargs):
+        """
+        Allows the user to flip or explicitly set transaction direction between
+        Withdrawal (Debit) and Deposit (Credit) if AI or statement parser classified it incorrectly.
+        Re-evaluates party/expense matching heuristics accordingly.
+        """
+        company = get_authorized_company(request)
+        tx = get_object_or_404(BankTransaction, id=pk, company=company)
+
+        if tx.status in ['MATCHED', 'RECONCILED']:
+            return Response(
+                {"error": "Cannot flip direction of an already reconciled transaction. Exclude or unmatch it first."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        requested_dir = request.data.get('direction')
+        old_debit = tx.debit_amount
+        old_credit = tx.credit_amount
+
+        if requested_dir == 'DEBIT':
+            if tx.debit_amount > Decimal('0.00') and tx.credit_amount == Decimal('0.00'):
+                pass  # Already debit
+            else:
+                amt = tx.credit_amount if tx.credit_amount > Decimal('0.00') else tx.debit_amount
+                tx.debit_amount = amt
+                tx.credit_amount = Decimal('0.00')
+        elif requested_dir == 'CREDIT':
+            if tx.credit_amount > Decimal('0.00') and tx.debit_amount == Decimal('0.00'):
+                pass  # Already credit
+            else:
+                amt = tx.debit_amount if tx.debit_amount > Decimal('0.00') else tx.credit_amount
+                tx.credit_amount = amt
+                tx.debit_amount = Decimal('0.00')
+        else:
+            # Simple toggle
+            if tx.credit_amount > Decimal('0.00'):
+                tx.debit_amount = tx.credit_amount
+                tx.credit_amount = Decimal('0.00')
+            else:
+                tx.credit_amount = tx.debit_amount
+                tx.debit_amount = Decimal('0.00')
+
+        # Re-evaluate heuristics with the new direction
+        from apps.accounting.services.party_intelligence_service import PartyIntelligenceService
+        match_res = PartyIntelligenceService.match_transaction(
+            company=company,
+            narration=tx.normalized_narration or tx.description,
+            debit_amount=tx.debit_amount,
+            credit_amount=tx.credit_amount
+        )
+        tx.matched_party = match_res.get('matched_party')
+        tx.matched_invoice = match_res.get('matched_invoice')
+        tx.match_confidence = match_res.get('confidence', 0.0)
+        notes = tx.match_notes if isinstance(tx.match_notes, dict) else {}
+        notes['signals'] = match_res.get('signals', [])
+        notes['suggested_matches'] = match_res.get('suggested_matches', [])
+        notes['is_bank_expense'] = match_res.get('is_bank_expense', False)
+        tx.match_notes = notes
+
+        if tx.matched_party and tx.status == 'UNRESOLVED':
+            tx.status = 'NEEDS_REVIEW'
+
+        tx.save(update_fields=['debit_amount', 'credit_amount', 'matched_party', 'matched_invoice', 'match_confidence', 'match_notes', 'status', 'updated_at'])
+
+        # Audit log entry
+        from apps.audit.models import AuditLog
+        new_direction = "DEBIT" if tx.debit_amount > Decimal('0.00') else "CREDIT"
+        AuditLog.objects.create(
+            company=company,
+            user=request.user if request.user.is_authenticated else None,
+            action='UPDATE',
+            model_name='BankTransaction',
+            record_id=str(tx.id),
+            changes={
+                "action": "TOGGLE_DIRECTION",
+                "old_debit": str(old_debit),
+                "old_credit": str(old_credit),
+                "new_debit": str(tx.debit_amount),
+                "new_credit": str(tx.credit_amount),
+                "direction": new_direction,
+                "narration": tx.description
+            }
+        )
+
+        direction_label = "Withdrawal (Debit)" if new_direction == "DEBIT" else "Deposit (Credit)"
+        confidence_val = int(tx.match_confidence * 100) if tx.match_confidence <= 1.0 else int(tx.match_confidence)
+
+        return Response({
+            "status": "SUCCESS",
+            "message": f"Switched to {direction_label}",
+            "transaction": {
+                "id": str(tx.id),
+                "transaction_date": str(tx.transaction_date),
+                "value_date": str(tx.value_date) if tx.value_date else None,
+                "description": tx.description,
+                "normalized_narration": tx.normalized_narration,
+                "reference_number": tx.reference_number,
+                "debit_amount": str(tx.debit_amount),
+                "credit_amount": str(tx.credit_amount),
+                "balance": str(tx.balance) if tx.balance else None,
+                "status": tx.status,
+                "is_excluded": tx.is_excluded,
+                "exclusion_reason": tx.exclusion_reason,
+                "bank_ledger": {
+                    "id": str(tx.bank_ledger.id),
+                    "name": tx.bank_ledger.name
+                },
+                "matched_party": {
+                    "id": str(tx.matched_party.id),
+                    "name": tx.matched_party.name,
+                    "ledger_type": tx.matched_party.ledger_type
+                } if tx.matched_party else None,
+                "matched_voucher": {
+                    "id": str(tx.matched_voucher.id),
+                    "voucher_number": tx.matched_voucher.voucher_number
+                } if tx.matched_voucher else None,
+                "match_confidence": confidence_val,
+                "match_notes": tx.match_notes
+            }
+        }, status=status.HTTP_200_OK)

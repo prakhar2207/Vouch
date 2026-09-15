@@ -181,10 +181,11 @@ class PartyIntelligenceService:
         bank_expense_match = not is_receipt and bool(re.search(
             r'\b(?:DEBIT\s+INTEREST|INTEREST\s+CAPITALIZED|INT(?:EREST)?\.?\s*(?:PD|COLL|DR|DEBIT)|'
             r'BANK\s+CHARGES?|SERVICE\s+CHARGES?|SMS\s*(?:ALERT)?\s*CH(?:AR)?G(?:ES)?|'
-            r'FOLIO\s*CH(?:AR)?G(?:ES)?|CONSOLIDATED\s*(?:CHG|CHARGES?)|'
+            r'FOLIO(?:\s*AMT)?|PROC\s*CHGS?|PROCESSING\s*(?:CHGS?|FEES?)|'
+            r'CONSOLIDATED\s*(?:CHG|CHARGES?)|'
             r'ANNUAL\s*(?:MAINTENANCE\s*)?FEE|AMC\s*CH(?:AR)?G(?:ES)?|'
             r'MIN(?:IMUM)?\s*BAL(?:ANCE)?\s*CH(?:AR)?G(?:ES)?|ATM\s*CH(?:AR)?G(?:ES)?|'
-            r'INSPECTION\s*CH(?:AR)?G(?:ES)?|PROCESSING\s*FEE)\b',
+            r'INSPECTION\s*CH(?:AR)?G(?:ES)?)\b',
             norm_narration,
             re.IGNORECASE
         ))

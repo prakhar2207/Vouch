@@ -90,6 +90,7 @@ export default function BankingPage() {
   const [actionTransferLedgerId, setActionTransferLedgerId] = useState<string>("");
   const [actionRemarks, setActionRemarks] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
+  const [directionTogglingId, setDirectionTogglingId] = useState<string | null>(null);
 
   const [confirmModalConfig, setConfirmModalConfig] = useState<{
     isOpen: boolean;
@@ -361,6 +362,93 @@ export default function BankingPage() {
       await fetchTransactionsAndSummary(true);
     } catch (err: any) {
       toast.error("Restore Failed", err.response?.data?.error || err.message || "Failed to restore transaction.");
+    }
+  };
+
+  const handleToggleDirection = async (tx: BankTransactionItem) => {
+    if (directionTogglingId) return;
+    setDirectionTogglingId(tx.id);
+    try {
+      const headers = getHeaders();
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/toggle-direction/`,
+        {},
+        { headers }
+      );
+
+      const updatedTx = res.data.transaction;
+      if (updatedTx) {
+        setTransactions((prev) =>
+          prev.map((t) => (t.id === tx.id ? { ...t, ...updatedTx } : t))
+        );
+        if (selectedTx && selectedTx.id === tx.id) {
+          setSelectedTx((prev) => (prev ? { ...prev, ...updatedTx } : null));
+          if (updatedTx.matched_party) {
+            if (updatedTx.matched_party.ledger_type === "EXPENSE") {
+              setActionType("RECORD_EXPENSE");
+              setActionExpenseLedgerId(updatedTx.matched_party.id);
+            } else {
+              setActionTargetPartyId(updatedTx.matched_party.id);
+            }
+          } else {
+            const newIsCredit = parseFloat(updatedTx.credit_amount) > 0;
+            const desc = (updatedTx.description || updatedTx.normalized_narration || "").toLowerCase();
+            const isExp = !newIsCredit && (
+              desc.includes("interest") || desc.includes("charge") || desc.includes("chg") || desc.includes("fee") || desc.includes("sms") || desc.includes("folio")
+            );
+            if (isExp) {
+              setActionType("RECORD_EXPENSE");
+              let matchedExpId = "";
+              if (desc.includes("interest")) {
+                const intLedger = expenseLedgers.find((l) => l.name.toLowerCase().includes("interest"));
+                if (intLedger) matchedExpId = intLedger.id;
+              }
+              if (!matchedExpId) {
+                const chgLedger = expenseLedgers.find((l) =>
+                  l.name.toLowerCase().includes("charge") || l.name.toLowerCase().includes("fee")
+                );
+                if (chgLedger) matchedExpId = chgLedger.id;
+              }
+              if (matchedExpId) setActionExpenseLedgerId(matchedExpId);
+            }
+          }
+        }
+        // Update local offline IndexedDB cache
+        bankTransactionsRepository.bulkUpsert([{
+          id: updatedTx.id,
+          bank_ledger: updatedTx.bank_ledger?.id || selectedBankId,
+          transaction_date: updatedTx.transaction_date,
+          description: updatedTx.description,
+          normalized_narration: updatedTx.normalized_narration,
+          reference_number: updatedTx.reference_number,
+          debit_amount: updatedTx.debit_amount,
+          credit_amount: updatedTx.credit_amount,
+          balance: updatedTx.balance,
+          status: updatedTx.status,
+          is_excluded: updatedTx.is_excluded,
+          exclusion_reason: updatedTx.exclusion_reason,
+          matched_party: updatedTx.matched_party,
+          matched_voucher: updatedTx.matched_voucher,
+          match_confidence: updatedTx.match_confidence,
+          match_notes: updatedTx.match_notes,
+          created_at: updatedTx.created_at || new Date().toISOString(),
+          updated_at: updatedTx.updated_at || new Date().toISOString(),
+        }]).catch((e: any) => console.warn("Failed to update cached bank transaction offline:", e));
+      }
+
+      toast.success(
+        res.data.is_credit ? "Switched to Deposit (Credit)" : "Switched to Withdrawal (Debit)",
+        res.data.message || "Transaction direction updated."
+      );
+      fetchTransactionsAndSummary(false);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(
+        "Failed to change direction",
+        err.response?.data?.error || err.message || "Could not toggle transaction direction."
+      );
+    } finally {
+      setDirectionTogglingId(null);
     }
   };
 
@@ -915,6 +1003,8 @@ export default function BankingPage() {
                   idx={idx}
                   showDateHeader={showDateHeader}
                   onOpenActionModal={openActionModal}
+                  onToggleDirection={handleToggleDirection}
+                  isTogglingDirection={directionTogglingId === tx.id}
                   onExclude={handleExcludeTransaction}
                   onRestore={handleRestoreTransaction}
                   onViewVouchers={() => router.push("/vouchers")}
@@ -945,6 +1035,8 @@ export default function BankingPage() {
           selectedTx={selectedTx}
           actionType={actionType}
           onActionTypeChange={handleActionTypeChange}
+          onToggleDirection={handleToggleDirection}
+          isTogglingDirection={directionTogglingId === selectedTx?.id}
           onCloseAction={closeActionModal}
           actionTargetPartyId={actionTargetPartyId}
           onTargetPartyChange={setActionTargetPartyId}

@@ -11,6 +11,7 @@ import {
   Sparkles,
   RefreshCw,
   EyeOff,
+  ArrowLeftRight,
 } from "lucide-react";
 import SearchableSelect, { SearchableOption } from "@/components/SearchableSelect";
 import ConfirmModal from "@/components/modals/ConfirmModal";
@@ -42,6 +43,8 @@ interface BankingModalsContainerProps {
   selectedTx: BankTransactionItem | null;
   actionType: BankingActionType | null;
   onActionTypeChange?: (type: BankingActionType) => void;
+  onToggleDirection?: (tx: BankTransactionItem) => void;
+  isTogglingDirection?: boolean;
   onCloseAction: () => void;
   actionTargetPartyId: string;
   onTargetPartyChange: (id: string) => void;
@@ -105,6 +108,8 @@ export default function BankingModalsContainer({
   selectedTx,
   actionType,
   onActionTypeChange,
+  onToggleDirection,
+  isTogglingDirection = false,
   onCloseAction,
   actionTargetPartyId,
   onTargetPartyChange,
@@ -365,6 +370,45 @@ export default function BankingModalsContainer({
                 </button>
               </div>
               <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{selectedTx.description}</p>
+
+              <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-border/40">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-[11px] font-bold font-mono px-2 py-0.5 rounded ${
+                      parseFloat(selectedTx.credit_amount) > 0
+                        ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
+                        : "bg-rose-500/10 text-rose-500 border border-rose-500/20"
+                    }`}
+                  >
+                    {parseFloat(selectedTx.credit_amount) > 0 ? "+ Deposit (Credit)" : "- Withdrawal (Debit)"}
+                  </span>
+                  <span className="text-sm font-black font-mono">
+                    ₹{parseFloat(
+                      parseFloat(selectedTx.credit_amount) > 0
+                        ? selectedTx.credit_amount
+                        : selectedTx.debit_amount
+                    ).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                {onToggleDirection && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleDirection(selectedTx)}
+                    disabled={isTogglingDirection}
+                    className="text-[11px] font-semibold text-primary hover:text-primary/80 flex items-center gap-1.5 cursor-pointer bg-primary/10 hover:bg-primary/15 px-2.5 py-1 rounded-lg border border-primary/20 transition-all disabled:opacity-50"
+                    title={
+                      parseFloat(selectedTx.credit_amount) > 0
+                        ? "Switch to Withdrawal (Debit)"
+                        : "Switch to Deposit (Credit)"
+                    }
+                  >
+                    <ArrowLeftRight className={`w-3.5 h-3.5 ${isTogglingDirection ? "animate-spin" : ""}`} />
+                    <span>
+                      {parseFloat(selectedTx.credit_amount) > 0 ? "Make Debit (-)" : "Make Credit (+)"}
+                    </span>
+                  </button>
+                )}
+              </div>
 
               {/* Classification Switcher Tabs */}
               {onActionTypeChange && (

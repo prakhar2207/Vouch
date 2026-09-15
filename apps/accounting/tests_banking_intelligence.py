@@ -783,3 +783,40 @@ class BankIntelligenceAndAccountingHealthTests(APITestCase):
         self.assertFalse(BankStatementImport.objects.filter(id=summary["import_id"]).exists())
         self.assertFalse(BankTransaction.objects.filter(statement_import_id=summary["import_id"]).exists())
 
+    def test_29_toggle_transaction_direction_api(self):
+        """Scenario 29: Toggle transaction direction between Credit and Debit with heuristic re-evaluation."""
+        chg_ledger = Ledger.objects.create(
+            company=self.company, group=self.exp_grp, name="Bank Charges", ledger_type="EXPENSE"
+        )
+        tx = BankTransaction.objects.create(
+            company=self.company,
+            bank_ledger=self.bank_ledger,
+            transaction_date=datetime.date(2026, 7, 1),
+            description="FOLIO AMT FIXED FOR OD Chq: 0 -",
+            normalized_narration="FOLIO AMT FIXED FOR OD CHQ: 0 -",
+            debit_amount=Decimal('0.00'),
+            credit_amount=Decimal('295.00'),
+            status='UNRESOLVED'
+        )
+
+        from apps.companies.models import UserCompany
+        UserCompany.objects.get_or_create(user=self.user, company=self.company, defaults={'role': 'OWNER'})
+
+        self.client.force_authenticate(user=self.user)
+        url = f"/api/v1/accounting/banking/transactions/{tx.id}/toggle-direction/"
+        res = self.client.post(url, {}, HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(res.status_code, 200)
+
+        tx.refresh_from_db()
+        self.assertEqual(tx.debit_amount, Decimal('295.00'))
+        self.assertEqual(tx.credit_amount, Decimal('0.00'))
+        self.assertTrue(tx.match_notes.get('is_bank_expense'))
+        self.assertEqual(tx.matched_party, chg_ledger)
+
+        # Toggle back
+        res2 = self.client.post(url, {}, HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(res2.status_code, 200)
+        tx.refresh_from_db()
+        self.assertEqual(tx.credit_amount, Decimal('295.00'))
+        self.assertEqual(tx.debit_amount, Decimal('0.00'))
+

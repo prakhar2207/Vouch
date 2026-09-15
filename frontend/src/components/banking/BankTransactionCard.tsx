@@ -4,6 +4,7 @@ import React from "react";
 import {
   ArrowUpRight,
   ArrowDownRight,
+  ArrowLeftRight,
   Sparkles,
   EyeOff,
 } from "lucide-react";
@@ -14,6 +15,8 @@ interface BankTransactionCardProps {
   idx: number;
   showDateHeader: boolean;
   onOpenActionModal: (tx: BankTransactionItem, type: BankingActionType) => void;
+  onToggleDirection?: (tx: BankTransactionItem) => void;
+  isTogglingDirection?: boolean;
   onExclude: (tx: BankTransactionItem) => void;
   onRestore: (tx: BankTransactionItem) => void;
   onViewVouchers?: () => void;
@@ -24,6 +27,8 @@ export default function BankTransactionCard({
   idx,
   showDateHeader,
   onOpenActionModal,
+  onToggleDirection,
+  isTogglingDirection = false,
   onExclude,
   onRestore,
   onViewVouchers,
@@ -134,6 +139,18 @@ export default function BankTransactionCard({
                 Bal: ₹{parseFloat(tx.balance).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
               </div>
             )}
+            {!tx.is_excluded && tx.status !== "EXCLUDED" && tx.status !== "MATCHED" && tx.status !== "RECONCILED" && onToggleDirection && (
+              <button
+                type="button"
+                onClick={() => onToggleDirection(tx)}
+                disabled={isTogglingDirection}
+                className="mt-1.5 flex items-center justify-end gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md border border-border/60 bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs hover:border-primary/40 disabled:opacity-50 ml-auto"
+                title={isCredit ? "Marked as Deposit (+). Click to switch to Withdrawal / Debit (-)" : "Marked as Withdrawal (-). Click to switch to Deposit / Credit (+)"}
+              >
+                <ArrowLeftRight className={`w-3 h-3 text-primary ${isTogglingDirection ? "animate-spin" : ""}`} />
+                <span>{isCredit ? "Make Debit (-)" : "Make Credit (+)"}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -223,6 +240,18 @@ export default function BankTransactionCard({
                     title="Classify as Bank Interest, Charges, or Business Expense"
                   >
                     Expense
+                  </button>
+                )}
+                {onToggleDirection && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleDirection(tx)}
+                    disabled={isTogglingDirection}
+                    className="px-2 py-1.5 rounded-lg border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground text-xs font-medium cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                    title={isCredit ? "Marked as Deposit (+). Click to switch to Withdrawal / Debit (-)" : "Marked as Withdrawal (-). Click to switch to Deposit / Credit (+)"}
+                  >
+                    <ArrowLeftRight className={`w-3 h-3 text-primary ${isTogglingDirection ? "animate-spin" : ""}`} />
+                    <span>{isCredit ? "Make Debit" : "Make Credit"}</span>
                   </button>
                 )}
                 <button
@@ -317,6 +346,19 @@ export default function BankTransactionCard({
                 className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-muted hover:bg-muted/80 text-foreground border border-border/40 transition-colors cursor-pointer"
               >
                 Owner Drawing
+              </button>
+            )}
+
+            {onToggleDirection && (
+              <button
+                type="button"
+                onClick={() => onToggleDirection(tx)}
+                disabled={isTogglingDirection}
+                className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-muted hover:bg-muted/80 text-foreground border border-border/40 transition-colors cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                title={isCredit ? "Marked as Deposit (+). Click to switch to Withdrawal / Debit (-)" : "Marked as Withdrawal (-). Click to switch to Deposit / Credit (+)"}
+              >
+                <ArrowLeftRight className={`w-3 h-3 text-primary ${isTogglingDirection ? "animate-spin" : ""}`} />
+                <span>{isCredit ? "Make Debit (-)" : "Make Credit (+)"}</span>
               </button>
             )}
 
