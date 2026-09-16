@@ -457,24 +457,41 @@ export async function pullIncrementalChanges(
         }
         // Deleted/Cancelled/Reversed vouchers update their status or delete
         if (changes.vouchers.deleted && changes.vouchers.deleted.length > 0) {
-          const toUpdateCancelled: SyncedVoucher[] = changes.vouchers.deleted.map((v: any) => ({
-            id: v.id,
-            companyId: v.company_id || companyId,
-            financialYearId: v.financial_year_id,
-            voucherType: v.voucher_type,
-            voucherNumber: v.voucher_number,
-            voucherDate: v.voucher_date,
-            dueDate: v.due_date || v.dueDate || null,
-            referenceNumber: v.reference_number,
-            partyLedgerId: v.party_ledger_id,
-            partyName: v.party_name,
-            status: v.status || "CANCELLED",
-            totalAmount: Number(v.total_amount) || 0,
-            narration: v.narration,
-            serverUpdatedAt: v.server_updated_at || Date.now(),
-          }));
-          await offlineDb.syncedVouchers.bulkPut(toUpdateCancelled);
-          allChangedVouchers.push(...toUpdateCancelled);
+          const toDeleteIds: string[] = [];
+          const toUpdateCancelled: SyncedVoucher[] = [];
+
+          for (const v of changes.vouchers.deleted) {
+            // If it's a hard-delete event from server (only has id, missing voucher_number or voucher_type)
+            if (!v.voucher_number || !v.voucher_type) {
+              toDeleteIds.push(String(v.id));
+            } else {
+              toUpdateCancelled.push({
+                id: v.id,
+                companyId: v.company_id || companyId,
+                financialYearId: v.financial_year_id,
+                voucherType: v.voucher_type,
+                voucherNumber: v.voucher_number,
+                voucherDate: v.voucher_date,
+                dueDate: v.due_date || v.dueDate || null,
+                referenceNumber: v.reference_number,
+                partyLedgerId: v.party_ledger_id,
+                partyName: v.party_name,
+                status: v.status || "CANCELLED",
+                totalAmount: Number(v.total_amount) || 0,
+                narration: v.narration,
+                serverUpdatedAt: v.server_updated_at || Date.now(),
+              });
+            }
+          }
+
+          if (toDeleteIds.length > 0) {
+            await offlineDb.syncedVouchers.bulkDelete(toDeleteIds);
+          }
+
+          if (toUpdateCancelled.length > 0) {
+            await offlineDb.syncedVouchers.bulkPut(toUpdateCancelled);
+            allChangedVouchers.push(...toUpdateCancelled);
+          }
         }
       }
 

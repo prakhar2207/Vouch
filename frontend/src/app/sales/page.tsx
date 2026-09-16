@@ -109,7 +109,23 @@ export default function SalesInvoiceList() {
           }
         }
 
-        setInvoices(result.data || []);
+        const isGhostVoucher = (v: any) => {
+          const vNum = String(v.voucher_number || v.voucherNumber || '').trim();
+          const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(vNum);
+          return isUUID || vNum === String(v.id) || (v.status === 'CANCELLED' && Number(v.total_amount || v.totalAmount || 0) === 0 && !v.party_name && !v.partyName);
+        };
+
+        const cleanList = (result.data || []).filter((v: any) => !isGhostVoucher(v));
+        setInvoices(cleanList);
+
+        // Async purge any detected ghosts from IndexedDB
+        const ghosts = (result.data || []).filter(isGhostVoucher);
+        if (ghosts.length > 0) {
+          for (const g of ghosts) {
+            vouchersRepository.deleteVoucher(g.id);
+          }
+        }
+
         setPagination({
           page: result.page || targetPage,
           limit: result.pageSize || pageSize,
@@ -124,7 +140,8 @@ export default function SalesInvoiceList() {
         pullIncrementalChanges(companyId).then((pullRes) => {
           if (pullRes.success && pullRes.totalRecords > 0) {
             vouchersRepository.getSalesInvoices(companyId, { page: targetPage, pageSize, status: statusFilter }).then((fresh) => {
-              setInvoices(fresh.data);
+              const cleanFresh = (fresh.data || []).filter((v: any) => !isGhostVoucher(v));
+              setInvoices(cleanFresh);
               setPagination({
                 page: fresh.page,
                 limit: fresh.pageSize,
@@ -168,6 +185,13 @@ export default function SalesInvoiceList() {
         toast.error('Failed to delete invoice', res.data.error);
       }
     } catch (err: any) {
+      if (err.response?.status === 404) {
+        setInvoices((prev) => prev.filter((i) => i.id !== voucherId));
+        await vouchersRepository.deleteVoucher(voucherId);
+        setDeleteConfirmParams(null);
+        toast.success('Voucher cleaned up from local records.');
+        return;
+      }
       toast.error('Delete failed', err.response?.data?.error || err.message);
     }
   };

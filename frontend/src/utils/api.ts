@@ -133,11 +133,16 @@ async function handleResponseError(error: AxiosError) {
   isRefreshing = true;
   const refreshToken = getRefreshToken();
 
+  const isPublicRoute = typeof window !== 'undefined' && (
+    window.location.pathname.startsWith('/sales/') ||
+    window.location.pathname.includes('/print')
+  );
+
   if (!refreshToken || isTokenExpired(refreshToken)) {
     isRefreshing = false;
     processQueue(error, null);
     removeTokens();
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login' && !isPublicRoute) {
       console.warn('[AUTH] Session expired and refresh token unavailable, redirecting to /login');
       window.location.href = '/login?expired=1';
     }
@@ -173,7 +178,7 @@ async function handleResponseError(error: AxiosError) {
   } catch (refreshErr) {
     processQueue(refreshErr, null);
     removeTokens();
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login' && !isPublicRoute) {
       console.warn('[AUTH] Refresh token rejected, redirecting to /login');
       window.location.href = '/login?expired=1';
     }

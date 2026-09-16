@@ -164,6 +164,16 @@ export default function PurchaseInvoiceList() {
         toast.error("Failed to delete invoice", res.data.error);
       }
     } catch (err: any) {
+      if (err.response?.status === 404) {
+        setInvoices((prev) => prev.filter((i) => i.id !== voucherId));
+        await vouchersRepository.deleteVoucher(voucherId);
+        setDeleteConfirmParams(null);
+        if (selectedVoucher?.id === voucherId) {
+          setSelectedVoucher(null);
+        }
+        toast.success("Voucher cleaned up from local records.");
+        return;
+      }
       toast.error("Delete failed", err.response?.data?.error || err.message);
     }
   };

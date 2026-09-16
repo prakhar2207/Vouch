@@ -67,7 +67,7 @@ export default function SettingsPage() {
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState('VIEWER');
+  const [inviteRole, setInviteRole] = useState('EMPLOYEE');
   const [inviting, setInviting] = useState(false);
 
   // Diagnostics State
@@ -370,14 +370,11 @@ export default function SettingsPage() {
     switch (role?.toUpperCase()) {
       case 'OWNER':
         return 'bg-purple-500/15 text-purple-400 border-purple-500/30';
-      case 'ADMIN':
-        return 'bg-blue-500/15 text-blue-400 border-blue-500/30';
-      case 'ACCOUNTANT':
-        return 'bg-amber-500/15 text-amber-400 border-amber-500/30';
-      case 'SALES':
+      case 'CA':
         return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
-      case 'PURCHASE':
-        return 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30';
+      case 'EMPLOYEE':
+        return 'bg-blue-500/15 text-blue-400 border-blue-500/30';
+      case 'VIEWER':
       default:
         return 'bg-muted text-muted-foreground border-border/40';
     }
@@ -792,7 +789,7 @@ export default function SettingsPage() {
                   <div>
                     <h2 className="text-base font-bold text-foreground">Team & Permissions (RBAC)</h2>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Assign Owner, Admin, Accountant, Sales, or Purchase access roles
+                      Assign Owner, CA (Chartered Accountant), Employee, or Viewer access roles
                     </p>
                   </div>
                 </div>
@@ -856,10 +853,8 @@ export default function SettingsPage() {
                                 onChange={(e) => handleUpdateRole(m.id, e.target.value)}
                                 className="text-xs bg-muted/60 border border-input rounded px-2 py-1 text-foreground font-semibold outline-none cursor-pointer"
                               >
-                                <option value="ADMIN">ADMIN</option>
-                                <option value="ACCOUNTANT">ACCOUNTANT</option>
-                                <option value="SALES">SALES</option>
-                                <option value="PURCHASE">PURCHASE</option>
+                                <option value="CA">CA</option>
+                                <option value="EMPLOYEE">EMPLOYEE</option>
                                 <option value="VIEWER">VIEWER</option>
                               </select>
                             )}
@@ -1088,10 +1083,8 @@ export default function SettingsPage() {
                     onChange={(e) => setInviteRole(e.target.value)}
                     className="w-full bg-muted/40 border border-input text-foreground text-sm p-2.5 rounded-lg outline-none cursor-pointer"
                   >
-                    <option value="ADMIN">ADMIN (Full access except owner transfer)</option>
-                    <option value="ACCOUNTANT">ACCOUNTANT (Vouchers, Daybook, Ledgers, Reports)</option>
-                    <option value="SALES">SALES (Create & View Sales Invoices only)</option>
-                    <option value="PURCHASE">PURCHASE (Create & View Purchases only)</option>
+                    <option value="CA">CA (Full Accounting: Ledgers, Daybook, Vouchers, Reports)</option>
+                    <option value="EMPLOYEE">EMPLOYEE (Operational: Sales, Purchases, Stock, Parties)</option>
                     <option value="VIEWER">VIEWER (Read-only access)</option>
                   </select>
                 </div>

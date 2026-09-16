@@ -131,6 +131,13 @@ export default function VouchersPage() {
         toast.error('Failed to delete voucher', res.data.error);
       }
     } catch (err: any) {
+      if (err.response?.status === 404) {
+        setVouchers((prev) => prev.filter((v) => v.id !== voucherId));
+        await vouchersRepository.deleteVoucher(voucherId);
+        setDeleteConfirmParams(null);
+        toast.success('Voucher cleaned up from local records.');
+        return;
+      }
       toast.error('Delete failed', err.response?.data?.error || err.message);
     }
   };

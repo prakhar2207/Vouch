@@ -38,11 +38,11 @@ class BaseHardeningTestCase(TestCase):
         self.user_viewer_a = User.objects.create_user(email="viewer_a@alpha.com", password="Password123!")
         UserCompany.objects.create(user=self.user_viewer_a, company=self.comp_a, role="VIEWER")
 
-        self.user_sales_a = User.objects.create_user(email="sales_a@alpha.com", password="Password123!")
-        UserCompany.objects.create(user=self.user_sales_a, company=self.comp_a, role="SALES")
+        self.user_employee_a = User.objects.create_user(email="employee_a@alpha.com", password="Password123!")
+        UserCompany.objects.create(user=self.user_employee_a, company=self.comp_a, role="EMPLOYEE")
 
-        self.user_admin_a = User.objects.create_user(email="admin_a@alpha.com", password="Password123!")
-        UserCompany.objects.create(user=self.user_admin_a, company=self.comp_a, role="ADMIN")
+        self.user_ca_a = User.objects.create_user(email="ca_a@alpha.com", password="Password123!")
+        UserCompany.objects.create(user=self.user_ca_a, company=self.comp_a, role="CA")
 
         # Company B (Competitor - Gujarat 24)
         self.comp_b = Company.objects.create(
@@ -147,9 +147,9 @@ class RBACPermissionTests(BaseHardeningTestCase):
         response = self.client.post("/api/v1/accounting/sales-invoice/", data=payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_sales_role_can_create_sales_invoice(self):
-        """A user with SALES role can create sales invoices."""
-        self.client.force_authenticate(user=self.user_sales_a)
+    def test_employee_role_can_create_sales_invoice(self):
+        """A user with EMPLOYEE role can create sales invoices."""
+        self.client.force_authenticate(user=self.user_employee_a)
         payload = {
             "company_id": str(self.comp_a.id),
             "party_ledger_id": str(self.party_a.id),
@@ -158,20 +158,20 @@ class RBACPermissionTests(BaseHardeningTestCase):
         response = self.client.post("/api/v1/accounting/sales-invoice/", data=payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
-    def test_sales_role_cannot_create_purchase_invoice(self):
-        """A user with SALES role cannot create purchase invoices (403 Forbidden)."""
-        self.client.force_authenticate(user=self.user_sales_a)
+    def test_employee_role_can_create_purchase_invoice(self):
+        """A user with EMPLOYEE role can create purchase invoices."""
+        self.client.force_authenticate(user=self.user_employee_a)
         payload = {
             "company_id": str(self.comp_a.id),
             "party_ledger_id": str(self.party_a.id),
             "items": [{"product_id": str(self.prod_a.id), "quantity": 1, "rate": 100.00}]
         }
         response = self.client.post("/api/v1/accounting/purchase-invoice/", data=payload, format='json')
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
-    def test_admin_cannot_delete_company(self):
-        """Company deletion is restricted to OWNER only; ADMIN role must be rejected."""
-        self.client.force_authenticate(user=self.user_admin_a)
+    def test_ca_cannot_delete_company(self):
+        """Company deletion is restricted to OWNER only; CA role must be rejected."""
+        self.client.force_authenticate(user=self.user_ca_a)
         response = self.client.delete(f"/api/v1/companies/{self.comp_a.id}/", data={"password": "Password123!"}, format='json')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 

@@ -23,7 +23,10 @@ import {
   Check,
   Copy,
   X,
-  ChevronDown
+  ChevronDown,
+  Lock,
+  ShieldAlert,
+  LogIn
 } from 'lucide-react';
 
 function numberToWords(numAmount: number): string {
@@ -99,6 +102,16 @@ export default function PrintInvoicePage() {
   const [copiedMessage, setCopiedMessage] = useState<boolean>(false);
   const [preferredWhatsAppClient, setPreferredWhatsAppClient] = useState<'web' | 'app'>('web');
 
+  const [downloadPermission, setDownloadPermission] = useState<{
+    can_download: boolean;
+    reason?: string;
+    company_type?: string;
+    user_role?: string;
+    allowed_roles?: string[];
+  } | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
+  const [authModalReason, setAuthModalReason] = useState<string>('');
+
   useEffect(() => {
     setIsAuth(isAuthenticated());
     if (typeof window !== 'undefined') {
@@ -113,32 +126,84 @@ export default function PrintInvoicePage() {
   const fetchInvoice = async () => {
     try {
       let res;
-      if (isAuthenticated()) {
-        const token = getAccessToken();
-        const headers = { Authorization: `Bearer ${token}` };
+      const token = getAccessToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      if (token) {
         try {
           res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/detail/${invoiceId}/`, { headers });
         } catch (authErr) {
-          // Fallback to public endpoint if user lacks direct company permissions
-          res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/`);
+          // Fallback to public endpoint with auth headers so backend can evaluate user permissions
+          res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/`, { headers });
         }
       } else {
-        // Public viewing for recipients without an account
+        // Public viewing for recipients without an account (e.g. via QR scan)
         res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/`);
       }
-      setInvoice(res.data.data);
 
-      try {
-        const ewayRes = await gstApi.getEWayBillForVoucher(invoiceId);
-        if (ewayRes.success && ewayRes.data && ewayRes.data.status !== 'CAN') {
-          setEwayBill(ewayRes.data);
+      if (res?.data?.data) {
+        const invData = res.data.data;
+        setInvoice(invData);
+
+        if (invData.download_permission) {
+          setDownloadPermission(invData.download_permission);
         }
-      } catch (e) {
-        // E-Way Bill is optional
+
+        if (invData.eway_bill && invData.eway_bill.status !== 'CAN') {
+          setEwayBill(invData.eway_bill);
+        } else if (token) {
+          try {
+            const ewayRes = await gstApi.getEWayBillForVoucher(invoiceId);
+            if (ewayRes.success && ewayRes.data && ewayRes.data.status !== 'CAN') {
+              setEwayBill(ewayRes.data);
+            }
+          } catch (e) {
+            // E-Way Bill is optional
+          }
+        }
       }
     } catch (err) {
       console.error('Failed to load invoice:', err);
     }
+  };
+
+  const checkCanDownload = async (): Promise<boolean> => {
+    // 1. If download permission already cached from invoice detail payload
+    if (downloadPermission !== null) {
+      if (downloadPermission.can_download) {
+        return true;
+      }
+      setAuthModalReason(downloadPermission.reason || (isAuthenticated() ? 'ROLE_RESTRICTED' : 'UNAUTHENTICATED'));
+      setAuthModalOpen(true);
+      return false;
+    }
+
+    // 2. Fetch permission dynamically
+    try {
+      const token = getAccessToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${invoiceId}/download-permission/`, { headers });
+      if (res.data?.success && res.data?.data) {
+        const perm = res.data.data;
+        setDownloadPermission(perm);
+        if (perm.can_download) {
+          return true;
+        } else {
+          setAuthModalReason(perm.reason || (token ? 'ROLE_RESTRICTED' : 'UNAUTHENTICATED'));
+          setAuthModalOpen(true);
+          return false;
+        }
+      }
+    } catch (e) {
+      // Fallback
+    }
+
+    if (!isAuthenticated()) {
+      setAuthModalReason('UNAUTHENTICATED');
+      setAuthModalOpen(true);
+      return false;
+    }
+    return true;
   };
 
   // Auto-download PDF if URL contains ?download=true or ?auto_download=true
@@ -146,6 +211,7 @@ export default function PrintInvoicePage() {
     if (invoice && typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('download') === 'true' || urlParams.get('auto_download') === 'true') {
+        window.history.replaceState({}, '', window.location.pathname);
         handleDownloadPdf();
       }
     }
@@ -461,6 +527,13 @@ export default function PrintInvoicePage() {
   };
 
   const handleOpenExplicitWhatsApp = async (target: 'web' | 'app') => {
+    if (!invoice) return;
+    const canDownload = await checkCanDownload();
+    if (!canDownload) {
+      setIsWhatsAppModalOpen(false);
+      return;
+    }
+
     setPreferredWhatsAppClient(target);
     if (typeof window !== 'undefined') {
       localStorage.setItem('vouch_preferred_wa_client', target);
@@ -508,6 +581,9 @@ export default function PrintInvoicePage() {
 
   const handleWhatsAppShareClick = async () => {
     if (!invoice) return;
+    const canDownload = await checkCanDownload();
+    if (!canDownload) return;
+
     setIsGeneratingPdf(true);
 
     try {
@@ -588,6 +664,9 @@ export default function PrintInvoicePage() {
 
   const handleDownloadPdf = async () => {
     if (!invoice) return;
+    const canDownload = await checkCanDownload();
+    if (!canDownload) return;
+
     setIsGeneratingPdf(true);
     try {
       const pdfResult = await generateInvoicePdf();
@@ -664,9 +743,14 @@ export default function PrintInvoicePage() {
               <span>Back</span>
             </button>
           ) : (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded-lg text-xs font-semibold text-slate-200 border border-slate-700">
-              <FileText className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Invoice {invoice.voucher_number}</span>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded-lg text-xs font-semibold text-slate-200 border border-slate-700">
+                <FileText className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Invoice {invoice.voucher_number}</span>
+              </div>
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-medium">
+                Public View
+              </span>
             </div>
           )}
 
@@ -694,14 +778,33 @@ export default function PrintInvoicePage() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {!isAuth && (
+            <button
+              onClick={() => {
+                const redirectUrl = encodeURIComponent(window.location.pathname + '?download=true');
+                router.push(`/login?redirect=${redirectUrl}`);
+              }}
+              className="text-slate-300 hover:text-white px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <LogIn className="w-3.5 h-3.5 text-primary" />
+              <span>Sign In</span>
+            </button>
+          )}
+
           {/* Download PDF Button */}
           <button
             onClick={handleDownloadPdf}
             disabled={isGeneratingPdf}
             className="bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
-            title="Download PDF directly to your device"
+            title={downloadPermission && !downloadPermission.can_download ? "Download restricted to authorized company members" : "Download PDF directly to your device"}
           >
-            {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin text-primary" /> : <Download className="w-4 h-4" />}
+            {isGeneratingPdf ? (
+              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            ) : downloadPermission && !downloadPermission.can_download ? (
+              <Lock className="w-4 h-4 text-amber-400" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
             <span>Download PDF</span>
           </button>
 
@@ -860,6 +963,104 @@ export default function PrintInvoicePage() {
                 <span>{copiedMessage ? 'Message Copied!' : 'Copy Text Summary'}</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* DOWNLOAD AUTHENTICATION / PERMISSION MODAL */}
+      {authModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs print:hidden animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700 text-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 relative">
+            <button
+              onClick={() => setAuthModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {authModalReason === 'UNAUTHENTICATED' ? (
+              <>
+                <div className="flex items-center gap-3">
+                  <div className="p-3 rounded-xl bg-amber-500/20 text-amber-400">
+                    <Lock className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">Login Required to Download</h3>
+                    <p className="text-xs text-slate-400">Official GST Tax Invoice</p>
+                  </div>
+                </div>
+
+                <div className="p-3.5 bg-slate-800/80 rounded-xl border border-slate-700 space-y-2 text-xs text-slate-300">
+                  <p>
+                    Anyone can view this invoice. However, downloading the official PDF is restricted to authorized <strong>Owners</strong>, <strong>Accountants (CA)</strong>, or <strong>Employees</strong> of either:
+                  </p>
+                  <ul className="list-disc list-inside space-y-1 text-slate-400 pl-1 font-mono text-[11px]">
+                    <li>Billing Company: <span className="text-emerald-400 font-sans">{invoice?.company?.name}</span></li>
+                    <li>Recipient: <span className="text-blue-400 font-sans">{invoice?.party?.name}</span></li>
+                  </ul>
+                  <p className="text-slate-400 pt-1">
+                    Please log in to verify your account role and download the official PDF.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    onClick={() => {
+                      const redirectUrl = encodeURIComponent(window.location.pathname + '?download=true');
+                      router.push(`/login?redirect=${redirectUrl}`);
+                    }}
+                    className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                  >
+                    <LogIn className="w-4 h-4" />
+                    <span>Log In to Download</span>
+                  </button>
+                  <button
+                    onClick={() => setAuthModalOpen(false)}
+                    className="px-4 py-2.5 rounded-xl border border-slate-700 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    Continue Viewing
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-3">
+                  <div className="p-3 rounded-xl bg-rose-500/20 text-rose-400">
+                    <ShieldAlert className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">Download Permission Restricted</h3>
+                    <p className="text-xs text-slate-400">Role Verification Notice</p>
+                  </div>
+                </div>
+
+                <div className="p-3.5 bg-slate-800/80 rounded-xl border border-slate-700 space-y-2 text-xs text-slate-300">
+                  <p>
+                    Your current account does not have permission to download this official invoice PDF.
+                  </p>
+                  <p className="text-slate-400">
+                    {authModalReason === 'VIEWER_RESTRICTED' || downloadPermission?.user_role === 'VIEWER'
+                      ? 'You are signed in with a Viewer role. Official PDF downloads are restricted to Owners, Accountants/CAs, and Employees.'
+                      : authModalReason === 'UNRELATED_COMPANY'
+                      ? 'Your account is not associated with either the billing company or the recipient company on this invoice.'
+                      : 'Only authorized Owners, Accountants/CAs, or Employees of either company can download official tax invoice PDFs.'}
+                  </p>
+                  <div className="p-2.5 bg-slate-950/60 rounded-lg text-[11px] text-slate-400 space-y-1">
+                    <div>Your Role: <span className="text-amber-400 font-semibold">{downloadPermission?.user_role || 'Viewer / Restricted'}</span></div>
+                    <div>Permitted Roles: <span className="text-emerald-400 font-semibold">Owner, CA, Employee</span></div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    onClick={() => setAuthModalOpen(false)}
+                    className="w-full bg-slate-800 hover:bg-slate-700 text-white py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  >
+                    Understood (Keep Viewing)
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

@@ -41,14 +41,17 @@ class CompanyViewSet(viewsets.ModelViewSet):
             company=company,
             role='OWNER'
         )
+        if self.request.user.role != 'OWNER' and not getattr(self.request.user, 'is_superuser', False):
+            self.request.user.role = 'OWNER'
+            self.request.user.save(update_fields=['role'])
         # Create default settings
         from .models import CompanySettings
         CompanySettings.objects.create(company=company)
 
     def perform_update(self, serializer):
         company = self.get_object()
-        if not user_has_company_roles(self.request.user, company, ['OWNER', 'ADMIN']):
-            raise PermissionDenied("Only Company Owners or Admins can modify company details.")
+        if not user_has_company_roles(self.request.user, company, ['OWNER']):
+            raise PermissionDenied("Only Company Owners can modify company details.")
 
         import base64
         instance = serializer.save()
@@ -123,10 +126,10 @@ class CompanyViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['patch'])
     def update_settings(self, request, pk=None):
         company = self.get_object()
-        if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN']):
+        if not user_has_company_roles(request.user, company, ['OWNER']):
             return Response({
                 "success": False,
-                "error": "Only Company Owners and Admins are permitted to modify company settings."
+                "error": "Only Company Owners are permitted to modify company settings."
             }, status=status.HTTP_403_FORBIDDEN)
 
         from .models import CompanySettings
@@ -177,15 +180,15 @@ class CompanyViewSet(viewsets.ModelViewSet):
             return Response({"success": True, "data": data})
 
         # POST: Invite or add member
-        if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN']):
-            return Response({"success": False, "error": "Only Owners and Admins can invite team members."}, status=status.HTTP_403_FORBIDDEN)
+        if not user_has_company_roles(request.user, company, ['OWNER']):
+            return Response({"success": False, "error": "Only Owners can invite team members."}, status=status.HTTP_403_FORBIDDEN)
 
         email = (request.data.get('email') or '').strip().lower()
         role = (request.data.get('role') or 'VIEWER').strip().upper()
         if not email:
             return Response({"success": False, "error": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        allowed_roles = ['ADMIN', 'ACCOUNTANT', 'SALES', 'PURCHASE', 'VIEWER']
+        allowed_roles = ['CA', 'EMPLOYEE', 'VIEWER']
         if role not in allowed_roles:
             return Response({"success": False, "error": f"Invalid role. Allowed roles: {', '.join(allowed_roles)}"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -193,7 +196,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
         if not user:
             import secrets
             temp_pass = secrets.token_urlsafe(12) + "A1!"
-            user = User.objects.create_user(email=email, password=temp_pass)
+            user = User.objects.create_user(email=email, password=temp_pass, role=role)
 
         uc, created = UserCompany.objects.get_or_create(
             company=company,
@@ -220,8 +223,8 @@ class CompanyViewSet(viewsets.ModelViewSet):
         company = self.get_object()
         from .models import UserCompany
 
-        if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN']):
-            return Response({"success": False, "error": "Only Owners and Admins can manage team members."}, status=status.HTTP_403_FORBIDDEN)
+        if not user_has_company_roles(request.user, company, ['OWNER']):
+            return Response({"success": False, "error": "Only Owners can manage team members."}, status=status.HTTP_403_FORBIDDEN)
 
         uc = UserCompany.objects.filter(id=member_id, company=company).first()
         if not uc:
@@ -235,7 +238,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
             return Response({"success": True, "message": "Member removed from company."})
 
         new_role = (request.data.get('role') or '').strip().upper()
-        allowed_roles = ['ADMIN', 'ACCOUNTANT', 'SALES', 'PURCHASE', 'VIEWER']
+        allowed_roles = ['CA', 'EMPLOYEE', 'VIEWER']
         if new_role not in allowed_roles:
             return Response({"success": False, "error": f"Invalid role: {new_role}"}, status=status.HTTP_400_BAD_REQUEST)
 

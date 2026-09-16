@@ -45,31 +45,57 @@ export class VouchersRepository {
       .equals(companyId)
       .toArray();
 
-    // Auto-heal any corrupted local records missing voucherDate, voucherNumber, or voucherType
+    // Detect and purge corrupted ghost records from local storage:
+    // Ghost records typically have voucherNumber equal to raw UUID, or missing number/date with 0 amount and CANCELLED status.
+    const ghostIds: string[] = [];
     const healedVouchers: SyncedVoucher[] = [];
+
     for (const v of localVouchers) {
       const vDate = v.voucherDate || (v as any).voucher_date || (v as any).date;
       const vNum = v.voucherNumber || (v as any).voucher_number;
       const vType = v.voucherType || (v as any).voucher_type || (v as any).type;
+      const totAmt = Number(v.totalAmount ?? (v as any).total_amount ?? 0);
+
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(vNum || "").trim());
+      const isGhost = 
+        isUUID ||
+        (vNum === v.id) ||
+        (!vNum && !vDate) ||
+        (v.status === "CANCELLED" && totAmt === 0 && (!v.partyName || isUUID));
+
+      if (isGhost) {
+        ghostIds.push(String(v.id));
+        continue;
+      }
+
       if (!v.voucherDate || !v.voucherNumber || !v.voucherType) {
         healedVouchers.push({
           ...v,
           voucherDate: vDate || new Date().toISOString().split("T")[0],
-          voucherNumber: vNum || (v as any).id || "VCH-0000",
+          voucherNumber: vNum || "VCH-0000",
           voucherType: String(vType || "SALES").toUpperCase(),
-          totalAmount: Number(v.totalAmount ?? (v as any).total_amount ?? 0),
+          totalAmount: totAmt,
           partyName: v.partyName || (v as any).party_name || "",
           partyLedgerId: v.partyLedgerId || (v as any).party_ledger_id || null,
           serverUpdatedAt: Number(v.serverUpdatedAt || (v as any).server_updated_at || Date.now()),
         });
       }
     }
+
+    if (ghostIds.length > 0) {
+      await offlineDb.syncedVouchers.bulkDelete(ghostIds).catch(() => {});
+      localVouchers = localVouchers.filter((v) => !ghostIds.includes(String(v.id)));
+    }
+
     if (healedVouchers.length > 0) {
       await offlineDb.syncedVouchers.bulkPut(healedVouchers).catch(() => {});
       localVouchers = await offlineDb.syncedVouchers
         .where("companyId")
         .equals(companyId)
         .toArray();
+      if (ghostIds.length > 0) {
+        localVouchers = localVouchers.filter((v) => !ghostIds.includes(String(v.id)));
+      }
     }
 
     // If local storage is empty, attempt initial fallback fetch
@@ -152,8 +178,13 @@ export class VouchersRepository {
         };
       });
 
-    // 3. Filter local vouchers
-    let filtered = localVouchers;
+    // 3. Filter local vouchers - strictly exclude any corrupted ghost records whose number is a UUID
+    let filtered = localVouchers.filter((v) => {
+      const vNum = String(v.voucherNumber || (v as any).voucher_number || "").trim();
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(vNum);
+      if (isUUID || vNum === v.id) return false;
+      return true;
+    });
 
     if (options.type) {
       const types = (Array.isArray(options.type) ? options.type : [options.type]).map((t) => String(t).toUpperCase());
@@ -326,6 +357,8 @@ export class VouchersRepository {
   async deleteVoucher(voucherId: string): Promise<void> {
     try {
       await offlineDb.syncedVouchers.delete(voucherId);
+      const cleanId = voucherId.startsWith("offline_") ? voucherId.replace("offline_", "") : voucherId;
+      await offlineDb.vouchers.where("localId").equals(cleanId).delete().catch(() => {});
     } catch (e) {
       console.warn("[VouchersRepo] Failed to delete local voucher:", e);
     }

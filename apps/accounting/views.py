@@ -432,7 +432,81 @@ class ListVouchersAPIView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-def serialize_voucher_detail(voucher, include_attachment=False):
+def check_invoice_download_permission(user, voucher):
+    """
+    Evaluates whether the user is authorized to download the official PDF invoice.
+    Requirements:
+      1. Must be logged in (authenticated).
+      2. Must have role OWNER, CA, or EMPLOYEE (VIEWER is excluded).
+      3. Must be associated with EITHER:
+         - The billing company (seller / voucher.company)
+         - OR the billed company (buyer / party company).
+    """
+    if not user or not user.is_authenticated:
+        return False, "Login required to download official PDF invoice.", None
+
+    if getattr(user, 'is_superuser', False):
+        return True, None, "SUPERUSER"
+
+    from apps.companies.models import Company, UserCompany
+    ALLOWED_ROLES = ['OWNER', 'CA', 'EMPLOYEE']
+
+    # 1. Check if user is an Owner, CA, or Employee of the billing company (seller)
+    seller_company = voucher.company
+    uc_seller = UserCompany.objects.filter(user=user, company=seller_company).first()
+    if uc_seller:
+        if uc_seller.role in ALLOWED_ROLES:
+            return True, None, "SELLER"
+        else:
+            return False, f"Your role ({uc_seller.role}) in {seller_company.name} does not permit downloading official invoices. Only Owner, CA, or Employee can download.", None
+
+    # 2. Check if user is an Owner, CA, or Employee of the billed company (buyer)
+    # A. Direct EDI Inward Voucher Request
+    from apps.accounting.models import InwardVoucherRequest
+    edi = InwardVoucherRequest.objects.filter(source_voucher=voucher).first()
+    if edi and edi.target_company:
+        uc_buyer = UserCompany.objects.filter(user=user, company=edi.target_company).first()
+        if uc_buyer:
+            if uc_buyer.role in ALLOWED_ROLES:
+                return True, None, "BUYER"
+            else:
+                return False, f"Your role ({uc_buyer.role}) in {edi.target_company.name} does not permit downloading official invoices.", None
+
+    # B. Check via Buyer GSTIN
+    buyer_gstin = (voucher.buyer_gstin or '').strip().upper()
+    if not buyer_gstin and voucher.party_ledger and voucher.party_ledger.gstin:
+        buyer_gstin = voucher.party_ledger.gstin.strip().upper()
+
+    if buyer_gstin:
+        buyer_companies = Company.objects.filter(gstin__iexact=buyer_gstin, is_active=True)
+        if buyer_companies.exists():
+            uc_buyer_gstin = UserCompany.objects.filter(user=user, company__in=buyer_companies).first()
+            if uc_buyer_gstin:
+                if uc_buyer_gstin.role in ALLOWED_ROLES:
+                    return True, None, "BUYER"
+                else:
+                    return False, f"Your role ({uc_buyer_gstin.role}) in the recipient company does not permit downloading official invoices.", None
+
+    # C. Check via Buyer Phone
+    buyer_phone = (voucher.buyer_phone or '').strip()
+    if not buyer_phone and voucher.party_ledger and voucher.party_ledger.phone:
+        buyer_phone = voucher.party_ledger.phone.strip()
+
+    if buyer_phone and len(buyer_phone) >= 10:
+        phone_clean = buyer_phone[-10:]
+        buyer_companies_phone = Company.objects.filter(phone__icontains=phone_clean, is_active=True)
+        if buyer_companies_phone.exists():
+            uc_buyer_phone = UserCompany.objects.filter(user=user, company__in=buyer_companies_phone).first()
+            if uc_buyer_phone:
+                if uc_buyer_phone.role in ALLOWED_ROLES:
+                    return True, None, "BUYER"
+                else:
+                    return False, f"Your role ({uc_buyer_phone.role}) in the recipient company does not permit downloading official invoices.", None
+
+    return False, "You must be an Owner, CA, or Employee of either the billing company or the billed company to download this invoice.", None
+
+
+def serialize_voucher_detail(voucher, include_attachment=False, user=None):
     from apps.accounting.models import VoucherItem, PaymentAllocation
     items = VoucherItem.objects.filter(voucher=voucher).select_related('product', 'product__category')
     
@@ -572,7 +646,26 @@ def serialize_voucher_detail(voucher, include_attachment=False):
         "has_attachment": bool(voucher.attachment_mime or (hasattr(voucher, 'attachment_data') and voucher.attachment_data)),
         "attachment_data": voucher.attachment_data if include_attachment else None,
         "attachment_mime": voucher.attachment_mime,
-        "items": items_data
+        "items": items_data,
+        "download_permission": {
+            "can_download": check_invoice_download_permission(user, voucher)[0],
+            "reason": check_invoice_download_permission(user, voucher)[1],
+            "company_type": check_invoice_download_permission(user, voucher)[2],
+        },
+        "eway_bill": (lambda: ({
+            "id": str(ewb.id),
+            "eway_bill_number": ewb.ewb_number,
+            "ewb_number": ewb.ewb_number,
+            "ewb_date": ewb.ewb_date.strftime('%Y-%m-%d %H:%M:%S') if ewb.ewb_date else None,
+            "valid_until": ewb.valid_until.strftime('%Y-%m-%d %H:%M:%S') if ewb.valid_until else None,
+            "valid_upto": ewb.valid_until.strftime('%Y-%m-%d %H:%M:%S') if ewb.valid_until else None,
+            "status": ewb.status,
+            "vehicle_number": ewb.vehicle_number,
+            "vehicle_no": ewb.vehicle_number,
+            "distance_km": ewb.distance_km,
+            "transporter_name": ewb.transporter_name,
+            "transporter_id": ewb.transporter_id,
+        } if (ewb := __import__('apps.gst.models', fromlist=['EWayBillRecord']).EWayBillRecord.objects.filter(voucher_id=voucher.id).exclude(status='CAN').order_by('-ewb_date').first()) else None))()
     }
 
 
@@ -588,8 +681,34 @@ class PublicVoucherDetailAPIView(APIView):
             if not voucher:
                 return Response({"success": False, "error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
             
-            data = serialize_voucher_detail(voucher, include_attachment=False)
+            user = request.user if request.user and request.user.is_authenticated else None
+            data = serialize_voucher_detail(voucher, include_attachment=False, user=user)
             return Response({"success": True, "data": data})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class VoucherDownloadPermissionAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, voucher_id):
+        try:
+            from apps.accounting.models import Voucher
+            voucher = Voucher.objects.select_related('company', 'party_ledger').filter(id=voucher_id).first()
+            if not voucher:
+                return Response({"success": False, "error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            user = request.user if request.user and request.user.is_authenticated else None
+            can_download, reason, comp_type = check_invoice_download_permission(user, voucher)
+            return Response({
+                "success": True,
+                "can_download": can_download,
+                "reason": reason,
+                "company_type": comp_type,
+                "user_email": user.email if user else None,
+                "billing_company": voucher.company.name,
+                "billed_party": voucher.buyer_name or (voucher.party_ledger.name if voucher.party_ledger else "N/A"),
+            })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -608,7 +727,7 @@ class VoucherDetailAPIView(APIView):
             if not include_attachment:
                 voucher_qs = voucher_qs.defer('attachment_data')
             voucher = voucher_qs.get(id=voucher_id, company__users__user=request.user)
-            data = serialize_voucher_detail(voucher, include_attachment=include_attachment)
+            data = serialize_voucher_detail(voucher, include_attachment=include_attachment, user=request.user)
             return Response({"success": True, "data": data})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -621,15 +740,20 @@ class VoucherDetailAPIView(APIView):
             
             voucher = Voucher.objects.filter(id=voucher_id, company__users__user=request.user).first()
             if not voucher:
+                if not Voucher.objects.filter(id=voucher_id).exists():
+                    return Response({
+                        "success": False, 
+                        "error": "Voucher not found (it does not exist or was already deleted)."
+                    }, status=status.HTTP_404_NOT_FOUND)
                 return Response({
                     "success": False, 
-                    "error": "Voucher not found or you do not have permission to delete it."
-                }, status=status.HTTP_404_NOT_FOUND)
+                    "error": "Permission denied: You do not belong to the company that owns this voucher."
+                }, status=status.HTTP_403_FORBIDDEN)
 
-            if not user_has_company_roles(request.user, voucher.company, ['OWNER', 'ADMIN', 'ACCOUNTANT']):
+            if not user_has_company_roles(request.user, voucher.company, ['OWNER', 'CA']):
                 return Response({
-                    "success": False,
-                    "error": "Permission denied: Only Owner, Admin, or Accountant can delete or cancel vouchers."
+                    "success": False, 
+                    "error": "Permission denied: Only Owner or CA can delete or cancel vouchers."
                 }, status=status.HTTP_403_FORBIDDEN)
 
             with transaction.atomic():
@@ -698,10 +822,10 @@ class VoucherDetailAPIView(APIView):
                 id=voucher_id, 
                 company__users__user=request.user
             )
-            if not user_has_company_roles(request.user, voucher.company, ['OWNER', 'ADMIN', 'ACCOUNTANT']):
+            if not user_has_company_roles(request.user, voucher.company, ['OWNER', 'CA']):
                 return Response({
                     "success": False,
-                    "error": "Permission denied: Only Owner, Admin, or Accountant can modify vouchers."
+                    "error": "Permission denied: Only Owner or CA can modify vouchers."
                 }, status=status.HTTP_403_FORBIDDEN)
 
             company = voucher.company
@@ -1640,7 +1764,7 @@ class CreatePaymentReceiptAPIView(APIView):
 
             company = Company.objects.get(id=data['company_id'], users__user=request.user, is_active=True)
             
-            if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN', 'ACCOUNTANT', 'SALES', 'PURCHASE']):
+            if not user_has_company_roles(request.user, company, ['OWNER', 'CA', 'EMPLOYEE']):
                 return Response({"success": False, "error": "Permission denied: Your role cannot create payment/receipt vouchers."}, status=403)
 
             party_ledger = get_company_ledger(company, data['party_ledger_id'], "Party Ledger")

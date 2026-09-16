@@ -65,7 +65,7 @@ class RegisterView(APIView):
         try:
             with transaction.atomic():
                 # 1. Create User
-                user = User.objects.create_user(email=email, password=password)
+                user = User.objects.create_user(email=email, password=password, role='OWNER')
 
                 # 2. Create Company
                 company = Company.objects.create(

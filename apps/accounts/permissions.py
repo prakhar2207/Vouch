@@ -65,7 +65,7 @@ def user_has_company_roles(user, company, allowed_roles):
     return role in allowed_roles
 
 class BaseCompanyPermission(BasePermission):
-    allowed_roles = ['OWNER', 'ADMIN', 'ACCOUNTANT', 'SALES', 'PURCHASE', 'VIEWER']
+    allowed_roles = ['OWNER', 'CA', 'EMPLOYEE', 'VIEWER']
 
     def resolve_company(self, request, view):
         # 1. From X-Company-ID header
@@ -148,34 +148,34 @@ class BaseCompanyPermission(BasePermission):
         return True
 
 class IsCompanyMember(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'ADMIN', 'ACCOUNTANT', 'SALES', 'PURCHASE', 'VIEWER']
+    allowed_roles = ['OWNER', 'CA', 'EMPLOYEE', 'VIEWER']
 
 class IsCompanyAdmin(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'ADMIN']
+    allowed_roles = ['OWNER']
 
 class IsCompanyOwner(BaseCompanyPermission):
     allowed_roles = ['OWNER']
 
 class CanCreateSales(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'ADMIN', 'ACCOUNTANT', 'SALES']
+    allowed_roles = ['OWNER', 'CA', 'EMPLOYEE']
 
 class CanCreatePurchases(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'ADMIN', 'ACCOUNTANT', 'PURCHASE']
+    allowed_roles = ['OWNER', 'CA', 'EMPLOYEE']
 
 class CanPostVoucher(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'ADMIN', 'ACCOUNTANT']
+    allowed_roles = ['OWNER', 'CA', 'EMPLOYEE']
 
 class CanCancelVoucher(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'ADMIN', 'ACCOUNTANT']
+    allowed_roles = ['OWNER', 'CA']
 
 class CanManageLedgers(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'ADMIN', 'ACCOUNTANT']
+    allowed_roles = ['OWNER', 'CA']
 
 class CanManageInventory(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'ADMIN', 'ACCOUNTANT', 'PURCHASE']
+    allowed_roles = ['OWNER', 'CA', 'EMPLOYEE']
 
 class CanManageCompanySettings(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'ADMIN']
+    allowed_roles = ['OWNER']
 
 class CanDeleteCompany(BaseCompanyPermission):
     allowed_roles = ['OWNER']
