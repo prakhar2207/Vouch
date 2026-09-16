@@ -159,10 +159,38 @@ class SequencePreviewAPIView(APIView):
         voucher_type = request.query_params.get('voucher_type', 'SALES')
         voucher_date = request.query_params.get('voucher_date') or request.query_params.get('date')
         custom_prefix = request.query_params.get('prefix')
+        resync = request.query_params.get('resync', '').lower() in ('true', '1')
 
         try:
+            if resync:
+                fy = InvoiceSequenceService.get_or_create_active_fy(company, voucher_date)
+                InvoiceSequenceService.resync_sequence(company, fy, voucher_type, custom_prefix, force=True)
+
             preview = InvoiceSequenceService.preview_next_number(company, voucher_type, voucher_date, custom_prefix)
             return Response({"success": True, "data": preview})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
+    def post(self, request):
+        """Allow explicit resync of sequence counter to match actual existing vouchers."""
+        company_id = request.data.get('company_id') or request.query_params.get('company_id')
+        if not company_id:
+            company = Company.objects.filter(users__user=request.user).first()
+        else:
+            company = Company.objects.filter(id=company_id, users__user=request.user).first()
+
+        if not company:
+            return Response({"success": False, "error": "Company not found"}, status=404)
+
+        voucher_type = request.data.get('voucher_type', 'SALES')
+        voucher_date = request.data.get('voucher_date') or request.data.get('date')
+        custom_prefix = request.data.get('prefix')
+
+        try:
+            fy = InvoiceSequenceService.get_or_create_active_fy(company, voucher_date)
+            InvoiceSequenceService.resync_sequence(company, fy, voucher_type, custom_prefix, force=True)
+            preview = InvoiceSequenceService.preview_next_number(company, voucher_type, voucher_date, custom_prefix)
+            return Response({"success": True, "message": "Sequence resynced successfully", "data": preview})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 

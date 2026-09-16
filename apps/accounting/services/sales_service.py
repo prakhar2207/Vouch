@@ -80,6 +80,15 @@ class SalesInvoiceService:
         if manual_voucher_number:
             v_num = manual_voucher_number
             fy = InvoiceSequenceService.get_or_create_active_fy(company, v_date)
+            # Advance sequence counter so future auto-generated numbers don't collide
+            import re
+            m = re.search(r'(\d+)$', str(manual_voucher_number).strip())
+            if m:
+                try:
+                    num_val = int(m.group(1))
+                    InvoiceSequenceService.advance_sequence_if_higher(company, fy, 'SALES', num_val)
+                except ValueError:
+                    pass
         else:
             v_num, fy = InvoiceSequenceService.get_next_number(company, 'SALES', v_date)
         

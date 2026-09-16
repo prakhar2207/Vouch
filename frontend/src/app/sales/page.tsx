@@ -64,26 +64,66 @@ export default function SalesInvoiceList() {
       }
 
       if (companyId) {
-        const result = await vouchersRepository.getSalesInvoices(companyId, {
+        let result = await vouchersRepository.getSalesInvoices(companyId, {
           page: targetPage,
           pageSize,
           status: statusFilter,
         });
-        setInvoices(result.data);
+
+        // Network fallback if local IndexedDB is empty or out of sync
+        if (!result.data || result.data.length === 0) {
+          try {
+            const token = getAccessToken();
+            if (token) {
+              const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
+              const sRes = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?type=SALES&limit=500&offset=${(targetPage - 1) * pageSize}`, { headers, timeout: 6000 });
+              if (sRes.data?.data && sRes.data.data.length > 0) {
+                const serverList = sRes.data.data;
+                const toPut: any[] = serverList.map((v: any) => ({
+                  id: String(v.id),
+                  companyId,
+                  financialYearId: v.financial_year_id || v.financialYearId || null,
+                  voucherType: String(v.voucherType || v.type || v.voucher_type || 'SALES').toUpperCase(),
+                  voucherNumber: v.voucherNumber || v.voucher_number || '',
+                  voucherDate: v.voucherDate || v.date || v.voucher_date || '',
+                  referenceNumber: v.referenceNumber || v.reference_number || '',
+                  partyLedgerId: v.partyLedgerId || v.party_ledger_id || null,
+                  partyName: v.partyName || v.party_name || '',
+                  status: v.status || 'POSTED',
+                  totalAmount: Number(v.totalAmount ?? v.total_amount) || 0,
+                  paymentStatus: v.paymentStatus || v.payment_status || 'UNPAID',
+                  paidAmount: Number(v.paidAmount ?? v.paid_amount) || 0,
+                  narration: v.narration || '',
+                  serverUpdatedAt: Number(v.serverUpdatedAt || v.server_updated_at || Date.now()),
+                }));
+                await offlineDb.syncedVouchers.bulkPut(toPut);
+                result = await vouchersRepository.getSalesInvoices(companyId, {
+                  page: targetPage,
+                  pageSize,
+                  status: statusFilter,
+                });
+              }
+            }
+          } catch (serverErr) {
+            console.warn('Server fallback failed:', serverErr);
+          }
+        }
+
+        setInvoices(result.data || []);
         setPagination({
-          page: result.page,
-          limit: result.pageSize,
+          page: result.page || targetPage,
+          limit: result.pageSize || pageSize,
           offset: result.offset ?? (targetPage - 1) * pageSize,
-          total_count: result.totalCount,
-          total_pages: result.totalPages,
-          has_more: result.hasMore ?? (targetPage < result.totalPages),
+          total_count: result.totalCount || 0,
+          total_pages: result.totalPages || 1,
+          has_more: result.hasMore ?? (targetPage < (result.totalPages || 1)),
         });
         setPage(targetPage);
 
         // Background incremental sync to ensure server cancellations/reversals sync to IndexedDB
         pullIncrementalChanges(companyId).then((pullRes) => {
           if (pullRes.success && pullRes.totalRecords > 0) {
-            vouchersRepository.getSalesInvoices(companyId, { page: targetPage, pageSize }).then((fresh) => {
+            vouchersRepository.getSalesInvoices(companyId, { page: targetPage, pageSize, status: statusFilter }).then((fresh) => {
               setInvoices(fresh.data);
               setPagination({
                 page: fresh.page,

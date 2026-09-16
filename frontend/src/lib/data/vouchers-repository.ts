@@ -45,6 +45,33 @@ export class VouchersRepository {
       .equals(companyId)
       .toArray();
 
+    // Auto-heal any corrupted local records missing voucherDate, voucherNumber, or voucherType
+    const healedVouchers: SyncedVoucher[] = [];
+    for (const v of localVouchers) {
+      const vDate = v.voucherDate || (v as any).voucher_date || (v as any).date;
+      const vNum = v.voucherNumber || (v as any).voucher_number;
+      const vType = v.voucherType || (v as any).voucher_type || (v as any).type;
+      if (!v.voucherDate || !v.voucherNumber || !v.voucherType) {
+        healedVouchers.push({
+          ...v,
+          voucherDate: vDate || new Date().toISOString().split("T")[0],
+          voucherNumber: vNum || (v as any).id || "VCH-0000",
+          voucherType: String(vType || "SALES").toUpperCase(),
+          totalAmount: Number(v.totalAmount ?? (v as any).total_amount ?? 0),
+          partyName: v.partyName || (v as any).party_name || "",
+          partyLedgerId: v.partyLedgerId || (v as any).party_ledger_id || null,
+          serverUpdatedAt: Number(v.serverUpdatedAt || (v as any).server_updated_at || Date.now()),
+        });
+      }
+    }
+    if (healedVouchers.length > 0) {
+      await offlineDb.syncedVouchers.bulkPut(healedVouchers).catch(() => {});
+      localVouchers = await offlineDb.syncedVouchers
+        .where("companyId")
+        .equals(companyId)
+        .toArray();
+    }
+
     // If local storage is empty, attempt initial fallback fetch
     if (localVouchers.length === 0) {
       try {
@@ -52,26 +79,26 @@ export class VouchersRepository {
         if (token) {
           const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
           const typeParam = Array.isArray(options.type) ? options.type.join(",") : (options.type || "");
-          const url = `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?limit=100${typeParam ? `&type=${typeParam}` : ""}`;
-          const res = await axios.get(url, { headers, timeout: 5000 });
+          const url = `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?limit=500${typeParam ? `&type=${typeParam}` : ""}`;
+          const res = await axios.get(url, { headers, timeout: 6000 });
           const serverList = res.data?.data || [];
           if (serverList.length > 0) {
             const toPut: SyncedVoucher[] = serverList.map((v: any) => ({
-              id: v.id,
+              id: String(v.id),
               companyId,
-              financialYearId: v.financial_year_id || null,
-              voucherType: v.type || v.voucher_type,
-              voucherNumber: v.voucher_number,
-              voucherDate: v.date || v.voucher_date,
-              referenceNumber: v.reference_number || "",
-              partyLedgerId: v.party_ledger_id || null,
-              partyName: v.party_name || v.party_ledger?.name || "",
+              financialYearId: v.financial_year_id || v.financialYearId || null,
+              voucherType: String(v.voucherType || v.type || v.voucher_type || "SALES").toUpperCase(),
+              voucherNumber: v.voucherNumber || v.voucher_number || "",
+              voucherDate: v.voucherDate || v.date || v.voucher_date || new Date().toISOString().split("T")[0],
+              referenceNumber: v.referenceNumber || v.reference_number || "",
+              partyLedgerId: v.partyLedgerId || v.party_ledger_id || null,
+              partyName: v.partyName || v.party_name || v.party_ledger?.name || "",
               status: v.status || "POSTED",
-              totalAmount: Number(v.total_amount) || 0,
-              paymentStatus: v.payment_status || "UNPAID",
-              paidAmount: Number(v.paid_amount) || 0,
+              totalAmount: Number(v.totalAmount ?? v.total_amount) || 0,
+              paymentStatus: v.paymentStatus || v.payment_status || "UNPAID",
+              paidAmount: Number(v.paidAmount ?? v.paid_amount) || 0,
               narration: v.narration || "",
-              serverUpdatedAt: Date.now(),
+              serverUpdatedAt: Number(v.serverUpdatedAt || v.server_updated_at || Date.now()),
             }));
             await offlineDb.syncedVouchers.bulkPut(toPut);
             localVouchers = toPut;
@@ -94,8 +121,8 @@ export class VouchersRepository {
         const matchesCompany = !p.company_id || p.company_id === companyId;
         if (!matchesCompany) return false;
         if (options.type) {
-          const types = Array.isArray(options.type) ? options.type : [options.type];
-          return types.includes(o.voucherType);
+          const types = (Array.isArray(options.type) ? options.type : [options.type]).map((t) => String(t).toUpperCase());
+          return types.includes(String(o.voucherType).toUpperCase());
         }
         return true;
       })
@@ -129,8 +156,8 @@ export class VouchersRepository {
     let filtered = localVouchers;
 
     if (options.type) {
-      const types = Array.isArray(options.type) ? options.type : [options.type];
-      filtered = filtered.filter((v) => types.includes(v.voucherType));
+      const types = (Array.isArray(options.type) ? options.type : [options.type]).map((t) => String(t).toUpperCase());
+      filtered = filtered.filter((v) => types.includes(String(v.voucherType || (v as any).voucher_type || "").toUpperCase()));
     }
 
     if (options.status === "ACTIVE") {
@@ -143,20 +170,24 @@ export class VouchersRepository {
     // If options.status === "ALL" or undefined, all vouchers are retained for complete sequential register
 
     if (options.startDate) {
-      filtered = filtered.filter((v) => v.voucherDate >= options.startDate!);
+      filtered = filtered.filter((v) => (v.voucherDate || (v as any).voucher_date || "") >= options.startDate!);
     }
     if (options.endDate) {
-      filtered = filtered.filter((v) => v.voucherDate <= options.endDate!);
+      filtered = filtered.filter((v) => (v.voucherDate || (v as any).voucher_date || "") <= options.endDate!);
     }
 
     if (options.search) {
       const q = options.search.trim().toLowerCase();
-      filtered = filtered.filter((v) =>
-        (v.voucherNumber && v.voucherNumber.toLowerCase().includes(q)) ||
-        (v.partyName && v.partyName.toLowerCase().includes(q)) ||
-        (v.referenceNumber && v.referenceNumber.toLowerCase().includes(q)) ||
-        (v.narration && v.narration.toLowerCase().includes(q))
-      );
+      filtered = filtered.filter((v) => {
+        const vNum = String(v.voucherNumber || (v as any).voucher_number || "");
+        const pName = String(v.partyName || (v as any).party_name || "");
+        const refNum = String(v.referenceNumber || (v as any).reference_number || "");
+        const narr = String(v.narration || "");
+        return vNum.toLowerCase().includes(q) ||
+          pName.toLowerCase().includes(q) ||
+          refNum.toLowerCase().includes(q) ||
+          narr.toLowerCase().includes(q);
+      });
     }
 
     // 3b. Query local payment allocations to calculate accurate payment/settlement status
@@ -181,13 +212,18 @@ export class VouchersRepository {
 
     // Map SyncedVoucher to common frontend item schema (supporting both camelCase and snake_case)
     const normalizedLocal = filtered.map((v) => {
-      let pStatus = v.paymentStatus || "UNPAID";
-      let paidAmt = v.paidAmount || 0;
+      let pStatus = v.paymentStatus || (v as any).payment_status || "UNPAID";
+      let paidAmt = Number(v.paidAmount ?? (v as any).paid_amount ?? 0);
+      const vType = String(v.voucherType || (v as any).voucher_type || "SALES").toUpperCase();
+      const vNum = v.voucherNumber || (v as any).voucher_number || "";
+      const vDate = v.voucherDate || (v as any).voucher_date || (v as any).date || "";
+      const pName = v.partyName || (v as any).party_name || "";
+      const totAmt = Number(v.totalAmount ?? (v as any).total_amount ?? 0);
 
-      if (v.voucherType === "SALES" || v.voucherType === "PURCHASE") {
+      if (vType === "SALES" || vType === "PURCHASE") {
         if (allocByInv[v.id] !== undefined) {
           paidAmt = allocByInv[v.id];
-          if (paidAmt >= v.totalAmount && v.totalAmount > 0) {
+          if (paidAmt >= totAmt && totAmt > 0) {
             pStatus = "PAID";
           } else if (paidAmt > 0) {
             pStatus = "PARTIAL";
@@ -195,10 +231,10 @@ export class VouchersRepository {
             pStatus = "UNPAID";
           }
         }
-      } else if (v.voucherType === "PAYMENT" || v.voucherType === "RECEIPT") {
+      } else if (vType === "PAYMENT" || vType === "RECEIPT") {
         if (allocByPmt[v.id] !== undefined) {
           paidAmt = allocByPmt[v.id];
-          if (paidAmt >= v.totalAmount && v.totalAmount > 0) {
+          if (paidAmt >= totAmt && totAmt > 0) {
             pStatus = "ALLOCATED";
           } else if (paidAmt > 0) {
             pStatus = "PARTIAL";
@@ -210,23 +246,32 @@ export class VouchersRepository {
 
       return {
         ...v,
-        type: v.voucherType,
-        voucher_number: v.voucherNumber,
-        voucher_date: v.voucherDate,
-        party_name: v.partyName,
-        total_amount: v.totalAmount,
+        type: vType,
+        voucherType: vType,
+        voucher_number: vNum,
+        voucherNumber: vNum,
+        voucher_date: vDate,
+        voucherDate: vDate,
+        party_name: pName,
+        partyName: pName,
+        total_amount: totAmt,
+        totalAmount: totAmt,
         payment_status: pStatus,
+        paymentStatus: pStatus,
         paid_amount: paidAmt,
+        paidAmount: paidAmt,
         syncStatus: "SYNCED",
       };
     });
 
-    // 4. Sort: newest date first, then serverUpdatedAt descending
+    // 4. Sort: newest date first, then serverUpdatedAt descending (crash-proof)
     normalizedLocal.sort((a, b) => {
-      if (a.voucherDate !== b.voucherDate) {
-        return b.voucherDate.localeCompare(a.voucherDate);
+      const dateA = String(a.voucherDate || a.voucher_date || (a as any).date || "");
+      const dateB = String(b.voucherDate || b.voucher_date || (b as any).date || "");
+      if (dateA !== dateB) {
+        return dateB.localeCompare(dateA);
       }
-      return (b.serverUpdatedAt || 0) - (a.serverUpdatedAt || 0);
+      return (Number(b.serverUpdatedAt) || 0) - (Number(a.serverUpdatedAt) || 0);
     });
 
     // Merge offline items on top

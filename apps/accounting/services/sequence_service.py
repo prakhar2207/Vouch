@@ -54,12 +54,12 @@ class InvoiceSequenceService:
         return fy
 
     @staticmethod
-    def resync_sequence(company: Company, financial_year: FinancialYear, voucher_type: str, prefix: str = None) -> int:
+    def resync_sequence(company: Company, financial_year: FinancialYear, voucher_type: str, prefix: str = None, force: bool = False) -> int:
         """
         Inspects existing vouchers for the given company, financial year, and voucher_type.
         Finds the highest trailing sequence number among them.
         Advances VoucherSequence.last_number if a higher sequence number exists (e.g. after bulk import).
-        Enforces monotonicity: retired or deleted invoice numbers are never reused or rolled backward.
+        Enforces monotonicity unless force=True: retired or deleted invoice numbers are not reused or rolled backward.
         Returns the updated last_number.
         """
         import re
@@ -121,10 +121,10 @@ class InvoiceSequenceService:
                 'last_number': max_num
             }
         )
-        # Monotonicity invariant: sequence numbers are NEVER decremented/reused.
+        # Monotonicity invariant: sequence numbers are NEVER decremented/reused unless force=True.
         # If an invoice is deleted or cancelled, its number is retired.
         # Only advance last_number forward if an imported or higher-numbered invoice exists.
-        if not created and max_num > seq.last_number:
+        if not created and (force or max_num > seq.last_number):
             seq.last_number = max_num
             seq.save(update_fields=['last_number', 'updated_at'])
 

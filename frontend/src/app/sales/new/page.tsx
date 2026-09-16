@@ -423,12 +423,15 @@ export default function SalesPage() {
       try {
         const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/sales-invoice/`, payload, { headers, timeout: 8000 });
         if (res.data?.voucher) {
+          const vData = res.data.voucher;
           await ingestVoucherLocally(companyId, {
-            ...res.data.voucher,
-            totalAmount: res.data.voucher.total_amount || grandTotal,
+            ...vData,
+            voucherNumber: vData.voucher_number || vData.voucherNumber || res.data.voucher_number,
+            voucherDate: vData.voucher_date || vData.voucherDate || invoiceDate,
+            totalAmount: vData.total_amount || vData.totalAmount || grandTotal,
             voucherType: 'SALES',
-            partyName: selectedParty?.name || res.data.voucher.party_name,
-            partyLedgerId: selectedParty?.id || res.data.voucher.party_ledger_id,
+            partyName: selectedParty?.name || vData.party_name || vData.partyName,
+            partyLedgerId: selectedParty?.id || vData.party_ledger_id || vData.partyLedgerId,
           });
         }
         toast.success(`Sales Invoice generated!`, `Voucher: ${res.data.voucher_number}`);

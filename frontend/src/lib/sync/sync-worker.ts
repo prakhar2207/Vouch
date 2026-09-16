@@ -593,36 +593,41 @@ export async function pullIncrementalChanges(
  */
 export async function ingestVoucherLocally(
   companyId: string,
-  voucher: Partial<SyncedVoucher> & {
-    id: string;
-    voucherType: string;
-    voucherNumber: string;
-    voucherDate: string;
-    totalAmount: number | string;
-    partyLedgerId?: string | null;
-    partyName?: string;
-    status?: "DRAFT" | "POSTED" | "CANCELLED" | "REVERSED" | "SUPERSEDED" | "CORRECTED";
-    dueDate?: string | null;
-    narration?: string;
-  }
+  voucher: any
 ): Promise<void> {
   if (!companyId || !voucher || !voucher.id) return;
 
+  const vNum = voucher.voucherNumber || voucher.voucher_number || "";
+  const vDate = voucher.voucherDate || voucher.voucher_date || voucher.date || new Date().toISOString().split("T")[0];
+  const vType = String(voucher.voucherType || voucher.voucher_type || voucher.type || "SALES").toUpperCase();
+  const totAmt = Number(voucher.totalAmount ?? voucher.total_amount ?? 0);
+  const pName = voucher.partyName || voucher.party_name || "";
+  const pLedgerId = voucher.partyLedgerId || voucher.party_ledger_id || null;
+  const dDate = voucher.dueDate || voucher.due_date || null;
+  const refNum = voucher.referenceNumber || voucher.reference_number || "";
+  const sStatus = voucher.status || "POSTED";
+  const pStatus = voucher.paymentStatus || voucher.payment_status || "UNPAID";
+  const pAmt = Number(voucher.paidAmount ?? voucher.paid_amount ?? 0);
+  const narr = voucher.narration || "";
+  const sUpdated = Number(voucher.serverUpdatedAt || voucher.server_updated_at || Date.now());
+
   const syncedV: SyncedVoucher = {
-    id: voucher.id,
-    companyId,
-    financialYearId: voucher.financialYearId || null,
-    voucherType: voucher.voucherType.toUpperCase(),
-    voucherNumber: voucher.voucherNumber,
-    voucherDate: voucher.voucherDate,
-    dueDate: voucher.dueDate || null,
-    referenceNumber: voucher.referenceNumber || "",
-    partyLedgerId: voucher.partyLedgerId || null,
-    partyName: voucher.partyName || "",
-    status: (voucher.status as any) || "POSTED",
-    totalAmount: Number(voucher.totalAmount) || 0,
-    narration: voucher.narration || "",
-    serverUpdatedAt: voucher.serverUpdatedAt || Date.now(),
+    id: String(voucher.id),
+    companyId: String(companyId),
+    financialYearId: voucher.financialYearId || voucher.financial_year_id || null,
+    voucherType: vType,
+    voucherNumber: vNum,
+    voucherDate: vDate,
+    dueDate: dDate,
+    referenceNumber: refNum,
+    partyLedgerId: pLedgerId,
+    partyName: pName,
+    status: sStatus as any,
+    totalAmount: totAmt,
+    paymentStatus: pStatus as any,
+    paidAmount: pAmt,
+    narration: narr,
+    serverUpdatedAt: isNaN(sUpdated) ? Date.now() : sUpdated,
   };
 
   await offlineDb.syncedVouchers.put(syncedV);

@@ -156,6 +156,15 @@ class CreateSalesInvoiceAPIView(APIView):
                     "total_amount": str(voucher.total_amount or '0.00'),
                     "narration": voucher.narration or '',
                     "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
+                    # CamelCase aliases for frontend IndexedDB / offlineDb compatibility
+                    "voucherType": voucher.voucher_type,
+                    "voucherNumber": voucher.voucher_number,
+                    "voucherDate": str(voucher.voucher_date),
+                    "dueDate": str(voucher.due_date) if voucher.due_date else None,
+                    "partyLedgerId": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
+                    "partyName": voucher.party_ledger.name if voucher.party_ledger else (voucher.buyer_name or ''),
+                    "totalAmount": str(voucher.total_amount or '0.00'),
+                    "serverUpdatedAt": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
                 }
             }, status=status.HTTP_201_CREATED)
             
@@ -1837,7 +1846,7 @@ class UniversalVoucherAPIView(APIView):
 
             v_type = request.query_params.get('type')
             try:
-                limit = min(max(int(request.query_params.get('limit', 50)), 1), 50)
+                limit = min(max(int(request.query_params.get('limit', 50)), 1), 500)
             except (ValueError, TypeError):
                 limit = 50
 
@@ -1897,17 +1906,28 @@ class UniversalVoucherAPIView(APIView):
                     p_status = 'N/A'
                     paid_amt = 0.0
 
+                v_num = v.reference_number if (v.voucher_type == 'PURCHASE' and v.reference_number and not v.voucher_number.startswith('G/')) else v.voucher_number
+                p_name = v.party_ledger.name if v.party_ledger else (v.buyer_name or "General Entry")
+                d_str = v.voucher_date.strftime('%Y-%m-%d')
                 data.append({
                     "id": str(v.id),
-                    "voucher_number": v.reference_number if (v.voucher_type == 'PURCHASE' and v.reference_number and not v.voucher_number.startswith('G/')) else v.voucher_number,
+                    "voucher_number": v_num,
+                    "voucherNumber": v_num,
                     "reference_number": v.reference_number or "",
+                    "referenceNumber": v.reference_number or "",
                     "type": v.voucher_type,
-                    "date": v.voucher_date.strftime('%Y-%m-%d'),
+                    "voucher_type": v.voucher_type,
+                    "voucherType": v.voucher_type,
+                    "date": d_str,
+                    "voucher_date": d_str,
+                    "voucherDate": d_str,
                     "status": v.status,
                     "total_amount": str(v.total_amount),
+                    "totalAmount": float(v.total_amount or 0),
                     "paid_amount": paid_amt,
                     "payment_status": p_status,
-                    "party_name": v.party_ledger.name if v.party_ledger else "General Entry",
+                    "party_name": p_name,
+                    "partyName": p_name,
                     "narration": v.narration or "",
                     "has_attachment": bool(v.has_attachment_flag),
                     "attachment_mime": v.attachment_mime or "",

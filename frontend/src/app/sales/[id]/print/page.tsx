@@ -237,9 +237,11 @@ export default function PrintInvoicePage() {
     // Standard 80mm thermal width: 80mm = 302px at 96 DPI
     const targetWidthPx = isThermal ? 302 : 794;
 
-    // Create an isolated off-screen sandbox container with fixed desktop width.
-    // This completely prevents mobile phone viewports (360-412px) from squishing or wrapping A4 tables!
+    // Create an isolated off-screen sandbox container with forced LIGHT theme.
+    // This completely prevents dark mode styles from turning invoice text white/faint!
     const sandbox = document.createElement('div');
+    sandbox.className = 'light print-sandbox-root';
+    sandbox.setAttribute('data-theme', 'light');
     sandbox.style.position = 'fixed';
     sandbox.style.left = '-99999px';
     sandbox.style.top = '0';
@@ -248,14 +250,55 @@ export default function PrintInvoicePage() {
     sandbox.style.maxWidth = `${targetWidthPx}px`;
     sandbox.style.zIndex = '-9999';
     sandbox.style.backgroundColor = '#ffffff';
+    sandbox.style.color = '#000000';
     sandbox.style.overflow = 'visible';
 
+    // Inject strict high-contrast printing styles into the sandbox
+    const printStyle = document.createElement('style');
+    printStyle.textContent = `
+      .print-sandbox-root, .print-sandbox-root * {
+        color: #000000 !important;
+        border-color: #000000 !important;
+        --foreground: #000000 !important;
+        --card-foreground: #000000 !important;
+        --muted-foreground: #1e293b !important;
+        text-shadow: none !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      .print-sandbox-root .bg-white {
+        background-color: #ffffff !important;
+      }
+      .print-sandbox-root .text-slate-500, .print-sandbox-root .text-slate-600, .print-sandbox-root .text-slate-700 {
+        color: #1e293b !important;
+      }
+      .print-sandbox-root .text-emerald-400, .print-sandbox-root .text-emerald-500, .print-sandbox-root .text-emerald-600 {
+        color: #059669 !important;
+      }
+      .print-sandbox-root .border-dashed {
+        border-style: dashed !important;
+      }
+      .print-sandbox-root .border-dotted {
+        border-style: dotted !important;
+      }
+    `;
+    sandbox.appendChild(printStyle);
+
     const clone = element.cloneNode(true) as HTMLElement;
+    clone.classList.remove('dark');
+    clone.classList.add('light');
     clone.style.width = `${targetWidthPx}px`;
     clone.style.minWidth = `${targetWidthPx}px`;
     clone.style.maxWidth = `${targetWidthPx}px`;
+    clone.style.backgroundColor = '#ffffff';
+    clone.style.color = '#000000';
+    clone.style.boxSizing = 'border-box';
+
     if (!isThermal) {
-      clone.style.minHeight = '1123px'; // Standard A4 height (297mm at 96 DPI)
+      // Remove min-height override and adjust padding so standard invoices fit cleanly on 1 page
+      clone.style.minHeight = 'unset';
+      clone.style.padding = '18px 24px';
+      clone.style.margin = '0 auto';
     }
     sandbox.appendChild(clone);
     document.body.appendChild(sandbox);
@@ -311,18 +354,21 @@ export default function PrintInvoicePage() {
       const a4Height = 297;
       const imgHeight = (canvas.height * a4Width) / canvas.width;
 
-      if (imgHeight <= a4Height) {
+      // Fit single-sheet invoices on exactly 1 single A4 page
+      // Allow up to 15% margin for subpixel rendering variations to stay strictly on 1 page
+      if (imgHeight <= a4Height * 1.15) {
         // Fits comfortably on a single standard A4 sheet
-        pdf.addImage(imgData, 'PNG', 0, 0, a4Width, imgHeight);
+        const renderHeight = Math.min(imgHeight, a4Height);
+        pdf.addImage(imgData, 'PNG', 0, 0, a4Width, renderHeight);
       } else {
-        // Multi-page standard A4 splitting
+        // Multi-page standard A4 splitting for invoices with many items
         let heightLeft = imgHeight;
         let position = 0;
 
         pdf.addImage(imgData, 'PNG', 0, position, a4Width, imgHeight);
         heightLeft -= a4Height;
 
-        while (heightLeft > 0) {
+        while (heightLeft > 8) { // 8mm threshold to avoid microscopic second page
           position -= a4Height;
           pdf.addPage('a4', 'portrait');
           pdf.addImage(imgData, 'PNG', 0, position, a4Width, imgHeight);
@@ -967,7 +1013,7 @@ export default function PrintInvoicePage() {
       ) : (
         /* ================= A4 STANDARD TAX INVOICE LAYOUT ================= */
         <div className="w-full overflow-x-auto p-4 sm:p-8 flex justify-center bg-slate-200 print:bg-white print:p-0">
-          <div id="invoice-sheet" className="w-[210mm] min-w-[210mm] max-w-[210mm] shrink-0 min-h-[297mm] print:min-h-[95vh] bg-white p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none print:p-6 print:pt-10 flex flex-col mx-auto">
+          <div id="invoice-sheet" className="w-[210mm] min-w-[210mm] max-w-[210mm] shrink-0 min-h-[297mm] print:min-h-[95vh] bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none print:p-6 print:pt-10 flex flex-col mx-auto">
           
           {/* Main Border Box */}
           <div className="border-2 border-black flex-1 flex flex-col justify-between">
