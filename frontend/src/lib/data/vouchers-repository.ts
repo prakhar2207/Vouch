@@ -112,7 +112,7 @@ export class VouchersRepository {
         res = res.filter((v) => types.includes(String(v.voucherType || (v as any).voucher_type || "").toUpperCase()));
       }
 
-      if (options.status === "ACTIVE") {
+      if (options.status === "ACTIVE" || !options.status) {
         res = res.filter((v) => v.status !== "CANCELLED" && v.status !== "REVERSED" && v.status !== "SUPERSEDED");
       } else if (options.status === "SUPERSEDED" || options.status === "CANCELLED_OR_SUPERSEDED") {
         res = res.filter((v) => v.status === "CANCELLED" || v.status === "REVERSED" || v.status === "SUPERSEDED");
@@ -171,6 +171,7 @@ export class VouchersRepository {
           if (options.financialYearId) params.append("financial_year_id", options.financialYearId);
           if (options.startDate) params.append("start_date", options.startDate);
           if (options.endDate) params.append("end_date", options.endDate);
+          params.append("status", options.status || "ACTIVE");
 
           const url = `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?${params.toString()}`;
           const res = await axios.get(url, { headers, timeout: 6000 });

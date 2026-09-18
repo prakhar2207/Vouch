@@ -74,6 +74,7 @@ export default function PurchaseInvoiceList() {
       const result = await vouchersRepository.getPurchaseInvoices(companyId, {
         page: targetPage,
         pageSize,
+        status: "ACTIVE",
         financialYearId: activeFY?.id,
         startDate: activeFY?.start_date,
         endDate: activeFY?.end_date,
@@ -97,6 +98,7 @@ export default function PurchaseInvoiceList() {
           vouchersRepository.getPurchaseInvoices(companyId, {
             page: targetPage,
             pageSize,
+            status: "ACTIVE",
             financialYearId: activeFY?.id,
             startDate: activeFY?.start_date,
             endDate: activeFY?.end_date,

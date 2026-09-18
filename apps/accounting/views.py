@@ -2016,6 +2016,15 @@ class UniversalVoucherAPIView(APIView):
             if v_type:
                 qs = qs.filter(voucher_type=v_type.upper())
 
+            status_param = request.query_params.get('status')
+            if status_param:
+                if status_param.upper() == 'ACTIVE':
+                    qs = qs.exclude(status__in=['CANCELLED', 'REVERSED', 'SUPERSEDED'])
+                elif status_param.upper() != 'ALL':
+                    qs = qs.filter(status=status_param.upper())
+            else:
+                qs = qs.exclude(status__in=['CANCELLED', 'REVERSED', 'SUPERSEDED'])
+
             fy_id = request.query_params.get('financial_year_id')
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
