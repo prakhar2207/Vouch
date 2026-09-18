@@ -244,7 +244,7 @@ class CreatePurchaseInvoiceAPIView(APIView):
                     input_cgst_ledger=input_cgst,
                     input_sgst_ledger=input_sgst,
                     input_igst_ledger=input_igst,
-                    supplier_invoice_number=data.get('voucher_number') or data.get('supplier_invoice_number'),
+                    supplier_invoice_number=data.get('supplier_invoice_number') or data.get('voucher_number') or data.get('external_invoice_number') or data.get('invoice_number'),
                     voucher_date=data.get('voucher_date'),
                     cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
                     cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None
@@ -930,7 +930,7 @@ class VoucherDetailAPIView(APIView):
                             input_cgst_ledger=None,
                             input_sgst_ledger=None,
                             input_igst_ledger=None,
-                            supplier_invoice_number=data.get('voucher_number') or voucher.external_invoice_number,
+                            supplier_invoice_number=data.get('supplier_invoice_number') or data.get('voucher_number') or voucher.external_invoice_number or voucher.voucher_number,
                             voucher_date=data.get('voucher_date', voucher.voucher_date),
                             cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
                             exclude_voucher_id=voucher.id
@@ -2280,7 +2280,7 @@ class UniversalVoucherAPIView(APIView):
                             input_cgst_ledger=input_cgst,
                             input_sgst_ledger=input_sgst,
                             input_igst_ledger=input_igst,
-                            supplier_invoice_number=manual_vnum or data.get('supplier_invoice_number'),
+                            supplier_invoice_number=data.get('supplier_invoice_number') or manual_vnum or data.get('external_invoice_number') or data.get('invoice_number'),
                             voucher_date=voucher_date,
                             cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
                             cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None
@@ -2358,9 +2358,17 @@ class UniversalVoucherAPIView(APIView):
                 if isinstance(v_date, str):
                     v_date = datetime.date.fromisoformat(v_date)
 
-                v_num, fy = InvoiceSequenceService.get_next_number(company, voucher_type, v_date)
-                if manual_vnum and str(manual_vnum).strip():
-                    v_num = str(manual_vnum).strip()
+                if voucher_type == 'PURCHASE':
+                    supp_num = data.get('supplier_invoice_number') or manual_vnum or data.get('external_invoice_number') or data.get('invoice_number')
+                    if supp_num and str(supp_num).strip():
+                        v_num = str(supp_num).strip()
+                        fy = InvoiceSequenceService.get_or_create_active_fy(company, v_date)
+                    else:
+                        v_num, fy = InvoiceSequenceService.get_next_number(company, voucher_type, v_date)
+                else:
+                    v_num, fy = InvoiceSequenceService.get_next_number(company, voucher_type, v_date)
+                    if manual_vnum and str(manual_vnum).strip():
+                        v_num = str(manual_vnum).strip()
 
                 party_ledger = None
                 party_ledger_id = data.get('party_ledger_id')
@@ -2372,6 +2380,8 @@ class UniversalVoucherAPIView(APIView):
                     financial_year=fy,
                     voucher_type=voucher_type,
                     voucher_number=v_num,
+                    external_invoice_number=v_num if voucher_type == 'PURCHASE' else None,
+                    reference_number=v_num if voucher_type == 'PURCHASE' else (data.get('reference_number') or None),
                     voucher_date=v_date,
                     party_ledger=party_ledger,
                     narration=narration,

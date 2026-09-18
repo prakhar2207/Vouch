@@ -192,6 +192,10 @@ export default function PurchasePage() {
       toast.warning("Please select Party and Purchase ledgers!");
       return;
     }
+    if (!invoiceNumber || !invoiceNumber.trim()) {
+      toast.warning("Please enter the Supplier's Invoice Number as mentioned on the bill!");
+      return;
+    }
     
     const flatItems: any[] = [];
     for (let i=0; i<groupedItems.length; i++) {
@@ -446,8 +450,18 @@ export default function PurchasePage() {
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 pb-6 border-b border-border">
             <div>
-              <label className="block text-sm font-medium text-muted-foreground mb-1.5">Supplier Invoice No.</label>
-              <input type="text" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} placeholder="e.g. SUP-998" className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
+              <label className="block text-sm font-medium text-foreground mb-1.5 flex items-center justify-between">
+                <span>Supplier Invoice No. <span className="text-red-500">*</span></span>
+                <span className="text-xs text-muted-foreground font-normal">(as mentioned on supplier bill)</span>
+              </label>
+              <input
+                type="text"
+                value={invoiceNumber}
+                onChange={e => setInvoiceNumber(e.target.value)}
+                placeholder="e.g. SUP-998 or GST/24-25/1102"
+                className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono font-medium"
+                required
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-muted-foreground mb-1.5">Invoice Date</label>

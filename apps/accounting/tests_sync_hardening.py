@@ -380,7 +380,7 @@ class SyncHardeningComprehensiveTestCase(TestCase):
 
         voucher_id = res.data['results'][0]['voucher_id']
         voucher = Voucher.objects.get(id=voucher_id)
-        self.assertTrue(voucher.voucher_number.startswith("PUR/"))
+        self.assertEqual(voucher.voucher_number, "STEEL-INV-9988")
         self.assertEqual(voucher.external_invoice_number, "STEEL-INV-9988")
         self.assertEqual(voucher.status, 'POSTED')
 

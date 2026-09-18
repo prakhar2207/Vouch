@@ -1,4 +1,4 @@
-from django.db import transaction
+from django.db import transaction, models
 from django.utils import timezone
 from decimal import Decimal
 from apps.companies.models import Company
@@ -51,19 +51,41 @@ class PurchaseInvoiceService:
         if not input_igst_ledger or 'output' in input_igst_ledger.name.lower():
             input_igst_ledger = PurchaseInvoiceService._get_or_create_input_tax_ledger(company, 'IGST')
 
-        # 1. Create Voucher Header (Strict Separation of Vouch PO and Supplier Invoice No.)
+        # 1. Create Voucher Header: Use Supplier's Invoice Number directly as voucher_number
         from apps.accounting.services.sequence_service import InvoiceSequenceService
+        import re
+
         v_date = voucher_date if voucher_date else timezone.now().date()
-        v_num, fy = InvoiceSequenceService.get_next_number(company, 'PURCHASE', v_date)
         ext_invoice_num = str(supplier_invoice_number).strip() if supplier_invoice_number else None
 
-        # P2-2: Duplicate Supplier Invoice Detection
+        if ext_invoice_num:
+            fy = InvoiceSequenceService.get_or_create_active_fy(company, v_date)
+            # Ensure unique_together = ('company', 'financial_year', 'voucher_number') is respected across parties
+            candidate_vnum = ext_invoice_num
+            dup_vnum_qs = Voucher.objects.filter(company=company, financial_year=fy, voucher_number=candidate_vnum)
+            if exclude_voucher_id:
+                dup_vnum_qs = dup_vnum_qs.exclude(id=exclude_voucher_id)
+            if dup_vnum_qs.exists():
+                party_prefix = re.sub(r'[^A-Za-z0-9]', '', party_ledger.name or '')[:4].upper() if party_ledger else 'P'
+                suffix = 2
+                candidate_vnum = f"{ext_invoice_num}-{party_prefix}" if party_prefix else f"{ext_invoice_num}-2"
+                while Voucher.objects.filter(company=company, financial_year=fy, voucher_number=candidate_vnum).exclude(id=exclude_voucher_id if exclude_voucher_id else None).exists():
+                    candidate_vnum = f"{ext_invoice_num}-{party_prefix}-{suffix}"
+                    suffix += 1
+            v_num = candidate_vnum
+        else:
+            # Fallback to internal sequence only if supplier invoice number is not provided
+            v_num, fy = InvoiceSequenceService.get_next_number(company, 'PURCHASE', v_date)
+
+        # P2-2: Duplicate Supplier Invoice Detection for the same supplier
         if ext_invoice_num and party_ledger:
             dup_qs = Voucher.objects.filter(
                 company=company,
                 party_ledger=party_ledger,
-                external_invoice_number__iexact=ext_invoice_num,
+                voucher_type='PURCHASE',
                 status__in=['POSTED', 'DRAFT', 'VALIDATING']
+            ).filter(
+                models.Q(external_invoice_number__iexact=ext_invoice_num) | models.Q(voucher_number__iexact=ext_invoice_num)
             )
             if exclude_voucher_id:
                 dup_qs = dup_qs.exclude(id=exclude_voucher_id)
@@ -72,7 +94,7 @@ class PurchaseInvoiceService:
                 from rest_framework.exceptions import ValidationError
                 raise ValidationError(
                     f"Duplicate supplier bill: Supplier '{party_ledger.name}' already has bill '{ext_invoice_num}' "
-                    f"recorded on {existing_dup.voucher_date} (Vouch PO #{existing_dup.voucher_number})."
+                    f"recorded on {existing_dup.voucher_date} (Invoice #{existing_dup.voucher_number})."
                 )
 
         voucher = Voucher.objects.create(
@@ -86,7 +108,7 @@ class PurchaseInvoiceService:
             party_ledger=party_ledger,
             status='DRAFT',
             created_by=user,
-            narration=f"Purchase from {party_ledger.name}" + (f" (Bill #{ext_invoice_num})" if ext_invoice_num else "")
+            narration=f"Purchase from {party_ledger.name if party_ledger else 'Supplier'}" + (f" (Bill #{ext_invoice_num})" if ext_invoice_num else "")
         )
         
         total_invoice_value = Decimal('0.00')
@@ -261,7 +283,7 @@ class PurchaseInvoiceService:
             taxable_amount = gross - discount_amt
             
             # 2. Calculate GST
-            target_supplier_state = party_ledger.state_code or company.state_code
+            target_supplier_state = (party_ledger.state_code if party_ledger else None) or company.state_code
             taxes = GSTCalculator.calculate_taxes(
                 company_state_code=company.state_code,
                 party_state_code=target_supplier_state,
