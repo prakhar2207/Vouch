@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import React, { useState, useRef, useEffect } from "react";
 import { GST_STATES, GSTState, getStateByCode } from "@/utils/gstStates";
 
@@ -104,7 +104,7 @@ export default function StateSelect({
           placeholder={placeholder}
           disabled={disabled}
           required={required}
-          className="w-full px-3 py-2 border rounded-lg shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-foreground disabled:bg-gray-100 dark:disabled:bg-gray-900 disabled:cursor-not-allowed pr-8"
+          className="w-full px-3 py-2 border rounded-lg shadow-xs text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 border-input bg-background text-foreground disabled:bg-muted disabled:cursor-not-allowed pr-8 transition-colors"
         />
 
         {value && !disabled && (
@@ -114,7 +114,7 @@ export default function StateSelect({
               onChange("", "");
               setSearch("");
             }}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-gray-600 dark:hover:text-foreground text-xs font-bold"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs font-bold p-1 cursor-pointer"
             title="Clear"
           >
             ✕
@@ -123,9 +123,9 @@ export default function StateSelect({
       </div>
 
       {isOpen && !disabled && (
-        <ul className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white dark:bg-gray-800 py-1 text-sm shadow-lg ring-1 ring-black ring-opacity-5 border border-gray-200 dark:border-gray-700 focus:outline-none">
+        <ul className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-xl bg-card py-1 text-sm shadow-xl border border-border focus:outline-none">
           {filteredStates.length === 0 ? (
-            <li className="relative cursor-default select-none py-2 px-3 text-muted-foreground dark:text-muted-foreground">
+            <li className="relative cursor-default select-none py-2 px-3 text-muted-foreground text-xs">
               No matching states or codes found.
             </li>
           ) : (
@@ -135,12 +135,12 @@ export default function StateSelect({
                 <li
                   key={s.code}
                   onClick={() => handleSelect(s)}
-                  className={`relative cursor-pointer select-none py-2 px-3 flex items-center justify-between hover:bg-blue-50 dark:hover:bg-gray-700 ${
-                    isSelected ? "bg-blue-100 dark:bg-blue-900/40 font-semibold text-blue-900 dark:text-blue-200" : "text-gray-900 dark:text-gray-100"
+                  className={`relative cursor-pointer select-none py-2 px-3 flex items-center justify-between transition-colors ${
+                    isSelected ? "bg-primary/10 text-primary font-semibold" : "text-foreground hover:bg-accent hover:text-accent-foreground"
                   }`}
                 >
                   <span>{s.name}</span>
-                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 font-mono text-gray-600 dark:text-foreground/80 border border-gray-200 dark:border-gray-600">
+                  <span className="text-xs px-2 py-0.5 rounded bg-muted font-mono text-muted-foreground border border-border">
                     Code: {s.code}
                   </span>
                 </li>

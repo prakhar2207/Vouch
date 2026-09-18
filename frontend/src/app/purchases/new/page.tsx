@@ -602,8 +602,8 @@ export default function PurchasePage() {
                                 </tbody>
                             </table>
                         </div>
-                        <div className="p-3 bg-zinc-900/30 border-t border-border">
-                            <button onClick={() => addRow(gIndex)} className="text-sm text-red-500 hover:text-red-400 font-medium flex items-center gap-1">
+                        <div className="p-3 bg-muted/40 border-t border-border">
+                            <button onClick={() => addRow(gIndex)} className="text-sm text-primary hover:text-primary/80 font-medium flex items-center gap-1 cursor-pointer">
                                 + Add item in {categories.find(c=>c.id===group.category_id)?.name || 'this category'}
                             </button>
                         </div>
@@ -611,8 +611,8 @@ export default function PurchasePage() {
                 ))}
             </div>
             
-            <div className="p-4 border-t border-border bg-zinc-900/20">
-                <button onClick={addCategoryGroup} className="text-sm text-foreground bg-muted hover:bg-zinc-700 border border-input px-4 py-2 rounded shadow transition-colors font-medium">
+            <div className="p-4 border-t border-border bg-muted/30">
+                <button onClick={addCategoryGroup} className="text-sm text-foreground bg-card hover:bg-accent border border-input px-4 py-2 rounded-lg shadow-xs transition-colors font-medium cursor-pointer">
                     + Add Another Category Block
                 </button>
             </div>

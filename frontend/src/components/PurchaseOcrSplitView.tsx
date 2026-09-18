@@ -531,35 +531,35 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
   return (
     <div className="space-y-6">
       {/* Dual-Engine Hybrid Mode Bar */}
-      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-zinc-900/90 border border-border p-3.5 rounded-2xl shadow-sm">
+      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-card border border-border p-3.5 rounded-2xl shadow-xs">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2.5">
           <span className="text-xs font-bold text-foreground/80 uppercase tracking-wider flex items-center gap-1.5">
             <span>⚡</span> OCR Engine:
           </span>
-          <div className="inline-flex rounded-xl bg-zinc-950 p-1 border border-border">
+          <div className="inline-flex rounded-xl bg-muted p-1 border border-border">
             <button
               type="button"
               onClick={() => setScanMode("printed")}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                 scanMode === "printed"
-                  ? "bg-blue-600 text-foreground shadow-md"
+                  ? "bg-blue-600 text-white shadow-xs"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <span>⚡ Printed Bill</span>
-              <span className="text-[10px] opacity-80 hidden sm:inline font-normal">(Flash-Lite: 2x Faster, High Quota)</span>
+              <span className="text-[10px] opacity-90 hidden sm:inline font-normal">(Flash-Lite: 2x Faster, High Quota)</span>
             </button>
             <button
               type="button"
               onClick={() => setScanMode("handwritten")}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                 scanMode === "handwritten"
-                  ? "bg-purple-600 text-foreground shadow-md"
+                  ? "bg-purple-600 text-white shadow-xs"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <span>🧠 Handwritten / Kaccha</span>
-              <span className="text-[10px] opacity-80 hidden sm:inline font-normal">(3.6 Flash: Deep Vision)</span>
+              <span className="text-[10px] opacity-90 hidden sm:inline font-normal">(3.6 Flash: Deep Vision)</span>
             </button>
           </div>
         </div>
@@ -567,7 +567,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         <button
           type="button"
           onClick={() => setShowApiKeyAccordion(!showApiKeyAccordion)}
-          className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1.5 underline cursor-pointer self-end md:self-auto"
+          className="text-xs text-purple-600 dark:text-purple-400 hover:underline flex items-center gap-1.5 cursor-pointer self-end md:self-auto font-medium"
         >
           <span>🔑</span>
           <span>{showApiKeyAccordion ? "Hide Key Settings" : geminiApiKey ? "Custom Key Configured ✓" : "Configure Custom Key"}</span>
@@ -576,8 +576,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
       {/* Collapsible API Key Configuration */}
       {showApiKeyAccordion && (
-        <div className="p-3.5 bg-purple-500/10 border border-purple-500/25 rounded-2xl space-y-2">
-          <div className="flex items-center justify-between text-xs text-purple-300 font-semibold">
+        <div className="p-3.5 bg-purple-500/5 dark:bg-purple-500/10 border border-purple-500/25 rounded-2xl space-y-2">
+          <div className="flex items-center justify-between text-xs text-purple-700 dark:text-purple-300 font-semibold">
             <span>Custom Scanner API Key (saved in browser):</span>
             {geminiApiKey && (
               <button
@@ -586,7 +586,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                   setGeminiApiKey("");
                   if (typeof window !== "undefined") localStorage.removeItem("vouch_gemini_key");
                 }}
-                className="text-[11px] text-red-400 hover:text-red-300 cursor-pointer font-bold"
+                className="text-[11px] text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 cursor-pointer font-bold"
               >
                 Clear Key
               </button>
@@ -604,7 +604,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                 else localStorage.removeItem("vouch_gemini_key");
               }
             }}
-            className="w-full bg-zinc-950 border border-purple-500/35 text-foreground px-3 py-2 rounded-xl text-xs font-mono outline-none focus:ring-1 focus:ring-purple-500"
+            className="w-full bg-background border border-purple-500/35 text-foreground px-3 py-2 rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-purple-500"
           />
           <p className="text-[10px] text-muted-foreground">
             Optional custom key for high-volume bill scanning and price list imports.
@@ -614,7 +614,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
       {/* Upload Banner */}
       {!fileBase64 && (
-        <div className="border-2 border-dashed border-input bg-zinc-900/40 rounded-2xl p-10 text-center hover:border-blue-500 transition-colors">
+        <div className="border-2 border-dashed border-input bg-card/60 hover:bg-muted/40 rounded-2xl p-10 text-center hover:border-primary transition-colors">
           <input
             type="file"
             ref={fileInputRef}
@@ -634,7 +634,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
             </div>
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-foreground font-bold rounded-lg text-xs shadow-lg transition-colors cursor-pointer"
+              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-xs shadow-md transition-colors cursor-pointer"
             >
               Browse Document / Photo
             </button>
@@ -752,7 +752,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                       processOcr(fileBase64, fileMimeType, nextMode);
                     }}
                     disabled={loading}
-                    className="px-2 py-0.5 bg-muted hover:bg-zinc-700 text-foreground/80 rounded text-[10px] font-medium border border-input transition-colors flex items-center gap-1 cursor-pointer ml-1"
+                    className="px-2 py-0.5 bg-card hover:bg-accent text-foreground/80 rounded text-[10px] font-medium border border-input transition-colors flex items-center gap-1 cursor-pointer ml-1"
                     title="Re-run OCR using the complementary engine"
                   >
                     <span>🔄 Re-scan with {(invoice.model_used?.includes("flash-lite") || invoice.source?.includes("flash-lite")) ? "🧠 3.6 Flash" : "⚡ Flash-Lite"}</span>
@@ -772,14 +772,14 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                   setCompressionNotice(null);
                   if (fileInputRef.current) fileInputRef.current.value = "";
                 }}
-                className="px-4 py-2 bg-muted hover:bg-zinc-700 text-foreground/80 rounded-lg text-xs font-semibold border border-input transition-colors cursor-pointer"
+                className="px-4 py-2 bg-card hover:bg-accent text-foreground rounded-lg text-xs font-semibold border border-input transition-colors cursor-pointer"
               >
                 Upload Different Bill
               </button>
               <button
                 onClick={handleSaveToAccounting}
                 disabled={saving}
-                className="px-6 py-2 bg-green-600 hover:bg-green-700 text-foreground rounded-lg text-sm font-bold shadow-lg transition-colors flex-1 sm:flex-none cursor-pointer"
+                className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-bold shadow-md transition-colors flex-1 sm:flex-none cursor-pointer"
               >
                 {saving ? "Saving..." : "✓ Approve & Save to ERP"}
               </button>
@@ -787,13 +787,13 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           </div>
 
           {/* Mobile Screen Segmented Switcher (< lg) */}
-          <div className="flex lg:hidden items-center bg-muted/50 border border-border p-1 rounded-xl shadow-inner mb-2">
+          <div className="flex lg:hidden items-center bg-muted border border-border p-1 rounded-xl shadow-xs mb-2">
             <button
               type="button"
               onClick={() => setMobileTab('DOCUMENT')}
               className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
                 mobileTab === 'DOCUMENT'
-                  ? 'bg-blue-600 text-foreground shadow-md'
+                  ? 'bg-blue-600 text-white shadow-xs'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
@@ -804,7 +804,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
               onClick={() => setMobileTab('FORM')}
               className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
                 mobileTab === 'FORM'
-                  ? 'bg-blue-600 text-foreground shadow-md'
+                  ? 'bg-blue-600 text-white shadow-xs'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
@@ -822,15 +822,15 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
               <div className="flex items-center justify-between border-b border-border pb-3 mb-3 text-xs text-muted-foreground">
                 <span className="font-semibold text-foreground">Original Document Preview</span>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setZoomLevel((z) => Math.max(50, z - 25))} className="px-2 py-1 bg-muted hover:bg-zinc-700 text-foreground rounded text-xs cursor-pointer">-</button>
+                  <button onClick={() => setZoomLevel((z) => Math.max(50, z - 25))} className="px-2 py-1 bg-card hover:bg-accent text-foreground border border-input rounded text-xs cursor-pointer">-</button>
                   <span className="font-mono">{zoomLevel}%</span>
-                  <button onClick={() => setZoomLevel((z) => Math.min(200, z + 25))} className="px-2 py-1 bg-muted hover:bg-zinc-700 text-foreground rounded text-xs cursor-pointer">+</button>
+                  <button onClick={() => setZoomLevel((z) => Math.min(200, z + 25))} className="px-2 py-1 bg-card hover:bg-accent text-foreground border border-input rounded text-xs cursor-pointer">+</button>
                   {blobUrl && (
                     <a
                       href={blobUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-2 py-1 bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 rounded text-xs font-bold"
+                      className="px-2 py-1 bg-blue-600/20 text-blue-600 dark:text-blue-400 hover:bg-blue-600/30 rounded text-xs font-bold"
                     >
                       ↗ Pop Out
                     </a>
@@ -838,7 +838,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                 </div>
               </div>
 
-              <div className="flex-1 bg-zinc-950 rounded-lg overflow-auto flex items-center justify-center p-2">
+              <div className="flex-1 bg-slate-100 dark:bg-zinc-950 border border-border/80 rounded-lg overflow-auto flex items-center justify-center p-2">
                 {fileMimeType.includes("pdf") ? (
                   <object
                     data={blobUrl || fileBase64}
@@ -848,7 +848,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                     <embed src={blobUrl || fileBase64} type="application/pdf" className="w-full h-full" />
                     <div className="text-center p-4 text-xs text-muted-foreground">
                       PDF preview not supported directly in this view.
-                      <a href={blobUrl || fileBase64} target="_blank" rel="noreferrer" className="text-blue-400 underline ml-2">Click to open PDF</a>
+                      <a href={blobUrl || fileBase64} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 underline ml-2">Click to open PDF</a>
                     </div>
                   </object>
                 ) : (
@@ -886,15 +886,15 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-xs font-semibold text-muted-foreground uppercase">Supplier Name</label>
                       {autoFilled && invoice.supplier_name && (
-                        <span className="text-[10px] text-emerald-400 font-medium">✨ AI Auto-Filled</span>
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">✨ AI Auto-Filled</span>
                       )}
                     </div>
                     <input
                       type="text"
                       value={invoice.supplier_name}
                       onChange={(e) => setInvoice({ ...invoice, supplier_name: e.target.value })}
-                      className={`w-full bg-muted/50 border ${
-                        autoFilled && invoice.supplier_name ? 'border-emerald-500/40 focus:ring-emerald-500' : 'border-input focus:ring-blue-500'
+                      className={`w-full bg-background border ${
+                        autoFilled && invoice.supplier_name ? 'border-emerald-500/40 focus:ring-emerald-500/30' : 'border-input focus:ring-blue-500/30'
                       } text-foreground p-2.5 rounded-lg text-sm font-semibold outline-none focus:ring-2`}
                     />
                   </div>
@@ -903,15 +903,15 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-xs font-semibold text-muted-foreground uppercase">Supplier GSTIN</label>
                       {autoFilled && invoice.supplier_gstin && (
-                        <span className="text-[10px] text-emerald-400 font-medium">✨ AI Auto-Filled</span>
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">✨ AI Auto-Filled</span>
                       )}
                     </div>
                     <input
                       type="text"
                       value={invoice.supplier_gstin}
                       onChange={(e) => setInvoice({ ...invoice, supplier_gstin: e.target.value.toUpperCase() })}
-                      className={`w-full bg-muted/50 border ${
-                        autoFilled && invoice.supplier_gstin ? 'border-emerald-500/40 focus:ring-emerald-500' : 'border-input focus:ring-blue-500'
+                      className={`w-full bg-background border ${
+                        autoFilled && invoice.supplier_gstin ? 'border-emerald-500/40 focus:ring-emerald-500/30' : 'border-input focus:ring-blue-500/30'
                       } text-foreground p-2.5 rounded-lg text-sm font-mono uppercase outline-none focus:ring-2`}
                     />
                   </div>
@@ -919,6 +919,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                   <div>
                     <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">State Code / Place of Supply</label>
                     <StateSelect
+                      label=""
                       value={invoice.state_code}
                       onChange={(val) => setInvoice({ ...invoice, state_code: val })}
                     />
@@ -928,15 +929,15 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-xs font-semibold text-muted-foreground uppercase">Invoice Number</label>
                       {autoFilled && invoice.invoice_number && (
-                        <span className="text-[10px] text-emerald-400 font-medium">✨ AI Auto-Filled</span>
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">✨ AI Auto-Filled</span>
                       )}
                     </div>
                     <input
                       type="text"
                       value={invoice.invoice_number}
                       onChange={(e) => setInvoice({ ...invoice, invoice_number: e.target.value })}
-                      className={`w-full bg-muted/50 border ${
-                        autoFilled && invoice.invoice_number ? 'border-emerald-500/40 focus:ring-emerald-500' : 'border-input focus:ring-blue-500'
+                      className={`w-full bg-background border ${
+                        autoFilled && invoice.invoice_number ? 'border-emerald-500/40 focus:ring-emerald-500/30' : 'border-input focus:ring-blue-500/30'
                       } text-foreground p-2.5 rounded-lg text-sm font-mono outline-none focus:ring-2`}
                     />
                   </div>
@@ -945,15 +946,15 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-xs font-semibold text-muted-foreground uppercase">Invoice Date</label>
                       {autoFilled && invoice.invoice_date && (
-                        <span className="text-[10px] text-emerald-400 font-medium">✨ AI Auto-Filled</span>
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">✨ AI Auto-Filled</span>
                       )}
                     </div>
                     <input
                       type="date"
                       value={invoice.invoice_date}
                       onChange={(e) => setInvoice({ ...invoice, invoice_date: e.target.value })}
-                      className={`w-full bg-muted/50 border ${
-                        autoFilled && invoice.invoice_date ? 'border-emerald-500/40 focus:ring-emerald-500' : 'border-input focus:ring-blue-500'
+                      className={`w-full bg-background border ${
+                        autoFilled && invoice.invoice_date ? 'border-emerald-500/40 focus:ring-emerald-500/30' : 'border-input focus:ring-blue-500/30'
                       } text-foreground p-2.5 rounded-lg text-sm font-mono outline-none focus:ring-2`}
                     />
                   </div>
@@ -961,18 +962,18 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
               </div>
 
               {/* Inventory Category Allocation Card */}
-              <div className={`p-3.5 rounded-xl space-y-2 border transition-colors ${
+              <div className={`p-4 rounded-xl space-y-3 border transition-colors ${
                 invoice.requires_category_confirmation
                   ? 'bg-amber-500/10 border-amber-500/40'
-                  : 'bg-blue-500/10 border-blue-500/30'
+                  : 'bg-blue-50/70 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900/50'
               }`}>
                 {/* AI Category Confirmation Warning Banner */}
                 {invoice.requires_category_confirmation && (
-                  <div className="p-2.5 bg-amber-500/15 border border-amber-500/30 rounded-lg text-xs text-amber-200 flex items-start gap-2">
+                  <div className="p-2.5 bg-amber-500/15 border border-amber-500/30 rounded-lg text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
                     <span className="text-sm">⚠️</span>
                     <div className="space-y-0.5">
                       <div className="font-bold">Category Confirmation Required</div>
-                      <p className="text-[11px] text-amber-300/90 leading-relaxed">
+                      <p className="text-[11px] text-amber-700 dark:text-amber-300/90 leading-relaxed">
                         The bill did not clearly specify an inventory category or contains multiple categories. Please confirm or select the correct category below before saving.
                       </p>
                     </div>
@@ -981,7 +982,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
                 {/* AI Detected Category Notification */}
                 {categoryDetectedMsg && (
-                  <div className="p-2 bg-blue-500/15 border border-blue-500/30 rounded-lg text-xs text-blue-200 flex items-center justify-between">
+                  <div className="p-2 bg-blue-100/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/40 rounded-lg text-xs text-blue-800 dark:text-blue-200 flex items-center justify-between">
                     <span className="flex items-center gap-1.5 font-medium">
                       <span>✨</span>
                       <span>{categoryDetectedMsg}</span>
@@ -989,7 +990,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                     <button
                       type="button"
                       onClick={() => setCategoryDetectedMsg(null)}
-                      className="text-blue-400 hover:text-blue-200 font-bold ml-2 cursor-pointer text-xs"
+                      className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 font-bold ml-2 cursor-pointer text-xs"
                     >
                       ✕
                     </button>
@@ -997,10 +998,10 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                 )}
 
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <label className="text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
                     <span>📦</span>
                     <span>Add Scanned Items to Inventory Category (Required):</span>
-                    <span className="text-red-400">*</span>
+                    <span className="text-red-500">*</span>
                   </label>
                   {isCreatingNewCategory ? (
                     <button 
@@ -1014,7 +1015,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                     <button 
                       type="button" 
                       onClick={() => setIsCreatingNewCategory(true)}
-                      className="text-[11px] text-blue-400 hover:text-blue-300 underline cursor-pointer"
+                      className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer font-medium"
                     >
                       + New Category
                     </button>
@@ -1028,9 +1029,9 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                       placeholder="e.g. V Belts, Bearings, Lubricants"
                       value={newCategoryName}
                       onChange={(e) => setNewCategoryName(e.target.value)}
-                      className="w-full bg-zinc-950 border border-blue-500/60 text-foreground p-2.5 rounded-lg text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full bg-background border border-blue-400 dark:border-blue-500/60 text-foreground p-2.5 rounded-lg text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500"
                     />
-                    <p className="text-[10px] text-emerald-400">
+                    <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
                       ⚡ This category will be created in the database first before saving voucher items.
                     </p>
                   </div>
@@ -1044,7 +1045,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                         setSelectedCategoryId(e.target.value);
                       }
                     }}
-                    className={`w-full bg-zinc-950 border ${
+                    className={`w-full bg-background border ${
                       !selectedCategoryId ? 'border-amber-500/60 focus:ring-amber-500' : 'border-input focus:ring-blue-500'
                     } text-foreground p-2.5 rounded-lg text-xs font-medium outline-none focus:ring-2 cursor-pointer`}
                   >
@@ -1068,19 +1069,19 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                   <div className="flex items-center gap-2">
                     <h4 className="text-xs font-bold text-foreground/80 uppercase tracking-wider">Line Items</h4>
                     {autoFilled && invoice.line_items.length > 0 && (
-                      <span className="text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                         ✨ {invoice.line_items.length} items parsed
                       </span>
                     )}
                   </div>
-                  <button onClick={addLineItem} type="button" className="text-xs text-blue-400 hover:text-blue-300 font-bold cursor-pointer">
+                  <button onClick={addLineItem} type="button" className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-bold cursor-pointer">
                     + Add Item
                   </button>
                 </div>
 
                 <div className="space-y-3">
                   {invoice.line_items.map((item, idx) => (
-                    <div key={idx} className={`p-3 bg-zinc-900/80 border ${autoFilled ? 'border-emerald-500/25 hover:border-emerald-500/50' : 'border-border'} rounded-lg space-y-2 text-xs transition-colors`}>
+                    <div key={idx} className={`p-3 bg-muted/40 dark:bg-muted/20 border ${autoFilled ? 'border-emerald-500/30 hover:border-emerald-500/50' : 'border-border'} rounded-xl space-y-2 text-xs transition-colors shadow-xs`}>
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
                         <div className="flex-1 flex items-center gap-2">
                           <input
@@ -1088,9 +1089,9 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                             value={item.description}
                             onChange={(e) => updateItem(idx, "description", e.target.value)}
                             placeholder="Item Description / Product Name"
-                            className="flex-1 bg-zinc-950 border border-input text-foreground p-2 sm:p-1.5 rounded outline-none font-medium"
+                            className="flex-1 bg-background border border-input text-foreground p-2 sm:p-1.5 rounded-lg outline-none font-medium focus:ring-1 focus:ring-blue-500"
                           />
-                          <button onClick={() => removeLineItem(idx)} className="sm:hidden text-red-400 hover:text-red-300 p-1 font-bold cursor-pointer" title="Delete item">✕</button>
+                          <button onClick={() => removeLineItem(idx)} className="sm:hidden text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 p-1 font-bold cursor-pointer" title="Delete item">✕</button>
                         </div>
                         <div className="flex items-center gap-2">
                           <input
@@ -1098,56 +1099,56 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                             value={item.brand || ""}
                             onChange={(e) => updateItem(idx, "brand", e.target.value)}
                             placeholder="Brand (e.g. Fenner, SKF)"
-                            className="flex-1 sm:w-44 bg-zinc-950 border border-input text-foreground p-2 sm:p-1.5 rounded outline-none text-xs"
+                            className="flex-1 sm:w-44 bg-background border border-input text-foreground p-2 sm:p-1.5 rounded-lg outline-none text-xs focus:ring-1 focus:ring-blue-500"
                           />
-                          <button onClick={() => removeLineItem(idx)} className="hidden sm:inline-block text-red-400 hover:text-red-300 px-1 font-bold cursor-pointer" title="Delete item">✕</button>
+                          <button onClick={() => removeLineItem(idx)} className="hidden sm:inline-block text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 px-1 font-bold cursor-pointer" title="Delete item">✕</button>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                         <div>
-                          <label className="block text-[10px] text-muted-foreground">HSN</label>
+                          <label className="block text-[10px] text-muted-foreground font-medium">HSN</label>
                           <input
                             type="text"
                             value={item.hsn_code}
                             onChange={(e) => updateItem(idx, "hsn_code", e.target.value)}
-                            className="w-full bg-zinc-950 border border-input text-foreground p-1.5 rounded outline-none font-mono"
+                            className="w-full bg-background border border-input text-foreground p-1.5 rounded-lg outline-none font-mono focus:ring-1 focus:ring-blue-500"
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] text-muted-foreground">Qty</label>
+                          <label className="block text-[10px] text-muted-foreground font-medium">Qty</label>
                           <input
                             type="number"
                             value={item.quantity}
                             onChange={(e) => updateItem(idx, "quantity", e.target.value)}
-                            className="w-full bg-zinc-950 border border-input text-foreground p-1.5 rounded outline-none font-mono"
+                            className="w-full bg-background border border-input text-foreground p-1.5 rounded-lg outline-none font-mono focus:ring-1 focus:ring-blue-500"
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] text-muted-foreground">Rate (₹)</label>
+                          <label className="block text-[10px] text-muted-foreground font-medium">Rate (₹)</label>
                           <input
                             type="number"
                             value={item.rate}
                             onChange={(e) => updateItem(idx, "rate", e.target.value)}
-                            className="w-full bg-zinc-950 border border-input text-foreground p-1.5 rounded outline-none font-mono"
+                            className="w-full bg-background border border-input text-foreground p-1.5 rounded-lg outline-none font-mono focus:ring-1 focus:ring-blue-500"
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] text-muted-foreground">Disc %</label>
+                          <label className="block text-[10px] text-muted-foreground font-medium">Disc %</label>
                           <input
                             type="number"
                             value={item.discount_percent || ""}
                             onChange={(e) => updateItem(idx, "discount_percent", e.target.value)}
-                            className="w-full bg-zinc-950 border border-input text-foreground p-1.5 rounded outline-none font-mono"
+                            className="w-full bg-background border border-input text-foreground p-1.5 rounded-lg outline-none font-mono focus:ring-1 focus:ring-blue-500"
                           />
                         </div>
                         <div className="col-span-2 sm:col-span-1">
-                          <label className="block text-[10px] text-muted-foreground">Taxable (₹)</label>
+                          <label className="block text-[10px] text-muted-foreground font-medium">Taxable (₹)</label>
                           <input
                             type="number"
                             value={item.amount}
                             readOnly
-                            className="w-full bg-zinc-950/50 border border-border text-blue-400 p-1.5 rounded outline-none font-mono font-bold"
+                            className="w-full bg-muted/60 border border-border text-blue-600 dark:text-blue-400 p-1.5 rounded-lg outline-none font-mono font-bold"
                           />
                         </div>
                       </div>
@@ -1157,32 +1158,32 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
               </div>
 
               {/* Totals Summary */}
-              <div className="p-4 bg-zinc-950 border border-border rounded-xl space-y-2 font-mono text-xs">
+              <div className="p-4 bg-muted/30 dark:bg-muted/20 border border-border rounded-xl space-y-2 font-mono text-xs shadow-xs">
                 <div className="flex justify-between text-muted-foreground">
                   <span>Subtotal:</span>
-                  <span>₹{invoice.subtotal.toFixed(2)}</span>
+                  <span className="text-foreground font-medium">₹{invoice.subtotal.toFixed(2)}</span>
                 </div>
                 {invoice.cgst_amount > 0 && (
                   <div className="flex justify-between text-muted-foreground">
                     <span>CGST (9%):</span>
-                    <span>₹{invoice.cgst_amount.toFixed(2)}</span>
+                    <span className="text-foreground font-medium">₹{invoice.cgst_amount.toFixed(2)}</span>
                   </div>
                 )}
                 {invoice.sgst_amount > 0 && (
                   <div className="flex justify-between text-muted-foreground">
                     <span>SGST (9%):</span>
-                    <span>₹{invoice.sgst_amount.toFixed(2)}</span>
+                    <span className="text-foreground font-medium">₹{invoice.sgst_amount.toFixed(2)}</span>
                   </div>
                 )}
                 {invoice.igst_amount > 0 && (
                   <div className="flex justify-between text-muted-foreground">
                     <span>IGST (18%):</span>
-                    <span>₹{invoice.igst_amount.toFixed(2)}</span>
+                    <span className="text-foreground font-medium">₹{invoice.igst_amount.toFixed(2)}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-base font-bold text-foreground border-t border-border pt-2">
                   <span>Grand Total:</span>
-                  <span className="text-green-400">₹{invoice.total_amount.toFixed(2)}</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-bold">₹{invoice.total_amount.toFixed(2)}</span>
                 </div>
               </div>
             </div>
