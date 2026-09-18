@@ -665,7 +665,9 @@ def serialize_voucher_detail(voucher, include_attachment=False, user=None):
             "distance_km": ewb.distance_km,
             "transporter_name": ewb.transporter_name,
             "transporter_id": ewb.transporter_id,
-        } if (ewb := __import__('apps.gst.models', fromlist=['EWayBillRecord']).EWayBillRecord.objects.filter(voucher_id=voucher.id).exclude(status='CAN').order_by('-ewb_date').first()) else None))()
+        } if (ewb := __import__('apps.gst.models', fromlist=['EWayBillRecord']).EWayBillRecord.objects.filter(voucher_id=voucher.id).exclude(status='CAN').order_by('-ewb_date').first()) else None))(),
+        "financial_year_id": str(voucher.financial_year_id) if voucher.financial_year_id else None,
+        "financialYearId": str(voucher.financial_year_id) if voucher.financial_year_id else None,
     }
 
 
@@ -1863,11 +1865,30 @@ class ListPaymentReceiptAPIView(APIView):
             if voucher_type in ('PAYMENT', 'RECEIPT'):
                 qs = qs.filter(voucher_type=voucher_type)
             
+            fy_id = request.query_params.get('financial_year_id')
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+
+            if fy_id:
+                from apps.accounting.models import FinancialYear
+                from django.db.models import Q
+                fy = FinancialYear.objects.filter(id=fy_id, company=company).first()
+                if fy:
+                    qs = qs.filter(Q(financial_year=fy) | Q(voucher_date__range=[fy.start_date, fy.end_date]))
+                else:
+                    qs = qs.filter(financial_year_id=fy_id)
+            elif start_date and end_date:
+                qs = qs.filter(voucher_date__range=[start_date, end_date])
+            elif start_date:
+                qs = qs.filter(voucher_date__gte=start_date)
+            elif end_date:
+                qs = qs.filter(voucher_date__lte=end_date)
+
             total_count = qs.count()
 
             qs = qs.only(
                 'id', 'voucher_number', 'voucher_type', 'voucher_date',
-                'status', 'total_amount', 'party_ledger__name', 'narration'
+                'status', 'total_amount', 'party_ledger__name', 'narration', 'financial_year_id'
             ).order_by('-voucher_date', '-created_at')
 
             page_vouchers = list(qs[offset:offset+limit])
@@ -1882,6 +1903,8 @@ class ListPaymentReceiptAPIView(APIView):
                     "total_amount": str(v.total_amount),
                     "party_name": v.party_ledger.name if v.party_ledger else "N/A",
                     "narration": v.narration or "",
+                    "financial_year_id": str(v.financial_year_id) if v.financial_year_id else None,
+                    "financialYearId": str(v.financial_year_id) if v.financial_year_id else None,
                 } for v in page_vouchers
             ]
             return Response({
@@ -1983,6 +2006,25 @@ class UniversalVoucherAPIView(APIView):
             if v_type:
                 qs = qs.filter(voucher_type=v_type.upper())
 
+            fy_id = request.query_params.get('financial_year_id')
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+
+            if fy_id:
+                from apps.accounting.models import FinancialYear
+                from django.db.models import Q
+                fy = FinancialYear.objects.filter(id=fy_id, company=company).first()
+                if fy:
+                    qs = qs.filter(Q(financial_year=fy) | Q(voucher_date__range=[fy.start_date, fy.end_date]))
+                else:
+                    qs = qs.filter(financial_year_id=fy_id)
+            elif start_date and end_date:
+                qs = qs.filter(voucher_date__range=[start_date, end_date])
+            elif start_date:
+                qs = qs.filter(voucher_date__gte=start_date)
+            elif end_date:
+                qs = qs.filter(voucher_date__lte=end_date)
+
             total_count = qs.count()
 
             qs = qs.annotate(
@@ -1994,7 +2036,7 @@ class UniversalVoucherAPIView(APIView):
             ).only(
                 'id', 'voucher_number', 'reference_number', 'voucher_type',
                 'voucher_date', 'status', 'total_amount', 'party_ledger__name',
-                'narration', 'attachment_mime'
+                'narration', 'attachment_mime', 'financial_year_id'
             ).order_by('-voucher_date', '-created_at')
 
             page_vouchers = list(qs[offset:offset+limit])
@@ -2055,6 +2097,8 @@ class UniversalVoucherAPIView(APIView):
                     "narration": v.narration or "",
                     "has_attachment": bool(v.has_attachment_flag),
                     "attachment_mime": v.attachment_mime or "",
+                    "financial_year_id": str(v.financial_year_id) if v.financial_year_id else None,
+                    "financialYearId": str(v.financial_year_id) if v.financial_year_id else None,
                 })
             return Response({
                 "success": True,

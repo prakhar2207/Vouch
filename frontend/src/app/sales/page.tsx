@@ -8,6 +8,7 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
+import { useFinancialYear } from '@/context/FinancialYearContext';
 import EditSalesInvoiceModal from '@/components/modals/EditSalesInvoiceModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 import EWayBillModal from '@/components/gst/EWayBillModal';
@@ -20,6 +21,7 @@ export default function SalesInvoiceList() {
   const router = useRouter();
   const { toast } = useToast();
   const { companyId: activeCompanyId } = useCompany();
+  const { activeFY } = useFinancialYear();
 
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,7 +47,7 @@ export default function SalesInvoiceList() {
       return;
     }
     fetchInvoices(1);
-  }, [router, activeCompanyId, statusFilter]);
+  }, [router, activeCompanyId, statusFilter, activeFY?.id]);
 
   const fetchInvoices = async (targetPage: number = page) => {
     setLoading(true);
@@ -68,6 +70,9 @@ export default function SalesInvoiceList() {
           page: targetPage,
           pageSize,
           status: statusFilter,
+          financialYearId: activeFY?.id,
+          startDate: activeFY?.start_date,
+          endDate: activeFY?.end_date,
         });
 
         // Network fallback if local IndexedDB is empty or out of sync
@@ -76,7 +81,15 @@ export default function SalesInvoiceList() {
             const token = getAccessToken();
             if (token) {
               const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
-              const sRes = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?type=SALES&limit=500&offset=${(targetPage - 1) * pageSize}`, { headers, timeout: 6000 });
+              const params = new URLSearchParams();
+              params.append("type", "SALES");
+              params.append("limit", "500");
+              params.append("offset", String((targetPage - 1) * pageSize));
+              if (activeFY?.id) params.append("financial_year_id", activeFY.id);
+              if (activeFY?.start_date) params.append("start_date", activeFY.start_date);
+              if (activeFY?.end_date) params.append("end_date", activeFY.end_date);
+
+              const sRes = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?${params.toString()}`, { headers, timeout: 6000 });
               if (sRes.data?.data && sRes.data.data.length > 0) {
                 const serverList = sRes.data.data;
                 const toPut: any[] = serverList.map((v: any) => ({
@@ -101,6 +114,9 @@ export default function SalesInvoiceList() {
                   page: targetPage,
                   pageSize,
                   status: statusFilter,
+                  financialYearId: activeFY?.id,
+                  startDate: activeFY?.start_date,
+                  endDate: activeFY?.end_date,
                 });
               }
             }
@@ -139,7 +155,14 @@ export default function SalesInvoiceList() {
         // Background incremental sync to ensure server cancellations/reversals sync to IndexedDB
         pullIncrementalChanges(companyId).then((pullRes) => {
           if (pullRes.success && pullRes.totalRecords > 0) {
-            vouchersRepository.getSalesInvoices(companyId, { page: targetPage, pageSize, status: statusFilter }).then((fresh) => {
+            vouchersRepository.getSalesInvoices(companyId, {
+              page: targetPage,
+              pageSize,
+              status: statusFilter,
+              financialYearId: activeFY?.id,
+              startDate: activeFY?.start_date,
+              endDate: activeFY?.end_date,
+            }).then((fresh) => {
               const cleanFresh = (fresh.data || []).filter((v: any) => !isGhostVoucher(v));
               setInvoices(cleanFresh);
               setPagination({

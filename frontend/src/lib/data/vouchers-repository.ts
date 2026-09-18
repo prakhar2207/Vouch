@@ -9,6 +9,7 @@ export interface VoucherQueryOptions {
   search?: string;
   startDate?: string;
   endDate?: string;
+  financialYearId?: string;
   page?: number;
   pageSize?: number;
 }
@@ -98,14 +99,80 @@ export class VouchersRepository {
       }
     }
 
-    // If local storage is empty, attempt initial fallback fetch
-    if (localVouchers.length === 0) {
+    const applyFilters = (list: SyncedVoucher[]) => {
+      let res = list.filter((v) => {
+        const vNum = String(v.voucherNumber || (v as any).voucher_number || "").trim();
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(vNum);
+        if (isUUID || vNum === v.id) return false;
+        return true;
+      });
+
+      if (options.type) {
+        const types = (Array.isArray(options.type) ? options.type : [options.type]).map((t) => String(t).toUpperCase());
+        res = res.filter((v) => types.includes(String(v.voucherType || (v as any).voucher_type || "").toUpperCase()));
+      }
+
+      if (options.status === "ACTIVE") {
+        res = res.filter((v) => v.status !== "CANCELLED" && v.status !== "REVERSED" && v.status !== "SUPERSEDED");
+      } else if (options.status === "SUPERSEDED" || options.status === "CANCELLED_OR_SUPERSEDED") {
+        res = res.filter((v) => v.status === "CANCELLED" || v.status === "REVERSED" || v.status === "SUPERSEDED");
+      } else if (options.status && options.status !== "ALL") {
+        res = res.filter((v) => v.status === options.status);
+      }
+
+      if (options.financialYearId) {
+        res = res.filter((v) => {
+          const vFyId = v.financialYearId || (v as any).financial_year_id;
+          const vDate = v.voucherDate || (v as any).voucher_date || (v as any).date || "";
+          if (vFyId) return vFyId === options.financialYearId;
+          if (options.startDate && options.endDate && vDate) {
+            return vDate >= options.startDate && vDate <= options.endDate;
+          }
+          return false;
+        });
+      }
+
+      if (options.startDate) {
+        res = res.filter((v) => (v.voucherDate || (v as any).voucher_date || "") >= options.startDate!);
+      }
+      if (options.endDate) {
+        res = res.filter((v) => (v.voucherDate || (v as any).voucher_date || "") <= options.endDate!);
+      }
+
+      if (options.search) {
+        const q = options.search.trim().toLowerCase();
+        res = res.filter((v) => {
+          const vNum = String(v.voucherNumber || (v as any).voucher_number || "");
+          const pName = String(v.partyName || (v as any).party_name || "");
+          const refNum = String(v.referenceNumber || (v as any).reference_number || "");
+          const narr = String(v.narration || "");
+          return vNum.toLowerCase().includes(q) ||
+            pName.toLowerCase().includes(q) ||
+            refNum.toLowerCase().includes(q) ||
+            narr.toLowerCase().includes(q);
+        });
+      }
+
+      return res;
+    };
+
+    let filtered = applyFilters(localVouchers);
+
+    // If local storage is empty, or filtered list for this financial year is empty, attempt on-demand server fetch
+    if (localVouchers.length === 0 || (filtered.length === 0 && (options.financialYearId || options.startDate))) {
       try {
         const token = getAccessToken();
         if (token) {
           const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
           const typeParam = Array.isArray(options.type) ? options.type.join(",") : (options.type || "");
-          const url = `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?limit=500${typeParam ? `&type=${typeParam}` : ""}`;
+          const params = new URLSearchParams();
+          params.append("limit", "500");
+          if (typeParam) params.append("type", typeParam);
+          if (options.financialYearId) params.append("financial_year_id", options.financialYearId);
+          if (options.startDate) params.append("start_date", options.startDate);
+          if (options.endDate) params.append("end_date", options.endDate);
+
+          const url = `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?${params.toString()}`;
           const res = await axios.get(url, { headers, timeout: 6000 });
           const serverList = res.data?.data || [];
           if (serverList.length > 0) {
@@ -127,7 +194,11 @@ export class VouchersRepository {
               serverUpdatedAt: Number(v.serverUpdatedAt || v.server_updated_at || Date.now()),
             }));
             await offlineDb.syncedVouchers.bulkPut(toPut);
-            localVouchers = toPut;
+            localVouchers = await offlineDb.syncedVouchers
+              .where("companyId")
+              .equals(companyId)
+              .toArray();
+            filtered = applyFilters(localVouchers);
           }
         }
       } catch (err) {
@@ -148,8 +219,15 @@ export class VouchersRepository {
         if (!matchesCompany) return false;
         if (options.type) {
           const types = (Array.isArray(options.type) ? options.type : [options.type]).map((t) => String(t).toUpperCase());
-          return types.includes(String(o.voucherType).toUpperCase());
+          if (!types.includes(String(o.voucherType).toUpperCase())) return false;
         }
+        const vDate = o.voucherDate || p.voucher_date || p.date || "";
+        const vFyId = p.financial_year_id || p.financialYearId;
+        if (options.financialYearId && vFyId && vFyId !== options.financialYearId) {
+          return false;
+        }
+        if (options.startDate && vDate && vDate < options.startDate) return false;
+        if (options.endDate && vDate && vDate > options.endDate) return false;
         return true;
       })
       .map((o) => {
@@ -159,6 +237,8 @@ export class VouchersRepository {
           localId: o.localId,
           isOffline: true,
           syncStatus: o.status,
+          financial_year_id: p.financial_year_id || p.financialYearId || null,
+          financialYearId: p.financial_year_id || p.financialYearId || null,
           voucher_number: o.voucherNumber || "PENDING SYNC",
           voucherNumber: o.voucherNumber || "PENDING SYNC",
           type: o.voucherType,
@@ -177,49 +257,6 @@ export class VouchersRepository {
           serverUpdatedAt: o.createdAt,
         };
       });
-
-    // 3. Filter local vouchers - strictly exclude any corrupted ghost records whose number is a UUID
-    let filtered = localVouchers.filter((v) => {
-      const vNum = String(v.voucherNumber || (v as any).voucher_number || "").trim();
-      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(vNum);
-      if (isUUID || vNum === v.id) return false;
-      return true;
-    });
-
-    if (options.type) {
-      const types = (Array.isArray(options.type) ? options.type : [options.type]).map((t) => String(t).toUpperCase());
-      filtered = filtered.filter((v) => types.includes(String(v.voucherType || (v as any).voucher_type || "").toUpperCase()));
-    }
-
-    if (options.status === "ACTIVE") {
-      filtered = filtered.filter((v) => v.status !== "CANCELLED" && v.status !== "REVERSED" && v.status !== "SUPERSEDED");
-    } else if (options.status === "SUPERSEDED" || options.status === "CANCELLED_OR_SUPERSEDED") {
-      filtered = filtered.filter((v) => v.status === "CANCELLED" || v.status === "REVERSED" || v.status === "SUPERSEDED");
-    } else if (options.status && options.status !== "ALL") {
-      filtered = filtered.filter((v) => v.status === options.status);
-    }
-    // If options.status === "ALL" or undefined, all vouchers are retained for complete sequential register
-
-    if (options.startDate) {
-      filtered = filtered.filter((v) => (v.voucherDate || (v as any).voucher_date || "") >= options.startDate!);
-    }
-    if (options.endDate) {
-      filtered = filtered.filter((v) => (v.voucherDate || (v as any).voucher_date || "") <= options.endDate!);
-    }
-
-    if (options.search) {
-      const q = options.search.trim().toLowerCase();
-      filtered = filtered.filter((v) => {
-        const vNum = String(v.voucherNumber || (v as any).voucher_number || "");
-        const pName = String(v.partyName || (v as any).party_name || "");
-        const refNum = String(v.referenceNumber || (v as any).reference_number || "");
-        const narr = String(v.narration || "");
-        return vNum.toLowerCase().includes(q) ||
-          pName.toLowerCase().includes(q) ||
-          refNum.toLowerCase().includes(q) ||
-          narr.toLowerCase().includes(q);
-      });
-    }
 
     // 3b. Query local payment allocations to calculate accurate payment/settlement status
     const allocByInv: Record<string, number> = {};

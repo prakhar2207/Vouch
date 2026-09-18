@@ -10,6 +10,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { ChevronLeft, ChevronRight, Edit2, Trash2 } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
+import { useFinancialYear } from '@/context/FinancialYearContext';
 import { vouchersRepository } from '@/lib/data';
 import { pullIncrementalChanges } from '@/lib/sync/sync-worker';
 import EditPaymentReceiptModal from '@/components/modals/EditPaymentReceiptModal';
@@ -19,6 +20,7 @@ export default function VouchersPage() {
   const router = useRouter();
   const { toast } = useToast();
   const { companyId: activeCompanyId } = useCompany();
+  const { activeFY } = useFinancialYear();
   const [vouchers, setVouchers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'ALL' | 'PAYMENT' | 'RECEIPT'>('ALL');
@@ -39,7 +41,7 @@ export default function VouchersPage() {
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
     fetchVouchers('ALL', 1);
-  }, [router]);
+  }, [router, activeCompanyId, activeFY?.id]);
 
   const fetchVouchers = async (typeFilter: string = filter, targetPage: number = page) => {
     setLoading(true);
@@ -60,6 +62,9 @@ export default function VouchersPage() {
         page: targetPage,
         pageSize,
         type: typeFilter !== 'ALL' ? typeFilter : ['PAYMENT', 'RECEIPT'],
+        financialYearId: activeFY?.id,
+        startDate: activeFY?.start_date,
+        endDate: activeFY?.end_date,
       });
 
       setVouchers(result.data);
@@ -82,7 +87,14 @@ export default function VouchersPage() {
       pullIncrementalChanges(companyId).then((pullRes) => {
         if (pullRes.success && pullRes.totalRecords > 0) {
           const typeOpt = typeFilter === 'ALL' ? ['PAYMENT', 'RECEIPT'] : typeFilter;
-          vouchersRepository.getPaymentReceipts(companyId, { page: targetPage, pageSize, type: typeOpt }).then((fresh) => {
+          vouchersRepository.getPaymentReceipts(companyId, {
+            page: targetPage,
+            pageSize,
+            type: typeOpt,
+            financialYearId: activeFY?.id,
+            startDate: activeFY?.start_date,
+            endDate: activeFY?.end_date,
+          }).then((fresh) => {
             setVouchers(fresh.data);
             setPagination({
               page: fresh.page,

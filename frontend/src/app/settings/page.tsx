@@ -1005,7 +1005,10 @@ export default function SettingsPage() {
                           ) : (
                             <button
                               type="button"
-                              onClick={() => setActiveFY(fy)}
+                              onClick={() => {
+                                setActiveFY(fy);
+                                toast.success("Switched Financial Year", `Active year changed to ${fy.name || fy.code}`);
+                              }}
                               className="px-2.5 py-1 bg-muted hover:bg-muted/80 text-foreground font-sans rounded text-[11px] transition-colors cursor-pointer"
                             >
                               Switch

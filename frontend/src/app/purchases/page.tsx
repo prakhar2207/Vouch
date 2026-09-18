@@ -8,6 +8,7 @@ import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
 import { useCompany } from "@/context/CompanyContext";
+import { useFinancialYear } from "@/context/FinancialYearContext";
 import EditPurchaseInvoiceModal from "@/components/modals/EditPurchaseInvoiceModal";
 import ConfirmModal from "@/components/modals/ConfirmModal";
 import { Edit2, Trash2, Eye, FileText, Plus, ChevronLeft, ChevronRight, AlertCircle, RefreshCw, CheckCircle, AlertTriangle, CloudOff } from "lucide-react";
@@ -19,6 +20,7 @@ export default function PurchaseInvoiceList() {
   const router = useRouter();
   const { toast } = useToast();
   const { companyId: activeCompanyId } = useCompany();
+  const { activeFY } = useFinancialYear();
 
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,7 +45,7 @@ export default function PurchaseInvoiceList() {
       return;
     }
     fetchInvoices(1);
-  }, [router, activeCompanyId]);
+  }, [router, activeCompanyId, activeFY?.id]);
 
   const fetchInvoices = async (targetPage: number = page) => {
     setLoading(true);
@@ -72,6 +74,9 @@ export default function PurchaseInvoiceList() {
       const result = await vouchersRepository.getPurchaseInvoices(companyId, {
         page: targetPage,
         pageSize,
+        financialYearId: activeFY?.id,
+        startDate: activeFY?.start_date,
+        endDate: activeFY?.end_date,
       });
 
       setInvoices(result.data);
@@ -89,7 +94,13 @@ export default function PurchaseInvoiceList() {
       // Background incremental sync to ensure any server-side cancellations/reversals update IndexedDB
       pullIncrementalChanges(companyId).then((pullRes) => {
         if (pullRes.success && pullRes.totalRecords > 0) {
-          vouchersRepository.getPurchaseInvoices(companyId, { page: targetPage, pageSize }).then((fresh) => {
+          vouchersRepository.getPurchaseInvoices(companyId, {
+            page: targetPage,
+            pageSize,
+            financialYearId: activeFY?.id,
+            startDate: activeFY?.start_date,
+            endDate: activeFY?.end_date,
+          }).then((fresh) => {
             setInvoices(fresh.data);
             setPagination({
               page: fresh.page,

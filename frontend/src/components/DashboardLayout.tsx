@@ -30,6 +30,7 @@ import {
   ShieldCheck,
   Activity,
   Landmark,
+  Check,
 } from "lucide-react";
 import SyncStatusBadge from "./SyncStatusBadge";
 
@@ -490,16 +491,73 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {/* Unified Compact Context Pill: FY · Date · Alt+F2 */}
             <div ref={fyRef} className="relative hidden md:block">
               <button
-                onClick={() => setIsPeriodModalOpen(true)}
+                onClick={() => setIsFYDropdownOpen(!isFYDropdownOpen)}
                 className="flex items-center gap-1.5 xl:gap-2 px-2.5 xl:px-3 py-1.5 rounded-lg border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px]"
-                title="Change Accounting Period (Alt + F2)"
+                title="Change Financial Year or Period (Alt + F2)"
               >
                 <Calendar className="w-3.5 xl:w-4 h-3.5 xl:h-4 text-muted-foreground shrink-0" />
                 <span className="font-mono tabular-nums text-xs font-medium text-foreground whitespace-nowrap">
                   {activeFY ? (activeFY.code || activeFY.name) : "FY 26-27"}<span className="hidden xl:inline"> · {workingDate ? workingDate.slice(5) : "Today"}</span>
                 </span>
                 <span className={`w-2 h-2 rounded-full shrink-0 ${activeFY?.is_closed ? "bg-amber-400" : "bg-emerald-400"}`}></span>
+                <ChevronDown className="w-3 h-3 text-muted-foreground ml-0.5 opacity-60 shrink-0" />
               </button>
+
+              {isFYDropdownOpen && (
+                <div className="absolute right-0 mt-1.5 w-64 rounded-xl border border-border bg-card/95 backdrop-blur-md shadow-xl p-1.5 z-50 text-xs animate-in fade-in zoom-in-95">
+                  <div className="px-2.5 py-1.5 text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                    <span>Financial Years</span>
+                    <span className="text-[9px] font-mono text-muted-foreground/80">Active FY Only</span>
+                  </div>
+                  <div className="space-y-0.5 max-h-56 overflow-y-auto">
+                    {availableFYs.map((fy) => {
+                      const isSelected = activeFY?.id === fy.id;
+                      return (
+                        <button
+                          key={fy.id}
+                          onClick={() => {
+                            setActiveFY(fy);
+                            setIsFYDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-2.5 py-2 rounded-lg flex items-center justify-between transition-colors cursor-pointer ${
+                            isSelected
+                              ? "bg-primary/15 text-primary font-semibold"
+                              : "hover:bg-muted text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-medium text-xs text-foreground flex items-center gap-1.5">
+                              {fy.name || `FY ${fy.code}`}
+                              {fy.is_closed && (
+                                <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-400 font-normal">Closed</span>
+                              )}
+                            </span>
+                            <span className="font-mono text-[10px] text-muted-foreground">
+                              {fy.start_date} → {fy.end_date}
+                            </span>
+                          </div>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="border-t border-border mt-1 pt-1 flex flex-col gap-0.5">
+                    <button
+                      onClick={() => {
+                        setIsFYDropdownOpen(false);
+                        setIsPeriodModalOpen(true);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors flex items-center justify-between cursor-pointer"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>Custom Period Range</span>
+                      </span>
+                      <kbd className="font-mono text-[10px] px-1 py-0.2 bg-muted text-muted-foreground rounded border border-border">Alt+F2</kbd>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Search Trigger: Compact Ctrl+K */}
@@ -628,6 +686,31 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 >
                   {availableCompanies.map(c => (
                     <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Mobile Financial Year Selector */}
+            {availableFYs.length > 0 && (
+              <div className="py-2 border-b border-border/50">
+                <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">
+                  Financial Year
+                </label>
+                <select
+                  value={activeFY?.id || ""}
+                  onChange={(e) => {
+                    const found = availableFYs.find(f => f.id === e.target.value);
+                    if (found) {
+                      setActiveFY(found);
+                    }
+                  }}
+                  className="w-full bg-muted border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground font-medium"
+                >
+                  {availableFYs.map(f => (
+                    <option key={f.id} value={f.id}>
+                      {f.name || `FY ${f.code}`}{f.is_closed ? " (Closed)" : ""}
+                    </option>
                   ))}
                 </select>
               </div>

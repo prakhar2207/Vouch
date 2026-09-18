@@ -1,6 +1,7 @@
 "use client";
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
+import { useFinancialYear } from "./FinancialYearContext";
 
 interface PeriodContextType {
   fromDate: string;
@@ -34,9 +35,17 @@ export function PeriodProvider({ children }: { children: React.ReactNode }) {
   const [toDate, setToDateState] = useState<string>(defaults.to);
   const [isPeriodModalOpen, setIsPeriodModalOpen] = useState(false);
   const [isSplitModalOpen, setIsSplitModalOpen] = useState(false);
+  const { activeFY } = useFinancialYear();
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
+    if (activeFY?.start_date && activeFY?.end_date) {
+      setFromDateState(activeFY.start_date);
+      setToDateState(activeFY.end_date);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("vouch_period_from", activeFY.start_date);
+        localStorage.setItem("vouch_period_to", activeFY.end_date);
+      }
+    } else if (typeof window !== "undefined") {
       const savedFrom = localStorage.getItem("vouch_period_from");
       const savedTo = localStorage.getItem("vouch_period_to");
       if (savedFrom && savedTo) {
@@ -44,7 +53,7 @@ export function PeriodProvider({ children }: { children: React.ReactNode }) {
         setToDateState(savedTo);
       }
     }
-  }, []);
+  }, [activeFY?.id, activeFY?.start_date, activeFY?.end_date]);
 
   const setPeriod = useCallback((from: string, to: string) => {
     setFromDateState(from);
