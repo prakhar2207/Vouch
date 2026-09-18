@@ -187,18 +187,28 @@ export default function VouchersPage() {
         </div>
 
         {/* Filter Tabs */}
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {(['ALL', 'RECEIPT', 'PAYMENT'] as const).map(f => (
-            <button key={f} onClick={() => handleFilter(f)}
-              className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors border whitespace-nowrap ${
-                filter === f
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                  : 'bg-muted/50 text-muted-foreground border-input hover:border-zinc-500'
-              }`}
-            >
-              {f === 'ALL' ? 'All' : f === 'RECEIPT' ? '↓ Receipts' : '↑ Payments'}
-            </button>
-          ))}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 overflow-x-auto pb-1">
+          <div className="flex gap-2">
+            {(['ALL', 'RECEIPT', 'PAYMENT'] as const).map(f => (
+              <button key={f} onClick={() => handleFilter(f)}
+                className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors border whitespace-nowrap cursor-pointer ${
+                  filter === f
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                    : 'bg-muted/50 text-muted-foreground border-input hover:border-zinc-500'
+                }`}
+              >
+                {f === 'ALL' ? 'All' : f === 'RECEIPT' ? '↓ Receipts' : '↑ Payments'}
+              </button>
+            ))}
+          </div>
+
+          <Link
+            href="/vouchers/credit-note?tab=history"
+            className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 hover:bg-amber-100 transition-colors whitespace-nowrap flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
+          >
+            <span>Credit & Debit Notes History</span>
+            <span className="text-amber-600 dark:text-amber-400">→</span>
+          </Link>
         </div>
 
         {/* Table & Mobile Cards Container */}

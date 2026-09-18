@@ -770,10 +770,21 @@ class VoucherDetailAPIView(APIView):
                     affected_ledger_ids.add(voucher.party_ledger_id)
 
                 if voucher.status in ['POSTED', 'VALIDATING', 'REVERSED', 'CANCELLED', 'CORRECTED']:
-                    # P0-5: Never physically delete posted financial documents
                     if voucher.status in ['POSTED', 'VALIDATING']:
-                        VoucherService.create_reversal_voucher(voucher, user=request.user, reason="User Cancellation")
-                        action_msg = "cancelled and reversed (accounting records preserved)"
+                        if voucher.voucher_type in ['CREDIT_NOTE', 'DEBIT_NOTE']:
+                            # Revert inventory if any items were restocked
+                            for itm in voucher.items.all():
+                                if itm.product and voucher.voucher_type == 'CREDIT_NOTE':
+                                    itm.product.stock_quantity = max(Decimal('0.00'), itm.product.stock_quantity - itm.quantity)
+                                    itm.product.save(update_fields=['stock_quantity'])
+                                elif itm.product and voucher.voucher_type == 'DEBIT_NOTE':
+                                    itm.product.stock_quantity = itm.product.stock_quantity + itm.quantity
+                                    itm.product.save(update_fields=['stock_quantity'])
+                            VoucherService.cancel_voucher(voucher, user=request.user)
+                            action_msg = "cancelled and removed from active books"
+                        else:
+                            VoucherService.create_reversal_voucher(voucher, user=request.user, reason="User Cancellation")
+                            action_msg = "cancelled and reversed (accounting records preserved)"
                     else:
                         action_msg = "is already cancelled/reversed"
                 else:
@@ -795,13 +806,22 @@ class VoucherDetailAPIView(APIView):
                         except Exception:
                             pass
 
+                # Emit SyncEvent so offline/local storage drops the cancelled/deleted voucher
+                from apps.accounting.models import SyncEvent
+                SyncEvent.objects.create(
+                    company=company,
+                    entity_type='voucher',
+                    entity_id=str(voucher_id),
+                    operation='DELETE'
+                )
+
                 # Single-source-of-truth recalculation for all affected ledgers
                 for lid in affected_ledger_ids:
                     l = Ledger.objects.filter(id=lid).first()
                     if l:
                         VoucherService.recalculate_ledger_balance(l)
 
-            type_label = "Voucher" if voucher_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL'] else "Invoice"
+            type_label = "Credit Note" if voucher_type == 'CREDIT_NOTE' else ("Debit Note" if voucher_type == 'DEBIT_NOTE' else ("Voucher" if voucher_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL'] else "Invoice"))
             return Response({
                 "success": True, 
                 "message": f"{type_label} #{voucher_num} {action_msg} successfully."
@@ -2014,7 +2034,11 @@ class UniversalVoucherAPIView(APIView):
 
             qs = Voucher.objects.filter(company=company).select_related('party_ledger')
             if v_type:
-                qs = qs.filter(voucher_type=v_type.upper())
+                if ',' in v_type:
+                    types = [t.strip().upper() for t in v_type.split(',') if t.strip()]
+                    qs = qs.filter(voucher_type__in=types)
+                else:
+                    qs = qs.filter(voucher_type=v_type.upper())
 
             status_param = request.query_params.get('status')
             if status_param:
