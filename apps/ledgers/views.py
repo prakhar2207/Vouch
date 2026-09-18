@@ -1,7 +1,7 @@
 import datetime
 from decimal import Decimal
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Sum, Q
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -120,11 +120,12 @@ def compute_scoped_ledger_balances(company, start_date=None, end_date=None, ledg
         return {}
 
     target_ids = [l.id for l in ledgers]
+    company_filter = Q(company=company) | Q(voucher__company=company)
 
     # Double-entry opening vouchers
     ledgers_with_opening = set(
         LedgerEntry.objects.filter(
-            company=company,
+            company_filter,
             ledger_id__in=target_ids,
             voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
             voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
@@ -137,7 +138,7 @@ def compute_scoped_ledger_balances(company, start_date=None, end_date=None, ledg
     nominal_totals = {}
     if nominal_ids:
         nominal_qs = LedgerEntry.objects.filter(
-            company=company,
+            company_filter,
             ledger_id__in=nominal_ids,
             voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
         )
@@ -156,7 +157,7 @@ def compute_scoped_ledger_balances(company, start_date=None, end_date=None, ledg
     bs_totals = {}
     if bs_ids:
         bs_qs = LedgerEntry.objects.filter(
-            company=company,
+            company_filter,
             ledger_id__in=bs_ids,
             voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
         )
