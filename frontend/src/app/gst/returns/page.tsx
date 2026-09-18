@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import { API_BASE_URL } from "@/utils/api";
 import { useCompany } from "@/context/CompanyContext";
+import { useFinancialYear } from "@/context/FinancialYearContext";
 import DashboardLayout from "@/components/DashboardLayout";
 import { 
   FileCheck, 
@@ -31,15 +32,33 @@ import {
 export default function GSTReturnCenterPage() {
   const router = useRouter();
   const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const { activeFY, availableFYs } = useFinancialYear();
   const [activeTab, setActiveTab] = useState<"monthly" | "quarterly" | "annual">("monthly");
   
   const companyId = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") || "" : "");
   const companyName = activeCompany?.name || "Your Company";
+
+  // Helpers for current FY and quarter
+  const getCurrentFYCode = () => {
+    const today = new Date();
+    const m = today.getMonth() + 1;
+    const y = today.getFullYear();
+    const startYr = m >= 4 ? y : y - 1;
+    return `${startYr}-${startYr + 1}`;
+  };
+
+  const getCurrentQuarter = () => {
+    const m = new Date().getMonth() + 1;
+    if (m >= 4 && m <= 6) return "Q1";
+    if (m >= 7 && m <= 9) return "Q2";
+    if (m >= 10 && m <= 12) return "Q3";
+    return "Q4";
+  };
   
   // Date states
   const [selectedMonth, setSelectedMonth] = useState<string>(new Date().toISOString().slice(0, 7)); // YYYY-MM
-  const [selectedQuarter, setSelectedQuarter] = useState<string>("Q2");
-  const [selectedYear, setSelectedYear] = useState<string>("2025-2026");
+  const [selectedQuarter, setSelectedQuarter] = useState<string>(getCurrentQuarter());
+  const [selectedYear, setSelectedYear] = useState<string>(getCurrentFYCode());
 
   // Loading & Data states
   const [loading, setLoading] = useState(false);
@@ -78,6 +97,30 @@ export default function GSTReturnCenterPage() {
     }
   }, [activeCompany?.gstin]);
 
+  // Synchronize selectedYear with active financial year from top bar when loaded
+  useEffect(() => {
+    if (activeFY?.start_date && activeFY?.end_date) {
+      const sYr = activeFY.start_date.slice(0, 4);
+      const eYr = activeFY.end_date.slice(0, 4);
+      setSelectedYear(`${sYr}-${eYr}`);
+    }
+  }, [activeFY?.id]);
+
+  const handleTabChange = (tab: "monthly" | "quarterly" | "annual") => {
+    setActiveTab(tab);
+    if (tab === "quarterly" && selectedMonth) {
+      const [yStr, mStr] = selectedMonth.split("-");
+      const m = parseInt(mStr);
+      const y = parseInt(yStr);
+      const startYr = m >= 4 ? y : y - 1;
+      setSelectedYear(`${startYr}-${startYr + 1}`);
+      if (m >= 4 && m <= 6) setSelectedQuarter("Q1");
+      else if (m >= 7 && m <= 9) setSelectedQuarter("Q2");
+      else if (m >= 10 && m <= 12) setSelectedQuarter("Q3");
+      else setSelectedQuarter("Q4");
+    }
+  };
+
   const getStartAndEndDate = () => {
     if (activeTab === "monthly") {
       const [year, month] = selectedMonth.split("-");
@@ -88,12 +131,15 @@ export default function GSTReturnCenterPage() {
         periodLabel: selectedMonth,
       };
     } else {
-      const year = selectedYear.split("-")[0];
-      const nextYear = selectedYear.split("-")[1];
-      if (selectedQuarter === "Q1") return { startDate: `${year}-04-01`, endDate: `${year}-06-30`, periodLabel: `${selectedYear} Q1` };
-      if (selectedQuarter === "Q2") return { startDate: `${year}-07-01`, endDate: `${year}-09-30`, periodLabel: `${selectedYear} Q2` };
-      if (selectedQuarter === "Q3") return { startDate: `${year}-10-01`, endDate: `${year}-12-31`, periodLabel: `${selectedYear} Q3` };
-      return { startDate: `${nextYear}-01-01`, endDate: `${nextYear}-03-31`, periodLabel: `${selectedYear} Q4` };
+      const parts = selectedYear.replace("FY", "").trim().split("-");
+      const startYear = parseInt(parts[0].length === 2 ? `20${parts[0]}` : parts[0]) || 2026;
+      const endYear = parts[1] ? (parseInt(parts[1].length === 2 ? `20${parts[1]}` : parts[1]) || startYear + 1) : startYear + 1;
+      const fyShort = `FY ${String(startYear).slice(-2)}-${String(endYear).slice(-2)}`;
+
+      if (selectedQuarter === "Q1") return { startDate: `${startYear}-04-01`, endDate: `${startYear}-06-30`, periodLabel: `${fyShort} Q1 (Apr-Jun)` };
+      if (selectedQuarter === "Q2") return { startDate: `${startYear}-07-01`, endDate: `${startYear}-09-30`, periodLabel: `${fyShort} Q2 (Jul-Sep)` };
+      if (selectedQuarter === "Q3") return { startDate: `${startYear}-10-01`, endDate: `${startYear}-12-31`, periodLabel: `${fyShort} Q3 (Oct-Dec)` };
+      return { startDate: `${endYear}-01-01`, endDate: `${endYear}-03-31`, periodLabel: `${fyShort} Q4 (Jan-Mar)` };
     }
   };
 
@@ -250,8 +296,9 @@ export default function GSTReturnCenterPage() {
   };
 
   const totalVouchers = (exceptionsData?.clean_count ?? 0) + (exceptionsData?.exception_count ?? 0);
-  const readinessPct = totalVouchers > 0 ? Math.round(((exceptionsData?.clean_count ?? 0) / totalVouchers) * 100) : 100;
-  const isFullyClean = (exceptionsData?.exception_count ?? 0) === 0;
+  const hasTransactions = totalVouchers > 0;
+  const readinessPct = hasTransactions ? Math.round(((exceptionsData?.clean_count ?? 0) / totalVouchers) * 100) : 0;
+  const isFullyClean = hasTransactions && (exceptionsData?.exception_count ?? 0) === 0;
 
   return (
     <DashboardLayout>
@@ -267,7 +314,11 @@ export default function GSTReturnCenterPage() {
                 <div className="flex items-center gap-3">
                   <h1 className="text-2xl font-bold tracking-tight">GST Return & Compliance Center</h1>
                   {exceptionsData && (
-                    isFullyClean ? (
+                    !hasTransactions ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-muted text-muted-foreground border border-border">
+                        No Transactions in {getStartAndEndDate().periodLabel}
+                      </span>
+                    ) : isFullyClean ? (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                         Grade A • 100% Audit Ready
@@ -323,7 +374,7 @@ export default function GSTReturnCenterPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card p-3 rounded-2xl border border-border shadow-xs">
           <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
             <button
-              onClick={() => setActiveTab("monthly")}
+              onClick={() => handleTabChange("monthly")}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeTab === "monthly" ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
               }`}
@@ -331,7 +382,7 @@ export default function GSTReturnCenterPage() {
               Monthly Return
             </button>
             <button
-              onClick={() => setActiveTab("quarterly")}
+              onClick={() => handleTabChange("quarterly")}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeTab === "quarterly" ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
               }`}
@@ -339,7 +390,7 @@ export default function GSTReturnCenterPage() {
               Quarterly / Tri-Monthly (QRMP)
             </button>
             <button
-              onClick={() => setActiveTab("annual")}
+              onClick={() => handleTabChange("annual")}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeTab === "annual" ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
               }`}
@@ -370,8 +421,26 @@ export default function GSTReturnCenterPage() {
                   onChange={(e) => setSelectedYear(e.target.value)}
                   className="px-2.5 py-1.5 bg-background border border-border rounded-lg text-xs font-semibold"
                 >
-                  <option value="2025-2026">FY 2025-26</option>
-                  <option value="2026-2027">FY 2026-27</option>
+                  {availableFYs && availableFYs.length > 0 ? (
+                    availableFYs
+                      .slice()
+                      .sort((a, b) => b.start_date.localeCompare(a.start_date))
+                      .map((fy) => {
+                        const sYr = fy.start_date.slice(0, 4);
+                        const eYr = fy.end_date.slice(0, 4);
+                        const code = `${sYr}-${eYr}`;
+                        return (
+                          <option key={fy.id} value={code}>
+                            {fy.name || `FY ${fy.code}`}
+                          </option>
+                        );
+                      })
+                  ) : (
+                    <>
+                      <option value="2026-2027">FY 2026-27</option>
+                      <option value="2025-2026">FY 2025-26</option>
+                    </>
+                  )}
                 </select>
 
                 <span className="text-muted-foreground font-medium ml-2">Quarter:</span>
@@ -396,8 +465,26 @@ export default function GSTReturnCenterPage() {
                   onChange={(e) => setSelectedYear(e.target.value)}
                   className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-semibold"
                 >
-                  <option value="2025-2026">FY 2025-26</option>
-                  <option value="2026-2027">FY 2026-27</option>
+                  {availableFYs && availableFYs.length > 0 ? (
+                    availableFYs
+                      .slice()
+                      .sort((a, b) => b.start_date.localeCompare(a.start_date))
+                      .map((fy) => {
+                        const sYr = fy.start_date.slice(0, 4);
+                        const eYr = fy.end_date.slice(0, 4);
+                        const code = `${sYr}-${eYr}`;
+                        return (
+                          <option key={fy.id} value={code}>
+                            {fy.name || `FY ${fy.code}`}
+                          </option>
+                        );
+                      })
+                  ) : (
+                    <>
+                      <option value="2026-2027">FY 2026-27</option>
+                      <option value="2025-2026">FY 2025-26</option>
+                    </>
+                  )}
                 </select>
               </div>
             )}
@@ -555,6 +642,40 @@ export default function GSTReturnCenterPage() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+            ) : !hasTransactions ? (
+              <div className="bg-card border border-border rounded-2xl p-8 text-center space-y-3 shadow-xs">
+                <div className="w-14 h-14 rounded-2xl bg-muted text-muted-foreground flex items-center justify-center mx-auto text-2xl font-bold border border-border shadow-xs">
+                  <Calendar className="w-7 h-7" />
+                </div>
+                <h3 className="text-base font-bold text-foreground">No Vouchers Found for {getStartAndEndDate().periodLabel}</h3>
+                <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                  There are no transactions recorded in this period ({getStartAndEndDate().startDate} to {getStartAndEndDate().endDate}). Select a quarter with vouchers to view and prepare returns.
+                </p>
+                {activeTab === "quarterly" && (
+                  <div className="pt-2 flex flex-wrap justify-center gap-3">
+                    <button
+                      onClick={() => {
+                        setSelectedYear("2026-2027");
+                        setSelectedQuarter("Q2");
+                      }}
+                      className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold shadow-md cursor-pointer transition-all inline-flex items-center gap-2"
+                    >
+                      <span>Switch to FY 2026-27 Q2 (62 Vouchers)</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSelectedYear("2026-2027");
+                        setSelectedQuarter("Q1");
+                      }}
+                      className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded-xl text-xs font-semibold border border-border cursor-pointer transition-all inline-flex items-center gap-2"
+                    >
+                      <span>Switch to FY 2026-27 Q1 (43 Vouchers)</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="bg-card border border-border rounded-2xl p-8 text-center space-y-3 shadow-xs">

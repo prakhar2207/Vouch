@@ -380,12 +380,14 @@ class GSTRReportService:
         """
         # Determine year range
         try:
-            start_yr, end_yr = [int(y) for y in year_code.split('-')]
+            parts = [int(y.strip()) for y in year_code.replace("FY", "").strip().split('-')]
+            start_yr = parts[0] if parts[0] > 1000 else 2000 + parts[0]
+            end_yr = parts[1] if parts[1] > 1000 else 2000 + parts[1]
             start_date = f"{start_yr}-04-01"
             end_date = f"{end_yr}-03-31"
         except Exception:
-            start_date = "2025-04-01"
-            end_date = "2026-03-31"
+            start_date = "2026-04-01"
+            end_date = "2027-03-31"
 
         # Outward supplies
         sales_vouchers = Voucher.objects.filter(

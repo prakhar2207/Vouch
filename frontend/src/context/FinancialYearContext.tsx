@@ -50,11 +50,14 @@ export function FinancialYearProvider({ children }: { children: React.ReactNode 
         const list: FinancialYear[] = res.data.data;
         setAvailableFYs(list);
 
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const currentByDate = list.find((fy) => !fy.is_closed && fy.start_date <= todayStr && fy.end_date >= todayStr);
+
         const savedId = typeof window !== "undefined" ? localStorage.getItem("vouch_active_fy_id") : null;
         let selected = list.find((fy) => fy.id === savedId);
 
         if (!selected) {
-          selected = list.find((fy) => fy.is_current && !fy.is_closed) || list.find((fy) => !fy.is_closed) || list[0];
+          selected = currentByDate || list.find((fy) => !fy.is_closed) || list[0];
         }
 
         if (selected) {
