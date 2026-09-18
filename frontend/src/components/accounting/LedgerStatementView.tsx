@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { API_BASE_URL } from '@/utils/api';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import { useCompany } from '@/context/CompanyContext';
+import { useFinancialYear } from '@/context/FinancialYearContext';
 import { 
   ArrowLeft, 
   Download, 
@@ -33,17 +34,27 @@ interface LedgerStatementViewProps {
 export default function LedgerStatementView({ ledgerId, context = 'party' }: LedgerStatementViewProps) {
   const router = useRouter();
   const { companyId: activeCompanyId } = useCompany();
+  const { activeFY } = useFinancialYear();
 
   const [statementData, setStatementData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters & Options
-  const [fromDate, setFromDate] = useState<string>('');
-  const [toDate, setToDate] = useState<string>('');
+  // Filters & Options - initialize with activeFY if available
+  const [fromDate, setFromDate] = useState<string>(activeFY?.start_date || '');
+  const [toDate, setToDate] = useState<string>(activeFY?.end_date || '');
   const [offset, setOffset] = useState<number>(0);
   const limit = 50;
   const [showAccountingDetails, setShowAccountingDetails] = useState<boolean>(false);
+
+  // Synchronize dates whenever active Financial Year changes
+  useEffect(() => {
+    if (activeFY?.start_date && activeFY?.end_date) {
+      setFromDate(activeFY.start_date);
+      setToDate(activeFY.end_date);
+      setOffset(0);
+    }
+  }, [activeFY?.id]);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -51,7 +62,7 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
       return;
     }
     fetchStatement();
-  }, [ledgerId, activeCompanyId, fromDate, toDate, offset]);
+  }, [ledgerId, activeCompanyId, fromDate, toDate, offset, activeFY?.id]);
 
   const fetchStatement = async () => {
     setLoading(true);
@@ -80,6 +91,7 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
       params.append('offset', String(offset));
       if (fromDate) params.append('from_date', fromDate);
       if (toDate) params.append('to_date', toDate);
+      if (activeFY?.id) params.append('financial_year_id', activeFY.id);
 
       const res = await axios.get(
         `${API_BASE_URL}/api/v1/accounting/reports/ledger-statement/${cid}/${ledgerId}/?${params.toString()}`,
@@ -318,6 +330,11 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
 
           {/* Date Filter Controls */}
           <div className="flex items-center gap-2 bg-muted/40 border border-border/40 p-2 rounded-xl text-xs flex-wrap sm:flex-nowrap w-full sm:w-auto">
+            {activeFY && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-primary/10 text-primary border border-primary/20 whitespace-nowrap">
+                FY {activeFY.code}
+              </span>
+            )}
             <div className="flex items-center gap-1.5 text-muted-foreground">
               <Calendar className="w-3.5 h-3.5" />
               <span className="font-medium">From:</span>
@@ -339,8 +356,13 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
             </div>
             {(fromDate || toDate) && (
               <button
-                onClick={() => { setFromDate(''); setToDate(''); setOffset(0); }}
-                className="text-[11px] font-semibold text-primary hover:underline px-1"
+                onClick={() => {
+                  setFromDate(activeFY?.start_date || '');
+                  setToDate(activeFY?.end_date || '');
+                  setOffset(0);
+                }}
+                className="text-[11px] font-semibold text-primary hover:underline px-1 cursor-pointer"
+                title="Reset to Financial Year default"
               >
                 Reset
               </button>

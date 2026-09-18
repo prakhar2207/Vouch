@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import { API_BASE_URL } from "@/utils/api";
 import { useCompany } from "@/context/CompanyContext";
+import { useFinancialYear } from "@/context/FinancialYearContext";
 import DashboardLayout from "@/components/DashboardLayout";
 import { 
   Clock, 
@@ -22,6 +23,7 @@ import {
 export default function AgingReportPage() {
   const router = useRouter();
   const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const { activeFY } = useFinancialYear();
   const [partyType, setPartyType] = useState<"CUSTOMER" | "SUPPLIER">("CUSTOMER");
   const [loading, setLoading] = useState(false);
   const [reconciling, setReconciling] = useState(false);
@@ -42,20 +44,28 @@ export default function AgingReportPage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/reports/aging/${companyId}/?type=${partyType}`, { headers });
+      const params = new URLSearchParams();
+      params.append('type', partyType);
+      if (activeFY?.id) params.append('financial_year_id', activeFY.id);
+      if (activeFY?.start_date) params.append('start_date', activeFY.start_date);
+      if (activeFY?.end_date) {
+        params.append('end_date', activeFY.end_date);
+        params.append('as_of_date', activeFY.end_date);
+      }
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/reports/aging/${companyId}/?${params.toString()}`, { headers });
       setReportData(res.data.data);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [companyId, partyType]);
+  }, [companyId, partyType, activeFY?.id]);
 
   useEffect(() => {
     if (companyId) {
       loadAgingData();
     }
-  }, [companyId, partyType, loadAgingData]);
+  }, [companyId, partyType, loadAgingData, activeFY?.id]);
 
   const handleAutoFIFO = async () => {
     if (!companyId) return;
@@ -88,7 +98,15 @@ export default function AgingReportPage() {
                 <Clock className="w-6 h-6" />
               </span>
               <div>
-                <h1 className="text-2xl font-bold tracking-tight">Outstanding Aging Analysis</h1>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-2xl font-bold tracking-tight">Outstanding Aging Analysis</h1>
+                  {activeFY && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-600/10 text-purple-500 border border-purple-500/20">
+                      <span>FY {activeFY.code}</span>
+                      <span className="text-muted-foreground font-normal text-[11px]">({activeFY.start_date} to {activeFY.end_date})</span>
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Track overdue bills by age buckets (0–30, 31–60, 61–90, &gt;90 days) with MSME 45-day statutory compliance.
                 </p>

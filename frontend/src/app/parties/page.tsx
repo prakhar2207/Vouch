@@ -9,6 +9,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
+import { useFinancialYear } from '@/context/FinancialYearContext';
 import { ledgersRepository } from '@/lib/data';
 import SemanticBalance from '@/components/accounting/SemanticBalance';
 import { 
@@ -33,6 +34,7 @@ export default function PartiesPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const { activeFY } = useFinancialYear();
   const [companyId, setCompanyId] = useState(activeCompanyId || '');
 
   // Filtering: 'ALL' | 'SUPPLIER' | 'CUSTOMER'
@@ -51,7 +53,7 @@ export default function PartiesPage() {
       return;
     }
     fetchParties();
-  }, [router, activeCompanyId]);
+  }, [router, activeCompanyId, activeFY?.id]);
 
   useEffect(() => {
     if (activeCompanyId && activeCompanyId !== companyId) {
@@ -77,7 +79,11 @@ export default function PartiesPage() {
       if (!cid) return;
       setCompanyId(cid);
 
-      const { data: filteredParties } = await ledgersRepository.getParties(cid);
+      const { data: filteredParties } = await ledgersRepository.getParties(cid, {
+        financialYearId: activeFY?.id,
+        startDate: activeFY?.start_date,
+        endDate: activeFY?.end_date,
+      });
       setParties(filteredParties);
     } catch (err) {
       console.error(err);
@@ -257,7 +263,15 @@ export default function PartiesPage() {
         {/* Header */}
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-border/40 pb-6">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Parties</h1>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Parties</h1>
+              {activeFY && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                  <span>FY {activeFY.code}</span>
+                  <span className="text-muted-foreground font-normal text-[11px]">({activeFY.start_date} to {activeFY.end_date})</span>
+                </span>
+              )}
+            </div>
             <p className="text-muted-foreground mt-1 text-xs sm:text-sm">Manage your customers and suppliers</p>
           </div>
 

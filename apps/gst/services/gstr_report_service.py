@@ -342,34 +342,110 @@ class GSTRReportService:
         itc_cgst = sum([i.cgst_amount for i in purchase_items], Decimal('0.00'))
         itc_sgst = sum([i.sgst_amount for i in purchase_items], Decimal('0.00'))
 
-        net_igst = max(Decimal('0.00'), sales_igst - itc_igst)
-        net_cgst = max(Decimal('0.00'), sales_cgst - itc_cgst)
-        net_sgst = max(Decimal('0.00'), sales_sgst - itc_sgst)
+        # Fallback / Dual Check: Read tax entries from LedgerEntry level if item-level tax is unpopulated
+        from apps.accounting.models import LedgerEntry
+        tax_entries = LedgerEntry.objects.filter(
+            voucher__company=company,
+            voucher__voucher_date__gte=start_date,
+            voucher__voucher_date__lte=end_date,
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
+        ).select_related('ledger', 'voucher')
+
+        ledger_output_cgst = Decimal('0.00')
+        ledger_output_sgst = Decimal('0.00')
+        ledger_output_igst = Decimal('0.00')
+        ledger_input_cgst = Decimal('0.00')
+        ledger_input_sgst = Decimal('0.00')
+        ledger_input_igst = Decimal('0.00')
+
+        for entry in tax_entries:
+            lname = entry.ledger.name.lower()
+            if 'output' in lname or ('cgst' in lname and entry.voucher.voucher_type in ['SALES', 'CREDIT_NOTE', 'DEBIT_NOTE']):
+                sign = -1 if entry.voucher.voucher_type == 'CREDIT_NOTE' else 1
+                net_cr = (entry.credit_amount - entry.debit_amount) * sign
+                if 'cgst' in lname:
+                    ledger_output_cgst += net_cr
+                elif 'sgst' in lname or 'utgst' in lname:
+                    ledger_output_sgst += net_cr
+                elif 'igst' in lname:
+                    ledger_output_igst += net_cr
+            elif 'input' in lname or ('cgst' in lname and entry.voucher.voucher_type in ['PURCHASE', 'PAYMENT']):
+                sign = -1 if entry.voucher.voucher_type == 'DEBIT_NOTE' else 1
+                net_dr = (entry.debit_amount - entry.credit_amount) * sign
+                if 'cgst' in lname:
+                    ledger_input_cgst += net_dr
+                elif 'sgst' in lname or 'utgst' in lname:
+                    ledger_input_sgst += net_dr
+                elif 'igst' in lname:
+                    ledger_input_igst += net_dr
+
+        effective_sales_cgst = sales_cgst if sales_cgst > Decimal('0.00') else max(Decimal('0.00'), ledger_output_cgst)
+        effective_sales_sgst = sales_sgst if sales_sgst > Decimal('0.00') else max(Decimal('0.00'), ledger_output_sgst)
+        effective_sales_igst = sales_igst if sales_igst > Decimal('0.00') else max(Decimal('0.00'), ledger_output_igst)
+
+        effective_itc_cgst = itc_cgst if itc_cgst > Decimal('0.00') else max(Decimal('0.00'), ledger_input_cgst)
+        effective_itc_sgst = itc_sgst if itc_sgst > Decimal('0.00') else max(Decimal('0.00'), ledger_input_sgst)
+        effective_itc_igst = itc_igst if itc_igst > Decimal('0.00') else max(Decimal('0.00'), ledger_input_igst)
+
+        total_outward_tax = effective_sales_cgst + effective_sales_sgst + effective_sales_igst
+        total_itc = effective_itc_cgst + effective_itc_sgst + effective_itc_igst
+
+        net_igst = max(Decimal('0.00'), effective_sales_igst - effective_itc_igst)
+        net_cgst = max(Decimal('0.00'), effective_sales_cgst - effective_itc_cgst)
+        net_sgst = max(Decimal('0.00'), effective_sales_sgst - effective_itc_sgst)
+
+        net_cash_payable = max(Decimal('0.00'), total_outward_tax - total_itc)
+        excess_itc = max(Decimal('0.00'), total_itc - total_outward_tax)
+
+        if net_cash_payable > Decimal('0.00'):
+            status_headline = f"Pay Rs. {net_cash_payable:,.2f} in Cash"
+            status_badge = "CASH_PAYMENT_REQUIRED"
+            status_explanation = f"You collected Rs. {total_outward_tax:,.2f} in GST on sales. After adjusting Rs. {total_itc:,.2f} input credit from purchases, you must pay Rs. {net_cash_payable:,.2f} on the GST Portal."
+        elif excess_itc > Decimal('0.00'):
+            status_headline = f"Claim Rs. {excess_itc:,.2f} Refund / Credit"
+            status_badge = "EXCESS_ITC_AVAILABLE"
+            status_explanation = f"No tax to pay this period! You have Rs. {total_itc:,.2f} input credit on purchases vs Rs. {total_outward_tax:,.2f} tax on sales. The remaining Rs. {excess_itc:,.2f} can be claimed as refund or carried forward to next month."
+        else:
+            status_headline = "Rs. 0.00 Nil Return"
+            status_badge = "NIL_RETURN"
+            status_explanation = "No tax payable or excess credit for this period."
 
         return {
             "company_name": company.name,
             "period": f"{start_date} to {end_date}",
+            "summary": {
+                "outward_tax_total": float(total_outward_tax),
+                "itc_total": float(total_itc),
+                "net_cash_payable": float(net_cash_payable),
+                "excess_itc_claimable": float(excess_itc),
+                "status_headline": status_headline,
+                "status_badge": status_badge,
+                "status_explanation": status_explanation,
+            },
             "table_3_1_outward_supplies": {
                 "nature": "Outward taxable supplies (other than zero rated, nil rated and exempted)",
                 "taxable_value": float(sales_txval),
-                "igst": float(sales_igst),
-                "cgst": float(sales_cgst),
-                "sgst": float(sales_sgst),
+                "total_tax": float(total_outward_tax),
+                "igst": float(effective_sales_igst),
+                "cgst": float(effective_sales_cgst),
+                "sgst": float(effective_sales_sgst),
                 "cess": 0.0,
             },
             "table_4_eligible_itc": {
                 "nature": "All other ITC (Inward supplies from registered persons)",
                 "taxable_value": float(pur_txval),
-                "igst": float(itc_igst),
-                "cgst": float(itc_cgst),
-                "sgst": float(itc_sgst),
+                "total_itc": float(total_itc),
+                "total": float(total_itc),
+                "igst": float(effective_itc_igst),
+                "cgst": float(effective_itc_cgst),
+                "sgst": float(effective_itc_sgst),
                 "cess": 0.0,
             },
             "net_tax_payable": {
                 "igst": float(net_igst),
                 "cgst": float(net_cgst),
                 "sgst": float(net_sgst),
-                "total": float(net_igst + net_cgst + net_sgst),
+                "total": float(net_cash_payable),
             }
         }
 

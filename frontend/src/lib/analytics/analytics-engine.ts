@@ -1,4 +1,5 @@
 import { offlineDb, SyncedVoucher, SyncedLedger, SyncedProduct, SyncedPaymentAllocation } from "../db/offlineDb";
+import { ledgersRepository } from "../data/ledgers-repository";
 
 /**
  * Returns YYYY-MM-DD string in Indian Standard Time (Asia/Kolkata).
@@ -144,7 +145,10 @@ export class LocalAnalyticsEngine {
   /**
    * Primary entry point for rendering the operational dashboard.
    */
-  static async getDashboardAnalytics(companyId: string): Promise<LocalDashboardResult> {
+  static async getDashboardAnalytics(
+    companyId: string,
+    options?: { startDate?: string; endDate?: string; financialYearId?: string }
+  ): Promise<LocalDashboardResult> {
     if (!companyId) {
       return this.getEmptyDashboard();
     }
@@ -156,7 +160,13 @@ export class LocalAnalyticsEngine {
       .equals(companyId)
       .toArray();
 
-    const activeVouchers = this.resolveEffectiveVouchers(allCompanyVouchers);
+    let activeVouchers = this.resolveEffectiveVouchers(allCompanyVouchers);
+    if (options?.startDate) {
+      activeVouchers = activeVouchers.filter((v) => v.voucherDate >= options.startDate!);
+    }
+    if (options?.endDate) {
+      activeVouchers = activeVouchers.filter((v) => v.voucherDate <= options.endDate!);
+    }
     const activeVouchersMap = new Map(activeVouchers.map(v => [v.id, v]));
 
     // Fetch allocations for outstanding calculations
@@ -165,11 +175,21 @@ export class LocalAnalyticsEngine {
       .equals(companyId)
       .toArray();
 
-    // 2. Fetch ledgers for active company
-    const ledgers = await offlineDb.syncedLedgers
-      .where("companyId")
-      .equals(companyId)
-      .toArray();
+    // 2. Fetch ledgers for active company (scoped to FY if dates or FY ID provided)
+    let ledgers: any[] = [];
+    if (options?.financialYearId || options?.startDate || options?.endDate) {
+      const { data: scopedLedgers } = await ledgersRepository.getLedgers(companyId, {
+        financialYearId: options.financialYearId,
+        startDate: options.startDate,
+        endDate: options.endDate,
+      });
+      ledgers = scopedLedgers;
+    } else {
+      ledgers = await offlineDb.syncedLedgers
+        .where("companyId")
+        .equals(companyId)
+        .toArray();
+    }
 
     // 3. Fetch products for active company
     const products = await offlineDb.syncedProducts
@@ -185,12 +205,12 @@ export class LocalAnalyticsEngine {
     const thirtyDaysAgo = getIndiaDateDaysAgo(30);
 
     // --- P1: Aggregate-First Fast Path ---
-    // Try to read from pre-computed local aggregates
-    const dailyAggregates = await offlineDb.analyticsDaily.where("companyId").equals(companyId).toArray();
-    const partyAggregates = await offlineDb.analyticsParty.where("companyId").equals(companyId).toArray();
+    // If scoped to a specific FY date range, bypass static pre-computed aggregates to isolate that period
+    const isDateFiltered = Boolean(options?.startDate || options?.endDate);
+    const dailyAggregates = isDateFiltered ? [] : await offlineDb.analyticsDaily.where("companyId").equals(companyId).toArray();
+    const partyAggregates = isDateFiltered ? [] : await offlineDb.analyticsParty.where("companyId").equals(companyId).toArray();
     
-    // Fallback detection (if aggregates are empty but we have vouchers, or initial sync isn't complete)
-    const useAggregates = dailyAggregates.length > 0 || activeVouchers.length === 0;
+    const useAggregates = !isDateFiltered && (dailyAggregates.length > 0 || activeVouchers.length === 0);
 
     // --- A. Financial KPIs ---
     let todaySales = 0;

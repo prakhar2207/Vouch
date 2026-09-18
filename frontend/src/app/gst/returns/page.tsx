@@ -97,14 +97,21 @@ export default function GSTReturnCenterPage() {
     }
   }, [activeCompany?.gstin]);
 
-  // Synchronize selectedYear with active financial year from top bar when loaded
+  // Synchronize selectedYear and selectedMonth with active financial year from top bar when loaded
   useEffect(() => {
     if (activeFY?.start_date && activeFY?.end_date) {
       const sYr = activeFY.start_date.slice(0, 4);
       const eYr = activeFY.end_date.slice(0, 4);
       setSelectedYear(`${sYr}-${eYr}`);
+
+      // Ensure selectedMonth is within the active financial year
+      const fyStartMonth = activeFY.start_date.slice(0, 7);
+      const fyEndMonth = activeFY.end_date.slice(0, 7);
+      if (selectedMonth < fyStartMonth || selectedMonth > fyEndMonth) {
+        setSelectedMonth(fyStartMonth);
+      }
     }
-  }, [activeFY?.id]);
+  }, [activeFY?.id, activeFY?.start_date, activeFY?.end_date]);
 
   const handleTabChange = (tab: "monthly" | "quarterly" | "annual") => {
     setActiveTab(tab);
@@ -549,30 +556,195 @@ export default function GSTReturnCenterPage() {
                 </div>
               </div>
 
-              {/* Card 3: GSTR-3B Net Tax Liability */}
-              <div className="p-5 bg-card rounded-2xl border border-blue-500/30 bg-gradient-to-br from-card via-card to-blue-500/5 shadow-xs space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Net Tax Payable (GSTR-3B)</span>
-                  <span className="p-2 bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-xl border border-blue-500/20">
-                    <TrendingUp className="w-4 h-4" />
-                  </span>
-                </div>
-                <div>
-                  <div className="text-3xl font-black text-blue-600 dark:text-blue-400 font-mono">
-                    ₹{(gstr3bData?.net_tax_payable?.total ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              {/* Card 3: GSTR-3B Net Tax Liability & Claimable Credit */}
+              {(() => {
+                const outwardTax = Number(gstr3bData?.summary?.outward_tax_total ?? 
+                  ((gstr3bData?.table_3_1_outward_supplies?.igst ?? 0) + (gstr3bData?.table_3_1_outward_supplies?.cgst ?? 0) + (gstr3bData?.table_3_1_outward_supplies?.sgst ?? 0)));
+                const itcAvailable = Number(gstr3bData?.summary?.itc_total ?? 
+                  ((gstr3bData?.table_4_eligible_itc?.igst ?? 0) + (gstr3bData?.table_4_eligible_itc?.cgst ?? 0) + (gstr3bData?.table_4_eligible_itc?.sgst ?? 0)));
+                const netCash = Number(gstr3bData?.summary?.net_cash_payable ?? (gstr3bData?.net_tax_payable?.total ?? Math.max(0, outwardTax - itcAvailable)));
+                const excessItc = Number(gstr3bData?.summary?.excess_itc_claimable ?? Math.max(0, itcAvailable - outwardTax));
+
+                return (
+                  <div className={`p-5 bg-card rounded-2xl border shadow-xs space-y-3 ${
+                    netCash > 0
+                      ? "border-rose-500/40 bg-gradient-to-br from-card via-card to-rose-500/10 ring-1 ring-rose-500/20"
+                      : excessItc > 0
+                      ? "border-emerald-500/40 bg-gradient-to-br from-card via-card to-emerald-500/10 ring-1 ring-emerald-500/20"
+                      : "border-blue-500/30 bg-gradient-to-br from-card via-card to-blue-500/5"
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                        {netCash > 0 ? "Net Cash To Pay (GSTR-3B)" : excessItc > 0 ? "Refund / Excess ITC Claim" : "Net Tax Liability"}
+                      </span>
+                      <span className={`p-2 rounded-xl border ${
+                        netCash > 0
+                          ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                          : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                      }`}>
+                        <TrendingUp className="w-4 h-4" />
+                      </span>
+                    </div>
+                    <div>
+                      <div className={`text-3xl font-black font-mono ${
+                        netCash > 0 ? "text-rose-600 dark:text-rose-400" : excessItc > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"
+                      }`}>
+                        ₹{(netCash > 0 ? netCash : excessItc).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Tax on Sales: <span className="font-semibold text-foreground font-mono">₹{outwardTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+                    <div className={`text-[11px] flex justify-between items-center px-2.5 py-1 rounded-md ${
+                      netCash > 0 ? "bg-rose-500/10 text-rose-700 dark:text-rose-300" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                    }`}>
+                      <span>ITC from Purchases:</span>
+                      <span className="font-mono font-bold">
+                        ₹{itcAvailable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    Outward: <span className="font-semibold text-foreground font-mono">₹{(gstr3bData?.table_3_1_outward_supplies?.taxable_value ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                  </div>
-                </div>
-                <div className="text-[11px] text-muted-foreground flex justify-between items-center bg-blue-500/10 px-2.5 py-1 rounded-md">
-                  <span>ITC Available:</span>
-                  <span className="font-mono font-bold text-foreground">
-                    ₹{((gstr3bData?.table_4_eligible_itc?.igst ?? 0) + (gstr3bData?.table_4_eligible_itc?.cgst ?? 0) + (gstr3bData?.table_4_eligible_itc?.sgst ?? 0)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                  </span>
-                </div>
-              </div>
+                );
+              })()}
             </div>
+
+            {/* Plain-English Tax Settlement & Return Claim Guide */}
+            {(() => {
+              const outwardTax = Number(gstr3bData?.summary?.outward_tax_total ?? 
+                ((gstr3bData?.table_3_1_outward_supplies?.igst ?? 0) + (gstr3bData?.table_3_1_outward_supplies?.cgst ?? 0) + (gstr3bData?.table_3_1_outward_supplies?.sgst ?? 0)));
+              const itcAvailable = Number(gstr3bData?.summary?.itc_total ?? 
+                ((gstr3bData?.table_4_eligible_itc?.igst ?? 0) + (gstr3bData?.table_4_eligible_itc?.cgst ?? 0) + (gstr3bData?.table_4_eligible_itc?.sgst ?? 0)));
+              const netCash = Number(gstr3bData?.summary?.net_cash_payable ?? (gstr3bData?.net_tax_payable?.total ?? Math.max(0, outwardTax - itcAvailable)));
+              const excessItc = Number(gstr3bData?.summary?.excess_itc_claimable ?? Math.max(0, itcAvailable - outwardTax));
+
+              return (
+                <div className="bg-card border border-border/80 rounded-2xl p-6 shadow-sm space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/60 pb-3">
+                    <div>
+                      <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                        <span className="p-1.5 rounded-xl bg-primary/10 text-primary border border-primary/20">
+                          <HelpCircle className="w-4 h-4" />
+                        </span>
+                        <span>GST Payment & Return Claim Summary (Plain English)</span>
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Clear breakdown of what you owe the government versus what credit/refund you can claim for this return.
+                      </p>
+                    </div>
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold border self-start sm:self-auto ${
+                      netCash > 0 
+                        ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20" 
+                        : excessItc > 0 
+                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                        : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                    }`}>
+                      {netCash > 0 ? "⚠️ Cash Payment Required" : excessItc > 0 ? "✓ 100% Tax Covered by Input Credit" : "Nil Return"}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    {/* Section 1: How much do I have to pay? */}
+                    <div className={`p-4 rounded-xl border space-y-2.5 ${
+                      netCash > 0 ? "bg-rose-500/5 border-rose-500/30" : "bg-muted/30 border-border/60"
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                          1. How much do I have to pay?
+                        </span>
+                        <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${
+                          netCash > 0 ? "bg-rose-500/20 text-rose-600 dark:text-rose-400" : "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                        }`}>
+                          {netCash > 0 ? "Cash Payable" : "₹0 Cash Due"}
+                        </span>
+                      </div>
+                      <div className="text-2xl font-black font-mono text-foreground">
+                        ₹{netCash.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {netCash > 0 ? (
+                          <>
+                            You collected <strong className="text-foreground font-mono">₹{outwardTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong> in GST from customers on sales. 
+                            After adjusting your <strong className="text-foreground font-mono">₹{itcAvailable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong> purchase credit (ITC), 
+                            you must pay <strong className="text-rose-600 dark:text-rose-400 font-mono">₹{netCash.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong> in cash on the GST Portal before filing GSTR-3B.
+                          </>
+                        ) : (
+                          <>
+                            You have <strong className="text-emerald-600 dark:text-emerald-400">₹0.00</strong> cash to pay for this period! 
+                            Your total sales tax liability (<strong className="text-foreground font-mono">₹{outwardTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>) 
+                            is completely offset by the Input Tax Credit (<strong className="text-foreground font-mono">₹{itcAvailable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>) from your purchases.
+                          </>
+                        )}
+                      </p>
+                    </div>
+
+                    {/* Section 2: How much return / credit can I claim? */}
+                    <div className={`p-4 rounded-xl border space-y-2.5 ${
+                      excessItc > 0 ? "bg-emerald-500/5 border-emerald-500/30" : "bg-muted/30 border-border/60"
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                          2. How much return / credit can I claim?
+                        </span>
+                        <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                          {excessItc > 0 ? "Excess Refund/Credit" : "ITC Claimed"}
+                        </span>
+                      </div>
+                      <div className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400">
+                        ₹{(excessItc > 0 ? excessItc : itcAvailable).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {excessItc > 0 ? (
+                          <>
+                            You can claim <strong className="text-foreground font-mono">₹{itcAvailable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong> in total Input Tax Credit. 
+                            Since your purchase taxes exceeded your sales tax by <strong className="text-emerald-600 dark:text-emerald-400 font-mono">₹{excessItc.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>, 
+                            this excess balance is yours to keep—it will <strong className="text-foreground">automatically carry forward</strong> in your GST electronic credit ledger to save you tax next month, or can be claimed as a cash refund (for export / inverted duty).
+                          </>
+                        ) : (
+                          <>
+                            You are claiming the full <strong className="text-emerald-600 dark:text-emerald-400 font-mono">₹{itcAvailable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong> in Input Tax Credit (ITC) 
+                            for all GST paid on your supplier bills. This entire amount is being utilized to reduce your tax payment this month.
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Component Breakdown Table */}
+                  <div className="bg-muted/20 border border-border/60 rounded-xl overflow-hidden text-xs">
+                    <div className="px-4 py-2 bg-muted/40 font-semibold text-muted-foreground text-[11px] uppercase tracking-wider border-b border-border/60 flex justify-between">
+                      <span>Tax Head Breakdown</span>
+                      <span>Output Tax (Sales) vs Input Credit (Purchases)</span>
+                    </div>
+                    <div className="divide-y divide-border/40 font-mono">
+                      <div className="px-4 py-2.5 flex items-center justify-between hover:bg-muted/30 transition-colors">
+                        <span className="font-sans font-medium text-foreground">IGST (Inter-State)</span>
+                        <div className="flex items-center gap-6">
+                          <span className="text-muted-foreground">Sales: <span className="text-foreground font-semibold">₹{(gstr3bData?.table_3_1_outward_supplies?.igst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
+                          <span className="text-muted-foreground">ITC: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">₹{(gstr3bData?.table_4_eligible_itc?.igst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
+                          <span className="text-foreground font-bold">Net: ₹{(gstr3bData?.net_tax_payable?.igst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      </div>
+                      <div className="px-4 py-2.5 flex items-center justify-between hover:bg-muted/30 transition-colors">
+                        <span className="font-sans font-medium text-foreground">CGST (Central Tax)</span>
+                        <div className="flex items-center gap-6">
+                          <span className="text-muted-foreground">Sales: <span className="text-foreground font-semibold">₹{(gstr3bData?.table_3_1_outward_supplies?.cgst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
+                          <span className="text-muted-foreground">ITC: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">₹{(gstr3bData?.table_4_eligible_itc?.cgst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
+                          <span className="text-foreground font-bold">Net: ₹{(gstr3bData?.net_tax_payable?.cgst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      </div>
+                      <div className="px-4 py-2.5 flex items-center justify-between hover:bg-muted/30 transition-colors">
+                        <span className="font-sans font-medium text-foreground">SGST / UTGST (State Tax)</span>
+                        <div className="flex items-center gap-6">
+                          <span className="text-muted-foreground">Sales: <span className="text-foreground font-semibold">₹{(gstr3bData?.table_3_1_outward_supplies?.sgst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
+                          <span className="text-muted-foreground">ITC: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">₹{(gstr3bData?.table_4_eligible_itc?.sgst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
+                          <span className="text-foreground font-bold">Net: ₹{(gstr3bData?.net_tax_payable?.sgst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Exceptions Table ("Triangulation" in-place review) */}
             {(exceptionsData?.exception_count ?? 0) > 0 ? (

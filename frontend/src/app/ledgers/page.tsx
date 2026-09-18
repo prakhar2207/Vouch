@@ -8,6 +8,7 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
+import { useFinancialYear } from '@/context/FinancialYearContext';
 import SemanticBalance from '@/components/accounting/SemanticBalance';
 import {
   Search,
@@ -71,6 +72,7 @@ export default function LedgersPage() {
   const router = useRouter();
   const { toast } = useToast();
   const { companyId: activeCompanyId } = useCompany();
+  const { activeFY } = useFinancialYear();
 
   const [companyId, setCompanyId] = useState('');
   const [ledgers, setLedgers] = useState<LedgerItem[]>([]);
@@ -111,7 +113,7 @@ export default function LedgersPage() {
       return;
     }
     fetchLedgers();
-  }, [router, activeCompanyId]);
+  }, [router, activeCompanyId, activeFY?.id]);
 
   const fetchLedgers = async () => {
     setLoading(true);
@@ -142,8 +144,12 @@ export default function LedgersPage() {
         }
       }
 
-      // 2. Read ledgers locally first for instant UI response
-      const { data: localLedgers } = await ledgersRepository.getLedgers(cid);
+      // 2. Read ledgers locally first for instant UI response (scoped to active FY)
+      const { data: localLedgers } = await ledgersRepository.getLedgers(cid, {
+        financialYearId: activeFY?.id,
+        startDate: activeFY?.start_date,
+        endDate: activeFY?.end_date,
+      });
       if (localLedgers && localLedgers.length > 0) {
         const mappedLocal: LedgerItem[] = localLedgers.map((l: any) => {
           const grp = grpList.find(g => g.id === (l.group_id || l.groupId) || g.name === l.group);
@@ -174,8 +180,13 @@ export default function LedgersPage() {
         setLedgers(mappedLocal);
       }
 
-      // 3. Fetch authoritative fresh ledgers with full nature & group from server
-      const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers }).catch((err) => {
+      // 3. Fetch authoritative fresh ledgers with full nature & group from server scoped to active FY
+      const params: Record<string, string> = {};
+      if (activeFY?.id) params.financial_year_id = activeFY.id;
+      if (activeFY?.start_date) params.start_date = activeFY.start_date;
+      if (activeFY?.end_date) params.end_date = activeFY.end_date;
+
+      const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers, params }).catch((err) => {
         console.warn("[Ledgers] Server fetch error:", err);
         return null;
       });
@@ -536,7 +547,15 @@ export default function LedgersPage() {
               <BookOpen className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Accounts</h1>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Accounts</h1>
+                {activeFY && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                    <span>FY {activeFY.code}</span>
+                    <span className="text-muted-foreground font-normal text-[11px]">({activeFY.start_date} to {activeFY.end_date})</span>
+                  </span>
+                )}
+              </div>
               <p className="text-sm text-muted-foreground">
                 Manage your account heads and ledgers
               </p>

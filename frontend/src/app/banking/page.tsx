@@ -8,6 +8,7 @@ import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
 import { useCompany } from "@/context/CompanyContext";
+import { useFinancialYear } from "@/context/FinancialYearContext";
 import { SearchableOption } from "@/components/SearchableSelect";
 import { bankTransactionsRepository, ledgersRepository } from "@/lib/data";
 import {
@@ -44,6 +45,7 @@ export default function BankingPage() {
   const { toast } = useToast();
 
   const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const { activeFY } = useFinancialYear();
   const [companyId, setCompanyId] = useState<string>(isValidId(activeCompanyId) ? activeCompanyId : "");
   const [bankLedgers, setBankLedgers] = useState<BankLedger[]>([]);
   const [selectedBankId, setSelectedBankId] = useState<string>("");
@@ -129,13 +131,16 @@ export default function BankingPage() {
     if (isValidId(companyId)) {
       fetchTransactionsAndSummary();
     }
-  }, [companyId, selectedBankId, activeTab]);
+  }, [companyId, selectedBankId, activeTab, activeFY?.id]);
 
   const getHeaders = () => {
     const token = getAccessToken();
     const headers: Record<string, string> = {
       "X-Company-ID": companyId,
     };
+    if (activeFY?.id) {
+      headers["X-Financial-Year-ID"] = activeFY.id;
+    }
     if (token) {
       headers["Authorization"] = `Bearer ${token}`;
     }
@@ -216,15 +221,42 @@ export default function BankingPage() {
       if (activeTab !== "ALL") {
         params.status = activeTab;
       }
+      if (activeFY?.id) {
+        params.financial_year_id = activeFY.id;
+      }
+      if (activeFY?.start_date) {
+        params.start_date = activeFY.start_date;
+      }
+      if (activeFY?.end_date) {
+        params.end_date = activeFY.end_date;
+      }
 
       if (typeof window !== "undefined" && !navigator.onLine && selectedBankId) {
         const cachedTxs = await bankTransactionsRepository.getByBankLedger(selectedBankId);
         if (cachedTxs && cachedTxs.length > 0) {
-          setTransactions(cachedTxs as any[]);
+          const filteredByFY = cachedTxs.filter((t: any) => {
+            if (!activeFY?.start_date || !activeFY?.end_date) return true;
+            return t.transaction_date >= activeFY.start_date && t.transaction_date <= activeFY.end_date;
+          });
+          setTransactions(filteredByFY as any[]);
           setLoading(false);
           if (isManualRefresh) setRefreshing(false);
           return;
         }
+      }
+
+      const summaryParams: any = { company_id: companyId };
+      if (selectedBankId) {
+        summaryParams.bank_ledger_id = selectedBankId;
+      }
+      if (activeFY?.id) {
+        summaryParams.financial_year_id = activeFY.id;
+      }
+      if (activeFY?.start_date) {
+        summaryParams.start_date = activeFY.start_date;
+      }
+      if (activeFY?.end_date) {
+        summaryParams.end_date = activeFY.end_date;
       }
 
       const [txRes, sumRes] = await Promise.all([
@@ -234,7 +266,7 @@ export default function BankingPage() {
         }),
         axios.get(`${API_BASE_URL}/api/v1/accounting/banking/summary/`, {
           headers,
-          params: selectedBankId ? { company_id: companyId, bank_ledger_id: selectedBankId } : { company_id: companyId },
+          params: summaryParams,
         }),
       ]);
 
@@ -900,16 +932,21 @@ export default function BankingPage() {
         {/* Top Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border/40 pb-5">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5 flex-wrap">
               <div className="p-2 rounded-xl bg-blue-500/10 text-blue-500">
                 <Landmark className="w-5 h-5" />
               </div>
               <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                 Banking
               </h1>
+              {activeFY && (
+                <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                  FY {activeFY.code} ({activeFY.start_date} to {activeFY.end_date})
+                </span>
+              )}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Upload bank statements and match transactions
+              Upload bank statements and match transactions for {activeFY ? `FY ${activeFY.code}` : "the selected period"}
             </p>
           </div>
 
@@ -1015,7 +1052,9 @@ export default function BankingPage() {
                  "No Transactions Found"}
               </h3>
               <p className="text-xs text-muted-foreground max-w-xs mx-auto mt-1.5">
-                {activeTab === "UNRESOLVED"
+                {transactions.length === 0 && activeFY
+                  ? `No bank transactions recorded for FY ${activeFY.code} (${activeFY.start_date} to ${activeFY.end_date}). Upload a statement or switch financial years.`
+                  : activeTab === "UNRESOLVED"
                   ? "There are no transactions requiring your attention. Upload a new statement to import more."
                   : activeTab === "NEEDS_REVIEW"
                   ? "Vouch hasn't found any AI-suggested matches. Upload another statement or check the Attention tab."

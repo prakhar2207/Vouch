@@ -120,11 +120,22 @@ class BankTransactionListAPIView(APIView):
         elif direction in ['OUT', 'DEBIT']:
             qs = qs.filter(debit_amount__gt=Decimal('0.00'))
 
-        # Date range filters
+        # Date range & Financial Year filters
         start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        financial_year_id = request.query_params.get('financial_year_id') or request.headers.get('X-Financial-Year-ID')
+
+        if financial_year_id and (not start_date or not end_date):
+            from apps.accounting.models import FinancialYear
+            fy = FinancialYear.objects.filter(id=financial_year_id, company=company).first()
+            if fy:
+                if not start_date:
+                    start_date = str(fy.start_date)
+                if not end_date:
+                    end_date = str(fy.end_date)
+
         if start_date:
             qs = qs.filter(transaction_date__gte=start_date)
-        end_date = request.query_params.get('end_date')
         if end_date:
             qs = qs.filter(transaction_date__lte=end_date)
 
@@ -385,7 +396,25 @@ class BankSummaryAPIView(APIView):
             except (ValueError, TypeError, AttributeError):
                 bank_ledger_id = None
 
-        summary = BankReconciliationService.get_reconciliation_summary(company, bank_ledger_id)
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        financial_year_id = request.query_params.get('financial_year_id') or request.headers.get('X-Financial-Year-ID')
+
+        if financial_year_id and (not start_date or not end_date):
+            from apps.accounting.models import FinancialYear
+            fy = FinancialYear.objects.filter(id=financial_year_id, company=company).first()
+            if fy:
+                if not start_date:
+                    start_date = str(fy.start_date)
+                if not end_date:
+                    end_date = str(fy.end_date)
+
+        summary = BankReconciliationService.get_reconciliation_summary(
+            company,
+            bank_ledger_id=bank_ledger_id,
+            start_date=start_date,
+            end_date=end_date
+        )
         return Response(summary, status=status.HTTP_200_OK)
 
 

@@ -177,31 +177,31 @@ export default function EditPartyPage() {
         </div>
 
         {/* Edit Form */}
-        <form id="edit-party-form" onSubmit={handleSave} className="bg-card border border-border rounded-xl p-4 sm:p-8 shadow-sm space-y-6">
+        <form id="edit-party-form" onSubmit={handleSave} className="bg-card border border-border/80 rounded-2xl p-5 sm:p-8 shadow-sm space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
             {/* Name */}
             <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">Party / Business Name *</label>
+              <label className="block text-xs font-semibold text-foreground/80 uppercase tracking-wider mb-1.5">Party / Business Name *</label>
               <input
                 required
                 type="text"
                 value={formData.name}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-semibold"
+                className="w-full bg-muted/40 border border-input text-foreground p-3 rounded-xl focus:bg-background focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all font-semibold"
               />
             </div>
 
             {/* GSTIN */}
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">GSTIN Number</label>
+              <label className="block text-xs font-semibold text-foreground/80 uppercase tracking-wider mb-1.5">GSTIN Number</label>
               <input
                 type="text"
                 maxLength={15}
                 placeholder="e.g. 09ABCDEFG7988P4"
                 value={formData.gstin}
                 onChange={e => setFormData({ ...formData, gstin: e.target.value.toUpperCase() })}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                className="w-full bg-muted/40 border border-input text-foreground p-3 rounded-xl focus:bg-background focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all font-mono uppercase placeholder:text-muted-foreground"
               />
             </div>
 
@@ -217,35 +217,35 @@ export default function EditPartyPage() {
 
             {/* Phone */}
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">Phone Number</label>
+              <label className="block text-xs font-semibold text-foreground/80 uppercase tracking-wider mb-1.5">Phone Number</label>
               <input
                 type="text"
                 placeholder="+91 XXXXXXXXXX"
                 value={formData.phone}
                 onChange={e => setFormData({ ...formData, phone: e.target.value })}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                className="w-full bg-muted/40 border border-input text-foreground p-3 rounded-xl focus:bg-background focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all placeholder:text-muted-foreground"
               />
             </div>
 
             {/* Email */}
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">Email Address</label>
+              <label className="block text-xs font-semibold text-foreground/80 uppercase tracking-wider mb-1.5">Email Address</label>
               <input
                 type="email"
                 placeholder="party@example.com"
                 value={formData.email}
                 onChange={e => setFormData({ ...formData, email: e.target.value })}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                className="w-full bg-muted/40 border border-input text-foreground p-3 rounded-xl focus:bg-background focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all placeholder:text-muted-foreground"
               />
             </div>
 
             {/* Default Party / Customer Discount */}
-            <div className="col-span-2 bg-zinc-900/50 border border-zinc-800 p-4 rounded-xl space-y-2">
+            <div className="col-span-2 bg-muted/30 border border-border/60 p-5 rounded-2xl space-y-2.5">
               <div className="flex justify-between items-center">
-                <label className="block text-sm font-semibold text-gray-200">
+                <label className="block text-xs font-bold text-foreground uppercase tracking-wider">
                   Default Discount (%)
                 </label>
-                <span className="text-[11px] text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded font-mono">
+                <span className="text-[11px] text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded font-mono font-semibold">
                   Auto-applied in Invoices
                 </span>
               </div>
@@ -258,33 +258,33 @@ export default function EditPartyPage() {
                   placeholder="e.g. 10.00"
                   value={formData.discount_percent}
                   onChange={e => setFormData({ ...formData, discount_percent: e.target.value })}
-                  className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 pr-10 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono"
+                  className="w-full bg-background border border-input text-foreground p-3 pr-10 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all font-mono font-semibold"
                 />
-                <span className="absolute right-3.5 top-3 text-gray-400 text-base font-bold">%</span>
+                <span className="absolute right-3.5 top-3 text-muted-foreground text-base font-bold">%</span>
               </div>
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-muted-foreground">
                 This discount automatically populates on invoice line items whenever this customer is selected, and can still be edited or customized per order.
               </p>
             </div>
 
             {/* Address */}
             <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">Billing Address</label>
+              <label className="block text-xs font-semibold text-foreground/80 uppercase tracking-wider mb-1.5">Billing Address</label>
               <textarea
                 rows={3}
                 value={formData.address}
                 onChange={e => setFormData({ ...formData, address: e.target.value })}
-                className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none"
+                className="w-full bg-muted/40 border border-input text-foreground p-3 rounded-xl focus:bg-background focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all placeholder:text-muted-foreground resize-none"
               />
             </div>
           </div>
 
-          <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-zinc-800">
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-border/60">
             <div className="flex items-center justify-between sm:justify-start gap-3">
-              <Link href="/parties" className="text-gray-400 hover:text-white text-sm transition-colors">
+              <Link href="/parties" className="text-muted-foreground hover:text-foreground text-sm font-medium transition-colors">
                 ← Cancel
               </Link>
-              <span className="text-zinc-700">•</span>
+              <span className="text-border">•</span>
               <button
                 type="button"
                 onClick={() => setIsDeleteOpen(true)}
@@ -297,7 +297,7 @@ export default function EditPartyPage() {
             <button
               type="submit"
               disabled={saving}
-              className="w-full sm:w-auto justify-center bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-semibold shadow-lg transition-all disabled:opacity-50 text-sm cursor-pointer"
+              className="w-full sm:w-auto justify-center bg-primary hover:bg-primary/90 text-primary-foreground px-8 py-3 rounded-xl font-bold shadow-md shadow-primary/20 transition-all disabled:opacity-50 text-sm cursor-pointer"
             >
               {saving ? 'Saving...' : 'Save Changes'}
             </button>

@@ -1,6 +1,7 @@
 import datetime
 from decimal import Decimal
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -9,6 +10,8 @@ from rest_framework.permissions import IsAuthenticated
 from .models import Ledger, LedgerGroup
 from apps.companies.models import Company
 from apps.accounting.models import Voucher, LedgerEntry, FinancialYear
+from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
+from apps.accounting.services.party_balance_service import PartyBalanceService
 from apps.accounts.permissions import IsCompanyMember, CanManageLedgers, get_authorized_company
 from apps.audit.services.audit_service import AuditService
 from apps.ledgers.services.opening_balance_service import OpeningBalanceService
@@ -74,6 +77,134 @@ class LedgerGroupListView(APIView):
             return Response({"success": False, "error": str(e)}, status=400)
 
 
+def resolve_fy_dates(request, company):
+    fy_id = request.query_params.get('financial_year_id') or request.headers.get('X-Financial-Year-ID')
+    start_param = request.query_params.get('start_date')
+    end_param = request.query_params.get('end_date') or request.query_params.get('as_of_date')
+
+    start_date = None
+    end_date = None
+
+    if fy_id:
+        fy = FinancialYear.objects.filter(id=fy_id, company=company).first()
+        if fy:
+            start_date = fy.start_date
+            end_date = fy.end_date
+
+    if start_param:
+        try:
+            start_date = datetime.datetime.strptime(str(start_param).strip(), '%Y-%m-%d').date()
+        except ValueError:
+            pass
+
+    if end_param:
+        try:
+            end_date = datetime.datetime.strptime(str(end_param).strip(), '%Y-%m-%d').date()
+        except ValueError:
+            pass
+
+    return start_date, end_date
+
+
+def compute_scoped_ledger_balances(company, start_date=None, end_date=None, ledger_ids=None):
+    """
+    Computes ledger balances dynamically scoped to [start_date, end_date].
+    - Nominal accounts (INCOME, EXPENSE): entries strictly within [start_date, end_date].
+    - Balance Sheet accounts (ASSET, LIABILITY, EQUITY): entries up to end_date + opening balance.
+    """
+    qs = Ledger.objects.filter(company=company).select_related('group')
+    if ledger_ids:
+        qs = qs.filter(id__in=ledger_ids)
+    ledgers = list(qs)
+    if not ledgers:
+        return {}
+
+    target_ids = [l.id for l in ledgers]
+
+    # Double-entry opening vouchers
+    ledgers_with_opening = set(
+        LedgerEntry.objects.filter(
+            company=company,
+            ledger_id__in=target_ids,
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
+            voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
+        ).values_list('ledger_id', flat=True).distinct()
+    )
+
+    nominal_ids = [l.id for l in ledgers if l.group and l.group.nature in ('INCOME', 'EXPENSE')]
+    bs_ids = [l.id for l in ledgers if not (l.group and l.group.nature in ('INCOME', 'EXPENSE'))]
+
+    nominal_totals = {}
+    if nominal_ids:
+        nominal_qs = LedgerEntry.objects.filter(
+            company=company,
+            ledger_id__in=nominal_ids,
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
+        )
+        if start_date:
+            nominal_qs = nominal_qs.filter(voucher__voucher_date__gte=start_date)
+        if end_date:
+            nominal_qs = nominal_qs.filter(voucher__voucher_date__lte=end_date)
+        nominal_totals = {
+            row['ledger_id']: row
+            for row in nominal_qs.values('ledger_id').annotate(
+                total_dr=Sum('debit_amount'),
+                total_cr=Sum('credit_amount')
+            )
+        }
+
+    bs_totals = {}
+    if bs_ids:
+        bs_qs = LedgerEntry.objects.filter(
+            company=company,
+            ledger_id__in=bs_ids,
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
+        )
+        if end_date:
+            bs_qs = bs_qs.filter(voucher__voucher_date__lte=end_date)
+        bs_totals = {
+            row['ledger_id']: row
+            for row in bs_qs.values('ledger_id').annotate(
+                total_dr=Sum('debit_amount'),
+                total_cr=Sum('credit_amount')
+            )
+        }
+
+    scoped_map = {}
+    for l in ledgers:
+        is_nominal = bool(l.group and l.group.nature in ('INCOME', 'EXPENSE'))
+        if is_nominal:
+            tot = nominal_totals.get(l.id)
+            dr = Decimal(str(tot['total_dr'] or '0.00')) if tot else Decimal('0.00')
+            cr = Decimal(str(tot['total_cr'] or '0.00')) if tot else Decimal('0.00')
+        else:
+            tot = bs_totals.get(l.id)
+            dr = Decimal(str(tot['total_dr'] or '0.00')) if tot else Decimal('0.00')
+            cr = Decimal(str(tot['total_cr'] or '0.00')) if tot else Decimal('0.00')
+            if l.id not in ledgers_with_opening:
+                op_date = l.opening_date
+                if not end_date or not op_date or op_date <= end_date:
+                    op_bal = Decimal(str(l.opening_balance or '0.00'))
+                    if l.opening_balance_type == 'CREDIT':
+                        cr += op_bal
+                    else:
+                        dr += op_bal
+
+        bal_info = PartyBalanceService.get_balance_from_components(
+            l.canonical_role, dr, cr, l.normal_balance
+        )
+        scoped_map[str(l.id)] = {
+            'display_amount': float(bal_info['display_amount']),
+            'current_balance': float(bal_info['signed_balance']),
+            'balance_state': bal_info['balance_state'],
+            'balance_direction': bal_info['balance_direction'],
+            'explanation': bal_info.get('explanation', ''),
+            'owner_headline': bal_info.get('owner_headline', '')
+        }
+
+    return scoped_map
+
+
 class LedgerListView(APIView):
     def get_permissions(self):
         if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
@@ -99,8 +230,22 @@ class LedgerListView(APIView):
                 qs = qs.filter(is_archived=False)
 
             ledgers = qs.order_by('name')
-            data = [
-                {
+
+            # Financial Year Scoping
+            start_date, end_date = resolve_fy_dates(request, company)
+            scoped_balances = None
+            if start_date or end_date:
+                scoped_balances = compute_scoped_ledger_balances(company, start_date, end_date)
+
+            data = []
+            for l in ledgers:
+                s_bal = scoped_balances.get(str(l.id)) if scoped_balances else None
+                cur_bal = s_bal['current_balance'] if s_bal else float(l.current_balance or 0)
+                disp_amt = s_bal['display_amount'] if s_bal else float(l.display_amount)
+                bal_state = s_bal['balance_state'] if s_bal else l.balance_state
+                bal_dir = s_bal['balance_direction'] if s_bal else l.balance_direction
+
+                data.append({
                     "id": str(l.id),
                     "name": l.name,
                     "group_id": str(l.group_id) if l.group_id else None,
@@ -108,16 +253,16 @@ class LedgerListView(APIView):
                     "nature": l.group.nature if l.group else "ASSET",
                     "ledger_type": l.ledger_type,
                     "canonical_role": l.canonical_role,
-                    "balance_state": l.balance_state,
-                    "balance_direction": l.balance_direction,
+                    "balance_state": bal_state,
+                    "balance_direction": bal_dir,
                     "normal_balance": l.normal_balance,
-                    "display_amount": float(l.display_amount),
+                    "display_amount": disp_amt,
                     "gstin": l.gstin or "",
                     "state_code": l.state_code or "",
                     "phone": l.phone or "",
                     "email": l.email or "",
                     "address": l.address or "",
-                    "current_balance": float(l.current_balance or 0),
+                    "current_balance": cur_bal,
                     "opening_balance": float(l.opening_balance or 0),
                     "opening_balance_type": l.opening_balance_type,
                     "opening_date": str(l.opening_date) if l.opening_date else None,
@@ -126,8 +271,7 @@ class LedgerListView(APIView):
                     "discount_percent": float(l.discount_percent or 0),
                     "is_active": l.is_active,
                     "is_archived": l.is_archived,
-                } for l in ledgers
-            ]
+                })
             return Response({"success": True, "data": data})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
@@ -383,6 +527,18 @@ class LedgerDetailView(APIView):
         try:
             company = Company.objects.get(id=company_id, users__user=request.user)
             l = Ledger.objects.select_related('group').get(id=ledger_id, company=company)
+
+            start_date, end_date = resolve_fy_dates(request, company)
+            s_bal = None
+            if start_date or end_date:
+                scoped_balances = compute_scoped_ledger_balances(company, start_date, end_date, ledger_ids=[l.id])
+                s_bal = scoped_balances.get(str(l.id))
+
+            cur_bal = s_bal['current_balance'] if s_bal else float(l.current_balance or 0)
+            disp_amt = s_bal['display_amount'] if s_bal else float(l.display_amount)
+            bal_state = s_bal['balance_state'] if s_bal else l.balance_state
+            bal_dir = s_bal['balance_direction'] if s_bal else l.balance_direction
+
             data = {
                 "id": str(l.id),
                 "name": l.name,
@@ -391,16 +547,16 @@ class LedgerDetailView(APIView):
                 "nature": l.group.nature if l.group else "ASSET",
                 "ledger_type": l.ledger_type,
                 "canonical_role": l.canonical_role,
-                "balance_state": l.balance_state,
-                "balance_direction": l.balance_direction,
+                "balance_state": bal_state,
+                "balance_direction": bal_dir,
                 "normal_balance": l.normal_balance,
-                "display_amount": float(l.display_amount),
+                "display_amount": disp_amt,
                 "gstin": l.gstin or "",
                 "state_code": l.state_code or "",
                 "phone": l.phone or "",
                 "email": l.email or "",
                 "address": l.address or "",
-                "current_balance": float(l.current_balance or 0),
+                "current_balance": cur_bal,
                 "opening_balance": float(l.opening_balance or 0),
                 "opening_balance_type": l.opening_balance_type,
                 "opening_date": str(l.opening_date) if l.opening_date else None,
@@ -620,8 +776,21 @@ class PartyKhataView(APIView):
                     not_due_items.append(item_data)
 
             # Business-friendly terminology
-            from apps.accounting.services.party_balance_service import PartyBalanceService
-            bal_info = PartyBalanceService.get_party_balance(ledger)
+            start_date, end_date = resolve_fy_dates(request, company)
+            if start_date or end_date:
+                scoped_balances = compute_scoped_ledger_balances(company, start_date, end_date, ledger_ids=[ledger.id])
+                s_bal = scoped_balances.get(str(ledger.id))
+                if s_bal:
+                    bal_info = {
+                        'display_amount': Decimal(str(s_bal['display_amount'])),
+                        'signed_balance': Decimal(str(s_bal['current_balance'])),
+                        'balance_state': s_bal['balance_state'],
+                        'balance_direction': s_bal['balance_direction'],
+                    }
+                else:
+                    bal_info = PartyBalanceService.get_party_balance(ledger)
+            else:
+                bal_info = PartyBalanceService.get_party_balance(ledger)
 
             # Map the semantic state back to the UI labels
             state_label_map = {

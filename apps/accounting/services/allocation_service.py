@@ -234,7 +234,7 @@ class PaymentAllocationService:
         return alloc
 
     @classmethod
-    def get_aging_analysis(cls, company: Company, party_type: str = 'CUSTOMER') -> dict:
+    def get_aging_analysis(cls, company: Company, party_type: str = 'CUSTOMER', as_of_date=None, start_date=None, end_date=None) -> dict:
         """
         Computes party-wise outstanding receivables/payables aging breakdown:
         - Current (Not Due)
@@ -246,14 +246,21 @@ class PaymentAllocationService:
         """
         import datetime
         today = datetime.date.today()
+        comparison_date = as_of_date or end_date or today
         is_customer = (party_type.upper() == 'CUSTOMER')
         target_vtypes = ['SALES', 'OPENING_INVOICE'] if is_customer else ['PURCHASE', 'OPENING_BILL']
 
-        invoices = list(Voucher.objects.filter(
+        inv_qs = Voucher.objects.filter(
             company=company,
             voucher_type__in=target_vtypes,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).select_related('party_ledger').order_by('due_date', 'voucher_date'))
+        )
+        if as_of_date or end_date:
+            inv_qs = inv_qs.filter(voucher_date__lte=as_of_date or end_date)
+        if start_date:
+            inv_qs = inv_qs.filter(voucher_date__gte=start_date)
+
+        invoices = list(inv_qs.select_related('party_ledger').order_by('due_date', 'voucher_date'))
 
         if not invoices:
             return {
@@ -264,9 +271,11 @@ class PaymentAllocationService:
             }
 
         inv_ids = [inv.id for inv in invoices]
-        alloc_totals = PaymentAllocation.objects.filter(
-            invoice_voucher_id__in=inv_ids
-        ).values('invoice_voucher_id').annotate(total_paid=Sum('allocated_amount'))
+        alloc_qs = PaymentAllocation.objects.filter(invoice_voucher_id__in=inv_ids)
+        if as_of_date or end_date:
+            alloc_qs = alloc_qs.filter(payment_voucher__voucher_date__lte=as_of_date or end_date)
+
+        alloc_totals = alloc_qs.values('invoice_voucher_id').annotate(total_paid=Sum('allocated_amount'))
         allocations_map = {item['invoice_voucher_id']: item['total_paid'] for item in alloc_totals}
 
         parties_map = {}
@@ -280,7 +289,7 @@ class PaymentAllocationService:
                 continue
 
             ref_date = inv.due_date or inv.voucher_date
-            overdue_days = (today - ref_date).days if today > ref_date else 0
+            overdue_days = (comparison_date - ref_date).days if comparison_date > ref_date else 0
             is_msme_alert = overdue_days > 45
 
             if is_msme_alert:

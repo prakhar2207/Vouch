@@ -1463,7 +1463,7 @@ class LedgerStatementAPIView(APIView):
             ledger_id = args[0]
 
         try:
-            from apps.accounting.models import LedgerEntry, Voucher
+            from apps.accounting.models import LedgerEntry, Voucher, FinancialYear
             from apps.ledgers.models import Ledger
             from apps.companies.models import Company
             from apps.accounting.services.party_balance_service import PartyBalanceService
@@ -1506,6 +1506,16 @@ class LedgerStatementAPIView(APIView):
                     to_date = datetime.strptime(to_date_str.strip(), '%Y-%m-%d').date()
                 except ValueError:
                     pass
+
+            # Fallback to Financial Year if dates are omitted
+            fy_id = request.query_params.get('financial_year_id') or request.headers.get('X-Financial-Year-ID')
+            if fy_id and (not from_date or not to_date):
+                fy = FinancialYear.objects.filter(id=fy_id, company=company).first()
+                if fy:
+                    if not from_date:
+                        from_date = fy.start_date
+                    if not to_date:
+                        to_date = fy.end_date
 
             # Pagination parameters (Capped at 50 max rows per request)
             try:
@@ -2572,7 +2582,43 @@ class AgingReportAPIView(APIView):
                 return Response({"success": False, "error": "Company not found."}, status=status.HTTP_404_NOT_FOUND)
 
             party_type = request.query_params.get('type', 'CUSTOMER').upper()
-            data = PaymentAllocationService.get_aging_analysis(company, party_type)
+
+            from apps.accounting.models import FinancialYear
+            fy_id = request.query_params.get('financial_year_id') or request.headers.get('X-Financial-Year-ID')
+            as_of_str = request.query_params.get('as_of_date')
+            start_str = request.query_params.get('start_date')
+            end_str = request.query_params.get('end_date')
+
+            as_of_date = None
+            start_date = None
+            end_date = None
+
+            if fy_id:
+                fy = FinancialYear.objects.filter(id=fy_id, company=company).first()
+                if fy:
+                    start_date = fy.start_date
+                    end_date = fy.end_date
+                    as_of_date = fy.end_date
+
+            if as_of_str:
+                try:
+                    as_of_date = datetime.strptime(as_of_str.strip(), '%Y-%m-%d').date()
+                except ValueError:
+                    pass
+            if start_str:
+                try:
+                    start_date = datetime.strptime(start_str.strip(), '%Y-%m-%d').date()
+                except ValueError:
+                    pass
+            if end_str:
+                try:
+                    end_date = datetime.strptime(end_str.strip(), '%Y-%m-%d').date()
+                except ValueError:
+                    pass
+
+            data = PaymentAllocationService.get_aging_analysis(
+                company, party_type, as_of_date=as_of_date, start_date=start_date, end_date=end_date
+            )
             return Response({"success": True, "data": data})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

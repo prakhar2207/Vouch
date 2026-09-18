@@ -17,6 +17,7 @@ import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { useCompany } from "@/context/CompanyContext";
+import { useFinancialYear } from "@/context/FinancialYearContext";
 import { LocalAnalyticsEngine, LocalDashboardResult } from "@/lib/analytics/analytics-engine";
 import { pullIncrementalChanges, triggerOutboxSync, executeClientOutboxSync } from "@/lib/sync/sync-worker";
 import { offlineDb } from "@/lib/db/offlineDb";
@@ -124,6 +125,7 @@ export default function Dashboard() {
   const [isOnline, setIsOnline] = useState(true);
 
   const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const { activeFY } = useFinancialYear();
   const loadedCompanyRef = useRef<string | null>(null);
 
   // Load dashboard from local IndexedDB first (<15ms), then run incremental sync in background
@@ -166,8 +168,14 @@ export default function Dashboard() {
         }
         const validCid = cid;
 
-        // 1. Instant local read from IndexedDB
-        const local = await LocalAnalyticsEngine.getDashboardAnalytics(validCid);
+        const fyOptions = {
+          startDate: activeFY?.start_date,
+          endDate: activeFY?.end_date,
+          financialYearId: activeFY?.id,
+        };
+
+        // 1. Instant local read from IndexedDB (strictly scoped to active FY)
+        const local = await LocalAnalyticsEngine.getDashboardAnalytics(validCid, fyOptions);
         if (isMounted) {
           setInsights(local);
           setVouchers(local.recent_vouchers || []);
@@ -204,9 +212,10 @@ export default function Dashboard() {
           } catch (e) {}
         }
 
-        // Avoid repeated network dispatch if this exact company was already loaded on this component instance
-        const isInitialCompanyLoad = loadedCompanyRef.current !== validCid;
-        loadedCompanyRef.current = validCid;
+        // Avoid repeated network dispatch if this exact company + FY was already loaded on this component instance
+        const loadKey = `${validCid}_${activeFY?.id || ''}`;
+        const isInitialCompanyLoad = loadedCompanyRef.current !== loadKey;
+        loadedCompanyRef.current = loadKey;
 
         // 3. Trigger background incremental delta sync if online
         if (typeof navigator !== "undefined" && navigator.onLine) {
@@ -221,7 +230,7 @@ export default function Dashboard() {
             }).then(async (res) => {
               if (!isMounted) return;
               if (res.success) {
-                const refreshed = await LocalAnalyticsEngine.getDashboardAnalytics(validCid);
+                const refreshed = await LocalAnalyticsEngine.getDashboardAnalytics(validCid, fyOptions);
                 setInsights(refreshed);
                 setVouchers(refreshed.recent_vouchers || []);
                 setCoverage(refreshed.coverage);
@@ -293,7 +302,12 @@ export default function Dashboard() {
     const handleSyncComplete = async (e: any) => {
       const cid = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") : null);
       if (cid) {
-        const updated = await LocalAnalyticsEngine.getDashboardAnalytics(cid);
+        const fyOptions = {
+          startDate: activeFY?.start_date,
+          endDate: activeFY?.end_date,
+          financialYearId: activeFY?.id,
+        };
+        const updated = await LocalAnalyticsEngine.getDashboardAnalytics(cid, fyOptions);
         if (isMounted) {
           setInsights(updated);
           setVouchers(updated.recent_vouchers || []);
@@ -331,7 +345,7 @@ export default function Dashboard() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [router, activeCompanyId]);
+  }, [router, activeCompanyId, activeFY?.id]);
 
   // Lazy-load forecast when user toggles to AI Forecast mode or company changes
   useEffect(() => {
@@ -487,9 +501,17 @@ export default function Dashboard() {
               )}
             </div>
 
-            <p className="text-sm text-muted-foreground mt-1">
-              Here&apos;s how your business is doing today
-            </p>
+            <div className="flex items-center gap-2 flex-wrap mt-1">
+              <p className="text-sm text-muted-foreground">
+                Here&apos;s how your business is doing today
+              </p>
+              {activeFY && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                  <span>FY {activeFY.code}</span>
+                  <span className="text-muted-foreground font-normal text-[11px]">({activeFY.start_date} to {activeFY.end_date})</span>
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">

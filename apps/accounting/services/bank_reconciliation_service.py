@@ -434,7 +434,7 @@ class BankReconciliationService:
         return total_dr - total_cr
 
     @classmethod
-    def get_reconciliation_summary(cls, company: Company, bank_ledger_id: Optional[str] = None) -> Dict[str, Any]:
+    def get_reconciliation_summary(cls, company: Company, bank_ledger_id: Optional[str] = None, start_date: Optional[Any] = None, end_date: Optional[Any] = None) -> Dict[str, Any]:
         """Calculates aggregate dashboard counters and date-bound verification for bank reconciliation."""
         from django.db.models import Sum, Count, Q
 
@@ -450,6 +450,10 @@ class BankReconciliationService:
         qs = BankTransaction.objects.filter(company=company)
         if valid_bank_id:
             qs = qs.filter(bank_ledger_id=valid_bank_id)
+        if start_date:
+            qs = qs.filter(transaction_date__gte=start_date)
+        if end_date:
+            qs = qs.filter(transaction_date__lte=end_date)
 
         stats = qs.aggregate(
             total=Count('id'),
@@ -474,10 +478,13 @@ class BankReconciliationService:
         excluded = stats['excluded'] or 0
 
         # Determine cutoff date:
-        # 1. From latest non-excluded statement import
-        # 2. From latest non-excluded transaction
+        # 1. If explicit end_date is provided, use it
+        # 2. From latest non-excluded statement import within range
+        # 3. From latest non-excluded transaction within range
         statement_cutoff_date = None
-        if valid_bank_id:
+        if end_date:
+            statement_cutoff_date = end_date
+        elif valid_bank_id:
             latest_import = BankStatementImport.objects.filter(
                 company=company,
                 bank_ledger_id=valid_bank_id,
@@ -493,15 +500,27 @@ class BankReconciliationService:
 
         # Calculate statement closing balance
         statement_closing_balance = None
-        latest_tx = qs.filter(is_excluded=False).exclude(balance__isnull=True).order_by('-transaction_date', '-created_at').first()
+        latest_tx_qs = BankTransaction.objects.filter(company=company, is_excluded=False).exclude(balance__isnull=True)
+        if valid_bank_id:
+            latest_tx_qs = latest_tx_qs.filter(bank_ledger_id=valid_bank_id)
+        if end_date:
+            latest_tx_qs = latest_tx_qs.filter(transaction_date__lte=end_date)
+        latest_tx = latest_tx_qs.order_by('-transaction_date', '-created_at').first()
+
         if latest_tx and latest_tx.balance is not None:
             statement_closing_balance = str(latest_tx.balance)
         elif valid_bank_id:
-            stmt = BankStatementImport.objects.filter(company=company, bank_ledger_id=valid_bank_id, is_excluded=False).order_by('-created_at').first()
+            stmt_qs = BankStatementImport.objects.filter(company=company, bank_ledger_id=valid_bank_id, is_excluded=False)
+            if end_date:
+                stmt_qs = stmt_qs.filter(statement_end_date__lte=end_date)
+            stmt = stmt_qs.order_by('-statement_end_date', '-created_at').first()
             if stmt and stmt.closing_balance is not None:
                 statement_closing_balance = str(stmt.closing_balance)
+            elif end_date:
+                # If an explicit FY date is queried and has no statements/txs, default to 0.00
+                statement_closing_balance = "0.00"
 
-        # Calculate book closing balance as of statement cutoff date
+        # Calculate book closing balance as of statement cutoff date or end_date
         book_closing_balance = None
         uncleared_deposits = Decimal('0.00')
         unpresented_payments = Decimal('0.00')
@@ -509,10 +528,11 @@ class BankReconciliationService:
         if valid_bank_id:
             bank_ledger = Ledger.objects.filter(id=valid_bank_id, company=company).first()
             if bank_ledger:
-                book_bal = cls.get_bank_balance_as_of(bank_ledger, statement_cutoff_date)
+                effective_as_of = end_date or statement_cutoff_date
+                book_bal = cls.get_bank_balance_as_of(bank_ledger, effective_as_of)
                 book_closing_balance = str(book_bal)
 
-                if statement_cutoff_date:
+                if effective_as_of:
                     rec_voucher_ids = set(
                         BankTransaction.objects.filter(
                             company=company,
@@ -525,8 +545,11 @@ class BankReconciliationService:
                         ledger=bank_ledger,
                         voucher__company=company,
                         voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
-                        voucher__voucher_date__lte=statement_cutoff_date
-                    ).exclude(voucher_id__in=rec_voucher_ids).exclude(
+                        voucher__voucher_date__lte=effective_as_of
+                    )
+                    if start_date:
+                        unreconciled_book = unreconciled_book.filter(voucher__voucher_date__gte=start_date)
+                    unreconciled_book = unreconciled_book.exclude(voucher_id__in=rec_voucher_ids).exclude(
                         voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
                     ).aggregate(
                         unrec_dr=Sum('debit_amount'),
@@ -552,6 +575,10 @@ class BankReconciliationService:
         else:
             reconciliation_state = "DISCREPANCY_DETECTED"
 
+        cutoff_str = None
+        if statement_cutoff_date:
+            cutoff_str = statement_cutoff_date.isoformat() if hasattr(statement_cutoff_date, 'isoformat') else str(statement_cutoff_date)
+
         return {
             "total_transactions": total_tx,
             "auto_matched": auto_matched,
@@ -571,7 +598,7 @@ class BankReconciliationService:
             "unreconciled_debit_amount": str(stats['unrec_debit'] or Decimal('0.00')),
             "unreconciled_credit_amount": str(stats['unrec_credit'] or Decimal('0.00')),
             "net_unreconciled_amount": str(Decimal(str(stats['unrec_credit'] or '0.00')) - Decimal(str(stats['unrec_debit'] or '0.00'))),
-            "statement_cutoff_date": statement_cutoff_date.isoformat() if statement_cutoff_date else None,
+            "statement_cutoff_date": cutoff_str,
             "statement_closing_balance": statement_closing_balance or "0.00",
             "book_closing_balance": book_closing_balance or "0.00",
             "reconciliation_gap": reconciliation_gap or "0.00",
@@ -580,7 +607,9 @@ class BankReconciliationService:
             "uncleared_deposits": str(uncleared_deposits),
             "unpresented_payments": str(unpresented_payments),
             "unmatched_statement_credits": str(stats['unrec_credit'] or Decimal('0.00')),
-            "unmatched_statement_debits": str(stats['unrec_debit'] or Decimal('0.00'))
+            "unmatched_statement_debits": str(stats['unrec_debit'] or Decimal('0.00')),
+            "start_date": str(start_date) if start_date else None,
+            "end_date": str(end_date) if end_date else None
         }
 
     @classmethod

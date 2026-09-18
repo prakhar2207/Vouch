@@ -6,20 +6,91 @@ import { getAccessToken } from "@/utils/auth";
 export interface LedgerQueryOptions {
   ledgerType?: string;
   search?: string;
+  financialYearId?: string;
+  startDate?: string;
+  endDate?: string;
+  asOfDate?: string;
+  forceRemote?: boolean;
 }
 
 export interface PartyQueryOptions {
   role?: "CUSTOMER" | "SUPPLIER" | "BOTH";
   search?: string;
+  financialYearId?: string;
+  startDate?: string;
+  endDate?: string;
+  asOfDate?: string;
+  forceRemote?: boolean;
 }
 
 export class LedgersRepository {
+  private _applyFilters(ledgers: SyncedLedger[], options: LedgerQueryOptions): SyncedLedger[] {
+    let filtered = ledgers;
+    if (options.ledgerType && options.ledgerType !== "ALL") {
+      filtered = filtered.filter((l) => l.ledgerType === options.ledgerType);
+    }
+    if (options.search) {
+      const q = options.search.trim().toLowerCase();
+      filtered = filtered.filter(
+        (l) =>
+          l.name.toLowerCase().includes(q) ||
+          (l.gstin && l.gstin.toLowerCase().includes(q)) ||
+          (l.phone && l.phone.includes(q))
+      );
+    }
+    return filtered;
+  }
+
   /**
-   * Reads ledgers locally from IndexedDB.
-   * If not yet populated, fetches once from server and caches locally.
+   * Reads ledgers locally from IndexedDB, or fetches from server if scoped or empty.
    */
   async getLedgers(companyId: string, options: LedgerQueryOptions = {}): Promise<{ data: SyncedLedger[]; isLocal: boolean }> {
     if (!companyId) return { data: [], isLocal: true };
+
+    const requiresRemote = Boolean(
+      options.financialYearId || options.startDate || options.endDate || options.asOfDate || options.forceRemote
+    );
+
+    if (requiresRemote) {
+      try {
+        const token = getAccessToken();
+        if (token) {
+          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
+          const params: Record<string, string> = {};
+          if (options.financialYearId) params.financial_year_id = options.financialYearId;
+          if (options.startDate) params.start_date = options.startDate;
+          if (options.endDate) params.end_date = options.endDate;
+          if (options.asOfDate) params.as_of_date = options.asOfDate;
+          const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${companyId}/`, { headers, params, timeout: 6000 });
+          const raw = res.data?.data || (Array.isArray(res.data) ? res.data : []);
+          if (raw.length > 0) {
+            const mapped: SyncedLedger[] = raw.map((l: any) => ({
+              id: String(l.id),
+              companyId,
+              name: l.name,
+              ledgerType: l.ledger_type || l.canonical_role || "GENERAL",
+              group: l.group || l.group_name || "",
+              group_id: l.group_id || "",
+              nature: l.nature || "ASSET",
+              gstin: l.gstin || "",
+              stateCode: l.state_code || "",
+              currentBalance: Number(l.current_balance) || 0,
+              openingBalance: Number(l.opening_balance) || 0,
+              openingBalanceType: l.opening_balance_type || "DEBIT",
+              phone: l.phone || "",
+              balanceState: l.balance_state,
+              displayAmount: Number(l.display_amount) || 0,
+              normalBalance: l.normal_balance,
+              balanceDirection: l.balance_direction,
+              serverUpdatedAt: Date.now(),
+            }));
+            return { data: this._applyFilters(mapped, options), isLocal: false };
+          }
+        }
+      } catch (err) {
+        console.warn("[LedgersRepo] Scoped fetch failed, falling back to local:", err);
+      }
+    }
 
     let ledgers = await offlineDb.syncedLedgers
       .where("companyId")
@@ -64,19 +135,7 @@ export class LedgersRepository {
       }
     }
 
-    let filtered = ledgers;
-    if (options.ledgerType && options.ledgerType !== "ALL") {
-      filtered = filtered.filter((l) => l.ledgerType === options.ledgerType);
-    }
-    if (options.search) {
-      const q = options.search.trim().toLowerCase();
-      filtered = filtered.filter(
-        (l) =>
-          l.name.toLowerCase().includes(q) ||
-          (l.gstin && l.gstin.toLowerCase().includes(q)) ||
-          (l.phone && l.phone.includes(q))
-      );
-    }
+    const filtered = this._applyFilters(ledgers, options);
 
     if (process.env.NODE_ENV === "development") {
       console.log(`[LOCAL] ledgers query (count=${filtered.length})`);
@@ -89,7 +148,7 @@ export class LedgersRepository {
    * Returns parties (Customers, Suppliers, Both) formatted for party screens.
    */
   async getParties(companyId: string, options: PartyQueryOptions = {}): Promise<{ data: any[]; isLocal: boolean }> {
-    const { data: allLedgers } = await this.getLedgers(companyId);
+    const { data: allLedgers } = await this.getLedgers(companyId, options);
 
     const partyLedgers = allLedgers.filter((l) => {
       const t = (l.ledgerType || "").toUpperCase();
