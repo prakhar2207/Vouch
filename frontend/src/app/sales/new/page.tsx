@@ -1292,6 +1292,17 @@ export default function SalesPage() {
                   <span className="text-[11px] text-zinc-400">Applied automatically • Editable below</span>
                 </div>
               )}
+              {selectedParty && Number(selectedParty.credit_limit || 0) > 0 && (Number(selectedParty.current_balance || 0) + grandTotal) > Number(selectedParty.credit_limit) && (
+                <div className="mt-2 text-xs flex items-center justify-between text-amber-300 bg-amber-500/10 border border-amber-500/30 px-3 py-2 rounded-lg">
+                  <div className="flex items-center gap-1.5 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                    <span>
+                      ⚠️ Credit Limit of ₹{Number(selectedParty.credit_limit).toLocaleString("en-IN")} exceeded by ₹{((Number(selectedParty.current_balance || 0) + grandTotal) - Number(selectedParty.credit_limit)).toLocaleString("en-IN")}.
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">Invoicing Permitted</span>
+                </div>
+              )}
             </div>
             {enableLedgerMapping && (
               <div>

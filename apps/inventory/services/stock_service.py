@@ -17,15 +17,18 @@ class StockService:
         if voucher.status != 'VALIDATING':
             raise ValidationError("Stock can only be processed during voucher validation phase.")
             
-        if voucher.voucher_type not in ['SALES', 'PURCHASE']:
+        if voucher.voucher_type not in ['SALES', 'PURCHASE', 'CREDIT_NOTE', 'DEBIT_NOTE']:
             return Decimal('0.00')
 
         items = list(voucher.items.select_related('product', 'warehouse').all())
-        movement_type = 'OUT' if voucher.voucher_type == 'SALES' else 'IN'
+        # SALES or DEBIT_NOTE (returned to supplier) -> OUT
+        # PURCHASE or CREDIT_NOTE (returned from customer) -> IN
+        movement_type = 'OUT' if voucher.voucher_type in ['SALES', 'DEBIT_NOTE'] else 'IN'
         total_cogs = Decimal('0.00')
         
         company_settings = getattr(voucher.company, 'settings', None)
-        allow_negative = getattr(company_settings, 'allow_negative_stock', False)
+        # Default allow_negative to True to guarantee billing flexibility
+        allow_negative = getattr(company_settings, 'allow_negative_stock', True)
 
         # 1. Resolve fallback warehouse if needed
         fallback_wh = default_warehouse

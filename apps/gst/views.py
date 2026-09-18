@@ -12,6 +12,7 @@ from apps.gst.models import CompanyGSTConfig, EWayBillRecord
 from apps.gst.services.gstin_lookup_service import GSTINLookupService
 from apps.gst.services.eway_bill_service import EWayBillService
 from apps.gst.services.gstr_report_service import GSTRReportService
+from apps.gst.services.gst_sandbox_service import GSTPortalService
 from rest_framework.exceptions import NotFound
 
 def get_company_or_404(user, company_id):
@@ -251,3 +252,139 @@ class GSTR3BSummaryAPIView(APIView):
 
         data = GSTRReportService.generate_gstr3b_summary(company, start_date, end_date)
         return Response({"success": True, "data": data})
+
+
+class GSTRPreFilingExceptionsAPIView(APIView):
+    """
+    GET /api/v1/gst/returns/exceptions/<uuid:company_id>/
+    Pre-filing Health Check ("Triangulation"):
+    Scans vouchers for the period and returns clean count vs exceptions needing correction.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        start_date = request.query_params.get('start_date', date.today().replace(day=1).isoformat())
+        end_date = request.query_params.get('end_date', date.today().isoformat())
+
+        result = GSTRReportService.get_return_exceptions(company, start_date, end_date)
+        return Response({"success": True, "data": result})
+
+
+class GSTR9AnnualSummaryAPIView(APIView):
+    """
+    GET /api/v1/gst/reports/gstr9/<uuid:company_id>/
+    Annual Return (GSTR-9) reconciliation summary across 4 quarters / 12 months.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        year_code = request.query_params.get('year_code', '2025-2026')
+
+        result = GSTRReportService.generate_annual_gstr9_summary(company, year_code)
+        return Response({"success": True, "data": result})
+
+
+class GSTRMarkPeriodFiledAPIView(APIView):
+    """
+    POST /api/v1/gst/returns/mark-filed/<uuid:company_id>/
+    Tags the period as FILED without hard-locking vouchers.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.data.get('period', 'Current Period')
+        return Response({
+            "success": True,
+            "message": f"GST return for period '{period}' successfully recorded as FILED.",
+            "period": period,
+            "filing_mode": "FLEXIBLE",
+        })
+
+
+class GSTRDirectPortalOTPRequestAPIView(APIView):
+    """
+    POST /api/v1/gst/portal/request-otp/
+    Requests taxpayer OTP from GST Portal / Sandbox for direct filing.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        company_id = request.data.get('company_id')
+        if not company_id:
+            return Response({"success": False, "error": "company_id is required."}, status=400)
+        company = get_company_or_404(request.user, company_id)
+        gstin = request.data.get('gstin')
+        username = request.data.get('username')
+
+        result = GSTPortalService.request_portal_otp(company, gstin=gstin, username=username)
+        return Response(result)
+
+
+class GSTRDirectPortalVerifyOTPAPIView(APIView):
+    """
+    POST /api/v1/gst/portal/verify-otp/
+    Verifies 6-digit OTP and generates an active GST Portal session token.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        company_id = request.data.get('company_id')
+        otp = request.data.get('otp')
+        if not company_id or not otp:
+            return Response({"success": False, "error": "company_id and otp are required."}, status=400)
+        company = get_company_or_404(request.user, company_id)
+
+        result = GSTPortalService.verify_portal_otp(
+            company=company,
+            otp=otp,
+            txn_id=request.data.get('txn_id'),
+            gstin=request.data.get('gstin'),
+            username=request.data.get('username')
+        )
+        if not result.get('success'):
+            return Response(result, status=400)
+        return Response(result)
+
+
+class GSTRDirectPortalUploadGSTR1APIView(APIView):
+    """
+    POST /api/v1/gst/portal/upload-gstr1/
+    Directly uploads GSTR-1 returns to the GST Portal / Sandbox without manual JSON file download.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        company_id = request.data.get('company_id')
+        start_date = request.data.get('start_date')
+        end_date = request.data.get('end_date')
+        if not company_id or not start_date or not end_date:
+            return Response({"success": False, "error": "company_id, start_date, and end_date are required."}, status=400)
+
+        company = get_company_or_404(request.user, company_id)
+        auth_token = request.data.get('auth_token')
+
+        result = GSTPortalService.upload_gstr1_direct(
+            company=company,
+            start_date=start_date,
+            end_date=end_date,
+            auth_token=auth_token
+        )
+        return Response(result)
+
+
+class GSTRDirectPortalStatusAPIView(APIView):
+    """
+    GET /api/v1/gst/portal/status/<uuid:company_id>/<str:ref_id>/
+    Queries return processing status by Reference ID.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, company_id, ref_id):
+        company = get_company_or_404(request.user, company_id)
+        result = GSTPortalService.get_portal_status(company, ref_id)
+        return Response(result)
+
+

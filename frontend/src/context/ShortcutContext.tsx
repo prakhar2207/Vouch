@@ -122,6 +122,18 @@ export function ShortcutProvider({ children }: { children: React.ReactNode }) {
     router.push("/purchases/new");
   }, { enableOnFormTags: true });
 
+  // Alt + F6: Credit Note (Sales Return)
+  useHotkeys("alt+f6, option+f6", (e) => {
+    e.preventDefault();
+    router.push("/vouchers/credit-note?type=CREDIT_NOTE");
+  }, { enableOnFormTags: true });
+
+  // Alt + F5: Debit Note (Purchase Return)
+  useHotkeys("alt+f5, option+f5", (e) => {
+    e.preventDefault();
+    router.push("/vouchers/credit-note?type=DEBIT_NOTE");
+  }, { enableOnFormTags: true });
+
   // Esc: Close open modal or Go Back
   useHotkeys("escape", (e) => {
     if (isHelpOpen || isDateOpen || isAltCOpen) {

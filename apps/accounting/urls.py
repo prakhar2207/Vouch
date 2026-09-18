@@ -4,7 +4,8 @@ from .views import (
     ProfitAndLossReportAPIView, BalanceSheetReportAPIView,
     ListVouchersAPIView, VoucherDetailAPIView, PublicVoucherDetailAPIView, VoucherDownloadPermissionAPIView, VoucherAttachmentAPIView, LedgerStatementAPIView, 
     CreatePaymentReceiptAPIView, ListPaymentReceiptAPIView, UniversalVoucherAPIView,
-    SyncTaxLedgersAPIView, PartyRatesAPIView, RebuildBalancesAPIView
+    SyncTaxLedgersAPIView, PartyRatesAPIView, RebuildBalancesAPIView,
+    AgingReportAPIView, AutoFIFOReconciliationAPIView, VoucherAuditHistoryAPIView
 )
 from .ocr_views import OCRExtractAPIView
 from .b2b_views import (
@@ -27,8 +28,13 @@ urlpatterns = [
     path('reports/profit-and-loss/<uuid:company_id>/', ProfitAndLossReportAPIView.as_view(), name='profit_and_loss_report_company'),
     path('reports/balance-sheet/', BalanceSheetReportAPIView.as_view(), name='balance_sheet_report'),
     path('reports/balance-sheet/<uuid:company_id>/', BalanceSheetReportAPIView.as_view(), name='balance_sheet_report_company'),
+    path('reports/aging/', AgingReportAPIView.as_view(), name='aging_report'),
+    path('reports/aging/<uuid:company_id>/', AgingReportAPIView.as_view(), name='aging_report_company'),
+    path('allocation/auto-fifo/', AutoFIFOReconciliationAPIView.as_view(), name='auto_fifo_reconciliation'),
+    path('allocation/auto-fifo/<uuid:company_id>/', AutoFIFOReconciliationAPIView.as_view(), name='auto_fifo_reconciliation_company'),
     path('vouchers/detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='voucher_detail'),
     path('voucher-detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='voucher_detail_alias'),
+    path('vouchers/<uuid:voucher_id>/history/', VoucherAuditHistoryAPIView.as_view(), name='voucher_history'),
     path('vouchers/public/<uuid:voucher_id>/', PublicVoucherDetailAPIView.as_view(), name='public_voucher_detail'),
     path('vouchers/<uuid:voucher_id>/download-permission/', VoucherDownloadPermissionAPIView.as_view(), name='voucher_download_permission'),
     path('vouchers/<uuid:voucher_id>/attachment/', VoucherAttachmentAPIView.as_view(), name='voucher_attachment'),

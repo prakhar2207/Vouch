@@ -228,6 +228,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 Banking
               </Link>
 
+              {/* GST Returns */}
+              <Link
+                href="/gst/returns"
+                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
+                  pathname.startsWith("/gst")
+                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                GST Returns
+              </Link>
+
               {/* More Dropdown */}
               <div ref={moreRef} className="relative">
                 <button
@@ -243,7 +255,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
 
                 {isMoreDropdownOpen && (
-                  <div className="absolute left-0 mt-1.5 w-60 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95">
+                  <div className="absolute left-0 mt-1.5 w-64 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95">
                     <Link
                       href="/vouchers"
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
@@ -255,13 +267,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       </div>
                     </Link>
                     <Link
+                      href="/vouchers/credit-note"
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      onClick={() => setIsMoreDropdownOpen(false)}
+                    >
+                      <div>
+                        <div className="font-medium text-amber-400">Credit / Debit Note</div>
+                        <div className="text-xs text-muted-foreground">Sales & purchase returns</div>
+                      </div>
+                    </Link>
+                    <Link
                       href="/vouchers/new"
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
                         <div className="font-medium">Payments & Receipts</div>
-                        <div className="text-xs text-muted-foreground">Record money in/out</div>
+                        <div className="text-xs text-muted-foreground">Record money in/out (On Account)</div>
                       </div>
                     </Link>
                     <Link
@@ -276,6 +298,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     
                     <div className="border-t border-border/40 my-1"></div>
+                    
+                    <Link
+                      href="/reports/aging"
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      onClick={() => setIsMoreDropdownOpen(false)}
+                    >
+                      <div>
+                        <div className="font-medium text-purple-400">Aging Analysis (MSME)</div>
+                        <div className="text-xs text-muted-foreground">Overdue debtors & creditors</div>
+                      </div>
+                    </Link>
                     
                     <Link
                       href="/ledgers"

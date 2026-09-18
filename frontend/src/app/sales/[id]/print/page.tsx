@@ -26,8 +26,10 @@ import {
   ChevronDown,
   Lock,
   ShieldAlert,
-  LogIn
+  LogIn,
+  History
 } from 'lucide-react';
+import AuditHistoryModal from '@/components/modals/AuditHistoryModal';
 
 function numberToWords(numAmount: number): string {
   const a = ['','One ','Two ','Three ','Four ', 'Five ','Six ','Seven ','Eight ','Nine ','Ten ','Eleven ','Twelve ','Thirteen ','Fourteen ','Fifteen ','Sixteen ','Seventeen ','Eighteen ','Nineteen '];
@@ -101,6 +103,7 @@ export default function PrintInvoicePage() {
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [copiedMessage, setCopiedMessage] = useState<boolean>(false);
   const [preferredWhatsAppClient, setPreferredWhatsAppClient] = useState<'web' | 'app'>('web');
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
 
   const [downloadPermission, setDownloadPermission] = useState<{
     can_download: boolean;
@@ -775,6 +778,17 @@ export default function PrintInvoicePage() {
               <span>80mm POS Thermal</span>
             </button>
           </div>
+
+          {isAuth && (
+            <button
+              onClick={() => setIsAuditModalOpen(true)}
+              className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+              title="MCA Statutory Audit Trail & Version History"
+            >
+              <History className="w-3.5 h-3.5 text-blue-400" />
+              <span>Version History</span>
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -1528,6 +1542,15 @@ export default function PrintInvoicePage() {
           </div>
         </div>
         </div>
+      )}
+
+      {invoice && (
+        <AuditHistoryModal
+          voucherId={invoiceId}
+          voucherNumber={invoice?.voucher_number || ""}
+          isOpen={isAuditModalOpen}
+          onClose={() => setIsAuditModalOpen(false)}
+        />
       )}
     </div>
   );

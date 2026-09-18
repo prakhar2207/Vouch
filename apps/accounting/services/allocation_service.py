@@ -232,3 +232,156 @@ class PaymentAllocationService:
             allocated_amount=alloc_amt
         )
         return alloc
+
+    @classmethod
+    def get_aging_analysis(cls, company: Company, party_type: str = 'CUSTOMER') -> dict:
+        """
+        Computes party-wise outstanding receivables/payables aging breakdown:
+        - Current (Not Due)
+        - 1-30 Days
+        - 31-60 Days
+        - 61-90 Days
+        - >90 Days
+        - MSME 45-day overdue indicator
+        """
+        import datetime
+        today = datetime.date.today()
+        is_customer = (party_type.upper() == 'CUSTOMER')
+        target_vtypes = ['SALES', 'OPENING_INVOICE'] if is_customer else ['PURCHASE', 'OPENING_BILL']
+
+        invoices = list(Voucher.objects.filter(
+            company=company,
+            voucher_type__in=target_vtypes,
+            status__in=EffectiveVoucherService.ACTIVE_STATUSES
+        ).select_related('party_ledger').order_by('due_date', 'voucher_date'))
+
+        if not invoices:
+            return {
+                "party_type": party_type,
+                "total_outstanding": 0.0,
+                "parties": [],
+                "summary": {"current": 0.0, "days_1_30": 0.0, "days_31_60": 0.0, "days_61_90": 0.0, "above_90": 0.0, "msme_overdue_count": 0}
+            }
+
+        inv_ids = [inv.id for inv in invoices]
+        alloc_totals = PaymentAllocation.objects.filter(
+            invoice_voucher_id__in=inv_ids
+        ).values('invoice_voucher_id').annotate(total_paid=Sum('allocated_amount'))
+        allocations_map = {item['invoice_voucher_id']: item['total_paid'] for item in alloc_totals}
+
+        parties_map = {}
+        summary = {"current": 0.0, "days_1_30": 0.0, "days_31_60": 0.0, "days_61_90": 0.0, "above_90": 0.0, "msme_overdue_count": 0}
+
+        for inv in invoices:
+            tot = quantize_money(inv.total_amount)
+            paid = quantize_money(allocations_map.get(inv.id, Decimal('0.00')))
+            remaining = tot - paid
+            if remaining <= Decimal('0.00'):
+                continue
+
+            ref_date = inv.due_date or inv.voucher_date
+            overdue_days = (today - ref_date).days if today > ref_date else 0
+            is_msme_alert = overdue_days > 45
+
+            if is_msme_alert:
+                summary["msme_overdue_count"] += 1
+
+            p_id = str(inv.party_ledger_id) if inv.party_ledger_id else "counter"
+            p_name = inv.party_ledger.name if inv.party_ledger else (inv.buyer_name or "Counter Party")
+
+            if p_id not in parties_map:
+                parties_map[p_id] = {
+                    "party_id": p_id,
+                    "party_name": p_name,
+                    "phone": inv.party_ledger.phone if inv.party_ledger else "",
+                    "gstin": inv.party_ledger.gstin if inv.party_ledger else "",
+                    "total_outstanding": Decimal('0.00'),
+                    "current": Decimal('0.00'),
+                    "days_1_30": Decimal('0.00'),
+                    "days_31_60": Decimal('0.00'),
+                    "days_61_90": Decimal('0.00'),
+                    "above_90": Decimal('0.00'),
+                    "msme_overdue": False,
+                    "bills_count": 0,
+                }
+
+            parties_map[p_id]["total_outstanding"] += remaining
+            parties_map[p_id]["bills_count"] += 1
+            if is_msme_alert:
+                parties_map[p_id]["msme_overdue"] = True
+
+            rem_flt = float(remaining)
+            if overdue_days <= 0:
+                parties_map[p_id]["current"] += remaining
+                summary["current"] += rem_flt
+            elif 1 <= overdue_days <= 30:
+                parties_map[p_id]["days_1_30"] += remaining
+                summary["days_1_30"] += rem_flt
+            elif 31 <= overdue_days <= 60:
+                parties_map[p_id]["days_31_60"] += remaining
+                summary["days_31_60"] += rem_flt
+            elif 61 <= overdue_days <= 90:
+                parties_map[p_id]["days_61_90"] += remaining
+                summary["days_61_90"] += rem_flt
+            else:
+                parties_map[p_id]["above_90"] += remaining
+                summary["above_90"] += rem_flt
+
+        parties_list = []
+        for p in parties_map.values():
+            parties_list.append({
+                "party_id": p["party_id"],
+                "party_name": p["party_name"],
+                "phone": p["phone"],
+                "gstin": p["gstin"],
+                "total_outstanding": float(p["total_outstanding"]),
+                "current": float(p["current"]),
+                "days_1_30": float(p["days_1_30"]),
+                "days_31_60": float(p["days_31_60"]),
+                "days_61_90": float(p["days_61_90"]),
+                "above_90": float(p["above_90"]),
+                "msme_overdue": p["msme_overdue"],
+                "bills_count": p["bills_count"],
+            })
+
+        parties_list.sort(key=lambda x: x["total_outstanding"], reverse=True)
+        total_out = sum(p["total_outstanding"] for p in parties_list)
+
+        return {
+            "party_type": party_type,
+            "total_outstanding": float(total_out),
+            "parties": parties_list,
+            "summary": summary,
+        }
+
+    @classmethod
+    @transaction.atomic
+    def auto_reconcile_all_unallocated(cls, company: Company, party_ledger: Ledger = None) -> dict:
+        """
+        One-click FIFO reconciliation: takes all unallocated Payment/Receipt vouchers
+        and automatically maps them against the oldest unpaid invoices.
+        """
+        qs = Voucher.objects.filter(
+            company=company,
+            voucher_type__in=['PAYMENT', 'RECEIPT'],
+            status__in=EffectiveVoucherService.ACTIVE_STATUSES
+        )
+        if party_ledger:
+            qs = qs.filter(party_ledger=party_ledger)
+
+        total_settled_amount = Decimal('0.00')
+        allocations_made = 0
+
+        for pv in qs:
+            allocs = cls.auto_allocate_voucher(pv)
+            for a in allocs:
+                total_settled_amount += Decimal(str(a.get('allocated_amount', 0)))
+                allocations_made += 1
+
+        return {
+            "success": True,
+            "allocations_count": allocations_made,
+            "total_settled_amount": float(total_settled_amount),
+            "message": f"Successfully settled {allocations_made} bills totaling ₹{total_settled_amount:,.2f} via FIFO."
+        }
+

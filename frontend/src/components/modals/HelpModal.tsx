@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import React, { useState } from "react";
 import { usePathname } from "next/navigation";
 import { useShortcuts } from "@/context/ShortcutContext";
@@ -26,6 +26,8 @@ export default function HelpModal() {
         { key: "F7", label: "Journal Voucher", desc: "Adjustments & non-cash entries", active: pathname.includes("JOURNAL") },
         { key: "F8", label: "Sales Invoice", desc: "Customer GST bill generation", active: isSalesPage },
         { key: "F9", label: "Purchase Invoice", desc: "Inward bill & AI Scanner", active: isPurchasePage },
+        { key: "Alt + F6", label: "Credit Note", desc: "Sales returns & tax reversal", active: pathname.includes("credit-note") },
+        { key: "Alt + F5", label: "Debit Note", desc: "Purchase returns & tax reversal", active: pathname.includes("credit-note") },
       ],
     },
     {

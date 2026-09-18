@@ -2172,7 +2172,7 @@ class UniversalVoucherAPIView(APIView):
                             cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
                             cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None
                         )
-                    else:  # PURCHASE
+                    elif voucher_type == 'PURCHASE':
                         purchase_ledger = None
                         purchase_id = data.get('purchase_ledger_id')
                         if purchase_id and str(purchase_id).strip():
@@ -2230,6 +2230,30 @@ class UniversalVoucherAPIView(APIView):
                             voucher_date=voucher_date,
                             cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
                             cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None
+                        )
+                    elif voucher_type == 'CREDIT_NOTE':
+                        from apps.accounting.services.credit_debit_note_service import CreditDebitNoteService
+                        voucher = CreditDebitNoteService.generate_credit_note(
+                            company=company,
+                            user=request.user,
+                            party_ledger=party_ledger,
+                            items_data=data['items'],
+                            reason=data.get('reason', 'Sales Return'),
+                            original_invoice_number=data.get('reference_number') or data.get('original_invoice_number'),
+                            voucher_date=voucher_date,
+                            narration=narration
+                        )
+                    elif voucher_type == 'DEBIT_NOTE':
+                        from apps.accounting.services.credit_debit_note_service import CreditDebitNoteService
+                        voucher = CreditDebitNoteService.generate_debit_note(
+                            company=company,
+                            user=request.user,
+                            party_ledger=party_ledger,
+                            items_data=data['items'],
+                            reason=data.get('reason', 'Purchase Return'),
+                            original_invoice_number=data.get('reference_number') or data.get('original_invoice_number'),
+                            voucher_date=voucher_date,
+                            narration=narration
                         )
 
                     # Save attachment if provided (auto-compressed under 2MB)
@@ -2484,5 +2508,124 @@ class RebuildBalancesAPIView(APIView):
             })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AgingReportAPIView(APIView):
+    """
+    GET /api/v1/accounting/reports/aging/<uuid:company_id>/
+    Computes real-time aging analysis for debtors (receivables) or creditors (payables).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, company_id=None):
+        try:
+            from apps.accounting.services.allocation_service import PaymentAllocationService
+            if company_id:
+                company = Company.objects.get(id=company_id, users__user=request.user)
+            else:
+                company = Company.objects.filter(users__user=request.user).first()
+            if not company:
+                return Response({"success": False, "error": "Company not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            party_type = request.query_params.get('type', 'CUSTOMER').upper()
+            data = PaymentAllocationService.get_aging_analysis(company, party_type)
+            return Response({"success": True, "data": data})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AutoFIFOReconciliationAPIView(APIView):
+    """
+    POST /api/v1/accounting/allocation/auto-fifo/<uuid:company_id>/
+    One-click reconciliation of unallocated payments/receipts against open invoices via FIFO.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, company_id=None):
+        try:
+            from apps.accounting.services.allocation_service import PaymentAllocationService
+            if company_id:
+                company = Company.objects.get(id=company_id, users__user=request.user)
+            else:
+                company = Company.objects.filter(users__user=request.user).first()
+            if not company:
+                return Response({"success": False, "error": "Company not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            party_id = request.data.get('party_id')
+            party_ledger = Ledger.objects.filter(id=party_id, company=company).first() if party_id else None
+
+            res = PaymentAllocationService.auto_reconcile_all_unallocated(company, party_ledger)
+            return Response(res)
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class VoucherAuditHistoryAPIView(APIView):
+    """
+    GET /api/v1/accounting/vouchers/<uuid:voucher_id>/history/
+    Retrieves MCA-compliant immutable audit version log for a voucher.
+    Returns previous snapshots (v1, v2...) with timestamps, user, reasons, and diffs.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, voucher_id):
+        try:
+            from apps.accounting.models import Voucher
+            voucher = Voucher.objects.select_related('company', 'created_by', 'corrected_by', 'party_ledger').get(id=voucher_id)
+            # Find the root voucher in the revision chain
+            root_v = voucher
+            while root_v.revision_of:
+                root_v = root_v.revision_of
+
+            def get_uname(usr):
+                if not usr:
+                    return "System"
+                full = f"{getattr(usr, 'first_name', '')} {getattr(usr, 'last_name', '')}".strip()
+                return full or getattr(usr, 'email', 'User')
+
+            # Collect all revisions starting from root
+            revisions = []
+            curr = root_v
+            while curr:
+                rev_data = {
+                    "id": str(curr.id),
+                    "version": curr.revision_number or 1,
+                    "status": curr.status,
+                    "voucher_number": curr.voucher_number,
+                    "date": curr.voucher_date.strftime('%Y-%m-%d') if curr.voucher_date else "",
+                    "party_name": curr.party_ledger.name if curr.party_ledger else (curr.buyer_name or "Counter"),
+                    "total_amount": float(curr.total_amount or 0),
+                    "user_name": get_uname(curr.created_by),
+                    "timestamp": curr.created_at.strftime('%Y-%m-%d %H:%M:%S') if curr.created_at else "",
+                    "correction_reason": curr.correction_reason or "",
+                    "correction_type": curr.correction_type or ("CREATION" if curr == root_v else "MODIFICATION"),
+                    "corrected_by": get_uname(curr.corrected_by) if curr.corrected_by else None,
+                    "corrected_at": curr.corrected_at.strftime('%Y-%m-%d %H:%M:%S') if curr.corrected_at else None,
+                    "items_count": curr.items.count(),
+                }
+                revisions.append(rev_data)
+                curr = curr.superseded_by
+
+            if not revisions:
+                revisions = [{
+                    "id": str(voucher.id),
+                    "version": 1,
+                    "status": voucher.status,
+                    "voucher_number": voucher.voucher_number,
+                    "date": voucher.voucher_date.strftime('%Y-%m-%d') if voucher.voucher_date else "",
+                    "party_name": voucher.party_ledger.name if voucher.party_ledger else (voucher.buyer_name or "Counter"),
+                    "total_amount": float(voucher.total_amount or 0),
+                    "user_name": get_uname(voucher.created_by),
+                    "timestamp": voucher.created_at.strftime('%Y-%m-%d %H:%M:%S') if voucher.created_at else "",
+                    "correction_reason": "Original creation",
+                    "correction_type": "CREATION",
+                    "items_count": voucher.items.count(),
+                }]
+
+            return Response({"success": True, "revisions": revisions})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 
 
