@@ -1,8 +1,10 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
+import { API_BASE_URL } from "@/utils/api";
+import { useCompany } from "@/context/CompanyContext";
 import DashboardLayout from "@/components/DashboardLayout";
 import { 
   FileCheck, 
@@ -28,9 +30,11 @@ import {
 
 export default function GSTReturnCenterPage() {
   const router = useRouter();
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
   const [activeTab, setActiveTab] = useState<"monthly" | "quarterly" | "annual">("monthly");
-  const [companyId, setCompanyId] = useState<string>("");
-  const [companyName, setCompanyName] = useState<string>("");
+  
+  const companyId = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") || "" : "");
+  const companyName = activeCompany?.name || "Your Company";
   
   // Date states
   const [selectedMonth, setSelectedMonth] = useState<string>(new Date().toISOString().slice(0, 7)); // YYYY-MM
@@ -53,7 +57,7 @@ export default function GSTReturnCenterPage() {
   const [showPortalModal, setShowPortalModal] = useState(false);
   const [portalStep, setPortalStep] = useState<"auth" | "otp" | "confirm" | "success">("auth");
   const [taxpayerUsername, setTaxpayerUsername] = useState("vouch_taxpayer");
-  const [portalGstin, setPortalGstin] = useState("09ACHFS9225Q1Z7");
+  const [portalGstin, setPortalGstin] = useState(activeCompany?.gstin || "09CIFPS1329P2ZL");
   const [portalOtp, setPortalOtp] = useState("575757");
   const [maskedMobile, setMaskedMobile] = useState("******9821");
   const [portalTxnId, setPortalTxnId] = useState("");
@@ -65,25 +69,14 @@ export default function GSTReturnCenterPage() {
   useEffect(() => {
     if (!isAuthenticated()) {
       router.push("/login");
-      return;
     }
-    fetchInitialData();
   }, [router]);
 
-  const fetchInitialData = async () => {
-    try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get("http://localhost:8000/api/v1/companies/", { headers });
-      const comp = compRes.data.data?.[0];
-      if (comp) {
-        setCompanyId(comp.id);
-        setCompanyName(comp.name);
-      }
-    } catch (e) {
-      console.error(e);
+  useEffect(() => {
+    if (activeCompany?.gstin) {
+      setPortalGstin(activeCompany.gstin);
     }
-  };
+  }, [activeCompany?.gstin]);
 
   const getStartAndEndDate = () => {
     if (activeTab === "monthly") {
@@ -104,7 +97,7 @@ export default function GSTReturnCenterPage() {
     }
   };
 
-  const loadGSTData = async () => {
+  const loadGSTData = useCallback(async () => {
     if (!companyId) return;
     setLoading(true);
     const { startDate, endDate } = getStartAndEndDate();
@@ -114,12 +107,12 @@ export default function GSTReturnCenterPage() {
       const headers = { Authorization: `Bearer ${token}` };
 
       if (activeTab === "annual") {
-        const res = await axios.get(`http://localhost:8000/api/v1/gst/reports/gstr9/${companyId}/?year_code=${selectedYear}`, { headers });
+        const res = await axios.get(`${API_BASE_URL}/api/v1/gst/reports/gstr9/${companyId}/?year_code=${selectedYear}`, { headers });
         setGstr9Data(res.data.data);
       } else {
         const [excRes, g3bRes] = await Promise.all([
-          axios.get(`http://localhost:8000/api/v1/gst/returns/exceptions/${companyId}/?start_date=${startDate}&end_date=${endDate}`, { headers }),
-          axios.get(`http://localhost:8000/api/v1/gst/reports/gstr3b/${companyId}/?start_date=${startDate}&end_date=${endDate}`, { headers }),
+          axios.get(`${API_BASE_URL}/api/v1/gst/returns/exceptions/${companyId}/?start_date=${startDate}&end_date=${endDate}`, { headers }),
+          axios.get(`${API_BASE_URL}/api/v1/gst/reports/gstr3b/${companyId}/?start_date=${startDate}&end_date=${endDate}`, { headers }),
         ]);
         setExceptionsData(excRes.data.data);
         setGstr3bData(g3bRes.data.data);
@@ -129,18 +122,17 @@ export default function GSTReturnCenterPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [companyId, activeTab, selectedMonth, selectedQuarter, selectedYear]);
 
   useEffect(() => {
     if (companyId) {
       loadGSTData();
     }
-  }, [companyId, activeTab, selectedMonth, selectedQuarter, selectedYear]);
+  }, [companyId, activeTab, selectedMonth, selectedQuarter, selectedYear, loadGSTData]);
 
   const handleDownloadGSTR1 = () => {
     const { startDate, endDate } = getStartAndEndDate();
-    const token = getAccessToken();
-    window.open(`http://localhost:8000/api/v1/gst/reports/gstr1/${companyId}/?start_date=${startDate}&end_date=${endDate}&download=1`, "_blank");
+    window.open(`${API_BASE_URL}/api/v1/gst/reports/gstr1/${companyId}/?start_date=${startDate}&end_date=${endDate}&download=1`, "_blank");
   };
 
   const handleMarkAsFiled = async () => {
@@ -148,7 +140,7 @@ export default function GSTReturnCenterPage() {
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      await axios.post(`http://localhost:8000/api/v1/gst/returns/mark-filed/${companyId}/`, { period: periodLabel }, { headers });
+      await axios.post(`${API_BASE_URL}/api/v1/gst/returns/mark-filed/${companyId}/`, { period: periodLabel }, { headers });
       setFilingStatus(`✓ Return for ${periodLabel} recorded as filed.`);
     } catch (e) {
       console.error(e);
@@ -157,7 +149,7 @@ export default function GSTReturnCenterPage() {
 
   const handleOpenPortalModal = () => {
     setPortalError(null);
-    setPortalGstin("09ACHFS9225Q1Z7");
+    setPortalGstin(activeCompany?.gstin || "09CIFPS1329P2ZL");
     setTaxpayerUsername("vouch_taxpayer");
     if (authToken) {
       setPortalStep("confirm");
@@ -174,7 +166,7 @@ export default function GSTReturnCenterPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const res = await axios.post(
-        "http://localhost:8000/api/v1/gst/portal/request-otp/",
+        `${API_BASE_URL}/api/v1/gst/portal/request-otp/`,
         {
           company_id: companyId,
           gstin: portalGstin,
@@ -203,7 +195,7 @@ export default function GSTReturnCenterPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const res = await axios.post(
-        "http://localhost:8000/api/v1/gst/portal/verify-otp/",
+        `${API_BASE_URL}/api/v1/gst/portal/verify-otp/`,
         {
           company_id: companyId,
           otp: portalOtp,
@@ -234,7 +226,7 @@ export default function GSTReturnCenterPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const res = await axios.post(
-        "http://localhost:8000/api/v1/gst/portal/upload-gstr1/",
+        `${API_BASE_URL}/api/v1/gst/portal/upload-gstr1/`,
         {
           company_id: companyId,
           start_date: startDate,
@@ -597,6 +589,62 @@ export default function GSTReturnCenterPage() {
                 </div>
               </div>
             )}
+
+            {/* Clean Vouchers Ready for Return Table */}
+            {exceptionsData?.clean_vouchers && exceptionsData.clean_vouchers.length > 0 && (
+              <div className="bg-card border border-border rounded-2xl p-5 shadow-xs space-y-4">
+                <div className="flex items-center justify-between border-b border-border pb-3">
+                  <div>
+                    <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                      <span className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                        <CheckCircle2 className="w-4 h-4" />
+                      </span>
+                      <span>Clean & Audit-Ready Invoices ({exceptionsData.clean_count})</span>
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      These invoices have passed statutory checks (GSTIN, HSN, Tax Rate) and will be included in the GSTR-1 & GSTR-3B filings.
+                    </p>
+                  </div>
+                  <div className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                    Total: ₹{(exceptionsData.clean_total_amount ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-border text-muted-foreground uppercase font-semibold text-[11px] tracking-wider">
+                        <th className="pb-3">Invoice No</th>
+                        <th className="pb-3">Date</th>
+                        <th className="pb-3">Customer / Party</th>
+                        <th className="pb-3">GSTIN</th>
+                        <th className="pb-3">Place of Supply</th>
+                        <th className="pb-3 text-right">Total (₹)</th>
+                        <th className="pb-3 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {exceptionsData.clean_vouchers.map((v: any) => (
+                        <tr key={v.id} className="hover:bg-muted/40 transition-colors">
+                          <td className="py-3 font-mono font-bold text-foreground">{v.voucher_number}</td>
+                          <td className="py-3 text-muted-foreground font-mono">{v.date}</td>
+                          <td className="py-3 font-medium text-foreground">{v.party_name}</td>
+                          <td className="py-3 font-mono text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded text-[11px]">{v.party_gstin || "B2C / Unregistered"}</td>
+                          <td className="py-3 font-mono text-muted-foreground">{v.pos || "09"}</td>
+                          <td className="py-3 font-bold font-mono text-foreground text-right">₹{Number(v.total_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <td className="py-3 text-center">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 rounded-full text-[10px] font-semibold">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                              Audit Ready
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -698,7 +746,7 @@ export default function GSTReturnCenterPage() {
                       const headers = { Authorization: `Bearer ${token}` };
                       // Update party gstin or voucher
                       await axios.post(
-                        `http://localhost:8000/api/v1/accounting/vouchers/`,
+                        `${API_BASE_URL}/api/v1/accounting/vouchers/`,
                         {
                           id: editingVoucher.id,
                           buyer_gstin: editGstin,

@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 from decimal import Decimal
 from typing import Dict, Any, List
 from collections import defaultdict
@@ -86,6 +86,8 @@ class GSTRReportService:
                     "voucher_type": v.voucher_type,
                     "date": v.voucher_date.strftime('%Y-%m-%d'),
                     "party_name": v.party_ledger.name if v.party_ledger else (v.buyer_name or "Counter Customer"),
+                    "party_gstin": party_gstin or "B2C / Unregistered",
+                    "pos": pos or (company.state_code or "09"),
                     "total_amount": float(v.total_amount),
                 })
 

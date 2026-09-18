@@ -3,6 +3,8 @@ import React, { useState, useEffect, Suspense } from "react";
 import axios from "axios";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
+import { API_BASE_URL } from "@/utils/api";
+import { useCompany } from "@/context/CompanyContext";
 import DashboardLayout from "@/components/DashboardLayout";
 import { 
   FileText, 
@@ -47,8 +49,9 @@ function CreditDebitNoteContent() {
   const searchParams = useSearchParams();
   const initialType = (searchParams.get("type") || "CREDIT_NOTE").toUpperCase() as "CREDIT_NOTE" | "DEBIT_NOTE";
 
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
   const [noteType, setNoteType] = useState<"CREDIT_NOTE" | "DEBIT_NOTE">(initialType);
-  const [companyId, setCompanyId] = useState("");
+  const companyId = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") || "" : "");
   const [parties, setParties] = useState<any[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
   
@@ -85,25 +88,23 @@ function CreditDebitNoteContent() {
       router.push("/login");
       return;
     }
-    fetchMasters();
-  }, [router]);
+    if (companyId) {
+      fetchMasters();
+    }
+  }, [router, companyId]);
 
   const fetchMasters = async () => {
+    if (!companyId) return;
     setLoading(true);
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const [compRes, prodRes] = await Promise.all([
-        axios.get("http://localhost:8000/api/v1/companies/", { headers }),
-        axios.get("http://localhost:8000/api/v1/inventory/products/", { headers }),
+      const [partyRes, prodRes] = await Promise.all([
+        axios.get(`${API_BASE_URL}/api/v1/ledgers/parties/?company_id=${companyId}`, { headers }),
+        axios.get(`${API_BASE_URL}/api/v1/inventory/products/`, { headers }),
       ]);
 
-      const comp = compRes.data.data?.[0];
-      if (comp) {
-        setCompanyId(comp.id);
-        const partyRes = await axios.get(`http://localhost:8000/api/v1/ledgers/parties/?company_id=${comp.id}`, { headers });
-        setParties(partyRes.data.data || partyRes.data.results || []);
-      }
+      setParties(partyRes.data.data || partyRes.data.results || []);
       setProducts(prodRes.data.data || prodRes.data.results || []);
     } catch (e) {
       console.error(e);
@@ -225,7 +226,7 @@ function CreditDebitNoteContent() {
         post_immediately: true,
       };
 
-      const res = await axios.post("http://localhost:8000/api/v1/accounting/vouchers/", payload, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/vouchers/`, payload, { headers });
       setSuccessMessage(`✓ ${noteType === "CREDIT_NOTE" ? "Credit Note" : "Debit Note"} #${res.data.voucher_number || ""} successfully recorded.`);
       setTimeout(() => {
         router.push("/vouchers");

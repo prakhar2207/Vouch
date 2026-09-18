@@ -1,8 +1,10 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
+import { API_BASE_URL } from "@/utils/api";
+import { useCompany } from "@/context/CompanyContext";
 import DashboardLayout from "@/components/DashboardLayout";
 import { 
   Clock, 
@@ -19,62 +21,49 @@ import {
 
 export default function AgingReportPage() {
   const router = useRouter();
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
   const [partyType, setPartyType] = useState<"CUSTOMER" | "SUPPLIER">("CUSTOMER");
-  const [companyId, setCompanyId] = useState("");
   const [loading, setLoading] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [reportData, setReportData] = useState<any>(null);
   const [notification, setNotification] = useState<string | null>(null);
 
+  const companyId = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") || "" : "");
+
   useEffect(() => {
     if (!isAuthenticated()) {
       router.push("/login");
-      return;
     }
-    fetchInitialData();
   }, [router]);
 
-  const fetchInitialData = async () => {
-    try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get("http://localhost:8000/api/v1/companies/", { headers });
-      const comp = compRes.data.data?.[0];
-      if (comp) {
-        setCompanyId(comp.id);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const loadAgingData = async () => {
+  const loadAgingData = useCallback(async () => {
     if (!companyId) return;
     setLoading(true);
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.get(`http://localhost:8000/api/v1/accounting/reports/aging/${companyId}/?type=${partyType}`, { headers });
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/reports/aging/${companyId}/?type=${partyType}`, { headers });
       setReportData(res.data.data);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [companyId, partyType]);
 
   useEffect(() => {
     if (companyId) {
       loadAgingData();
     }
-  }, [companyId, partyType]);
+  }, [companyId, partyType, loadAgingData]);
 
   const handleAutoFIFO = async () => {
+    if (!companyId) return;
     setReconciling(true);
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.post(`http://localhost:8000/api/v1/accounting/allocation/auto-fifo/${companyId}/`, {}, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/allocation/auto-fifo/${companyId}/`, {}, { headers });
       setNotification(res.data.message || "Auto-reconciliation finished.");
       loadAgingData();
     } catch (e) {

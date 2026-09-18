@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { getAccessToken } from "@/utils/auth";
+import { API_BASE_URL } from "@/utils/api";
 import { History, User, Clock, CheckCircle2, ShieldCheck, X } from "lucide-react";
 
 interface AuditHistoryModalProps {
@@ -31,7 +32,7 @@ export default function AuditHistoryModal({
     try {
       const token = getAccessToken();
       const res = await axios.get(
-        `http://localhost:8000/api/v1/accounting/vouchers/${voucherId}/history/`,
+        `${API_BASE_URL}/api/v1/accounting/vouchers/${voucherId}/history/`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setRevisions(res.data.revisions || []);
