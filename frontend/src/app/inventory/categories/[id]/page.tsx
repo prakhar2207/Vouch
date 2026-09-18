@@ -608,22 +608,22 @@ export default function CategoryDetailPage() {
 
               {/* Category Meta Badges */}
               <div className="flex items-center gap-2 mt-2 flex-wrap text-xs">
-                <span className="font-mono bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-md font-semibold">
+                <span className="font-mono bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20 px-2.5 py-0.5 rounded-md font-semibold">
                   {products.length} {products.length === 1 ? 'item' : 'items'}
                 </span>
 
-                <span className="font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2.5 py-0.5 rounded-md font-semibold flex items-center gap-1.5">
-                  <Boxes className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="font-mono bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20 px-2.5 py-0.5 rounded-md font-semibold flex items-center gap-1.5">
+                  <Boxes className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   <span>Stock Value: ₹{categoryStockValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   {categoryStockQty > 0 && (
-                    <span className="text-emerald-400/70 font-normal">({categoryStockQty.toLocaleString('en-IN')} units)</span>
+                    <span className="text-emerald-700/80 dark:text-emerald-400/70 font-normal">({categoryStockQty.toLocaleString('en-IN')} units)</span>
                   )}
                 </span>
 
-                <span className="font-mono bg-muted/40 px-2 py-0.5 rounded border border-border/50 text-muted-foreground">
+                <span className="font-mono bg-muted/50 px-2 py-0.5 rounded border border-border/60 text-foreground/80 dark:text-muted-foreground font-medium">
                   HSN: {category?.hsn_code || 'None'}
                 </span>
-                <span className="font-mono bg-muted/40 px-2 py-0.5 rounded border border-border/50 text-muted-foreground">
+                <span className="font-mono bg-muted/50 px-2 py-0.5 rounded border border-border/60 text-foreground/80 dark:text-muted-foreground font-medium">
                   GST: {category?.gst_rate || 0}%
                 </span>
               </div>
@@ -651,18 +651,18 @@ export default function CategoryDetailPage() {
                   {/* Bulk Discount Trigger */}
                   <button
                     onClick={() => setIsBulkDiscountModalOpen(true)}
-                    className="justify-center bg-muted/60 hover:bg-muted text-foreground border border-border/80 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="justify-center bg-card hover:bg-muted text-foreground border border-border/80 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                   >
-                    <Percent className="w-3.5 h-3.5 text-blue-400" />
+                    <Percent className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                     <span>Brand Disc.</span>
                   </button>
                   
                   {/* Import Price List Trigger */}
                   <button
                     onClick={() => setIsImportModalOpen(true)}
-                    className="justify-center bg-muted/60 hover:bg-muted text-foreground border border-border/80 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="justify-center bg-card hover:bg-muted text-foreground border border-border/80 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                   >
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                     <span>Import List</span>
                   </button>
 
@@ -670,10 +670,10 @@ export default function CategoryDetailPage() {
                   <button
                     onClick={() => setIsMergeModalOpen(true)}
                     disabled={isMerging}
-                    className="justify-center bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    className="justify-center bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-500/10 dark:hover:bg-amber-500/20 dark:text-amber-400 dark:border-amber-500/30 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                     title="Clean and combine duplicate sizes (e.g. A-31 and A 31 -> A 31, B92 -> B 92) and preserve invoice tags"
                   >
-                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <Sparkles className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
                     <span>{isMerging ? 'Combining...' : 'Combine'}</span>
                   </button>
 
@@ -686,12 +686,12 @@ export default function CategoryDetailPage() {
                     }}
                     className={`justify-center px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer border ${
                       analyticsOpen
-                        ? "bg-blue-500/20 text-blue-400 border-blue-500/40 shadow-xs"
-                        : "bg-muted/60 hover:bg-muted text-foreground border-border/80"
+                        ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/20 dark:text-blue-400 dark:border-blue-500/40 shadow-xs"
+                        : "bg-card hover:bg-muted text-foreground border-border/80"
                     }`}
                     title="View top sold and purchased items & movement analytics"
                   >
-                    <BarChart2 className="w-3.5 h-3.5 text-blue-400" />
+                    <BarChart2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                     <span>Analytics</span>
                   </button>
                 </div>
@@ -1104,11 +1104,11 @@ export default function CategoryDetailPage() {
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 {v.brand ? (
-                                  <span className="bg-zinc-800 text-blue-400 border border-blue-500/20 text-[11px] px-2 py-0.5 rounded font-bold font-mono">
+                                  <span className="bg-blue-50 text-blue-700 border border-blue-200 dark:bg-zinc-800 dark:text-blue-400 dark:border-blue-500/20 text-[11px] px-2 py-0.5 rounded font-bold font-mono">
                                     {v.brand}
                                   </span>
                                 ) : (
-                                  <span className="bg-zinc-800/80 text-zinc-400 border border-zinc-700/80 text-[11px] px-2 py-0.5 rounded font-medium">
+                                  <span className="bg-muted text-muted-foreground border border-border text-[11px] px-2 py-0.5 rounded font-medium">
                                     Unbranded
                                   </span>
                                 )}
@@ -1120,7 +1120,7 @@ export default function CategoryDetailPage() {
                                 {(v.purchase_price_from_invoice || v.has_invoice_stock) && (
                                   <button
                                     onClick={() => setSelectedHistoryItem(v)}
-                                    className="text-[9px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded font-mono font-bold flex items-center gap-1 hover:bg-emerald-500/25 transition-colors cursor-pointer"
+                                    className="text-[9px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 px-1.5 py-0.5 rounded font-mono font-bold flex items-center gap-1 hover:bg-emerald-100 dark:hover:bg-emerald-500/25 transition-colors cursor-pointer"
                                     title="Purchased via bill - click to inspect invoice history"
                                   >
                                     <FileText className="w-2.5 h-2.5" />
@@ -1132,21 +1132,21 @@ export default function CategoryDetailPage() {
                               <div className="flex items-center gap-1 shrink-0">
                                 <button
                                   onClick={() => setSelectedHistoryItem(v)}
-                                  className="p-1.5 text-muted-foreground hover:text-emerald-400 rounded-lg hover:bg-muted/60 transition-colors"
+                                  className="p-1.5 text-muted-foreground hover:text-emerald-600 dark:hover:text-emerald-400 rounded-lg hover:bg-muted/60 transition-colors"
                                   title="View Bill History & Analytics"
                                 >
                                   <History className="w-3.5 h-3.5" />
                                 </button>
                                 <button
                                   onClick={() => startEdit(v)}
-                                  className="p-1.5 text-muted-foreground hover:text-blue-400 rounded-lg hover:bg-muted/60 transition-colors"
+                                  className="p-1.5 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 rounded-lg hover:bg-muted/60 transition-colors"
                                   title="Edit item"
                                 >
                                   <Edit2 className="w-3.5 h-3.5" />
                                 </button>
                                 <button
                                   onClick={() => deleteProduct(v.id, v.name)}
-                                  className="p-1.5 text-muted-foreground hover:text-rose-400 rounded-lg hover:bg-muted/60 transition-colors"
+                                  className="p-1.5 text-muted-foreground hover:text-rose-600 dark:hover:text-rose-400 rounded-lg hover:bg-muted/60 transition-colors"
                                   title="Delete item"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -1156,21 +1156,21 @@ export default function CategoryDetailPage() {
 
                             {/* 3-Column Financial & Stock Metrics Grid */}
                             <div className="grid grid-cols-3 gap-2 pt-1 border-t border-border/30">
-                              <div className="bg-muted/20 rounded-lg p-1.5 text-center">
+                              <div className="bg-muted/30 rounded-lg p-1.5 text-center">
                                 <div className="text-[9px] uppercase font-semibold text-muted-foreground">MRP</div>
-                                <div className="text-xs font-bold text-emerald-400 font-mono">
+                                <div className="text-xs font-bold text-emerald-700 dark:text-emerald-400 font-mono">
                                   ₹{parseFloat(v.selling_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                                 </div>
                               </div>
-                              <div className="bg-muted/20 rounded-lg p-1.5 text-center">
+                              <div className="bg-muted/30 rounded-lg p-1.5 text-center">
                                 <div className="text-[9px] uppercase font-semibold text-muted-foreground">Purchase</div>
                                 <div className="text-xs font-mono text-muted-foreground font-medium">
                                   {parseFloat(v.purchase_price) > 0 ? `₹${parseFloat(v.purchase_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
                                 </div>
                               </div>
-                              <div className="bg-muted/20 rounded-lg p-1.5 text-center">
+                              <div className="bg-muted/30 rounded-lg p-1.5 text-center">
                                 <div className="text-[9px] uppercase font-semibold text-muted-foreground">Stock</div>
-                                <div className={`text-xs font-mono font-bold ${parseFloat(v.stock_quantity) > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                                <div className={`text-xs font-mono font-bold ${parseFloat(v.stock_quantity) > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'}`}>
                                   {formatStockQuantity(v.stock_quantity, v.unit)} <span className="text-[10px] font-normal text-muted-foreground">{v.unit}</span>
                                 </div>
                               </div>
@@ -1281,11 +1281,11 @@ export default function CategoryDetailPage() {
                                 className="bg-muted/40 border border-border text-foreground px-2 py-1 rounded w-full text-xs outline-none"
                               />
                             ) : v.brand ? (
-                              <span className="bg-zinc-800 text-blue-400 border border-blue-500/20 text-xs px-2 py-0.5 rounded font-bold font-mono">
+                              <span className="bg-blue-50 text-blue-700 border border-blue-200 dark:bg-zinc-800 dark:text-blue-400 dark:border-blue-500/20 text-xs px-2 py-0.5 rounded font-bold font-mono">
                                 {v.brand}
                               </span>
                             ) : (
-                              <span className="bg-zinc-800/80 text-zinc-300 border border-zinc-700/80 text-xs px-2 py-0.5 rounded-md font-medium">
+                              <span className="bg-muted text-muted-foreground border border-border text-xs px-2 py-0.5 rounded-md font-medium">
                                 Unbranded
                               </span>
                             )}
@@ -1301,7 +1301,7 @@ export default function CategoryDetailPage() {
                                     e.stopPropagation();
                                     setSelectedHistoryItem(v);
                                   }}
-                                  className="text-[9px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded font-mono font-bold flex items-center gap-1 cursor-pointer hover:bg-emerald-500/25 transition-colors"
+                                  className="text-[9px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 px-1.5 py-0.5 rounded font-mono font-bold flex items-center gap-1 cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-500/25 transition-colors"
                                   title="Purchased via bill - click to inspect invoice history"
                                 >
                                   <FileText className="w-2.5 h-2.5" />
@@ -1310,9 +1310,9 @@ export default function CategoryDetailPage() {
                               )}
                             </div>
                             <div className="flex gap-1 mt-1 flex-wrap">
-                              {v.tax_override && <span className="bg-red-500/10 text-red-400 text-[9px] px-1.5 py-0.5 rounded border border-red-500/20">Tax Override</span>}
-                              {v.track_batches && <span className="bg-green-500/10 text-green-400 text-[9px] px-1.5 py-0.5 rounded border border-green-500/20">Batches</span>}
-                              {v.track_serial_numbers && <span className="bg-purple-500/10 text-purple-400 text-[9px] px-1.5 py-0.5 rounded border border-purple-500/20">Serial</span>}
+                              {v.tax_override && <span className="bg-rose-50 text-rose-700 dark:bg-red-500/10 dark:text-red-400 text-[9px] px-1.5 py-0.5 rounded border border-rose-200 dark:border-red-500/20 font-medium">Tax Override</span>}
+                              {v.track_batches && <span className="bg-emerald-50 text-emerald-700 dark:bg-green-500/10 dark:text-green-400 text-[9px] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-green-500/20 font-medium">Batches</span>}
+                              {v.track_serial_numbers && <span className="bg-purple-50 text-purple-700 dark:bg-purple-500/10 dark:text-purple-400 text-[9px] px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-500/20 font-medium">Serial</span>}
                             </div>
                           </td>
 
@@ -1329,10 +1329,10 @@ export default function CategoryDetailPage() {
                                   const pp = sp * (1 - d/100);
                                   setEditData({ ...editData, selling_price: sp, purchase_price: parseFloat(pp.toFixed(2)) });
                                 }}
-                                className="bg-muted/40 border border-border text-emerald-400 px-2 py-1 rounded w-24 text-xs text-right font-mono font-bold outline-none"
+                                className="bg-muted/40 border border-border text-emerald-600 dark:text-emerald-400 px-2 py-1 rounded w-24 text-xs text-right font-mono font-bold outline-none"
                               />
                             ) : (
-                              <span className="text-emerald-400 font-bold text-sm">
+                              <span className="text-emerald-700 dark:text-emerald-400 font-bold text-sm">
                                 ₹{parseFloat(v.selling_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                               </span>
                             )}
@@ -1353,7 +1353,7 @@ export default function CategoryDetailPage() {
                                       const p = (editData.selling_price * (1 - d/100)).toFixed(2);
                                       setEditData({ ...editData, discount_percent: e.target.value, purchase_price: parseFloat(p) });
                                     }}
-                                    className="bg-transparent text-blue-400 w-14 text-xs text-right font-mono font-bold outline-none"
+                                    className="bg-transparent text-blue-600 dark:text-blue-400 w-14 text-xs text-right font-mono font-bold outline-none"
                                   />
                                 </div>
                                 <input
@@ -1371,7 +1371,7 @@ export default function CategoryDetailPage() {
                               </div>
                             ) : (
                               <div className="flex items-center justify-end gap-1.5 font-mono">
-                                <span className="text-muted-foreground font-medium text-xs">
+                                <span className="text-foreground/80 dark:text-muted-foreground font-medium text-xs">
                                   {parseFloat(v.purchase_price) > 0 ? `₹${parseFloat(v.purchase_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
                                 </span>
                                 {(v.purchase_price_from_invoice || v.has_invoice_stock) && (
@@ -1381,7 +1381,7 @@ export default function CategoryDetailPage() {
                                       setSelectedHistoryItem(v);
                                     }}
                                     title="Purchase price set from Purchase Invoice - click to inspect bills"
-                                    className="text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded font-mono font-bold hover:bg-emerald-500/25 transition-colors cursor-pointer"
+                                    className="text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 px-1.5 py-0.5 rounded font-mono font-bold hover:bg-emerald-100 dark:hover:bg-emerald-500/25 transition-colors cursor-pointer"
                                   >
                                     Invoice
                                   </button>
@@ -1420,13 +1420,13 @@ export default function CategoryDetailPage() {
                                     const val = parseFloat(e.target.value) || 0;
                                     setEditData({ ...editData, stock_quantity: isIntegerUnit(v.unit) ? Math.round(val) : val });
                                   }}
-                                  className="bg-muted/40 border border-border text-emerald-400 px-1.5 py-1 rounded text-xs text-right font-mono font-bold w-16 outline-none"
+                                  className="bg-muted/40 border border-border text-emerald-600 dark:text-emerald-400 px-1.5 py-1 rounded text-xs text-right font-mono font-bold w-16 outline-none"
                                 />
                                 <span className="text-[10px] text-muted-foreground">{v.unit}</span>
                               </div>
                             ) : (
                               <>
-                                <span className={`font-bold text-sm ${parseFloat(v.stock_quantity) > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                                <span className={`font-bold text-sm ${parseFloat(v.stock_quantity) > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'}`}>
                                   {formatStockQuantity(v.stock_quantity, v.unit)}
                                 </span>
                                 <span className="text-[10px] text-muted-foreground ml-1">{v.unit}</span>

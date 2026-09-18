@@ -283,6 +283,7 @@ export class VouchersRepository {
         voucherNumber: vNum,
         voucher_date: vDate,
         voucherDate: vDate,
+        date: vDate,
         party_name: pName,
         partyName: pName,
         total_amount: totAmt,

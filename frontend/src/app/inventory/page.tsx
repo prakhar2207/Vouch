@@ -273,8 +273,8 @@ export default function InventoryPage() {
 
         {/* Stock Valuation Summary Banner */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="p-4 rounded-2xl border border-border/40 bg-card/70 backdrop-blur shadow-sm flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center justify-center shrink-0">
+          <div className="p-4 rounded-2xl border border-border/60 bg-card shadow-sm flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20 flex items-center justify-center shrink-0">
               <Boxes className="w-6 h-6" />
             </div>
             <div className="min-w-0">
@@ -282,7 +282,7 @@ export default function InventoryPage() {
               <h3 className="text-xl font-bold font-mono tabular-nums text-foreground truncate">
                 ₹{(summary?.total_stock_value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </h3>
-              <p className="text-xs text-blue-400 font-medium mt-0.5">
+              <p className="text-xs text-blue-600 dark:text-blue-400 font-semibold mt-0.5">
                 {(summary?.total_stock_quantity || 0).toLocaleString('en-IN')} units at cost
               </p>
             </div>
@@ -299,9 +299,9 @@ export default function InventoryPage() {
 
             return (
               <>
-                <div className="p-4 rounded-2xl border border-border/40 bg-card/70 backdrop-blur shadow-sm flex flex-col justify-between">
+                <div className="p-4 rounded-2xl border border-border/60 bg-card shadow-sm flex flex-col justify-between">
                   <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center justify-center shrink-0">
+                    <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 border border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-500/20 flex items-center justify-center shrink-0">
                       <Tag className="w-6 h-6" />
                     </div>
                     <div className="min-w-0">
@@ -311,7 +311,7 @@ export default function InventoryPage() {
                       </h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
                         {retailDiscount > 0 ? (
-                          <span className="text-purple-400 font-medium">
+                          <span className="text-purple-600 dark:text-purple-400 font-semibold">
                             At {retailDiscount}% disc: ₹{effectiveRetailValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         ) : (
@@ -346,16 +346,16 @@ export default function InventoryPage() {
                   </div>
                 </div>
 
-                <div className="p-4 rounded-2xl border border-border/40 bg-card/70 backdrop-blur shadow-sm flex flex-col justify-between">
+                <div className="p-4 rounded-2xl border border-border/60 bg-card shadow-sm flex flex-col justify-between">
                   <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                    <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20 flex items-center justify-center shrink-0">
                       <TrendingUp className="w-6 h-6" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-emerald-400 uppercase tracking-wider">
+                      <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
                         {retailDiscount > 0 ? 'Profit Margin' : 'Profit Margin (At MRP)'}
                       </p>
-                      <h3 className="text-xl font-bold font-mono tabular-nums text-emerald-400 truncate">
+                      <h3 className="text-xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400 truncate">
                         ₹{effectiveMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
@@ -374,8 +374,8 @@ export default function InventoryPage() {
             );
           })()}
 
-          <div className="p-4 rounded-2xl border border-border/40 bg-card/70 backdrop-blur shadow-sm flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center shrink-0">
+          <div className="p-4 rounded-2xl border border-border/60 bg-card shadow-sm flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20 flex items-center justify-center shrink-0">
               <Layers className="w-6 h-6" />
             </div>
             <div className="min-w-0">
@@ -419,7 +419,7 @@ export default function InventoryPage() {
                     className={`border cursor-pointer rounded-2xl p-5 transition-all shadow-sm flex flex-col group relative overflow-hidden min-h-[17.5rem] ${
                       isFocused 
                         ? 'bg-card border-primary ring-2 ring-primary/60 shadow-lg shadow-primary/15 scale-[1.01]' 
-                        : 'bg-card border-border/40 hover:border-border'
+                        : 'bg-card border-border/60 hover:border-border hover:shadow-md'
                     }`}
                   >
                     {/* Top accent */}
@@ -462,43 +462,43 @@ export default function InventoryPage() {
                       </div>
                     ) : (
                       <>
-                        <div className="absolute top-3 right-3 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                          <button onClick={(e) => startEdit(cat, e)} className="p-1.5 bg-muted/80 hover:bg-primary text-muted-foreground hover:text-primary-foreground rounded-lg transition-colors" title="Edit Category (Ctrl+Enter)">
+                        <div className="absolute top-3 right-3 flex gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                          <button onClick={(e) => startEdit(cat, e)} className="p-1.5 bg-muted/80 hover:bg-primary text-muted-foreground hover:text-white rounded-lg transition-colors border border-border/50" title="Edit Category (Ctrl+Enter)">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                           </button>
-                          <button onClick={(e) => startDelete(cat, e)} className="p-1.5 bg-muted/80 hover:bg-rose-500 text-muted-foreground hover:text-foreground rounded-lg transition-colors" title="Delete Category (Alt+D)">
+                          <button onClick={(e) => startDelete(cat, e)} className="p-1.5 bg-muted/80 hover:bg-rose-600 text-muted-foreground hover:text-white rounded-lg transition-colors border border-border/50" title="Delete Category (Alt+D)">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                           </button>
                         </div>
 
                         <div className="flex-1 flex flex-col items-center justify-center text-center">
-                          <div className="w-12 h-12 bg-muted text-muted-foreground rounded-full flex items-center justify-center mb-2.5 group-hover:scale-110 group-hover:bg-primary/10 group-hover:text-primary transition-all">
+                          <div className="w-12 h-12 bg-muted text-muted-foreground rounded-full flex items-center justify-center mb-2.5 group-hover:scale-110 group-hover:bg-primary/10 group-hover:text-primary transition-all border border-border/40">
                             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
                           </div>
                           <h3 className="text-lg font-bold text-foreground group-hover:text-primary transition-colors truncate max-w-full px-1">{cat.name}</h3>
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
-                            <span>{cat.item_count} item{cat.item_count !== 1 ? 's' : ''}</span>
+                            <span className="font-medium">{cat.item_count} item{cat.item_count !== 1 ? 's' : ''}</span>
                             {cat.stock_quantity > 0 && (
                               <>
                                 <span>•</span>
-                                <span className="text-primary font-medium">{cat.stock_quantity} units</span>
+                                <span className="text-blue-600 dark:text-primary font-semibold">{cat.stock_quantity} units</span>
                               </>
                             )}
                           </div>
                           
                           {/* Stock Value Badge */}
-                          <div className="mt-2.5 px-2.5 py-1 rounded-md bg-emerald-950/40 border border-emerald-500/20 text-emerald-400 text-xs font-semibold flex items-center gap-1">
-                            <span className="text-[10px] text-emerald-500/70 uppercase">Stock Val:</span>
-                            <span>₹{(cat.stock_value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          <div className="mt-2.5 px-3 py-1 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-950/40 dark:border-emerald-500/20 dark:text-emerald-400 text-xs font-semibold flex items-center gap-1.5 shadow-2xs">
+                            <span className="text-[10px] text-emerald-700/80 dark:text-emerald-400/80 font-bold uppercase tracking-wider">Stock Val:</span>
+                            <span className="font-mono font-bold">₹{(cat.stock_value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           </div>
                         </div>
 
-                        <div className="border-t border-border/40 pt-3 mt-auto flex flex-col text-xs text-muted-foreground gap-1">
-                          <div className="flex justify-between">
-                            <span>HSN: <span className="text-foreground font-medium">{cat.hsn_code || '—'}</span></span>
-                            <span>IGST: <span className="text-foreground font-medium">{cat.gst_rate}%</span></span>
+                        <div className="border-t border-border/60 pt-3 mt-auto flex flex-col text-xs text-muted-foreground gap-1">
+                          <div className="flex justify-between font-medium">
+                            <span>HSN: <span className="text-foreground font-semibold font-mono">{cat.hsn_code || '—'}</span></span>
+                            <span>IGST: <span className="text-foreground font-semibold font-mono">{cat.gst_rate}%</span></span>
                           </div>
-                          <div className="flex justify-between text-[10px]">
+                          <div className="flex justify-between text-[11px] text-foreground/75 dark:text-muted-foreground font-mono font-medium">
                             <span></span>
                             <span>CGST: {(Number(cat.gst_rate)/2).toFixed(1)}% | SGST: {(Number(cat.gst_rate)/2).toFixed(1)}%</span>
                           </div>
@@ -578,7 +578,7 @@ export default function InventoryPage() {
               </button>
               <button 
                 onClick={handleDelete} 
-                className="px-5 py-2.5 bg-rose-600 text-foreground rounded-xl hover:bg-rose-700 shadow-md shadow-rose-600/20 transition-all font-medium flex items-center justify-center min-w-[120px] cursor-pointer"
+                className="px-5 py-2.5 bg-rose-600 text-white rounded-xl hover:bg-rose-700 shadow-md shadow-rose-600/20 transition-all font-medium flex items-center justify-center min-w-[120px] cursor-pointer"
                 disabled={saving}
               >
                 {saving ? 'Deleting...' : 'Yes, Delete'}

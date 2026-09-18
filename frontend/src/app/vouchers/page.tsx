@@ -149,10 +149,10 @@ export default function VouchersPage() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold">Cash & Bank</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Cash & Bank</h1>
             <p className="text-xs sm:text-sm text-muted-foreground mt-1">Record money you sent and received</p>
           </div>
-          <Link href="/vouchers/new" className="w-full sm:w-auto justify-center bg-blue-600 text-foreground px-5 py-2.5 rounded-lg shadow hover:bg-blue-700 transition-colors font-medium flex items-center gap-2">
+          <Link href="/vouchers/new" className="w-full sm:w-auto justify-center bg-blue-600 text-white px-5 py-2.5 rounded-lg shadow hover:bg-blue-700 transition-colors font-semibold flex items-center gap-2">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
             <span>New Entry</span>
           </Link>
@@ -166,11 +166,11 @@ export default function VouchersPage() {
           </div>
           <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm text-center">
             <p className="text-muted-foreground text-xs sm:text-sm uppercase tracking-wider font-medium mb-1">Money Paid Out</p>
-            <p className="text-2xl sm:text-3xl font-bold text-red-400">₹{summaryTotals.totalPayments.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl sm:text-3xl font-bold text-rose-600 dark:text-rose-400">₹{summaryTotals.totalPayments.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
           </div>
           <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm text-center">
             <p className="text-muted-foreground text-xs sm:text-sm uppercase tracking-wider font-medium mb-1">Money Received</p>
-            <p className="text-2xl sm:text-3xl font-bold text-green-400">₹{summaryTotals.totalReceipts.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl sm:text-3xl font-bold text-emerald-600 dark:text-emerald-400">₹{summaryTotals.totalReceipts.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
           </div>
         </div>
 
@@ -180,7 +180,7 @@ export default function VouchersPage() {
             <button key={f} onClick={() => handleFilter(f)}
               className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors border whitespace-nowrap ${
                 filter === f
-                  ? 'bg-blue-600 text-foreground border-blue-600'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                   : 'bg-muted/50 text-muted-foreground border-input hover:border-zinc-500'
               }`}
             >
@@ -206,24 +206,26 @@ export default function VouchersPage() {
                 {vouchers.map((v: any) => (
                   <div key={v.id} className="p-4 space-y-3">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono font-semibold text-blue-400 text-sm">{v.voucher_number}</span>
+                      <span className="font-mono font-bold text-blue-600 dark:text-blue-400 text-sm">{v.voucher_number}</span>
                       <div className="flex items-center gap-1.5">
                         <span className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${
                           v.type === 'RECEIPT'
-                            ? 'bg-green-500/10 text-green-500 border border-green-500/20'
-                            : 'bg-red-500/10 text-red-500 border border-red-500/20'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20'
+                            : 'bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/20'
                         }`}>
                           {v.type === 'RECEIPT' ? '↓ Receipt' : '↑ Payment'}
                         </span>
                         <span className={`text-xs px-2 py-0.5 rounded font-mono font-medium ${
-                          v.status === 'POSTED' ? 'bg-green-900/30 text-green-400' : 'bg-yellow-900/30 text-yellow-400'
+                          v.status === 'POSTED'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                            : 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-yellow-900/30 dark:text-yellow-400'
                         }`}>{v.status}</span>
                       </div>
                     </div>
 
                     <div className="flex items-center justify-between text-sm">
                       <span className="font-semibold text-foreground truncate max-w-[200px]">{v.party_name}</span>
-                      <span className="text-muted-foreground font-mono">{v.date}</span>
+                      <span className="text-foreground/80 dark:text-muted-foreground font-mono font-medium">{v.voucher_date || v.date || v.voucherDate || '-'}</span>
                     </div>
 
                     {v.narration && (
@@ -231,13 +233,13 @@ export default function VouchersPage() {
                     )}
 
                     <div className="flex items-center justify-between pt-1">
-                      <span className={`font-mono tabular-nums font-bold text-lg ${v.type === 'RECEIPT' ? 'text-green-500' : 'text-red-500'}`}>
+                      <span className={`font-mono tabular-nums font-bold text-lg ${v.type === 'RECEIPT' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                         ₹{parseFloat(v.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                       </span>
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => handleStartEdit(v)}
-                          className="px-3 py-1.5 bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+                          className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 dark:bg-blue-600/15 dark:hover:bg-blue-600/25 dark:text-blue-400 dark:border-blue-500/30 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                           title="Edit Voucher"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
@@ -245,7 +247,7 @@ export default function VouchersPage() {
                         </button>
                         <button
                           onClick={() => handleDeleteVoucher(v.id, v.voucher_number, v.type)}
-                          className="px-3 py-1.5 bg-rose-600/15 hover:bg-rose-600/25 text-rose-400 rounded-lg text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+                          className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 dark:bg-rose-600/15 dark:hover:bg-rose-600/25 dark:text-rose-400 dark:border-rose-500/30 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                           title="Delete Voucher"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -275,32 +277,36 @@ export default function VouchersPage() {
                   <tbody className="divide-y divide-border">
                     {vouchers.map((v: any) => (
                       <tr key={v.id} className="hover:bg-muted/30 transition-colors">
-                        <td className="p-4 whitespace-nowrap font-mono font-semibold text-blue-400 text-sm">{v.voucher_number}</td>
+                        <td className="p-4 whitespace-nowrap font-mono font-bold text-blue-600 dark:text-blue-400 text-sm">{v.voucher_number}</td>
                         <td className="p-4 whitespace-nowrap">
                           <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
                             v.type === 'RECEIPT'
-                              ? 'bg-green-500/10 text-green-500 border border-green-500/20'
-                              : 'bg-red-500/10 text-red-500 border border-red-500/20'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20'
+                              : 'bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/20'
                           }`}>
                             {v.type === 'RECEIPT' ? '↓ Receipt' : '↑ Payment'}
                           </span>
                         </td>
-                        <td className="p-4 whitespace-nowrap text-muted-foreground font-mono text-sm">{v.date}</td>
+                        <td className="p-4 whitespace-nowrap text-foreground/80 dark:text-muted-foreground font-mono font-medium text-sm">
+                          {v.voucher_date || v.date || v.voucherDate || '-'}
+                        </td>
                         <td className="p-4 text-foreground font-semibold text-sm">{v.party_name}</td>
                         <td className="p-4 text-muted-foreground text-sm max-w-xs truncate" title={v.narration}>{v.narration || '-'}</td>
-                        <td className={`p-4 text-right font-mono tabular-nums font-bold text-base ${v.type === 'RECEIPT' ? 'text-green-500' : 'text-red-500'}`}>
+                        <td className={`p-4 text-right font-mono tabular-nums font-bold text-base ${v.type === 'RECEIPT' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                           ₹{parseFloat(v.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </td>
                         <td className="p-4 text-center">
-                          <span className={`text-xs px-2 py-1 rounded font-mono font-medium ${
-                            v.status === 'POSTED' ? 'bg-green-900/30 text-green-400' : 'bg-yellow-900/30 text-yellow-400'
+                          <span className={`text-xs px-2.5 py-1 rounded font-mono font-medium ${
+                            v.status === 'POSTED'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                              : 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-yellow-900/30 dark:text-yellow-400'
                           }`}>{v.status}</span>
                         </td>
                         <td className="p-4 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                             <button
                               onClick={() => handleStartEdit(v)}
-                              className="px-3 py-1.5 bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+                              className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 dark:bg-blue-600/15 dark:hover:bg-blue-600/25 dark:text-blue-400 dark:border-blue-500/30 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                               title="Edit Voucher"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
@@ -308,7 +314,7 @@ export default function VouchersPage() {
                             </button>
                             <button
                               onClick={() => handleDeleteVoucher(v.id, v.voucher_number, v.type)}
-                              className="px-3 py-1.5 bg-rose-600/15 hover:bg-rose-600/25 text-rose-400 rounded-lg text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+                              className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 dark:bg-rose-600/15 dark:hover:bg-rose-600/25 dark:text-rose-400 dark:border-rose-500/30 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                               title="Delete Voucher"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
