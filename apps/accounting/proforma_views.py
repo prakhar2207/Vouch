@@ -21,6 +21,15 @@ from .services.sales_service import SalesInvoiceService
 from .services.voucher_service import VoucherService
 
 
+def get_user_display_name(usr):
+    if not usr:
+        return "System"
+    first = getattr(usr, 'first_name', '') or ''
+    last = getattr(usr, 'last_name', '') or ''
+    full = f"{first} {last}".strip()
+    return full or getattr(usr, 'email', str(usr))
+
+
 def serialize_proforma(p: ProformaInvoice, include_items: bool = True) -> dict:
     data = {
         "id": str(p.id),
@@ -38,23 +47,23 @@ def serialize_proforma(p: ProformaInvoice, include_items: bool = True) -> dict:
         "buyer_state_code": p.buyer_state_code or "",
         "buyer_phone": p.buyer_phone or "",
         "buyer_email": p.buyer_email or "",
-        "subtotal": float(p.subtotal),
-        "taxable_amount": float(p.taxable_amount),
-        "cgst_amount": float(p.cgst_amount),
-        "sgst_amount": float(p.sgst_amount),
-        "igst_amount": float(p.igst_amount),
-        "total_tax": float(p.total_tax),
-        "cartage_amount": float(p.cartage_amount),
-        "round_off": float(p.round_off),
-        "total_amount": float(p.total_amount),
+        "subtotal": float(p.subtotal or 0),
+        "taxable_amount": float(p.taxable_amount or 0),
+        "cgst_amount": float(p.cgst_amount or 0),
+        "sgst_amount": float(p.sgst_amount or 0),
+        "igst_amount": float(p.igst_amount or 0),
+        "total_tax": float(p.total_tax or 0),
+        "cartage_amount": float(p.cartage_amount or 0),
+        "round_off": float(p.round_off or 0),
+        "total_amount": float(p.total_amount or 0),
         "customer_notes": p.customer_notes or "",
         "terms_and_conditions": p.terms_and_conditions or "",
         "status": p.status,
         "converted_voucher_id": str(p.converted_voucher_id) if p.converted_voucher_id else None,
         "converted_voucher_number": p.converted_voucher.voucher_number if p.converted_voucher else None,
         "converted_at": p.converted_at.isoformat() if p.converted_at else None,
-        "created_by": p.created_by.get_full_name() or p.created_by.username,
-        "created_at": p.created_at.isoformat(),
+        "created_by": get_user_display_name(p.created_by),
+        "created_at": p.created_at.isoformat() if p.created_at else None,
         "items_count": p.items.count() if hasattr(p, 'items') else 0,
     }
 
