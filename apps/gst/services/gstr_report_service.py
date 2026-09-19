@@ -379,6 +379,37 @@ class GSTRReportService:
                 elif 'igst' in lname:
                     ledger_input_igst += net_dr
 
+        # Vouchers calculation for summary totals
+        sales_vouchers = Voucher.objects.filter(
+            company=company,
+            voucher_type__in=['SALES', 'CREDIT_NOTE', 'DEBIT_NOTE'],
+            voucher_date__gte=start_date,
+            voucher_date__lte=end_date,
+            status__in=EffectiveVoucherService.ACTIVE_STATUSES
+        )
+        total_sales_amount = Decimal('0.00')
+        sales_count = 0
+        for v in sales_vouchers:
+            sign = -1 if v.voucher_type == 'CREDIT_NOTE' else 1
+            total_sales_amount += v.total_amount * sign
+            if v.voucher_type == 'SALES':
+                sales_count += 1
+
+        purchase_vouchers = Voucher.objects.filter(
+            company=company,
+            voucher_type__in=['PURCHASE', 'DEBIT_NOTE'],
+            voucher_date__gte=start_date,
+            voucher_date__lte=end_date,
+            status__in=EffectiveVoucherService.ACTIVE_STATUSES
+        )
+        total_purchase_amount = Decimal('0.00')
+        purchase_count = 0
+        for v in purchase_vouchers:
+            sign = -1 if v.voucher_type == 'DEBIT_NOTE' else 1
+            total_purchase_amount += v.total_amount * sign
+            if v.voucher_type == 'PURCHASE':
+                purchase_count += 1
+
         effective_sales_cgst = sales_cgst if sales_cgst > Decimal('0.00') else max(Decimal('0.00'), ledger_output_cgst)
         effective_sales_sgst = sales_sgst if sales_sgst > Decimal('0.00') else max(Decimal('0.00'), ledger_output_sgst)
         effective_sales_igst = sales_igst if sales_igst > Decimal('0.00') else max(Decimal('0.00'), ledger_output_igst)
@@ -390,34 +421,106 @@ class GSTRReportService:
         total_outward_tax = effective_sales_cgst + effective_sales_sgst + effective_sales_igst
         total_itc = effective_itc_cgst + effective_itc_sgst + effective_itc_igst
 
-        net_igst = max(Decimal('0.00'), effective_sales_igst - effective_itc_igst)
-        net_cgst = max(Decimal('0.00'), effective_sales_cgst - effective_itc_cgst)
-        net_sgst = max(Decimal('0.00'), effective_sales_sgst - effective_itc_sgst)
+        if total_sales_amount == Decimal('0.00') and (sales_txval > Decimal('0.00') or total_outward_tax > Decimal('0.00')):
+            total_sales_amount = sales_txval + total_outward_tax
+        if total_purchase_amount == Decimal('0.00') and (pur_txval > Decimal('0.00') or total_itc > Decimal('0.00')):
+            total_purchase_amount = pur_txval + total_itc
 
-        net_cash_payable = max(Decimal('0.00'), total_outward_tax - total_itc)
-        excess_itc = max(Decimal('0.00'), total_itc - total_outward_tax)
+        # Rule 88A & Section 49 / 49A / 49B Set-Off Mechanism:
+        # 1. IGST credit must be utilized fully: first against IGST liability, then CGST & SGST.
+        # 2. CGST credit is utilized first against CGST liability, then remaining against IGST liability.
+        # 3. SGST credit is utilized first against SGST liability, then remaining against IGST liability.
+        # (CGST credit cannot offset SGST liability, and SGST credit cannot offset CGST liability).
 
-        if net_cash_payable > Decimal('0.00'):
-            status_headline = f"Pay Rs. {net_cash_payable:,.2f} in Cash"
+        rem_out_igst = effective_sales_igst
+        rem_out_cgst = effective_sales_cgst
+        rem_out_sgst = effective_sales_sgst
+
+        avail_itc_igst = effective_itc_igst
+        avail_itc_cgst = effective_itc_cgst
+        avail_itc_sgst = effective_itc_sgst
+
+        # Step 1: Utilize IGST ITC
+        used_igst_igst = min(avail_itc_igst, rem_out_igst)
+        avail_itc_igst -= used_igst_igst
+        rem_out_igst -= used_igst_igst
+
+        used_igst_cgst = min(avail_itc_igst, rem_out_cgst)
+        avail_itc_igst -= used_igst_cgst
+        rem_out_cgst -= used_igst_cgst
+
+        used_igst_sgst = min(avail_itc_igst, rem_out_sgst)
+        avail_itc_igst -= used_igst_sgst
+        rem_out_sgst -= used_igst_sgst
+
+        # Step 2: Utilize CGST ITC (first to CGST, then to IGST)
+        used_cgst_cgst = min(avail_itc_cgst, rem_out_cgst)
+        avail_itc_cgst -= used_cgst_cgst
+        rem_out_cgst -= used_cgst_cgst
+
+        used_cgst_igst = min(avail_itc_cgst, rem_out_igst)
+        avail_itc_cgst -= used_cgst_igst
+        rem_out_igst -= used_cgst_igst
+
+        # Step 3: Utilize SGST ITC (first to SGST, then to IGST)
+        used_sgst_sgst = min(avail_itc_sgst, rem_out_sgst)
+        avail_itc_sgst -= used_sgst_sgst
+        rem_out_sgst -= used_sgst_sgst
+
+        used_sgst_igst = min(avail_itc_sgst, rem_out_igst)
+        avail_itc_sgst -= used_sgst_igst
+        rem_out_igst -= used_sgst_igst
+
+        # Net cash payable per head after cross-utilization
+        net_payable_igst = rem_out_igst
+        net_payable_cgst = rem_out_cgst
+        net_payable_sgst = rem_out_sgst
+        total_net_payable = net_payable_igst + net_payable_cgst + net_payable_sgst
+
+        # Closing excess ITC balance per head
+        closing_itc_igst = avail_itc_igst
+        closing_itc_cgst = avail_itc_cgst
+        closing_itc_sgst = avail_itc_sgst
+        total_closing_itc = closing_itc_igst + closing_itc_cgst + closing_itc_sgst
+
+        total_cross_setoff = used_cgst_igst + used_sgst_igst + used_igst_cgst + used_igst_sgst
+
+        if total_net_payable > Decimal('0.00'):
+            status_headline = f"Pay Rs. {total_net_payable:,.2f} in Cash"
             status_badge = "CASH_PAYMENT_REQUIRED"
-            status_explanation = f"You collected Rs. {total_outward_tax:,.2f} in GST on sales. After adjusting Rs. {total_itc:,.2f} input credit from purchases, you must pay Rs. {net_cash_payable:,.2f} on the GST Portal."
-        elif excess_itc > Decimal('0.00'):
-            status_headline = f"Claim Rs. {excess_itc:,.2f} Refund / Credit"
+            cross_text = f" (including Rs. {total_cross_setoff:,.2f} surplus credit cross-adjusted under Rule 88A)" if total_cross_setoff > Decimal('0.00') else ""
+            status_explanation = (
+                f"You collected Rs. {total_outward_tax:,.2f} in GST on sales. "
+                f"After adjusting Rs. {total_itc:,.2f} input credit from purchases{cross_text}, "
+                f"you must pay Rs. {total_net_payable:,.2f} on the GST Portal."
+            )
+        elif total_closing_itc > Decimal('0.00'):
+            status_headline = f"Claim Rs. {total_closing_itc:,.2f} Refund / Credit"
             status_badge = "EXCESS_ITC_AVAILABLE"
-            status_explanation = f"No tax to pay this period! You have Rs. {total_itc:,.2f} input credit on purchases vs Rs. {total_outward_tax:,.2f} tax on sales. The remaining Rs. {excess_itc:,.2f} can be claimed as refund or carried forward to next month."
+            status_explanation = (
+                f"No tax to pay this period! You have Rs. {total_itc:,.2f} input credit on purchases vs "
+                f"Rs. {total_outward_tax:,.2f} tax on sales. The remaining Rs. {total_closing_itc:,.2f} "
+                f"can be claimed as refund or carried forward to next month."
+            )
         else:
             status_headline = "Rs. 0.00 Nil Return"
             status_badge = "NIL_RETURN"
-            status_explanation = "No tax payable or excess credit for this period."
+            status_explanation = "All taxes and input credits are fully balanced (Rs. 0.00 payable)."
 
         return {
             "company_name": company.name,
             "period": f"{start_date} to {end_date}",
             "summary": {
+                "total_sales": float(total_sales_amount),
+                "total_purchases": float(total_purchase_amount),
+                "sales_count": sales_count,
+                "purchase_count": purchase_count,
+                "sales_taxable": float(sales_txval),
+                "purchases_taxable": float(pur_txval),
                 "outward_tax_total": float(total_outward_tax),
                 "itc_total": float(total_itc),
-                "net_cash_payable": float(net_cash_payable),
-                "excess_itc_claimable": float(excess_itc),
+                "net_cash_payable": float(total_net_payable),
+                "excess_itc_claimable": float(total_closing_itc),
                 "status_headline": status_headline,
                 "status_badge": status_badge,
                 "status_explanation": status_explanation,
@@ -442,10 +545,41 @@ class GSTRReportService:
                 "cess": 0.0,
             },
             "net_tax_payable": {
-                "igst": float(net_igst),
-                "cgst": float(net_cgst),
-                "sgst": float(net_sgst),
-                "total": float(net_cash_payable),
+                "igst": float(net_payable_igst),
+                "cgst": float(net_payable_cgst),
+                "sgst": float(net_payable_sgst),
+                "total": float(total_net_payable),
+            },
+            "set_off_details": {
+                "igst": {
+                    "output_tax": float(effective_sales_igst),
+                    "itc_available": float(effective_itc_igst),
+                    "itc_utilized_igst": float(used_igst_igst),
+                    "itc_utilized_cgst": float(used_cgst_igst),
+                    "itc_utilized_sgst": float(used_sgst_igst),
+                    "total_credit_used": float(used_igst_igst + used_cgst_igst + used_sgst_igst),
+                    "net_payable": float(net_payable_igst),
+                    "closing_credit": float(closing_itc_igst),
+                },
+                "cgst": {
+                    "output_tax": float(effective_sales_cgst),
+                    "itc_available": float(effective_itc_cgst),
+                    "itc_utilized_cgst": float(used_cgst_cgst),
+                    "surplus_utilized_to_igst": float(used_cgst_igst),
+                    "total_credit_used": float(used_cgst_cgst + used_cgst_igst),
+                    "net_payable": float(net_payable_cgst),
+                    "closing_credit": float(closing_itc_cgst),
+                },
+                "sgst": {
+                    "output_tax": float(effective_sales_sgst),
+                    "itc_available": float(effective_itc_sgst),
+                    "itc_utilized_sgst": float(used_sgst_sgst),
+                    "surplus_utilized_to_igst": float(used_sgst_igst),
+                    "total_credit_used": float(used_sgst_sgst + used_sgst_igst),
+                    "net_payable": float(net_payable_sgst),
+                    "closing_credit": float(closing_itc_sgst),
+                },
+                "total_set_off": float(used_igst_igst + used_igst_cgst + used_igst_sgst + used_cgst_cgst + used_cgst_igst + used_sgst_sgst + used_sgst_igst),
             }
         }
 

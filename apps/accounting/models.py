@@ -38,6 +38,8 @@ class VoucherSequence(models.Model):
         ('OPENING', 'Opening Balance'),
         ('OPENING_INVOICE', 'Opening Invoice'),
         ('OPENING_BILL', 'Opening Bill'),
+        ('PROFORMA', 'Proforma Invoice'),
+        ('QUOTATION', 'Quotation / Estimate'),
     )
 
     METHOD_CHOICES = (
@@ -571,3 +573,8 @@ class SyncEvent(models.Model):
     class Meta:
         indexes = [models.Index(fields=['company', 'id'])]
         ordering = ['id']
+
+
+# Proforma Invoices & Quotations
+from .models_proforma import ProformaInvoice, ProformaItem
+

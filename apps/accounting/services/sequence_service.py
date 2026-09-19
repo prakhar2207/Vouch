@@ -13,6 +13,8 @@ DEFAULT_PREFIXES = {
     'JOURNAL': 'JRN',
     'CREDIT_NOTE': 'CN',
     'DEBIT_NOTE': 'DN',
+    'PROFORMA': 'PI',
+    'QUOTATION': 'QTN',
 }
 
 class InvoiceSequenceService:

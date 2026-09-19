@@ -9,6 +9,9 @@ from .views import (
     PurchasePeriodSummaryAPIView
 )
 from .ocr_views import OCRExtractAPIView
+from .proforma_views import (
+    ListCreateProformaAPIView, ProformaDetailAPIView, ConvertProformaToInvoiceAPIView
+)
 from .b2b_views import (
     InwardVoucherInboxView, InwardVoucherDetailView, InwardVoucherAcceptView, InwardVoucherRejectView
 )
@@ -17,6 +20,12 @@ import apps.accounting.banking_views
 import apps.accounting.health_views
 
 urlpatterns = [
+    # Proforma Invoices & Quotations
+    path('proforma/', ListCreateProformaAPIView.as_view(), name='list_create_proforma'),
+    path('proforma/<uuid:company_id>/', ListCreateProformaAPIView.as_view(), name='list_create_proforma_company'),
+    path('proforma/detail/<uuid:pk>/', ProformaDetailAPIView.as_view(), name='proforma_detail'),
+    path('proforma/<uuid:pk>/convert/', ConvertProformaToInvoiceAPIView.as_view(), name='convert_proforma_to_invoice'),
+
     path('vouchers/', UniversalVoucherAPIView.as_view(), name='universal_vouchers'),
     path('vouchers/<uuid:company_id>/', UniversalVoucherAPIView.as_view(), name='universal_vouchers_company'),
     path('ocr/extract/', OCRExtractAPIView.as_view(), name='ocr_extract'),

@@ -31,6 +31,7 @@ import {
   Activity,
   Landmark,
   Check,
+  Plus,
 } from "lucide-react";
 import SyncStatusBadge from "./SyncStatusBadge";
 
@@ -42,11 +43,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   // Dropdown states
+  const [isSalesDropdownOpen, setIsSalesDropdownOpen] = useState(false);
   const [isMoreDropdownOpen, setIsMoreDropdownOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isFYDropdownOpen, setIsFYDropdownOpen] = useState(false);
   const [isCompanyDropdownOpen, setIsCompanyDropdownOpen] = useState(false);
 
+  const salesRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const fyRef = useRef<HTMLDivElement>(null);
@@ -60,6 +63,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Close dropdowns on route change
   useEffect(() => {
     setIsMobileNavOpen(false);
+    setIsSalesDropdownOpen(false);
     setIsMoreDropdownOpen(false);
     setIsUserMenuOpen(false);
     setIsFYDropdownOpen(false);
@@ -69,6 +73,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Click away listener for dropdowns
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
+      if (salesRef.current && !salesRef.current.contains(e.target as Node)) {
+        setIsSalesDropdownOpen(false);
+      }
       if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
         setIsMoreDropdownOpen(false);
       }
@@ -164,18 +171,73 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 Dashboard
               </Link>
 
-              {/* Sales */}
-              <Link
-                id="tour-sales-btn"
-                href="/sales"
-                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
-                  isSalesActive
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                }`}
-              >
-                Sales
-              </Link>
+              {/* Sales Dropdown */}
+              <div ref={salesRef} className="relative">
+                <button
+                  id="tour-sales-btn"
+                  onClick={() => setIsSalesDropdownOpen(!isSalesDropdownOpen)}
+                  className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                    isSalesActive
+                      ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  <span>Sales</span>
+                  <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-150 ${isSalesDropdownOpen ? "rotate-180" : ""}`} />
+                </button>
+
+                {isSalesDropdownOpen && (
+                  <div className="absolute left-0 mt-1.5 w-64 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95">
+                    <Link
+                      href="/sales"
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      onClick={() => setIsSalesDropdownOpen(false)}
+                    >
+                      <div>
+                        <div className="font-medium flex items-center gap-1.5">
+                          <span>Sales Invoices (GST)</span>
+                          <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-mono font-semibold">F8</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground">Official GST tax invoices</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/sales/proforma"
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      onClick={() => setIsSalesDropdownOpen(false)}
+                    >
+                      <div>
+                        <div className="font-medium text-blue-500 dark:text-blue-400 flex items-center gap-1.5">
+                          <span>Proforma & Quotations</span>
+                          <span className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded font-semibold">1-Click GST</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground">Estimates, quotes & proforma bills</div>
+                      </div>
+                    </Link>
+
+                    <div className="border-t border-border/40 my-1"></div>
+
+                    <div className="grid grid-cols-2 gap-1.5 pt-1">
+                      <Link
+                        href="/sales/new"
+                        className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                        onClick={() => setIsSalesDropdownOpen(false)}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>+ Invoice</span>
+                      </Link>
+                      <Link
+                        href="/sales/proforma/new"
+                        className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-colors"
+                        onClick={() => setIsSalesDropdownOpen(false)}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>+ Quotation</span>
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Purchases */}
               <Link
@@ -751,15 +813,33 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               >
                 Dashboard
               </Link>
-              <Link
-                href="/sales"
-                onClick={() => setIsMobileNavOpen(false)}
-                className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors ${
-                  pathname.startsWith("/sales") ? "bg-muted font-semibold text-foreground" : "text-muted-foreground hover:bg-muted/60"
-                }`}
-              >
-                <span>Sales</span>
-              </Link>
+              <div className="space-y-0.5">
+                <div className="px-3 pt-2 pb-1 text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                  Sales
+                </div>
+                <Link
+                  href="/sales"
+                  onClick={() => setIsMobileNavOpen(false)}
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
+                    pathname === "/sales" || (pathname.startsWith("/sales") && !pathname.startsWith("/sales/proforma"))
+                      ? "bg-muted font-semibold text-foreground"
+                      : "text-muted-foreground hover:bg-muted/60"
+                  }`}
+                >
+                  <span>Sales Invoices (GST)</span>
+                  <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-mono font-semibold">F8</span>
+                </Link>
+                <Link
+                  href="/sales/proforma"
+                  onClick={() => setIsMobileNavOpen(false)}
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
+                    pathname.startsWith("/sales/proforma") ? "bg-muted font-semibold text-foreground" : "text-muted-foreground hover:bg-muted/60"
+                  }`}
+                >
+                  <span className="text-blue-500 dark:text-blue-400 font-medium">Proforma & Quotations</span>
+                  <span className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded font-semibold">1-Click GST</span>
+                </Link>
+              </div>
               <Link
                 href="/purchases"
                 onClick={() => setIsMobileNavOpen(false)}

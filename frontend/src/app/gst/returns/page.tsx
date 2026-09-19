@@ -26,7 +26,9 @@ import {
   Key,
   Sparkles,
   ExternalLink,
-  ShieldAlert
+  ShieldAlert,
+  ArrowUpRight,
+  ShoppingBag
 } from "lucide-react";
 
 export default function GSTReturnCenterPage() {
@@ -508,105 +510,142 @@ export default function GSTReturnCenterPage() {
         {/* Content for Monthly & Quarterly Returns */}
         {activeTab !== "annual" && (
           <div className="space-y-6">
-            {/* 3 Metric Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Card 1: Clean Vouchers */}
-              <div className="p-5 bg-card rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-card via-card to-emerald-500/5 shadow-xs space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Clean Vouchers (Ready)</span>
-                  <span className="p-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-xl border border-emerald-500/20">
-                    <CheckCircle2 className="w-4 h-4" />
-                  </span>
-                </div>
-                <div>
-                  <div className="text-3xl font-black text-foreground font-mono">
-                    {exceptionsData?.clean_count ?? 0}
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    Value: <span className="font-semibold text-foreground font-mono">₹{(exceptionsData?.clean_total_amount ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                  </div>
-                </div>
-                <div className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded-md">
-                  ✓ Passed GSTIN, HSN & Tax slab checks
-                </div>
-              </div>
+            {/* 1 Row Summary: Total Sales, Total Purchases, Total GST */}
+            {(() => {
+              const totalSales = Number(gstr3bData?.summary?.total_sales ?? 0);
+              const salesCount = Number(gstr3bData?.summary?.sales_count ?? 0);
+              const salesTaxable = Number(gstr3bData?.summary?.sales_taxable ?? (gstr3bData?.table_3_1_outward_supplies?.taxable_value ?? 0));
+              
+              const totalPurchases = Number(gstr3bData?.summary?.total_purchases ?? 0);
+              const purchaseCount = Number(gstr3bData?.summary?.purchase_count ?? 0);
+              const purTaxable = Number(gstr3bData?.summary?.purchases_taxable ?? (gstr3bData?.table_4_eligible_itc?.taxable_value ?? 0));
 
-              {/* Card 2: Exceptions Needing Correction */}
-              <div className={`p-5 bg-card rounded-2xl space-y-3 shadow-xs ${
-                (exceptionsData?.exception_count ?? 0) > 0
-                  ? "border-2 border-amber-500/40 bg-gradient-to-br from-card via-card to-amber-500/10 ring-1 ring-amber-500/20"
-                  : "border border-border"
-              }`}>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Clerical Exceptions</span>
-                  <span className="p-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl border border-amber-500/20">
-                    <AlertTriangle className="w-4 h-4" />
-                  </span>
-                </div>
-                <div>
-                  <div className="text-3xl font-black text-amber-600 dark:text-amber-400 font-mono">
-                    {exceptionsData?.exception_count ?? 0}
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    Needs Attention: <span className="font-semibold text-foreground font-mono">₹{(exceptionsData?.exception_total_amount ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                  </div>
-                </div>
-                <div className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-800 dark:text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-md">
-                  Fix typos below prior to GST portal upload
-                </div>
-              </div>
+              const outwardTax = Number(gstr3bData?.summary?.outward_tax_total ?? 
+                ((gstr3bData?.table_3_1_outward_supplies?.igst ?? 0) + (gstr3bData?.table_3_1_outward_supplies?.cgst ?? 0) + (gstr3bData?.table_3_1_outward_supplies?.sgst ?? 0)));
+              const itcAvailable = Number(gstr3bData?.summary?.itc_total ?? 
+                ((gstr3bData?.table_4_eligible_itc?.igst ?? 0) + (gstr3bData?.table_4_eligible_itc?.cgst ?? 0) + (gstr3bData?.table_4_eligible_itc?.sgst ?? 0)));
+              const netCash = Number(gstr3bData?.summary?.net_cash_payable ?? (gstr3bData?.net_tax_payable?.total ?? Math.max(0, outwardTax - itcAvailable)));
+              const excessItc = Number(gstr3bData?.summary?.excess_itc_claimable ?? Math.max(0, itcAvailable - outwardTax));
 
-              {/* Card 3: GSTR-3B Net Tax Liability & Claimable Credit */}
-              {(() => {
-                const outwardTax = Number(gstr3bData?.summary?.outward_tax_total ?? 
-                  ((gstr3bData?.table_3_1_outward_supplies?.igst ?? 0) + (gstr3bData?.table_3_1_outward_supplies?.cgst ?? 0) + (gstr3bData?.table_3_1_outward_supplies?.sgst ?? 0)));
-                const itcAvailable = Number(gstr3bData?.summary?.itc_total ?? 
-                  ((gstr3bData?.table_4_eligible_itc?.igst ?? 0) + (gstr3bData?.table_4_eligible_itc?.cgst ?? 0) + (gstr3bData?.table_4_eligible_itc?.sgst ?? 0)));
-                const netCash = Number(gstr3bData?.summary?.net_cash_payable ?? (gstr3bData?.net_tax_payable?.total ?? Math.max(0, outwardTax - itcAvailable)));
-                const excessItc = Number(gstr3bData?.summary?.excess_itc_claimable ?? Math.max(0, itcAvailable - outwardTax));
-
-                return (
-                  <div className={`p-5 bg-card rounded-2xl border shadow-xs space-y-3 ${
-                    netCash > 0
-                      ? "border-rose-500/40 bg-gradient-to-br from-card via-card to-rose-500/10 ring-1 ring-rose-500/20"
-                      : excessItc > 0
-                      ? "border-emerald-500/40 bg-gradient-to-br from-card via-card to-emerald-500/10 ring-1 ring-emerald-500/20"
-                      : "border-blue-500/30 bg-gradient-to-br from-card via-card to-blue-500/5"
-                  }`}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                        {netCash > 0 ? "Net Cash To Pay (GSTR-3B)" : excessItc > 0 ? "Refund / Excess ITC Claim" : "Net Tax Liability"}
-                      </span>
-                      <span className={`p-2 rounded-xl border ${
-                        netCash > 0
-                          ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
-                          : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                      }`}>
-                        <TrendingUp className="w-4 h-4" />
-                      </span>
-                    </div>
-                    <div>
-                      <div className={`text-3xl font-black font-mono ${
-                        netCash > 0 ? "text-rose-600 dark:text-rose-400" : excessItc > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"
-                      }`}>
-                        ₹{(netCash > 0 ? netCash : excessItc).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              return (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    {/* Card 1: Total Sales */}
+                    <div className="p-5 bg-card rounded-2xl border border-blue-500/30 bg-gradient-to-br from-card via-card to-blue-500/5 shadow-xs space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Total Sales</span>
+                        <span className="p-2 bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-xl border border-blue-500/20">
+                          <ArrowUpRight className="w-4 h-4" />
+                        </span>
                       </div>
-                      <div className="text-xs text-muted-foreground mt-1">
-                        Tax on Sales: <span className="font-semibold text-foreground font-mono">₹{outwardTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                      <div>
+                        <div className="text-3xl font-black text-foreground font-mono">
+                          ₹{totalSales.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1 flex items-center justify-between">
+                          <span>Taxable: <span className="font-semibold text-foreground font-mono">₹{salesTaxable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
+                          <span className="font-medium text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-md text-[11px]">
+                            {salesCount} {salesCount === 1 ? "Invoice" : "Invoices"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-[11px] flex justify-between items-center px-2.5 py-1 rounded-md bg-blue-500/10 text-blue-700 dark:text-blue-300 font-medium">
+                        <span>Output GST Collected:</span>
+                        <span className="font-mono font-bold">₹{outwardTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
                       </div>
                     </div>
-                    <div className={`text-[11px] flex justify-between items-center px-2.5 py-1 rounded-md ${
-                      netCash > 0 ? "bg-rose-500/10 text-rose-700 dark:text-rose-300" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+
+                    {/* Card 2: Total Purchases */}
+                    <div className="p-5 bg-card rounded-2xl border border-purple-500/30 bg-gradient-to-br from-card via-card to-purple-500/5 shadow-xs space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Total Purchases</span>
+                        <span className="p-2 bg-purple-500/10 text-purple-600 dark:text-purple-400 rounded-xl border border-purple-500/20">
+                          <ShoppingBag className="w-4 h-4" />
+                        </span>
+                      </div>
+                      <div>
+                        <div className="text-3xl font-black text-foreground font-mono">
+                          ₹{totalPurchases.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1 flex items-center justify-between">
+                          <span>Taxable: <span className="font-semibold text-foreground font-mono">₹{purTaxable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
+                          <span className="font-medium text-purple-600 dark:text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-md text-[11px]">
+                            {purchaseCount} {purchaseCount === 1 ? "Bill" : "Bills"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-[11px] flex justify-between items-center px-2.5 py-1 rounded-md bg-purple-500/10 text-purple-700 dark:text-purple-300 font-medium">
+                        <span>Input Tax Credit (ITC):</span>
+                        <span className="font-mono font-bold">₹{itcAvailable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+
+                    {/* Card 3: Total GST / Net Position */}
+                    <div className={`p-5 bg-card rounded-2xl border shadow-xs space-y-3 ${
+                      netCash > 0
+                        ? "border-rose-500/40 bg-gradient-to-br from-card via-card to-rose-500/10 ring-1 ring-rose-500/20"
+                        : excessItc > 0
+                        ? "border-emerald-500/40 bg-gradient-to-br from-card via-card to-emerald-500/10 ring-1 ring-emerald-500/20"
+                        : "border-border bg-card"
                     }`}>
-                      <span>ITC from Purchases:</span>
-                      <span className="font-mono font-bold">
-                        ₹{itcAvailable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </span>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                          {netCash > 0 ? "Total GST: Cash To Pay" : excessItc > 0 ? "Total GST: Excess ITC Claim" : "Total GST: Balanced"}
+                        </span>
+                        <span className={`p-2 rounded-xl border ${
+                          netCash > 0
+                            ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                            : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                        }`}>
+                          {netCash > 0 ? <TrendingUp className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                        </span>
+                      </div>
+                      <div>
+                        <div className={`text-3xl font-black font-mono ${
+                          netCash > 0 ? "text-rose-600 dark:text-rose-400" : excessItc > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"
+                        }`}>
+                          ₹{(netCash > 0 ? netCash : excessItc).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1 flex items-center justify-between">
+                          <span>Output: <span className="font-semibold text-foreground font-mono">₹{outwardTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
+                          <span>ITC: <span className="font-semibold text-emerald-600 dark:text-emerald-400 font-mono">₹{itcAvailable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
+                        </div>
+                      </div>
+                      <div className={`text-[11px] flex justify-between items-center px-2.5 py-1 rounded-md font-medium ${
+                        netCash > 0 ? "bg-rose-500/10 text-rose-700 dark:text-rose-300" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      }`}>
+                        <span>Rule 88A Position:</span>
+                        <span className="font-semibold">{netCash > 0 ? "Net Cash to Pay on Portal" : excessItc > 0 ? "Carried forward to next month" : "Fully Settled"}</span>
+                      </div>
                     </div>
                   </div>
-                );
-              })()}
-            </div>
+
+                  {/* Audit & Triangulation Status Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-muted/20 border border-border/80 rounded-xl text-xs">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-muted-foreground uppercase text-[11px] tracking-wider">Voucher Audit:</span>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-medium">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {exceptionsData?.clean_count ?? 0} Clean Vouchers (₹{(exceptionsData?.clean_total_amount ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })})
+                      </span>
+                      {(exceptionsData?.exception_count ?? 0) > 0 ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold animate-pulse">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          {exceptionsData?.exception_count} Clerical Exceptions (₹{(exceptionsData?.exception_total_amount ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })})
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-muted-foreground text-[11px]">
+                          • 0 Clerical Exceptions
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      ✓ GSTIN, HSN & Tax slab checks active
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Plain-English Tax Settlement & Return Claim Guide */}
             {(() => {
@@ -709,37 +748,200 @@ export default function GSTReturnCenterPage() {
                     </div>
                   </div>
 
-                  {/* Component Breakdown Table */}
+                  {/* Component Breakdown Table with GST Rule 88A Set-Off */}
                   <div className="bg-muted/20 border border-border/60 rounded-xl overflow-hidden text-xs">
-                    <div className="px-4 py-2 bg-muted/40 font-semibold text-muted-foreground text-[11px] uppercase tracking-wider border-b border-border/60 flex justify-between">
-                      <span>Tax Head Breakdown</span>
-                      <span>Output Tax (Sales) vs Input Credit (Purchases)</span>
+                    <div className="px-4 py-2.5 bg-muted/40 font-semibold text-muted-foreground text-[11px] uppercase tracking-wider border-b border-border/60 flex flex-col sm:flex-row justify-between gap-1 sm:items-center">
+                      <span className="flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-primary" />
+                        <span>Tax Head Breakdown & Rule 88A Cross-Set-Off</span>
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-normal normal-case sm:text-right">
+                        Surplus CGST & SGST credits are legally offset against IGST liability
+                      </span>
                     </div>
-                    <div className="divide-y divide-border/40 font-mono">
-                      <div className="px-4 py-2.5 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                        <span className="font-sans font-medium text-foreground">IGST (Inter-State)</span>
-                        <div className="flex items-center gap-6">
-                          <span className="text-muted-foreground">Sales: <span className="text-foreground font-semibold">₹{(gstr3bData?.table_3_1_outward_supplies?.igst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
-                          <span className="text-muted-foreground">ITC: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">₹{(gstr3bData?.table_4_eligible_itc?.igst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
-                          <span className="text-foreground font-bold">Net: ₹{(gstr3bData?.net_tax_payable?.igst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                        </div>
-                      </div>
-                      <div className="px-4 py-2.5 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                        <span className="font-sans font-medium text-foreground">CGST (Central Tax)</span>
-                        <div className="flex items-center gap-6">
-                          <span className="text-muted-foreground">Sales: <span className="text-foreground font-semibold">₹{(gstr3bData?.table_3_1_outward_supplies?.cgst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
-                          <span className="text-muted-foreground">ITC: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">₹{(gstr3bData?.table_4_eligible_itc?.cgst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
-                          <span className="text-foreground font-bold">Net: ₹{(gstr3bData?.net_tax_payable?.cgst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                        </div>
-                      </div>
-                      <div className="px-4 py-2.5 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                        <span className="font-sans font-medium text-foreground">SGST / UTGST (State Tax)</span>
-                        <div className="flex items-center gap-6">
-                          <span className="text-muted-foreground">Sales: <span className="text-foreground font-semibold">₹{(gstr3bData?.table_3_1_outward_supplies?.sgst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
-                          <span className="text-muted-foreground">ITC: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">₹{(gstr3bData?.table_4_eligible_itc?.sgst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span></span>
-                          <span className="text-foreground font-bold">Net: ₹{(gstr3bData?.net_tax_payable?.sgst ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                        </div>
-                      </div>
+                    
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-border/60 text-muted-foreground uppercase font-semibold text-[11px] tracking-wider bg-muted/10">
+                            <th className="py-2.5 px-4">Tax Head</th>
+                            <th className="py-2.5 px-4 text-right">Output Tax (Sales)</th>
+                            <th className="py-2.5 px-4 text-right">Input Credit (ITC)</th>
+                            <th className="py-2.5 px-4 text-right">Rule 88A Set-Off / Surplus</th>
+                            <th className="py-2.5 px-4 text-right">Net Cash Payable</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border/40 font-mono">
+                          {/* IGST Row */}
+                          {(() => {
+                            const outIgst = Number(gstr3bData?.table_3_1_outward_supplies?.igst ?? 0);
+                            const itcIgst = Number(gstr3bData?.table_4_eligible_itc?.igst ?? 0);
+                            const netIgst = Number(gstr3bData?.net_tax_payable?.igst ?? 0);
+                            const crossUsed = Number((gstr3bData?.set_off_details?.igst?.itc_utilized_cgst ?? 0) + (gstr3bData?.set_off_details?.igst?.itc_utilized_sgst ?? 0));
+
+                            return (
+                              <tr className="hover:bg-muted/30 transition-colors">
+                                <td className="py-2.5 px-4 font-sans font-medium text-foreground">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                                    <span>IGST (Inter-State)</span>
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-4 text-right font-semibold text-foreground">
+                                  ₹{outIgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2.5 px-4 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                                  ₹{itcIgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2.5 px-4 text-right">
+                                  {crossUsed > 0 ? (
+                                    <div className="flex flex-col items-end">
+                                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">-₹{crossUsed.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                                      <span className="text-[10px] text-muted-foreground font-sans">CGST & SGST surplus set-off</span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-muted-foreground">₹0.00</span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-4 text-right">
+                                  <span className={`font-bold ${netIgst > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                    ₹{netIgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })()}
+
+                          {/* CGST Row */}
+                          {(() => {
+                            const outCgst = Number(gstr3bData?.table_3_1_outward_supplies?.cgst ?? 0);
+                            const itcCgst = Number(gstr3bData?.table_4_eligible_itc?.cgst ?? 0);
+                            const netCgst = Number(gstr3bData?.net_tax_payable?.cgst ?? 0);
+                            const surplusToIgst = Number(gstr3bData?.set_off_details?.cgst?.surplus_utilized_to_igst ?? 0);
+
+                            return (
+                              <tr className="hover:bg-muted/30 transition-colors">
+                                <td className="py-2.5 px-4 font-sans font-medium text-foreground">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                    <span>CGST (Central Tax)</span>
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-4 text-right font-semibold text-foreground">
+                                  ₹{outCgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2.5 px-4 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                                  ₹{itcCgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2.5 px-4 text-right">
+                                  {surplusToIgst > 0 ? (
+                                    <div className="flex flex-col items-end">
+                                      <span className="font-semibold text-blue-600 dark:text-blue-400">+₹{surplusToIgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                                      <span className="text-[10px] text-muted-foreground font-sans">Surplus credit offset to IGST</span>
+                                    </div>
+                                  ) : itcCgst > outCgst ? (
+                                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                      +₹{(itcCgst - outCgst).toLocaleString("en-IN", { minimumFractionDigits: 2 })} carry-fwd
+                                    </span>
+                                  ) : (
+                                    <span className="text-muted-foreground">₹0.00</span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-4 text-right">
+                                  <span className={`font-bold ${netCgst > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                    ₹{netCgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                  </span>
+                                  {netCgst === 0 && (
+                                    <span className="block text-[10px] text-muted-foreground font-sans">Fully Settled</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })()}
+
+                          {/* SGST Row */}
+                          {(() => {
+                            const outSgst = Number(gstr3bData?.table_3_1_outward_supplies?.sgst ?? 0);
+                            const itcSgst = Number(gstr3bData?.table_4_eligible_itc?.sgst ?? 0);
+                            const netSgst = Number(gstr3bData?.net_tax_payable?.sgst ?? 0);
+                            const surplusToIgst = Number(gstr3bData?.set_off_details?.sgst?.surplus_utilized_to_igst ?? 0);
+
+                            return (
+                              <tr className="hover:bg-muted/30 transition-colors">
+                                <td className="py-2.5 px-4 font-sans font-medium text-foreground">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                                    <span>SGST / UTGST (State Tax)</span>
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-4 text-right font-semibold text-foreground">
+                                  ₹{outSgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2.5 px-4 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                                  ₹{itcSgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2.5 px-4 text-right">
+                                  {surplusToIgst > 0 ? (
+                                    <div className="flex flex-col items-end">
+                                      <span className="font-semibold text-blue-600 dark:text-blue-400">+₹{surplusToIgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                                      <span className="text-[10px] text-muted-foreground font-sans">Surplus credit offset to IGST</span>
+                                    </div>
+                                  ) : itcSgst > outSgst ? (
+                                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                      +₹{(itcSgst - outSgst).toLocaleString("en-IN", { minimumFractionDigits: 2 })} carry-fwd
+                                    </span>
+                                  ) : (
+                                    <span className="text-muted-foreground">₹0.00</span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-4 text-right">
+                                  <span className={`font-bold ${netSgst > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                    ₹{netSgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                  </span>
+                                  {netSgst === 0 && (
+                                    <span className="block text-[10px] text-muted-foreground font-sans">Fully Settled</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })()}
+
+                          {/* Total Summary Row */}
+                          {(() => {
+                            const totalOut = Number(gstr3bData?.summary?.outward_tax_total ?? 
+                              ((gstr3bData?.table_3_1_outward_supplies?.igst ?? 0) + (gstr3bData?.table_3_1_outward_supplies?.cgst ?? 0) + (gstr3bData?.table_3_1_outward_supplies?.sgst ?? 0)));
+                            const totalItc = Number(gstr3bData?.summary?.itc_total ?? 
+                              ((gstr3bData?.table_4_eligible_itc?.igst ?? 0) + (gstr3bData?.table_4_eligible_itc?.cgst ?? 0) + (gstr3bData?.table_4_eligible_itc?.sgst ?? 0)));
+                            const totalNet = Number(gstr3bData?.summary?.net_cash_payable ?? (gstr3bData?.net_tax_payable?.total ?? Math.max(0, totalOut - totalItc)));
+                            const totalSetOff = Number(gstr3bData?.set_off_details?.total_set_off ?? Math.min(totalOut, totalItc));
+
+                            return (
+                              <tr className="bg-muted/40 font-bold border-t-2 border-border">
+                                <td className="py-3 px-4 font-sans text-foreground">
+                                  Total (All Tax Heads)
+                                </td>
+                                <td className="py-3 px-4 text-right text-foreground">
+                                  ₹{totalOut.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-3 px-4 text-right text-emerald-600 dark:text-emerald-400">
+                                  ₹{totalItc.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-3 px-4 text-right text-blue-600 dark:text-blue-400">
+                                  ₹{totalSetOff.toLocaleString("en-IN", { minimumFractionDigits: 2 })} Total Utilized
+                                </td>
+                                <td className="py-3 px-4 text-right">
+                                  <span className={`text-sm ${totalNet > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                    ₹{totalNet.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                  </span>
+                                  <span className="block text-[10px] text-muted-foreground font-sans">
+                                    {totalNet > 0 ? "Cash to Pay" : "Nil Payable"}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })()}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 </div>
