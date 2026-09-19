@@ -1,8 +1,8 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, Suspense } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 
-export default function SalesInvoiceRedirectPage() {
+function SalesInvoiceRedirectContent() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -23,5 +23,22 @@ export default function SalesInvoiceRedirectPage() {
         <p className="text-sm font-medium text-slate-600">Loading invoice...</p>
       </div>
     </div>
+  );
+}
+
+export default function SalesInvoiceRedirectPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-white text-slate-800 font-sans p-4">
+          <div className="text-center space-y-2">
+            <div className="w-8 h-8 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+            <p className="text-sm font-medium text-slate-600">Loading invoice...</p>
+          </div>
+        </div>
+      }
+    >
+      <SalesInvoiceRedirectContent />
+    </Suspense>
   );
 }

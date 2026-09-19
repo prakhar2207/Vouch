@@ -1,6 +1,6 @@
 "use client";
 import { API_BASE_URL } from '@/utils/api';
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import axios from 'axios';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -19,10 +19,10 @@ import {
   Calendar, 
   User, 
   Truck, 
-  Info,
-  ChevronDown,
-  Loader2,
-  Receipt
+  Info, 
+  ChevronDown, 
+  Loader2, 
+  Receipt 
 } from 'lucide-react';
 
 interface LineItem {
@@ -37,7 +37,7 @@ interface LineItem {
   gst_rate: number;
 }
 
-export default function NewProformaQuotationPage() {
+function NewProformaQuotationForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
@@ -973,5 +973,24 @@ export default function NewProformaQuotationPage() {
         </div>
       </div>
     </DashboardLayout>
+  );
+}
+
+export default function NewProformaQuotationPage() {
+  return (
+    <Suspense
+      fallback={
+        <DashboardLayout>
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin"></div>
+              <p className="text-sm text-muted-foreground font-medium">Loading form...</p>
+            </div>
+          </div>
+        </DashboardLayout>
+      }
+    >
+      <NewProformaQuotationForm />
+    </Suspense>
   );
 }
