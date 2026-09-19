@@ -58,13 +58,18 @@ export default function PurchaseInvoiceList() {
   const [customEnd, setCustomEnd] = useState<string>("");
   const [filterTableByPeriod, setFilterTableByPeriod] = useState<boolean>(false);
   const [periodMetrics, setPeriodMetrics] = useState({
-    totalSales: 0,
-    salesCount: 0,
     totalPurchases: 0,
     purchaseCount: 0,
+    totalInputGst: 0,
+    inputCgst: 0,
+    inputSgst: 0,
+    inputIgst: 0,
     paidPurchases: 0,
+    paidCount: 0,
     unpaidPurchases: 0,
-    netMargin: 0,
+    unpaidCount: 0,
+    totalSales: 0,
+    salesCount: 0,
   });
   const [loadingMetrics, setLoadingMetrics] = useState<boolean>(false);
 
@@ -91,70 +96,105 @@ export default function PurchaseInvoiceList() {
 
     setLoadingMetrics(true);
     try {
-      let vouchers = await offlineDb.syncedVouchers
-        .where("companyId")
-        .equals(companyId)
-        .toArray();
+      const { startDate, endDate } = activeDateRange;
+      const token = getAccessToken();
+      let serverSummaryFetched = false;
 
-      if (!vouchers || vouchers.length === 0) {
-        const token = getAccessToken();
-        if (token) {
+      if (token) {
+        try {
           const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
+          const params = new URLSearchParams();
+          if (startDate) params.append("start_date", startDate);
+          if (endDate) params.append("end_date", endDate);
+          if (activeFY?.id) params.append("financial_year_id", activeFY.id);
+
           const res = await axios.get(
-            `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?limit=500&type=SALES,PURCHASE`,
-            { headers, timeout: 5000 }
-          ).catch(() => null);
-          if (res?.data?.data && Array.isArray(res.data.data)) {
-            vouchers = res.data.data;
+            `${API_BASE_URL}/api/v1/accounting/reports/purchase-period-summary/${companyId}/?${params.toString()}`,
+            { headers, timeout: 6000 }
+          );
+
+          if (res.data?.success && res.data?.data) {
+            const d = res.data.data;
+            setPeriodMetrics({
+              totalPurchases: Number(d.total_purchases) || 0,
+              purchaseCount: Number(d.purchase_count) || 0,
+              totalInputGst: Number(d.total_input_gst) || 0,
+              inputCgst: Number(d.input_cgst) || 0,
+              inputSgst: Number(d.input_sgst) || 0,
+              inputIgst: Number(d.input_igst) || 0,
+              paidPurchases: Number(d.paid_purchases) || 0,
+              paidCount: Number(d.paid_count) || 0,
+              unpaidPurchases: Number(d.unpaid_purchases) || 0,
+              unpaidCount: Number(d.unpaid_count) || 0,
+              totalSales: Number(d.total_sales) || 0,
+              salesCount: Number(d.sales_count) || 0,
+            });
+            serverSummaryFetched = true;
+          }
+        } catch (serverErr) {
+          console.warn("[PurchaseOverview] Server summary fetch failed, falling back to local calculation:", serverErr);
+        }
+      }
+
+      if (!serverSummaryFetched) {
+        let vouchers = await offlineDb.syncedVouchers
+          .where("companyId")
+          .equals(companyId)
+          .toArray();
+
+        let salesTot = 0;
+        let salesCnt = 0;
+        let purchasesTot = 0;
+        let purchasesCnt = 0;
+        let paidPurchases = 0;
+        let paidCnt = 0;
+
+        for (const v of vouchers) {
+          const st = String(v.status || "").toUpperCase();
+          if (st === "CANCELLED" || st === "REVERSED" || st === "SUPERSEDED") continue;
+
+          const vDate = v.voucherDate || (v as any).voucher_date || (v as any).date || "";
+          if (startDate && vDate < startDate) continue;
+          if (endDate && vDate > endDate) continue;
+
+          const vType = String(v.voucherType || (v as any).voucher_type || (v as any).type || "").toUpperCase();
+          const tot = Number(v.totalAmount !== undefined && v.totalAmount !== null ? v.totalAmount : (v as any).total_amount) || 0;
+          const paid = Number(v.paidAmount !== undefined && v.paidAmount !== null ? v.paidAmount : (v as any).paid_amount) || 0;
+
+          if (vType === "SALES") {
+            salesTot += tot;
+            salesCnt += 1;
+          } else if (vType === "PURCHASE") {
+            purchasesTot += tot;
+            purchasesCnt += 1;
+            paidPurchases += paid;
+            if (paid > 0) paidCnt += 1;
           }
         }
+
+        const estTax = Math.round(purchasesTot * 0.18 / 1.18 * 100) / 100;
+
+        setPeriodMetrics({
+          totalPurchases: Math.round(purchasesTot * 100) / 100,
+          purchaseCount: purchasesCnt,
+          totalInputGst: estTax,
+          inputCgst: Math.round(estTax / 2 * 100) / 100,
+          inputSgst: Math.round(estTax / 2 * 100) / 100,
+          inputIgst: 0,
+          paidPurchases: Math.round(paidPurchases * 100) / 100,
+          paidCount: paidCnt,
+          unpaidPurchases: Math.round(Math.max(0, purchasesTot - paidPurchases) * 100) / 100,
+          unpaidCount: Math.max(0, purchasesCnt - paidCnt),
+          totalSales: Math.round(salesTot * 100) / 100,
+          salesCount: salesCnt,
+        });
       }
-
-      const { startDate, endDate } = activeDateRange;
-
-      let salesTot = 0;
-      let salesCnt = 0;
-      let purchasesTot = 0;
-      let purchasesCnt = 0;
-      let paidPurchases = 0;
-
-      for (const v of vouchers) {
-        const st = String(v.status || "").toUpperCase();
-        if (st === "CANCELLED" || st === "REVERSED" || st === "SUPERSEDED") continue;
-
-        const vDate = v.voucherDate || (v as any).voucher_date || (v as any).date || "";
-        if (startDate && vDate < startDate) continue;
-        if (endDate && vDate > endDate) continue;
-
-        const vType = String(v.voucherType || (v as any).voucher_type || (v as any).type || "").toUpperCase();
-        const tot = Number(v.totalAmount !== undefined && v.totalAmount !== null ? v.totalAmount : (v as any).total_amount) || 0;
-        const paid = Number(v.paidAmount !== undefined && v.paidAmount !== null ? v.paidAmount : (v as any).paid_amount) || 0;
-
-        if (vType === "SALES") {
-          salesTot += tot;
-          salesCnt += 1;
-        } else if (vType === "PURCHASE") {
-          purchasesTot += tot;
-          purchasesCnt += 1;
-          paidPurchases += paid;
-        }
-      }
-
-      setPeriodMetrics({
-        totalSales: Math.round(salesTot * 100) / 100,
-        salesCount: salesCnt,
-        totalPurchases: Math.round(purchasesTot * 100) / 100,
-        purchaseCount: purchasesCnt,
-        paidPurchases: Math.round(paidPurchases * 100) / 100,
-        unpaidPurchases: Math.round(Math.max(0, purchasesTot - paidPurchases) * 100) / 100,
-        netMargin: Math.round((salesTot - purchasesTot) * 100) / 100,
-      });
     } catch (err) {
       console.error("calculatePeriodMetrics error:", err);
     } finally {
       setLoadingMetrics(false);
     }
-  }, [activeCompanyId, activeDateRange]);
+  }, [activeCompanyId, activeDateRange, activeFY]);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -435,16 +475,25 @@ export default function PurchaseInvoiceList() {
               </div>
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="text-base font-bold text-foreground">Period Performance &amp; Sales Overview</h2>
+                  <h2 className="text-base font-bold text-foreground">Period Performance &amp; Purchases Overview</h2>
                   <span className="text-[11px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full font-medium">
                     {activeDateRange.formattedRange}
                   </span>
+                  <Link
+                    href="/sales"
+                    className="text-[11px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/40 px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1 transition-all"
+                    title="View Sales Invoices for this period"
+                  >
+                    <TrendingUp className="w-3 h-3" />
+                    <span>Sales: ₹{periodMetrics.totalSales.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                    <ArrowRight className="w-2.5 h-2.5 opacity-70" />
+                  </Link>
                   {loadingMetrics && (
                     <RefreshCw className="w-3.5 h-3.5 text-muted-foreground animate-spin" />
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Track sales revenue vs purchase expense across selected timeframes
+                  Track inward purchases, Input GST (ITC), settled payments, and pending dues
                 </p>
               </div>
             </div>
@@ -577,35 +626,7 @@ export default function PurchaseInvoiceList() {
 
           {/* 4 Summary Cards Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-            {/* Card 1: Total Sales */}
-            <div className="bg-muted/20 border border-emerald-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-emerald-500/40 transition-all">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-500 tracking-wider uppercase">
-                  <TrendingUp className="w-3.5 h-3.5" />
-                  <span>Total Sales</span>
-                </div>
-                <Link
-                  href="/sales"
-                  className="text-[11px] font-semibold text-emerald-500 hover:text-emerald-400 hover:underline flex items-center gap-0.5"
-                  title="Go to Sales Invoices"
-                >
-                  <span>Invoices</span>
-                  <ArrowRight className="w-3 h-3" />
-                </Link>
-              </div>
-              <div>
-                <p className="text-2xl sm:text-3xl font-black text-foreground font-mono">
-                  ₹{periodMetrics.totalSales.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </p>
-                <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
-                  <span>{periodMetrics.salesCount} sales invoices</span>
-                  <span>Avg: ₹{periodMetrics.salesCount > 0 ? Math.round(periodMetrics.totalSales / periodMetrics.salesCount).toLocaleString("en-IN") : "0"}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Card 2: Total Purchases */}
+            {/* Card 1: Total Purchases */}
             <div className="bg-muted/20 border border-blue-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-blue-500/40 transition-all">
               <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
               <div className="flex items-center justify-between gap-2 mb-2">
@@ -628,44 +649,65 @@ export default function PurchaseInvoiceList() {
               </div>
             </div>
 
-            {/* Card 3: Net Trade Spread (Sales - Purchases) */}
-            <div className="bg-muted/20 border border-purple-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-purple-500/40 transition-all">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
+            {/* Card 2: Total Input GST */}
+            <div className="bg-muted/20 border border-indigo-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-indigo-500/40 transition-all">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
               <div className="flex items-center justify-between gap-2 mb-2">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-purple-400 tracking-wider uppercase">
-                  <Scale className="w-3.5 h-3.5" />
-                  <span>Net Trade Spread</span>
+                <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-500 dark:text-indigo-400 tracking-wider uppercase">
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Total Input GST</span>
                 </div>
-                <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
-                  periodMetrics.netMargin >= 0
-                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                    : "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                }`}>
-                  {periodMetrics.netMargin >= 0 ? "Surplus" : "Inflow"}
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                  ITC Claimable
                 </span>
               </div>
               <div>
-                <p className={`text-2xl sm:text-3xl font-black font-mono ${
-                  periodMetrics.netMargin >= 0 ? "text-emerald-500" : "text-blue-400"
-                }`}>
-                  {periodMetrics.netMargin >= 0 ? "+" : ""}₹{periodMetrics.netMargin.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                <p className="text-2xl sm:text-3xl font-black text-indigo-500 dark:text-indigo-400 font-mono">
+                  ₹{periodMetrics.totalInputGst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </p>
-                <p className="text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 truncate" title={periodMetrics.netMargin >= 0 ? "Sales exceed purchases in this period" : "Purchases exceed sales in this period"}>
-                  {periodMetrics.netMargin >= 0 ? "Sales exceed purchases" : "Purchases exceed sales"}
-                </p>
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
+                  <span>CGST: ₹{periodMetrics.inputCgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                  <span>SGST: ₹{periodMetrics.inputSgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                  {periodMetrics.inputIgst > 0 && (
+                    <span className="hidden xl:inline">IGST: ₹{periodMetrics.inputIgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                  )}
+                </div>
               </div>
             </div>
 
-            {/* Card 4: Unpaid Purchases (To Pay in Period) */}
+            {/* Card 3: Paid Amount */}
+            <div className="bg-muted/20 border border-emerald-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-emerald-500/40 transition-all">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-500 tracking-wider uppercase">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span>Paid Amount</span>
+                </div>
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  Settled
+                </span>
+              </div>
+              <div>
+                <p className="text-2xl sm:text-3xl font-black text-emerald-500 dark:text-emerald-400 font-mono">
+                  ₹{periodMetrics.paidPurchases.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </p>
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
+                  <span>{periodMetrics.paidCount} bills settled</span>
+                  <span>{periodMetrics.totalPurchases > 0 ? Math.round((periodMetrics.paidPurchases / periodMetrics.totalPurchases) * 100) : 0}% cleared</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 4: Yet to Pay */}
             <div className="bg-muted/20 border border-amber-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-amber-500/40 transition-all">
               <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-amber-500 tracking-wider uppercase">
                   <Clock className="w-3.5 h-3.5" />
-                  <span>Unpaid In Period</span>
+                  <span>Yet to Pay</span>
                 </div>
                 <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                  Payable
+                  Pending Due
                 </span>
               </div>
               <div>
@@ -673,8 +715,8 @@ export default function PurchaseInvoiceList() {
                   ₹{periodMetrics.unpaidPurchases.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </p>
                 <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
-                  <span>Paid: ₹{periodMetrics.paidPurchases.toLocaleString("en-IN")}</span>
-                  <span>Due: ₹{periodMetrics.unpaidPurchases.toLocaleString("en-IN")}</span>
+                  <span>{periodMetrics.unpaidCount} bills due</span>
+                  <span>To Suppliers</span>
                 </div>
               </div>
             </div>

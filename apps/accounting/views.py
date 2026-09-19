@@ -2760,5 +2760,129 @@ class VoucherAuditHistoryAPIView(APIView):
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+class PurchasePeriodSummaryAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get(self, request, company_id):
+        try:
+            company = Company.objects.get(id=company_id, users__user=request.user)
+        except Company.DoesNotExist:
+            return Response({"success": False, "error": "Company not found"}, status=404)
+
+        from apps.accounting.models import Voucher, LedgerEntry, PaymentAllocation, FinancialYear
+        from django.db.models import Sum, Count
+        from decimal import Decimal
+
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        fy_id = request.query_params.get('financial_year_id')
+
+        # Resolve date boundaries if not provided
+        if not start_date or not end_date:
+            if fy_id:
+                fy = FinancialYear.objects.filter(id=fy_id, company=company).first()
+            else:
+                fy = FinancialYear.objects.filter(company=company, is_closed=False).order_by('-start_date').first()
+            if fy:
+                start_date = start_date or str(fy.start_date)
+                end_date = end_date or str(fy.end_date)
+
+        # Base Purchase QuerySet (strictly POSTED active purchases)
+        p_qs = Voucher.objects.filter(
+            company=company,
+            voucher_type='PURCHASE',
+            status='POSTED'
+        )
+        if start_date:
+            p_qs = p_qs.filter(voucher_date__gte=start_date)
+        if end_date:
+            p_qs = p_qs.filter(voucher_date__lte=end_date)
+
+        p_agg = p_qs.aggregate(
+            tot=Sum('total_amount'),
+            cnt=Count('id')
+        )
+        total_purchases = p_agg['tot'] or Decimal('0.00')
+        purchase_count = p_agg['cnt'] or 0
+
+        p_ids = list(p_qs.values_list('id', flat=True))
+
+        # Input GST aggregated from double-entry LedgerEntry on tax accounts
+        tax_entries = LedgerEntry.objects.filter(
+            voucher_id__in=p_ids,
+            ledger__ledger_type='TAX'
+        ).values('ledger__name').annotate(
+            tot_dr=Sum('debit_amount'),
+            tot_cr=Sum('credit_amount')
+        )
+
+        input_cgst = Decimal('0.00')
+        input_sgst = Decimal('0.00')
+        input_igst = Decimal('0.00')
+
+        for row in tax_entries:
+            name = row['ledger__name'].lower()
+            net = (row['tot_dr'] or Decimal('0.00')) - (row['tot_cr'] or Decimal('0.00'))
+            if 'cgst' in name:
+                input_cgst += net
+            elif 'sgst' in name:
+                input_sgst += net
+            elif 'igst' in name:
+                input_igst += net
+
+        total_input_gst = input_cgst + input_sgst + input_igst
+
+        # Payment Allocations against these purchases
+        alloc_agg = PaymentAllocation.objects.filter(
+            invoice_voucher_id__in=p_ids
+        ).aggregate(
+            tot_paid=Sum('allocated_amount'),
+            cnt_paid=Count('invoice_voucher_id', distinct=True)
+        )
+        paid_purchases = alloc_agg['tot_paid'] or Decimal('0.00')
+        paid_count = alloc_agg['cnt_paid'] or 0
+        unpaid_purchases = max(Decimal('0.00'), total_purchases - paid_purchases)
+        unpaid_count = max(0, purchase_count - paid_count)
+
+        # Sales in period for comparative overview
+        s_qs = Voucher.objects.filter(
+            company=company,
+            voucher_type='SALES',
+            status='POSTED'
+        )
+        if start_date:
+            s_qs = s_qs.filter(voucher_date__gte=start_date)
+        if end_date:
+            s_qs = s_qs.filter(voucher_date__lte=end_date)
+
+        s_agg = s_qs.aggregate(
+            tot=Sum('total_amount'),
+            cnt=Count('id')
+        )
+        total_sales = s_agg['tot'] or Decimal('0.00')
+        sales_count = s_agg['cnt'] or 0
+
+        return Response({
+            "success": True,
+            "data": {
+                "total_purchases": float(total_purchases),
+                "purchase_count": purchase_count,
+                "total_input_gst": float(total_input_gst),
+                "input_cgst": float(input_cgst),
+                "input_sgst": float(input_sgst),
+                "input_igst": float(input_igst),
+                "paid_purchases": float(paid_purchases),
+                "paid_count": paid_count,
+                "unpaid_purchases": float(unpaid_purchases),
+                "unpaid_count": unpaid_count,
+                "total_sales": float(total_sales),
+                "sales_count": sales_count,
+                "start_date": str(start_date) if start_date else None,
+                "end_date": str(end_date) if end_date else None,
+            }
+        })
+
+
+
 
 

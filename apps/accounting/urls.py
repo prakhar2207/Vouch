@@ -5,7 +5,8 @@ from .views import (
     ListVouchersAPIView, VoucherDetailAPIView, PublicVoucherDetailAPIView, VoucherDownloadPermissionAPIView, VoucherAttachmentAPIView, LedgerStatementAPIView, 
     CreatePaymentReceiptAPIView, ListPaymentReceiptAPIView, UniversalVoucherAPIView,
     SyncTaxLedgersAPIView, PartyRatesAPIView, RebuildBalancesAPIView,
-    AgingReportAPIView, AutoFIFOReconciliationAPIView, VoucherAuditHistoryAPIView
+    AgingReportAPIView, AutoFIFOReconciliationAPIView, VoucherAuditHistoryAPIView,
+    PurchasePeriodSummaryAPIView
 )
 from .ocr_views import OCRExtractAPIView
 from .b2b_views import (
@@ -30,6 +31,7 @@ urlpatterns = [
     path('reports/balance-sheet/<uuid:company_id>/', BalanceSheetReportAPIView.as_view(), name='balance_sheet_report_company'),
     path('reports/aging/', AgingReportAPIView.as_view(), name='aging_report'),
     path('reports/aging/<uuid:company_id>/', AgingReportAPIView.as_view(), name='aging_report_company'),
+    path('reports/purchase-period-summary/<uuid:company_id>/', PurchasePeriodSummaryAPIView.as_view(), name='purchase_period_summary'),
     path('allocation/auto-fifo/', AutoFIFOReconciliationAPIView.as_view(), name='auto_fifo_reconciliation'),
     path('allocation/auto-fifo/<uuid:company_id>/', AutoFIFOReconciliationAPIView.as_view(), name='auto_fifo_reconciliation_company'),
     path('vouchers/detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='voucher_detail'),
