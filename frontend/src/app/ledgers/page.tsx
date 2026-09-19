@@ -31,10 +31,14 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
-  ArrowRight
+  ArrowRight,
+  Calendar,
+  Filter
 } from 'lucide-react';
 import { ledgersRepository } from '@/lib/data';
 import { offlineDb, SyncedLedger } from '@/lib/db/offlineDb';
+import { PeriodPreset, computePeriodDateRange, formatFriendlyDate } from '@/utils/periodRanges';
+import { gstApi } from '@/lib/api/gst';
 
 interface LedgerItem {
   id: string;
@@ -82,6 +86,34 @@ export default function LedgersPage() {
   const [activeTab, setActiveTab] = useState<'ALL' | 'ASSET' | 'LIABILITY' | 'INCOME' | 'EXPENSE' | 'TAX'>('ALL');
   const [isGstWidgetExpanded, setIsGstWidgetExpanded] = useState(true);
 
+  // GST Tax Summary Period Filtering
+  const [gstPeriodPreset, setGstPeriodPreset] = useState<PeriodPreset>('ALL');
+  const [gstCustomStart, setGstCustomStart] = useState('');
+  const [gstCustomEnd, setGstCustomEnd] = useState('');
+  const [filterLedgersByGstPeriod, setFilterLedgersByGstPeriod] = useState(false);
+  const [loadingGstPeriod, setLoadingGstPeriod] = useState(false);
+  const [gstPeriodSummary, setGstPeriodSummary] = useState<{
+    totalInput: number;
+    inputCgst: number;
+    inputSgst: number;
+    inputIgst: number;
+    otherInput: number;
+    totalOutput: number;
+    outputCgst: number;
+    outputSgst: number;
+    outputIgst: number;
+    otherOutput: number;
+    netPayable: number;
+    netItcCarryForward: number;
+    statusHeadline?: string;
+    statusBadge?: string;
+    statusExplanation?: string;
+  } | null>(null);
+
+  const activeGstDateRange = useMemo(() => {
+    return computePeriodDateRange(gstPeriodPreset, activeFY, gstCustomStart, gstCustomEnd);
+  }, [gstPeriodPreset, activeFY, gstCustomStart, gstCustomEnd]);
+
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingLedger, setEditingLedger] = useState<LedgerItem | null>(null);
@@ -113,7 +145,68 @@ export default function LedgersPage() {
       return;
     }
     fetchLedgers();
-  }, [router, activeCompanyId, activeFY?.id]);
+  }, [router, activeCompanyId, activeFY?.id, filterLedgersByGstPeriod, activeGstDateRange.startDate, activeGstDateRange.endDate]);
+
+  // Fetch period-specific GSTR-3B summary when a period preset is active
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadGstPeriodData = async () => {
+      if (gstPeriodPreset === 'ALL') {
+        setGstPeriodSummary(null);
+        setLoadingGstPeriod(false);
+        return;
+      }
+
+      const { startDate, endDate } = activeGstDateRange;
+      if (!startDate || !endDate) return;
+
+      const cid = companyId || activeCompanyId;
+      if (!cid) return;
+
+      setLoadingGstPeriod(true);
+      try {
+        const res = await gstApi.getGSTR3BSummary(cid, startDate, endDate);
+        if (isCancelled) return;
+
+        if (res && res.summary) {
+          const sum = res.summary || {};
+          const t31 = res.table_3_1_outward_supplies || {};
+          const t4 = res.table_4_eligible_itc || {};
+          const net = res.net_tax_payable || {};
+
+          setGstPeriodSummary({
+            totalInput: Number(sum.itc_total ?? t4.total ?? 0),
+            inputCgst: Number(t4.cgst ?? 0),
+            inputSgst: Number(t4.sgst ?? 0),
+            inputIgst: Number(t4.igst ?? 0),
+            otherInput: 0,
+            totalOutput: Number(sum.outward_tax_total ?? t31.total_tax ?? 0),
+            outputCgst: Number(t31.cgst ?? 0),
+            outputSgst: Number(t31.sgst ?? 0),
+            outputIgst: Number(t31.igst ?? 0),
+            otherOutput: 0,
+            netPayable: Number(sum.net_cash_payable ?? net.total ?? 0),
+            netItcCarryForward: Number(sum.excess_itc_claimable ?? 0),
+            statusHeadline: sum.status_headline,
+            statusBadge: sum.status_badge,
+            statusExplanation: sum.status_explanation,
+          });
+        }
+      } catch (err) {
+        console.warn('[Ledgers] Failed to fetch GSTR-3B summary for period:', err);
+      } finally {
+        if (!isCancelled) {
+          setLoadingGstPeriod(false);
+        }
+      }
+    };
+
+    loadGstPeriodData();
+    return () => {
+      isCancelled = true;
+    };
+  }, [gstPeriodPreset, activeGstDateRange.startDate, activeGstDateRange.endDate, companyId, activeCompanyId]);
 
   const fetchLedgers = async () => {
     setLoading(true);
@@ -144,11 +237,16 @@ export default function LedgersPage() {
         }
       }
 
-      // 2. Read ledgers locally first for instant UI response (scoped to active FY)
+      const shouldUsePeriod = filterLedgersByGstPeriod && gstPeriodPreset !== 'ALL';
+      const sDate = shouldUsePeriod ? activeGstDateRange.startDate : activeFY?.start_date;
+      const eDate = shouldUsePeriod ? activeGstDateRange.endDate : activeFY?.end_date;
+
+      // 2. Read ledgers locally first for instant UI response (scoped to active FY or selected period)
       const { data: localLedgers } = await ledgersRepository.getLedgers(cid, {
-        financialYearId: activeFY?.id,
-        startDate: activeFY?.start_date,
-        endDate: activeFY?.end_date,
+        financialYearId: shouldUsePeriod ? undefined : activeFY?.id,
+        startDate: sDate,
+        endDate: eDate,
+        scopeTaxes: shouldUsePeriod,
       });
       if (localLedgers && localLedgers.length > 0) {
         const mappedLocal: LedgerItem[] = localLedgers.map((l: any) => {
@@ -180,11 +278,17 @@ export default function LedgersPage() {
         setLedgers(mappedLocal);
       }
 
-      // 3. Fetch authoritative fresh ledgers with full nature & group from server scoped to active FY
+      // 3. Fetch authoritative fresh ledgers with full nature & group from server
       const params: Record<string, string> = {};
-      if (activeFY?.id) params.financial_year_id = activeFY.id;
-      if (activeFY?.start_date) params.start_date = activeFY.start_date;
-      if (activeFY?.end_date) params.end_date = activeFY.end_date;
+      if (shouldUsePeriod) {
+        if (sDate) params.start_date = sDate;
+        if (eDate) params.end_date = eDate;
+        params.scope_taxes = 'true';
+      } else {
+        if (activeFY?.id) params.financial_year_id = activeFY.id;
+        if (activeFY?.start_date) params.start_date = activeFY.start_date;
+        if (activeFY?.end_date) params.end_date = activeFY.end_date;
+      }
 
       const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers, params }).catch((err) => {
         console.warn("[Ledgers] Server fetch error:", err);
@@ -508,8 +612,22 @@ export default function LedgersPage() {
       netPayable: netDiff > 0 ? netDiff : 0,
       netItcCarryForward: netDiff < 0 ? Math.abs(netDiff) : 0,
       taxLedgersCount,
+      statusHeadline: undefined as string | undefined,
+      statusBadge: undefined as string | undefined,
+      statusExplanation: undefined as string | undefined,
     };
   }, [ledgers]);
+
+  // If a specific period is selected, use period-scoped GSTR-3B summary when available; otherwise fallback to full FY ledger summary
+  const effectiveGst = useMemo(() => {
+    if (gstPeriodPreset !== 'ALL' && gstPeriodSummary) {
+      return {
+        ...gstPeriodSummary,
+        taxLedgersCount: taxSummary.taxLedgersCount,
+      };
+    }
+    return taxSummary;
+  }, [gstPeriodPreset, gstPeriodSummary, taxSummary]);
 
   // Filtering
   const filteredLedgers = useMemo(() => {
@@ -613,39 +731,139 @@ export default function LedgersPage() {
 
         {/* GST Tax Position (Input vs. Output Summary) */}
         <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-border/40 pb-3">
+          <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-3 border-b border-border/40 pb-3">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+              <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 shrink-0">
                 <Receipt className="w-5 h-5" />
               </div>
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="text-base font-bold text-foreground">GST Tax Summary</h2>
                   <span className="text-[11px] bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-0.5 rounded-full font-medium">
                     Input Tax Credit vs. Output Liability
                   </span>
+                  {activeGstDateRange.startDate && activeGstDateRange.endDate && (
+                    <span className="text-[11px] bg-muted/80 text-foreground/80 border border-border/60 px-2 py-0.5 rounded-full font-mono font-medium flex items-center gap-1">
+                      <Calendar className="w-3 h-3 text-purple-400" />
+                      <span>{formatFriendlyDate(activeGstDateRange.startDate)} – {formatFriendlyDate(activeGstDateRange.endDate)}</span>
+                    </span>
+                  )}
+                  {loadingGstPeriod && (
+                    <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
+                      <RefreshCw className="w-3 h-3 animate-spin text-purple-400" />
+                      <span>Calculating period...</span>
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Live statutory balance aggregated across all Duties &amp; Taxes ledgers
+                  Statutory tax liability &amp; eligible input credit aggregated for the selected period
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+              {/* Period Preset Pills */}
+              <div className="flex items-center gap-1 bg-muted/70 p-1 rounded-xl border border-border/50 text-xs overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setGstPeriodPreset('ALL')}
+                  className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
+                    gstPeriodPreset === 'ALL'
+                      ? 'bg-background text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Full FY
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGstPeriodPreset('THIS_MONTH')}
+                  className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
+                    gstPeriodPreset === 'THIS_MONTH'
+                      ? 'bg-background text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  This Month
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGstPeriodPreset('LAST_MONTH')}
+                  className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
+                    gstPeriodPreset === 'LAST_MONTH'
+                      ? 'bg-background text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Last Month
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGstPeriodPreset('THIS_QUARTER')}
+                  className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
+                    gstPeriodPreset === 'THIS_QUARTER'
+                      ? 'bg-background text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  This Quarter
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGstPeriodPreset('TODAY')}
+                  className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
+                    gstPeriodPreset === 'TODAY'
+                      ? 'bg-background text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGstPeriodPreset('CUSTOM')}
+                  className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
+                    gstPeriodPreset === 'CUSTOM'
+                      ? 'bg-background text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Custom
+                </button>
+              </div>
+
+              {/* Table filter sync switch */}
+              <button
+                type="button"
+                onClick={() => setFilterLedgersByGstPeriod(!filterLedgersByGstPeriod)}
+                className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  filterLedgersByGstPeriod
+                    ? 'bg-purple-500/10 text-purple-400 border-purple-500/30 shadow-xs'
+                    : 'bg-muted/40 text-muted-foreground border-border/60 hover:text-foreground'
+                }`}
+                title="When enabled, the account heads table below will strictly show balances scoped to this period"
+              >
+                <Filter className="w-3.5 h-3.5" />
+                <span>Filter Accounts</span>
+                <span className={`w-2 h-2 rounded-full ${filterLedgersByGstPeriod ? 'bg-purple-500' : 'bg-muted-foreground/40'}`} />
+              </button>
+
               <button
                 onClick={() => {
                   setActiveTab('TAX');
                   setSearchTerm('');
                 }}
-                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer w-full sm:w-auto ${
+                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   activeTab === 'TAX'
                     ? 'bg-purple-600 text-foreground border-purple-600 shadow-sm'
                     : 'border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300'
                 }`}
+                title="Jump to tax ledgers tab"
               >
-                <span>Filter Tax Ledgers</span>
+                <span>Tax Ledgers</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
+
               <button
                 onClick={() => setIsGstWidgetExpanded(!isGstWidgetExpanded)}
                 className="p-1.5 rounded-lg border border-border/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
@@ -656,8 +874,45 @@ export default function LedgersPage() {
             </div>
           </div>
 
+          {/* Custom Date Picker row if CUSTOM selected */}
+          {gstPeriodPreset === 'CUSTOM' && (
+            <div className="flex flex-wrap items-center gap-3 bg-muted/30 p-3 rounded-xl border border-border/40 text-xs">
+              <span className="font-semibold text-muted-foreground">Select Date Range:</span>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">From</span>
+                <input
+                  type="date"
+                  value={gstCustomStart}
+                  onChange={(e) => setGstCustomStart(e.target.value)}
+                  className="bg-background border border-border rounded-lg px-2.5 py-1 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-purple-500"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">To</span>
+                <input
+                  type="date"
+                  value={gstCustomEnd}
+                  onChange={(e) => setGstCustomEnd(e.target.value)}
+                  className="bg-background border border-border rounded-lg px-2.5 py-1 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-purple-500"
+                />
+              </div>
+              {(gstCustomStart || gstCustomEnd) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGstCustomStart('');
+                    setGstCustomEnd('');
+                  }}
+                  className="text-xs text-muted-foreground hover:text-foreground underline cursor-pointer"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          )}
+
           {isGstWidgetExpanded && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+            <div className={`grid grid-cols-1 md:grid-cols-3 gap-4 pt-1 transition-opacity ${loadingGstPeriod ? 'opacity-70' : 'opacity-100'}`}>
               {/* Total Input Tax Credit (ITC) */}
               <div className="bg-muted/30 border border-border/40 rounded-xl p-4 flex flex-col justify-between">
                 <div>
@@ -670,29 +925,31 @@ export default function LedgersPage() {
                     </span>
                   </div>
                   <div className="text-2xl font-bold font-mono text-emerald-400 mt-2">
-                    ₹{taxSummary.totalInput.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ₹{effectiveGst.totalInput.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                   <p className="text-[11px] text-muted-foreground mt-0.5">
-                    Total tax paid on purchases eligible for input credit
+                    {gstPeriodPreset === 'ALL'
+                      ? 'Total tax paid on purchases eligible for input credit'
+                      : 'Eligible input credit from purchases in selected period'}
                   </p>
                 </div>
                 <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-border/40 text-center font-mono">
                   <div className="bg-background/50 rounded p-1.5 border border-border/40">
                     <div className="text-[10px] text-muted-foreground font-sans">Input CGST</div>
                     <div className="text-xs font-semibold text-foreground mt-0.5">
-                      ₹{taxSummary.inputCgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      ₹{effectiveGst.inputCgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </div>
                   </div>
                   <div className="bg-background/50 rounded p-1.5 border border-border/40">
                     <div className="text-[10px] text-muted-foreground font-sans">Input SGST</div>
                     <div className="text-xs font-semibold text-foreground mt-0.5">
-                      ₹{taxSummary.inputSgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      ₹{effectiveGst.inputSgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </div>
                   </div>
                   <div className="bg-background/50 rounded p-1.5 border border-border/40">
                     <div className="text-[10px] text-muted-foreground font-sans">Input IGST</div>
                     <div className="text-xs font-semibold text-foreground mt-0.5">
-                      ₹{taxSummary.inputIgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      ₹{effectiveGst.inputIgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </div>
                   </div>
                 </div>
@@ -710,29 +967,31 @@ export default function LedgersPage() {
                     </span>
                   </div>
                   <div className="text-2xl font-bold font-mono text-amber-400 mt-2">
-                    ₹{taxSummary.totalOutput.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ₹{effectiveGst.totalOutput.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                   <p className="text-[11px] text-muted-foreground mt-0.5">
-                    Total tax collected on sales invoices payable to gov
+                    {gstPeriodPreset === 'ALL'
+                      ? 'Total tax collected on sales invoices payable to gov'
+                      : 'Total tax collected on sales invoices in selected period'}
                   </p>
                 </div>
                 <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-border/40 text-center font-mono">
                   <div className="bg-background/50 rounded p-1.5 border border-border/40">
                     <div className="text-[10px] text-muted-foreground font-sans">Output CGST</div>
                     <div className="text-xs font-semibold text-foreground mt-0.5">
-                      ₹{taxSummary.outputCgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      ₹{effectiveGst.outputCgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </div>
                   </div>
                   <div className="bg-background/50 rounded p-1.5 border border-border/40">
                     <div className="text-[10px] text-muted-foreground font-sans">Output SGST</div>
                     <div className="text-xs font-semibold text-foreground mt-0.5">
-                      ₹{taxSummary.outputSgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      ₹{effectiveGst.outputSgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </div>
                   </div>
                   <div className="bg-background/50 rounded p-1.5 border border-border/40">
                     <div className="text-[10px] text-muted-foreground font-sans">Output IGST</div>
                     <div className="text-xs font-semibold text-foreground mt-0.5">
-                      ₹{taxSummary.outputIgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      ₹{effectiveGst.outputIgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </div>
                   </div>
                 </div>
@@ -741,9 +1000,9 @@ export default function LedgersPage() {
               {/* Net GST Position */}
               <div
                 className={`rounded-xl p-4 flex flex-col justify-between border ${
-                  taxSummary.netPayable > 0
+                  effectiveGst.netPayable > 0
                     ? 'bg-rose-500/5 border-rose-500/20'
-                    : taxSummary.netItcCarryForward > 0
+                    : effectiveGst.netItcCarryForward > 0
                     ? 'bg-emerald-500/5 border-emerald-500/20'
                     : 'bg-muted/30 border-border/40'
                 }`}
@@ -755,60 +1014,76 @@ export default function LedgersPage() {
                     </span>
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-medium ${
-                        taxSummary.netPayable > 0
+                        effectiveGst.statusBadge
+                          ? (effectiveGst.statusBadge === 'CASH_PAYMENT_REQUIRED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : effectiveGst.statusBadge === 'EXCESS_ITC_AVAILABLE' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-zinc-500/10 text-zinc-400 border border-zinc-500/20')
+                          : effectiveGst.netPayable > 0
                           ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                          : taxSummary.netItcCarryForward > 0
+                          : effectiveGst.netItcCarryForward > 0
                           ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                           : 'bg-zinc-500/10 text-zinc-400 border border-zinc-500/20'
                       }`}
                     >
-                      {taxSummary.netPayable > 0
+                      {effectiveGst.statusBadge
+                        ? (effectiveGst.statusBadge === 'CASH_PAYMENT_REQUIRED' ? 'Net Payable' : effectiveGst.statusBadge === 'EXCESS_ITC_AVAILABLE' ? 'ITC Surplus' : 'Reconciled')
+                        : effectiveGst.netPayable > 0
                         ? 'Net Payable'
-                        : taxSummary.netItcCarryForward > 0
+                        : effectiveGst.netItcCarryForward > 0
                         ? 'ITC Surplus'
                         : 'Reconciled'}
                     </span>
                   </div>
                   <div
                     className={`text-2xl font-bold font-mono mt-2 ${
-                      taxSummary.netPayable > 0
+                      effectiveGst.netPayable > 0
                         ? 'text-rose-400'
-                        : taxSummary.netItcCarryForward > 0
+                        : effectiveGst.netItcCarryForward > 0
                         ? 'text-emerald-400'
                         : 'text-foreground'
                     }`}
                   >
-                    ₹{(taxSummary.netPayable || taxSummary.netItcCarryForward || 0).toLocaleString('en-IN', {
+                    ₹{(effectiveGst.netPayable || effectiveGst.netItcCarryForward || 0).toLocaleString('en-IN', {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}
                   </div>
                   <p className="text-[11px] text-muted-foreground mt-0.5">
-                    {taxSummary.netPayable > 0
-                      ? 'Net statutory liability to be paid after setting off input credit'
-                      : taxSummary.netItcCarryForward > 0
-                      ? 'Unutilized ITC surplus available to offset future sales liability'
-                      : 'All input and output tax balances are completely balanced'}
+                    {effectiveGst.statusExplanation ||
+                      (effectiveGst.netPayable > 0
+                        ? 'Net statutory liability to be paid after setting off input credit'
+                        : effectiveGst.netItcCarryForward > 0
+                        ? 'Unutilized ITC surplus available to offset future sales liability'
+                        : 'All input and output tax balances are completely balanced')}
                   </p>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-border/40 flex items-center justify-between text-xs">
+                <div className="mt-4 pt-3 border-t border-border/40 flex items-center justify-between text-xs flex-wrap gap-2">
                   <span className="text-muted-foreground">Filing Action:</span>
-                  <span
-                    className={`font-semibold ${
-                      taxSummary.netPayable > 0
-                        ? 'text-rose-400'
-                        : taxSummary.netItcCarryForward > 0
-                        ? 'text-emerald-400'
-                        : 'text-zinc-400'
-                    }`}
-                  >
-                    {taxSummary.netPayable > 0
-                      ? `Deposit ₹${taxSummary.netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
-                      : taxSummary.netItcCarryForward > 0
-                      ? `Carry forward ₹${taxSummary.netItcCarryForward.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
-                      : 'Zero Tax Due'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`font-semibold ${
+                        effectiveGst.netPayable > 0
+                          ? 'text-rose-400'
+                          : effectiveGst.netItcCarryForward > 0
+                          ? 'text-emerald-400'
+                          : 'text-zinc-400'
+                      }`}
+                    >
+                      {effectiveGst.statusHeadline ||
+                        (effectiveGst.netPayable > 0
+                          ? `Deposit ₹${effectiveGst.netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                          : effectiveGst.netItcCarryForward > 0
+                          ? `Carry forward ₹${effectiveGst.netItcCarryForward.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                          : 'Zero Tax Due')}
+                    </span>
+                    <Link
+                      href="/gst/returns"
+                      className="text-purple-400 hover:text-purple-300 hover:underline flex items-center gap-0.5 font-medium ml-1"
+                      title="Open GST Returns Center"
+                    >
+                      <span>Returns</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </Link>
+                  </div>
                 </div>
               </div>
             </div>

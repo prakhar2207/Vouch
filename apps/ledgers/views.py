@@ -106,10 +106,11 @@ def resolve_fy_dates(request, company):
     return start_date, end_date
 
 
-def compute_scoped_ledger_balances(company, start_date=None, end_date=None, ledger_ids=None):
+def compute_scoped_ledger_balances(company, start_date=None, end_date=None, ledger_ids=None, scope_taxes=False):
     """
     Computes ledger balances dynamically scoped to [start_date, end_date].
     - Nominal accounts (INCOME, EXPENSE): entries strictly within [start_date, end_date].
+    - Tax accounts (DUTIES & TAXES): if scope_taxes=True, entries strictly within [start_date, end_date].
     - Balance Sheet accounts (ASSET, LIABILITY, EQUITY): entries up to end_date + opening balance.
     """
     qs = Ledger.objects.filter(company=company).select_related('group')
@@ -132,8 +133,10 @@ def compute_scoped_ledger_balances(company, start_date=None, end_date=None, ledg
         ).values_list('ledger_id', flat=True).distinct()
     )
 
+    is_tax = lambda l: l.ledger_type == 'TAX' or (l.group and ('duties' in l.group.name.lower() or 'tax' in l.group.name.lower()))
+    tax_ids = [l.id for l in ledgers if is_tax(l)] if scope_taxes else []
     nominal_ids = [l.id for l in ledgers if l.group and l.group.nature in ('INCOME', 'EXPENSE')]
-    bs_ids = [l.id for l in ledgers if not (l.group and l.group.nature in ('INCOME', 'EXPENSE'))]
+    bs_ids = [l.id for l in ledgers if not (l.group and l.group.nature in ('INCOME', 'EXPENSE')) and l.id not in tax_ids]
 
     nominal_totals = {}
     if nominal_ids:
@@ -149,6 +152,25 @@ def compute_scoped_ledger_balances(company, start_date=None, end_date=None, ledg
         nominal_totals = {
             row['ledger_id']: row
             for row in nominal_qs.values('ledger_id').annotate(
+                total_dr=Sum('debit_amount'),
+                total_cr=Sum('credit_amount')
+            )
+        }
+
+    tax_totals = {}
+    if tax_ids:
+        tax_qs = LedgerEntry.objects.filter(
+            company_filter,
+            ledger_id__in=tax_ids,
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
+        )
+        if start_date:
+            tax_qs = tax_qs.filter(voucher__voucher_date__gte=start_date)
+        if end_date:
+            tax_qs = tax_qs.filter(voucher__voucher_date__lte=end_date)
+        tax_totals = {
+            row['ledger_id']: row
+            for row in tax_qs.values('ledger_id').annotate(
                 total_dr=Sum('debit_amount'),
                 total_cr=Sum('credit_amount')
             )
@@ -176,6 +198,10 @@ def compute_scoped_ledger_balances(company, start_date=None, end_date=None, ledg
         is_nominal = bool(l.group and l.group.nature in ('INCOME', 'EXPENSE'))
         if is_nominal:
             tot = nominal_totals.get(l.id)
+            dr = Decimal(str(tot['total_dr'] or '0.00')) if tot else Decimal('0.00')
+            cr = Decimal(str(tot['total_cr'] or '0.00')) if tot else Decimal('0.00')
+        elif l.id in tax_ids:
+            tot = tax_totals.get(l.id)
             dr = Decimal(str(tot['total_dr'] or '0.00')) if tot else Decimal('0.00')
             cr = Decimal(str(tot['total_cr'] or '0.00')) if tot else Decimal('0.00')
         else:
@@ -234,9 +260,10 @@ class LedgerListView(APIView):
 
             # Financial Year Scoping
             start_date, end_date = resolve_fy_dates(request, company)
+            scope_taxes = request.query_params.get('scope_taxes', '').lower() in ('1', 'true', 'yes')
             scoped_balances = None
             if start_date or end_date:
-                scoped_balances = compute_scoped_ledger_balances(company, start_date, end_date)
+                scoped_balances = compute_scoped_ledger_balances(company, start_date, end_date, scope_taxes=scope_taxes)
 
             data = []
             for l in ledgers:

@@ -1,6 +1,6 @@
 "use client";
 import { API_BASE_URL } from '@/utils/api';
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -11,10 +11,33 @@ import { useCompany } from "@/context/CompanyContext";
 import { useFinancialYear } from "@/context/FinancialYearContext";
 import EditPurchaseInvoiceModal from "@/components/modals/EditPurchaseInvoiceModal";
 import ConfirmModal from "@/components/modals/ConfirmModal";
-import { Edit2, Trash2, Eye, FileText, Plus, ChevronLeft, ChevronRight, AlertCircle, RefreshCw, CheckCircle, AlertTriangle, CloudOff } from "lucide-react";
+import {
+  Edit2,
+  Trash2,
+  Eye,
+  FileText,
+  Plus,
+  ChevronLeft,
+  ChevronRight,
+  AlertCircle,
+  RefreshCw,
+  CheckCircle,
+  AlertTriangle,
+  CloudOff,
+  TrendingUp,
+  ShoppingCart,
+  Calendar,
+  ArrowUpRight,
+  Scale,
+  Clock,
+  Filter,
+  ArrowRight,
+  Check
+} from "lucide-react";
 import { offlineDb } from "@/lib/db/offlineDb";
 import { retryFailedVoucher, pullIncrementalChanges } from "@/lib/sync/sync-worker";
 import { vouchersRepository } from "@/lib/data";
+import { PeriodPreset, computePeriodDateRange, formatFriendlyDate } from "@/utils/periodRanges";
 
 export default function PurchaseInvoiceList() {
   const router = useRouter();
@@ -29,6 +52,22 @@ export default function PurchaseInvoiceList() {
   const [pagination, setPagination] = useState<any>(null);
   const pageSize = 50;
 
+  // Period Selection & Overview State
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("ALL");
+  const [customStart, setCustomStart] = useState<string>("");
+  const [customEnd, setCustomEnd] = useState<string>("");
+  const [filterTableByPeriod, setFilterTableByPeriod] = useState<boolean>(false);
+  const [periodMetrics, setPeriodMetrics] = useState({
+    totalSales: 0,
+    salesCount: 0,
+    totalPurchases: 0,
+    purchaseCount: 0,
+    paidPurchases: 0,
+    unpaidPurchases: 0,
+    netMargin: 0,
+  });
+  const [loadingMetrics, setLoadingMetrics] = useState<boolean>(false);
+
   const [selectedVoucher, setSelectedVoucher] = useState<any | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
@@ -39,13 +78,92 @@ export default function PurchaseInvoiceList() {
   
   const [deleteConfirmParams, setDeleteConfirmParams] = useState<{ id: string, number: string } | null>(null);
 
+  const activeDateRange = useMemo(() => {
+    return computePeriodDateRange(periodPreset, activeFY, customStart, customEnd);
+  }, [periodPreset, activeFY, customStart, customEnd]);
+
+  const calculatePeriodMetrics = useCallback(async (targetCompanyId?: string) => {
+    let companyId = targetCompanyId || activeCompanyId;
+    if (!companyId && typeof window !== "undefined") {
+      companyId = localStorage.getItem("vouch_active_company_id");
+    }
+    if (!companyId) return;
+
+    setLoadingMetrics(true);
+    try {
+      let vouchers = await offlineDb.syncedVouchers
+        .where("companyId")
+        .equals(companyId)
+        .toArray();
+
+      if (!vouchers || vouchers.length === 0) {
+        const token = getAccessToken();
+        if (token) {
+          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
+          const res = await axios.get(
+            `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?limit=500&type=SALES,PURCHASE`,
+            { headers, timeout: 5000 }
+          ).catch(() => null);
+          if (res?.data?.data && Array.isArray(res.data.data)) {
+            vouchers = res.data.data;
+          }
+        }
+      }
+
+      const { startDate, endDate } = activeDateRange;
+
+      let salesTot = 0;
+      let salesCnt = 0;
+      let purchasesTot = 0;
+      let purchasesCnt = 0;
+      let paidPurchases = 0;
+
+      for (const v of vouchers) {
+        const st = String(v.status || "").toUpperCase();
+        if (st === "CANCELLED" || st === "REVERSED" || st === "SUPERSEDED") continue;
+
+        const vDate = v.voucherDate || (v as any).voucher_date || (v as any).date || "";
+        if (startDate && vDate < startDate) continue;
+        if (endDate && vDate > endDate) continue;
+
+        const vType = String(v.voucherType || (v as any).voucher_type || (v as any).type || "").toUpperCase();
+        const tot = Number(v.totalAmount !== undefined && v.totalAmount !== null ? v.totalAmount : (v as any).total_amount) || 0;
+        const paid = Number(v.paidAmount !== undefined && v.paidAmount !== null ? v.paidAmount : (v as any).paid_amount) || 0;
+
+        if (vType === "SALES") {
+          salesTot += tot;
+          salesCnt += 1;
+        } else if (vType === "PURCHASE") {
+          purchasesTot += tot;
+          purchasesCnt += 1;
+          paidPurchases += paid;
+        }
+      }
+
+      setPeriodMetrics({
+        totalSales: Math.round(salesTot * 100) / 100,
+        salesCount: salesCnt,
+        totalPurchases: Math.round(purchasesTot * 100) / 100,
+        purchaseCount: purchasesCnt,
+        paidPurchases: Math.round(paidPurchases * 100) / 100,
+        unpaidPurchases: Math.round(Math.max(0, purchasesTot - paidPurchases) * 100) / 100,
+        netMargin: Math.round((salesTot - purchasesTot) * 100) / 100,
+      });
+    } catch (err) {
+      console.error("calculatePeriodMetrics error:", err);
+    } finally {
+      setLoadingMetrics(false);
+    }
+  }, [activeCompanyId, activeDateRange]);
+
   useEffect(() => {
     if (!isAuthenticated()) {
       router.push("/login");
       return;
     }
     fetchInvoices(1);
-  }, [router, activeCompanyId, activeFY?.id]);
+    calculatePeriodMetrics();
+  }, [router, activeCompanyId, activeFY?.id, filterTableByPeriod, activeDateRange.startDate, activeDateRange.endDate]);
 
   const fetchInvoices = async (targetPage: number = page) => {
     setLoading(true);
@@ -71,13 +189,23 @@ export default function PurchaseInvoiceList() {
         return;
       }
 
+      const dateFilters = filterTableByPeriod
+        ? {
+            startDate: activeDateRange.startDate,
+            endDate: activeDateRange.endDate,
+            financialYearId: undefined,
+          }
+        : {
+            financialYearId: activeFY?.id,
+            startDate: activeFY?.start_date,
+            endDate: activeFY?.end_date,
+          };
+
       const result = await vouchersRepository.getPurchaseInvoices(companyId, {
         page: targetPage,
         pageSize,
         status: "ACTIVE",
-        financialYearId: activeFY?.id,
-        startDate: activeFY?.start_date,
-        endDate: activeFY?.end_date,
+        ...dateFilters,
       });
 
       setInvoices(result.data);
@@ -99,9 +227,7 @@ export default function PurchaseInvoiceList() {
             page: targetPage,
             pageSize,
             status: "ACTIVE",
-            financialYearId: activeFY?.id,
-            startDate: activeFY?.start_date,
-            endDate: activeFY?.end_date,
+            ...dateFilters,
           }).then((fresh) => {
             setInvoices(fresh.data);
             setPagination({
@@ -112,6 +238,7 @@ export default function PurchaseInvoiceList() {
               total_pages: fresh.totalPages,
               has_more: fresh.hasMore ?? (targetPage < fresh.totalPages),
             });
+            calculatePeriodMetrics(companyId);
           });
         }
       }).catch(() => {});
@@ -299,11 +426,273 @@ export default function PurchaseInvoiceList() {
           </Link>
         </div>
 
+        {/* Period Performance & Overview Section */}
+        <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/40 p-4 sm:p-5 space-y-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-border/40 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-500">
+                <Calendar className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-base font-bold text-foreground">Period Performance &amp; Sales Overview</h2>
+                  <span className="text-[11px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full font-medium">
+                    {activeDateRange.formattedRange}
+                  </span>
+                  {loadingMetrics && (
+                    <RefreshCw className="w-3.5 h-3.5 text-muted-foreground animate-spin" />
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Track sales revenue vs purchase expense across selected timeframes
+                </p>
+              </div>
+            </div>
+
+            {/* Period presets and table filter toggle */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 bg-muted/70 p-1 rounded-xl border border-border/50 text-xs overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setPeriodPreset("ALL")}
+                  className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                    periodPreset === "ALL"
+                      ? "bg-background text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Full FY
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPeriodPreset("THIS_MONTH")}
+                  className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                    periodPreset === "THIS_MONTH"
+                      ? "bg-background text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  This Month
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPeriodPreset("LAST_MONTH")}
+                  className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                    periodPreset === "LAST_MONTH"
+                      ? "bg-background text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Last Month
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPeriodPreset("THIS_QUARTER")}
+                  className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                    periodPreset === "THIS_QUARTER"
+                      ? "bg-background text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  This Quarter
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPeriodPreset("TODAY")}
+                  className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                    periodPreset === "TODAY"
+                      ? "bg-background text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPeriodPreset("CUSTOM")}
+                  className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                    periodPreset === "CUSTOM"
+                      ? "bg-background text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Custom
+                </button>
+              </div>
+
+              {/* Table filter sync switch */}
+              <button
+                type="button"
+                onClick={() => setFilterTableByPeriod(!filterTableByPeriod)}
+                className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  filterTableByPeriod
+                    ? "bg-primary/10 text-primary border-primary/30 shadow-xs"
+                    : "bg-muted/40 text-muted-foreground border-border/60 hover:text-foreground"
+                }`}
+                title="When enabled, the previous invoices list below will strictly show bills within this period"
+              >
+                <Filter className="w-3.5 h-3.5" />
+                <span>Filter Table</span>
+                <span className={`w-2 h-2 rounded-full ${filterTableByPeriod ? "bg-primary" : "bg-muted-foreground/40"}`} />
+              </button>
+            </div>
+          </div>
+
+          {/* Custom Date Picker row if CUSTOM selected */}
+          {periodPreset === "CUSTOM" && (
+            <div className="flex flex-wrap items-center gap-3 bg-muted/30 p-3 rounded-xl border border-border/40 text-xs">
+              <span className="font-semibold text-muted-foreground">Select Date Range:</span>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">From</span>
+                <input
+                  type="date"
+                  value={customStart}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  className="bg-background border border-border rounded-lg px-2.5 py-1 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">To</span>
+                <input
+                  type="date"
+                  value={customEnd}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  className="bg-background border border-border rounded-lg px-2.5 py-1 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              {(customStart || customEnd) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomStart("");
+                    setCustomEnd("");
+                  }}
+                  className="text-xs text-muted-foreground hover:text-foreground underline cursor-pointer"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* 4 Summary Cards Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+            {/* Card 1: Total Sales */}
+            <div className="bg-muted/20 border border-emerald-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-emerald-500/40 transition-all">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-500 tracking-wider uppercase">
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  <span>Total Sales</span>
+                </div>
+                <Link
+                  href="/sales"
+                  className="text-[11px] font-semibold text-emerald-500 hover:text-emerald-400 hover:underline flex items-center gap-0.5"
+                  title="Go to Sales Invoices"
+                >
+                  <span>Invoices</span>
+                  <ArrowRight className="w-3 h-3" />
+                </Link>
+              </div>
+              <div>
+                <p className="text-2xl sm:text-3xl font-black text-foreground font-mono">
+                  ₹{periodMetrics.totalSales.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </p>
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
+                  <span>{periodMetrics.salesCount} sales invoices</span>
+                  <span>Avg: ₹{periodMetrics.salesCount > 0 ? Math.round(periodMetrics.totalSales / periodMetrics.salesCount).toLocaleString("en-IN") : "0"}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 2: Total Purchases */}
+            <div className="bg-muted/20 border border-blue-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-blue-500/40 transition-all">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-blue-500 tracking-wider uppercase">
+                  <ShoppingCart className="w-3.5 h-3.5" />
+                  <span>Total Purchases</span>
+                </div>
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  Inward
+                </span>
+              </div>
+              <div>
+                <p className="text-2xl sm:text-3xl font-black text-foreground font-mono">
+                  ₹{periodMetrics.totalPurchases.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </p>
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
+                  <span>{periodMetrics.purchaseCount} purchase bills</span>
+                  <span>Avg: ₹{periodMetrics.purchaseCount > 0 ? Math.round(periodMetrics.totalPurchases / periodMetrics.purchaseCount).toLocaleString("en-IN") : "0"}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 3: Net Trade Spread (Sales - Purchases) */}
+            <div className="bg-muted/20 border border-purple-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-purple-500/40 transition-all">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-purple-400 tracking-wider uppercase">
+                  <Scale className="w-3.5 h-3.5" />
+                  <span>Net Trade Spread</span>
+                </div>
+                <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                  periodMetrics.netMargin >= 0
+                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                    : "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                }`}>
+                  {periodMetrics.netMargin >= 0 ? "Surplus" : "Inflow"}
+                </span>
+              </div>
+              <div>
+                <p className={`text-2xl sm:text-3xl font-black font-mono ${
+                  periodMetrics.netMargin >= 0 ? "text-emerald-500" : "text-blue-400"
+                }`}>
+                  {periodMetrics.netMargin >= 0 ? "+" : ""}₹{periodMetrics.netMargin.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 truncate" title={periodMetrics.netMargin >= 0 ? "Sales exceed purchases in this period" : "Purchases exceed sales in this period"}>
+                  {periodMetrics.netMargin >= 0 ? "Sales exceed purchases" : "Purchases exceed sales"}
+                </p>
+              </div>
+            </div>
+
+            {/* Card 4: Unpaid Purchases (To Pay in Period) */}
+            <div className="bg-muted/20 border border-amber-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-amber-500/40 transition-all">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-500 tracking-wider uppercase">
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Unpaid In Period</span>
+                </div>
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  Payable
+                </span>
+              </div>
+              <div>
+                <p className="text-2xl sm:text-3xl font-black text-amber-500 dark:text-amber-400 font-mono">
+                  ₹{periodMetrics.unpaidPurchases.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </p>
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
+                  <span>Paid: ₹{periodMetrics.paidPurchases.toLocaleString("en-IN")}</span>
+                  <span>Due: ₹{periodMetrics.unpaidPurchases.toLocaleString("en-IN")}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Invoices Table Card */}
         <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/40 flex-1 overflow-hidden flex flex-col">
           <div className="px-4 sm:px-5 py-3.5 border-b border-border/70 bg-muted/20 flex items-center justify-between">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Previous Invoices</span>
-            <span className="text-xs text-muted-foreground hidden sm:inline">Click any row to inspect original bill & line items</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Previous Invoices</span>
+              {filterTableByPeriod && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">
+                  Filtered: {activeDateRange.formattedRange}
+                </span>
+              )}
+            </div>
+            <span className="text-xs text-muted-foreground hidden sm:inline">Click any row to inspect original bill &amp; line items</span>
           </div>
 
           {loading ? (

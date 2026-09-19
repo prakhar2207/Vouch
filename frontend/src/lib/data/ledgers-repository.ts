@@ -10,6 +10,7 @@ export interface LedgerQueryOptions {
   startDate?: string;
   endDate?: string;
   asOfDate?: string;
+  scopeTaxes?: boolean;
   forceRemote?: boolean;
 }
 
@@ -61,6 +62,7 @@ export class LedgersRepository {
           if (options.startDate) params.start_date = options.startDate;
           if (options.endDate) params.end_date = options.endDate;
           if (options.asOfDate) params.as_of_date = options.asOfDate;
+          if (options.scopeTaxes) params.scope_taxes = "true";
           const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${companyId}/`, { headers, params, timeout: 6000 });
           const raw = res.data?.data || (Array.isArray(res.data) ? res.data : []);
           if (raw.length > 0) {
