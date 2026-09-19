@@ -9,7 +9,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useShortcuts } from '@/context/ShortcutContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
 import { useToast } from '@/context/ToastContext';
-import { ChevronDown, ScanBarcode, AlertTriangle, CheckCircle2, ArrowRight, Hash } from 'lucide-react';
+import { ChevronDown, ScanBarcode, AlertTriangle, CheckCircle2, ArrowRight, Hash, Plus } from 'lucide-react';
 import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
 
@@ -1289,18 +1289,18 @@ export default function SalesPage() {
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
                     <span>Customer Discount: <strong className="text-foreground font-mono">{Number(selectedParty.discount_percent)}%</strong></span>
                   </div>
-                  <span className="text-[11px] text-zinc-400">Applied automatically • Editable below</span>
+                  <span className="text-[11px] text-muted-foreground">Applied automatically • Editable below</span>
                 </div>
               )}
               {selectedParty && Number(selectedParty.credit_limit || 0) > 0 && (Number(selectedParty.current_balance || 0) + grandTotal) > Number(selectedParty.credit_limit) && (
-                <div className="mt-2 text-xs flex items-center justify-between text-amber-300 bg-amber-500/10 border border-amber-500/30 px-3 py-2 rounded-lg">
+                <div className="mt-2 text-xs flex items-center justify-between text-amber-600 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 px-3 py-2 rounded-lg">
                   <div className="flex items-center gap-1.5 font-medium">
-                    <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                    <span className="w-2 h-2 rounded-full bg-amber-500"></span>
                     <span>
                       ⚠️ Credit Limit of ₹{Number(selectedParty.credit_limit).toLocaleString("en-IN")} exceeded by ₹{((Number(selectedParty.current_balance || 0) + grandTotal) - Number(selectedParty.credit_limit)).toLocaleString("en-IN")}.
                     </span>
                   </div>
-                  <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">Invoicing Permitted</span>
+                  <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold uppercase tracking-wider">Invoicing Permitted</span>
                 </div>
               )}
             </div>
@@ -1320,61 +1320,61 @@ export default function SalesPage() {
           {/* Ad-hoc Buyer Details Subform for Cash / Walk-in Customers */}
           <div className="mt-5 pt-4 border-t border-border">
             <div 
-              className="flex items-center justify-between cursor-pointer select-none bg-zinc-900/40 hover:bg-zinc-900/80 p-3 rounded-lg border border-border/80 transition-all"
+              className="flex items-center justify-between cursor-pointer select-none bg-muted/40 hover:bg-muted/70 p-3.5 rounded-xl border border-border/80 transition-all shadow-xs"
               onClick={() => setShowBuyerDetails(!showBuyerDetails)}
             >
               <div className="flex items-center gap-2.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                <span className="text-sm font-semibold text-zinc-200">Buyer Details (Optional — Cash / Counter Walk-in)</span>
-                <span className="text-[11px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-mono">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <span className="text-sm font-semibold text-foreground">Buyer Details (Optional — Cash / Counter Walk-in)</span>
+                <span className="text-[11px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-md font-mono font-medium">
                   Prints on bill without creating a Debtor
                 </span>
               </div>
-              <span className="text-xs text-zinc-400 hover:text-foreground font-medium">
+              <span className="text-xs text-muted-foreground hover:text-foreground font-medium">
                 {showBuyerDetails ? '▲ Hide Details' : '▼ Enter Walk-in Details'}
               </span>
             </div>
 
             {showBuyerDetails && (
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-zinc-900/40 border border-border/60 rounded-xl">
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-muted/30 border border-border rounded-xl">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1.5">Walk-in Buyer Name</label>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Walk-in Buyer Name</label>
                   <input
                     type="text"
                     value={buyerName}
                     onChange={e => setBuyerName(e.target.value)}
                     placeholder="e.g. Ramesh Kumar"
-                    className="w-full bg-muted/50 border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-zinc-600"
+                    className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-muted-foreground"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1.5">Mobile / Phone</label>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Mobile / Phone</label>
                   <input
                     type="text"
                     value={buyerPhone}
                     onChange={e => setBuyerPhone(e.target.value)}
                     placeholder="e.g. 9876543210"
-                    className="w-full bg-muted/50 border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-zinc-600"
+                    className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-muted-foreground"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1.5">GSTIN (Optional)</label>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">GSTIN (Optional)</label>
                   <input
                     type="text"
                     value={buyerGstin}
                     onChange={e => setBuyerGstin(e.target.value.toUpperCase())}
                     placeholder="Unregistered or 15-digit GSTIN"
-                    className="w-full bg-muted/50 border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none uppercase font-mono placeholder:text-zinc-600"
+                    className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none uppercase font-mono placeholder:text-muted-foreground"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1.5">Billing Address / City</label>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Billing Address / City</label>
                   <input
                     type="text"
                     value={buyerAddress}
                     onChange={e => setBuyerAddress(e.target.value)}
                     placeholder="City, State"
-                    className="w-full bg-muted/50 border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-zinc-600"
+                    className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-muted-foreground"
                   />
                 </div>
               </div>
@@ -1474,7 +1474,7 @@ export default function SalesPage() {
                                         const taxable = gross - discount;
                                         
                                         return (
-                                        <tr key={iIndex} className="hover:bg-zinc-800/40 transition-colors">
+                                        <tr key={iIndex} className="hover:bg-muted/40 transition-colors">
                                             <td className="p-2 relative">
                                                 <div className="relative">
                                                     <input 
@@ -1518,15 +1518,15 @@ export default function SalesPage() {
 
                                                                 if (filteredProds.length === 0) {
                                                                     return (
-                                                                        <div className="p-3 text-xs text-zinc-500 italic">
+                                                                        <div className="p-3 text-xs text-muted-foreground italic">
                                                                             No catalog product found. Enter details manually.
                                                                         </div>
                                                                     );
                                                                 }
 
                                                                 return (
-                                                                    <div className="divide-y divide-zinc-800/70">
-                                                                        <div className="bg-zinc-900/90 px-3 py-1.5 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider flex justify-between">
+                                                                    <div className="divide-y divide-border">
+                                                                        <div className="bg-muted px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex justify-between border-b border-border">
                                                                             <span>Catalog SKUs</span>
                                                                             <span>{filteredProds.length} match{filteredProds.length > 1 ? 'es' : ''}</span>
                                                                         </div>
@@ -1544,7 +1544,7 @@ export default function SalesPage() {
                                                                                         selectProduct(gIndex, iIndex, p);
                                                                                         setActiveSearch(null);
                                                                                     }}
-                                                                                    className={`w-full text-left p-2.5 hover:bg-zinc-800/90 flex items-center justify-between gap-3 cursor-pointer transition-colors ${
+                                                                                    className={`w-full text-left p-2.5 hover:bg-muted/80 flex items-center justify-between gap-3 cursor-pointer transition-colors ${
                                                                                         isSelected ? 'bg-blue-600/15 border-l-2 border-blue-500' : ''
                                                                                     }`}
                                                                                 >
@@ -1556,7 +1556,7 @@ export default function SalesPage() {
                                                                                                     {p.brand}
                                                                                                 </span>
                                                                                             ) : (
-                                                                                                <span className="text-[10px] px-1.5 py-0.2 rounded font-medium text-zinc-500 bg-muted/50 border border-border">
+                                                                                                <span className="text-[10px] px-1.5 py-0.2 rounded font-medium text-muted-foreground bg-muted border border-border">
                                                                                                     Unbranded
                                                                                                 </span>
                                                                                             )}
@@ -1566,12 +1566,12 @@ export default function SalesPage() {
                                                                                                 </span>
                                                                                             )}
                                                                                         </div>
-                                                                                        <div className="text-[11px] text-zinc-400 truncate mt-0.5">
+                                                                                        <div className="text-[11px] text-muted-foreground truncate mt-0.5">
                                                                                             {p.category} {p.sku ? `• SKU: ${p.sku}` : ''}
                                                                                         </div>
                                                                                     </div>
                                                                                     <div className="text-right whitespace-nowrap pl-2">
-                                                                                        <div className="text-xs font-mono font-bold text-zinc-300">
+                                                                                        <div className="text-xs font-mono font-bold text-foreground">
                                                                                             {mrp > 0 ? `MRP: ₹${mrp.toFixed(2)}` : 'No MRP'}
                                                                                         </div>
                                                                                         {pPast && (
@@ -1601,14 +1601,14 @@ export default function SalesPage() {
                                                                 (item.product_id && p.id === item.product_id) || 
                                                                 (p.name.toLowerCase() === String(item.product_name || '').trim().toLowerCase() && 
                                                                  (!item.brand || (p.brand || '').toLowerCase() === item.brand.toLowerCase()))
-                                                            );
+                             );
                                                             const catalogMrp = parseFloat(matched?.selling_price || item.mrp || 0);
                                                             
                                                             if (catalogMrp > 0) {
                                                                 return (
-                                                                    <span className="text-[11px] font-mono flex items-center gap-1 bg-zinc-900/90 text-zinc-400 border border-border px-2 py-0.5 rounded">
-                                                                        <span className="text-zinc-500 font-sans">MRP:</span>
-                                                                        <strong className="text-zinc-200">₹{catalogMrp.toFixed(2)}</strong>
+                                                                    <span className="text-[11px] font-mono flex items-center gap-1 bg-muted/60 text-muted-foreground border border-border px-2 py-0.5 rounded">
+                                                                        <span className="text-muted-foreground font-sans">MRP:</span>
+                                                                        <strong className="text-foreground">₹{catalogMrp.toFixed(2)}</strong>
                                                                         {Number(item.rate) !== catalogMrp && (
                                                                             <button
                                                                                 type="button"
@@ -1622,7 +1622,7 @@ export default function SalesPage() {
                                                                     </span>
                                                                 );
                                                             }
-                                                            return <span className="text-[11px] text-zinc-500 italic">No MRP stored</span>;
+                                                            return <span className="text-[11px] text-muted-foreground italic">No MRP stored</span>;
                                                         })()}
 
                                                         {/* Party's Remembered Past Sales Rate */}
@@ -1693,8 +1693,8 @@ export default function SalesPage() {
                                                                             sameNameProducts.length > 1
                                                                                 ? 'bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border-blue-500/50 shadow-sm shadow-blue-500/10'
                                                                                 : item.brand
-                                                                                ? 'bg-muted hover:bg-zinc-700 text-zinc-200 border-input'
-                                                                                : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                                                                ? 'bg-muted hover:bg-muted/80 text-foreground border-input'
+                                                                                : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-300 border-amber-500/30'
                                                                         }`}
                                                                         title="Click to select or change brand"
                                                                     >
@@ -1709,17 +1709,17 @@ export default function SalesPage() {
 
                                                                     {isBrandOpen && (
                                                                         <div 
-                                                                            className="absolute left-0 top-full mt-1 z-50 bg-zinc-950 border border-input rounded-xl shadow-2xl p-2 min-w-[240px] max-h-64 overflow-y-auto"
+                                                                            className="absolute left-0 top-full mt-1 z-50 bg-popover text-popover-foreground border border-border rounded-xl shadow-2xl p-2 min-w-[240px] max-h-64 overflow-y-auto"
                                                                             onClick={(e) => e.stopPropagation()}
                                                                         >
-                                                                            <div className="text-[10px] uppercase font-bold text-zinc-400 px-2 py-1 border-b border-border mb-1 flex items-center justify-between">
+                                                                            <div className="text-[10px] uppercase font-bold text-muted-foreground px-2 py-1 border-b border-border mb-1 flex items-center justify-between">
                                                                                 <span>Brand for "{item.product_name}"</span>
-                                                                                <span className="text-[9px] text-zinc-500">Auto-links Rate & Stock</span>
+                                                                                <span className="text-[9px] text-muted-foreground">Auto-links Rate & Stock</span>
                                                                             </div>
 
                                                                             {sameNameProducts.length > 0 && (
                                                                                 <div className="space-y-1 mb-2">
-                                                                                    <div className="text-[9px] font-semibold text-blue-400 px-2 uppercase">Brand SKUs:</div>
+                                                                                    <div className="text-[9px] font-semibold text-blue-500 dark:text-blue-400 px-2 uppercase">Brand SKUs:</div>
                                                                                     {sameNameProducts.map((snp: any) => {
                                                                                         const snpMrp = parseFloat(snp.selling_price || 0);
                                                                                         const snpStock = Number(snp.stock_quantity ?? 0);
@@ -1733,25 +1733,25 @@ export default function SalesPage() {
                                                                                                     selectProduct(gIndex, iIndex, snp);
                                                                                                     setOpenBrandDropdown(null);
                                                                                                 }}
-                                                                                                className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between gap-2 hover:bg-zinc-800/90 cursor-pointer transition-colors ${
-                                                                                                    isCurrent ? 'bg-blue-600/20 text-blue-300 font-bold border border-blue-500/40' : 'text-zinc-200'
+                                                                                                className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between gap-2 hover:bg-muted cursor-pointer transition-colors ${
+                                                                                                    isCurrent ? 'bg-primary/15 text-primary font-bold border border-primary/30' : 'text-foreground'
                                                                                                 }`}
                                                                                             >
                                                                                                 <div className="flex items-center gap-1.5">
                                                                                                     <span className="font-semibold">{snp.brand || 'Unbranded'}</span>
                                                                                                     {isCurrent && <span className="text-[9px] bg-blue-500 text-foreground px-1 rounded">Active</span>}
                                                                                                 </div>
-                                                                                                <div className="text-[10px] text-right text-zinc-400">
+                                                                                                <div className="text-[10px] text-right text-muted-foreground">
                                                                                                     <div>MRP: ₹{snpMrp.toFixed(2)}</div>
                                                                                                     {(() => {
                                                                                                         const snpKeyBrand = `${(snp.name || '').trim().toLowerCase()}|${(snp.brand || '').trim().toLowerCase()}`;
                                                                                                         const snpPast = (snp.id && partyRates[snp.id]) || partyRates[snpKeyBrand];
                                                                                                         if (snpPast) {
-                                                                                                            return <div className="text-emerald-400 font-bold">Party: ₹{Number(snpPast.rate).toFixed(2)}</div>;
+                                                                                                            return <div className="text-emerald-500 dark:text-emerald-400 font-bold">Party: ₹{Number(snpPast.rate).toFixed(2)}</div>;
                                                                                                         }
                                                                                                         return null;
                                                                                                     })()}
-                                                                                                    <div className={snpStock > 0 ? 'text-emerald-400 font-mono' : 'text-rose-400 font-mono'}>
+                                                                                                    <div className={snpStock > 0 ? 'text-emerald-500 dark:text-emerald-400 font-mono' : 'text-rose-500 dark:text-rose-400 font-mono'}>
                                                                                                         {snpStock} {snp.unit || 'PCS'}
                                                                                                     </div>
                                                                                                 </div>
@@ -1764,7 +1764,7 @@ export default function SalesPage() {
                                                                             {/* All other catalog brands */}
                                                                             {allCategoryBrands.filter(b => !sameNameProducts.some((snp: any) => snp.brand?.toLowerCase() === b.toLowerCase())).length > 0 && (
                                                                                 <div className="pt-1 border-t border-border/80 mb-2">
-                                                                                    <div className="text-[9px] font-semibold text-zinc-500 px-2 mb-1 uppercase">Other Brands:</div>
+                                                                                    <div className="text-[9px] font-semibold text-muted-foreground px-2 mb-1 uppercase">Other Brands:</div>
                                                                                     <div className="flex flex-wrap gap-1 px-1">
                                                                                         {allCategoryBrands
                                                                                             .filter(b => !sameNameProducts.some((snp: any) => snp.brand?.toLowerCase() === b.toLowerCase()))
@@ -1776,7 +1776,7 @@ export default function SalesPage() {
                                                                                                         selectBrand(gIndex, iIndex, b);
                                                                                                         setOpenBrandDropdown(null);
                                                                                                     }}
-                                                                                                    className="text-[10px] px-2 py-0.5 bg-muted/50 hover:bg-muted text-zinc-300 rounded border border-border hover:border-input cursor-pointer"
+                                                                                                    className="text-[10px] px-2 py-0.5 bg-muted/60 hover:bg-muted text-foreground rounded border border-border hover:border-input cursor-pointer"
                                                                                                 >
                                                                                                     {b}
                                                                                                 </button>
@@ -1787,7 +1787,7 @@ export default function SalesPage() {
 
                                                                             {/* Custom Brand input */}
                                                                             <div className="pt-1.5 border-t border-border">
-                                                                                <div className="text-[9px] font-semibold text-zinc-500 px-1 mb-1 uppercase">Custom Brand:</div>
+                                                                                <div className="text-[9px] font-semibold text-muted-foreground px-1 mb-1 uppercase">Custom Brand:</div>
                                                                                 <div className="flex gap-1">
                                                                                     <input
                                                                                         type="text"
@@ -1909,18 +1909,20 @@ export default function SalesPage() {
                                 </tbody>
                             </table>
                         </div>
-                        <div className="p-3 bg-zinc-900/30 border-t border-border">
-                            <button onClick={() => addRow(gIndex)} className="text-sm text-blue-500 hover:text-blue-400 font-medium flex items-center gap-1">
-                                + Add item in {categories.find(c=>c.id===group.category_id)?.name || 'this category'}
+                        <div className="p-3 bg-muted/20 border-t border-border/60">
+                            <button onClick={() => addRow(gIndex)} className="text-sm text-primary hover:text-primary/80 font-semibold flex items-center gap-1.5 transition-colors cursor-pointer">
+                                <Plus className="w-4 h-4" />
+                                <span>Add item in {categories.find(c=>c.id===group.category_id)?.name || 'this category'}</span>
                             </button>
                         </div>
                     </div>
                 ))}
             </div>
             
-            <div className="p-4 border-t border-border bg-zinc-900/20">
-                <button onClick={addCategoryGroup} className="text-sm text-foreground bg-muted hover:bg-zinc-700 border border-input px-4 py-2 rounded shadow transition-colors font-medium">
-                    + Add Another Category Block
+            <div className="p-4 border-t border-border bg-muted/20 flex items-center">
+                <button onClick={addCategoryGroup} className="text-sm text-foreground bg-card hover:bg-accent border border-border hover:border-input px-4 py-2 rounded-xl shadow-xs transition-colors font-semibold flex items-center gap-2 cursor-pointer">
+                    <Plus className="w-4 h-4 text-primary" />
+                    <span>Add Another Category Block</span>
                 </button>
             </div>
         </div>
