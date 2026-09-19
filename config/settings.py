@@ -212,6 +212,8 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'x-company-id',
     'company-id',
     'x-financial-year',
+    'x-financial-year-id',
+    'financial-year-id',
     'x-period',
     'x-gemini-key',
     'x-csrftoken',
