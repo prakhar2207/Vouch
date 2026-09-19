@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.db.models import Q
 from decimal import Decimal
 from django.utils import timezone
@@ -168,6 +168,15 @@ class CreateSalesInvoiceAPIView(APIView):
                 }
             }, status=status.HTTP_201_CREATED)
             
+        except ValidationError as e:
+            msg = e.message if hasattr(e, 'message') else (e.messages[0] if hasattr(e, 'messages') and e.messages else str(e))
+            return Response({"success": False, "error": msg}, status=status.HTTP_400_BAD_REQUEST)
+        except IntegrityError as ie:
+            msg = str(ie)
+            if "accounting_voucher_company_id_financial_yea" in msg or "voucher_number" in msg:
+                v_num = data.get('voucher_number', 'this number')
+                return Response({"success": False, "error": f'Invoice number "{v_num}" already exists in this financial year. Please use a unique invoice number.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"success": False, "error": str(ie)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 

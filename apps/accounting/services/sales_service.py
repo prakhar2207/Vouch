@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
 from apps.companies.models import Company
@@ -78,11 +79,14 @@ class SalesInvoiceService:
             calculated_due_date = datetime.date.fromisoformat(calculated_due_date.split('T')[0])
 
         if manual_voucher_number:
-            v_num = manual_voucher_number
+            v_num = str(manual_voucher_number).strip()
             fy = InvoiceSequenceService.get_or_create_active_fy(company, v_date)
+            # Check duplicate manual invoice number in this financial year
+            if Voucher.objects.filter(company=company, financial_year=fy, voucher_number__iexact=v_num).exists():
+                raise ValidationError(f'Invoice number "{v_num}" already exists in financial year {fy.name}. Please use a unique invoice number or switch to automatic numbering.')
             # Advance sequence counter so future auto-generated numbers don't collide
             import re
-            m = re.search(r'(\d+)$', str(manual_voucher_number).strip())
+            m = re.search(r'(\d+)$', v_num)
             if m:
                 try:
                     num_val = int(m.group(1))
