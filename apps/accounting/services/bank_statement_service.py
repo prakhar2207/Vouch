@@ -751,6 +751,23 @@ class BankStatementService:
                                             if not has_desc_credit:
                                                 deb = cred
                                                 cred = Decimal('0.00')
+                                    if deb > Decimal('0.00') and cred > Decimal('0.00'):
+                                        if bal is not None and abs(cred - bal) <= Decimal('0.05'):
+                                            cred = Decimal('0.00')
+                                        elif bal is not None and abs(deb - bal) <= Decimal('0.05'):
+                                            deb = Decimal('0.00')
+                                        elif has_desc_debit:
+                                            cred = Decimal('0.00')
+                                        elif has_desc_credit:
+                                            deb = Decimal('0.00')
+                                        elif prev_balance is not None and bal is not None:
+                                            if bal < prev_balance:
+                                                cred = Decimal('0.00')
+                                            else:
+                                                deb = Decimal('0.00')
+                                        else:
+                                            cred = Decimal('0.00')
+
                                     if bal is not None:
                                         prev_balance = bal
 
@@ -966,13 +983,42 @@ class BankStatementService:
             has_debit = bool(is_debit_re.search(upper_block))
 
             if len(amts) >= 3:
-                if deposit_col_first:
-                    credit = cls.clean_amount_str(amts[0])
-                    debit = cls.clean_amount_str(amts[1])
+                # In banking statements, a single transaction row is NEVER both a Debit and a Credit.
+                # In multi-column extraction, the last amount is the running balance.
+                bal = cls.clean_amount_str(amts[-1])
+                candidate_amts = [cls.clean_amount_str(a) for a in amts[:-1]]
+                # Exclude any candidate amounts that duplicate the running balance
+                non_bal_amts = [a for a in candidate_amts if a > 0 and (bal is None or abs(a - bal) > Decimal('0.05'))]
+                amt_val = non_bal_amts[0] if non_bal_amts else (candidate_amts[0] if candidate_amts else Decimal('0.00'))
+
+                if has_credit and not has_debit:
+                    credit = amt_val
+                    debit = Decimal('0.00')
+                elif has_debit and not has_credit:
+                    debit = amt_val
+                    credit = Decimal('0.00')
+                elif prev_balance is not None and bal is not None:
+                    delta = bal - prev_balance
+                    if is_od_statement:
+                        if abs(delta - (-amt_val)) <= Decimal('0.05') or delta < -Decimal('0.01'):
+                            credit = amt_val
+                            debit = Decimal('0.00')
+                        else:
+                            debit = amt_val
+                            credit = Decimal('0.00')
+                    else:
+                        if abs(delta - amt_val) <= Decimal('0.05') or delta > Decimal('0.01'):
+                            credit = amt_val
+                            debit = Decimal('0.00')
+                        else:
+                            debit = amt_val
+                            credit = Decimal('0.00')
+                elif deposit_col_first:
+                    credit = amt_val
+                    debit = Decimal('0.00')
                 else:
-                    debit = cls.clean_amount_str(amts[0])
-                    credit = cls.clean_amount_str(amts[1])
-                bal = cls.clean_amount_str(amts[2])
+                    debit = amt_val
+                    credit = Decimal('0.00')
             elif len(amts) == 2:
                 amt_val = cls.clean_amount_str(amts[0])
                 bal = cls.clean_amount_str(amts[1])
@@ -1016,6 +1062,18 @@ class BankStatementService:
                     debit = amt_val
                 else:
                     credit = amt_val
+
+            if debit > Decimal('0.00') and credit > Decimal('0.00'):
+                if bal is not None and abs(credit - bal) <= Decimal('0.05'):
+                    credit = Decimal('0.00')
+                elif bal is not None and abs(debit - bal) <= Decimal('0.05'):
+                    debit = Decimal('0.00')
+                elif has_debit:
+                    credit = Decimal('0.00')
+                elif has_credit:
+                    debit = Decimal('0.00')
+                else:
+                    credit = Decimal('0.00')
 
             if bal is not None:
                 prev_balance = bal
@@ -1323,10 +1381,30 @@ class BankStatementService:
             curr_row = valid_rows[i]
             prev_bal = prev_row.get("balance")
             curr_bal = curr_row.get("balance")
+            c_deb = curr_row.get("debit") or Decimal('0.00')
+            c_cred = curr_row.get("credit") or Decimal('0.00')
+
+            # Ensure mutual exclusion between debit and credit
+            if c_deb > Decimal('0.00') and c_cred > Decimal('0.00'):
+                if curr_bal is not None and abs(c_cred - curr_bal) <= Decimal('0.05'):
+                    curr_row["credit"] = Decimal('0.00')
+                    c_cred = Decimal('0.00')
+                elif curr_bal is not None and abs(c_deb - curr_bal) <= Decimal('0.05'):
+                    curr_row["debit"] = Decimal('0.00')
+                    c_deb = Decimal('0.00')
+                elif prev_bal is not None and curr_bal is not None:
+                    if curr_bal < prev_bal:
+                        curr_row["credit"] = Decimal('0.00')
+                        c_cred = Decimal('0.00')
+                    else:
+                        curr_row["debit"] = Decimal('0.00')
+                        c_deb = Decimal('0.00')
+                else:
+                    curr_row["credit"] = Decimal('0.00')
+                    c_cred = Decimal('0.00')
+
             if prev_bal is not None and curr_bal is not None:
                 diff = curr_bal - prev_bal
-                c_deb = curr_row.get("debit") or Decimal('0.00')
-                c_cred = curr_row.get("credit") or Decimal('0.00')
                 # Balance increased by approximately transaction amount -> must be credit (deposit / receipt)
                 if diff > Decimal('0.01') and c_deb > 0 and c_cred == 0 and abs(diff - c_deb) < Decimal('0.05'):
                     curr_row["credit"] = c_deb
@@ -1404,9 +1482,28 @@ class BankStatementService:
                     if deb_amt > 0 and cred_amt == 0:
                         cred_amt = deb_amt
                         deb_amt = Decimal('0.00')
+                    elif deb_amt > 0 and cred_amt > 0:
+                        deb_amt = Decimal('0.00')
                 elif cls.IS_DEBIT_REGEX.search(norm_desc) and not cls.IS_CREDIT_REGEX.search(norm_desc):
                     if cred_amt > 0 and deb_amt == 0:
                         deb_amt = cred_amt
+                        cred_amt = Decimal('0.00')
+                    elif deb_amt > 0 and cred_amt > 0:
+                        cred_amt = Decimal('0.00')
+
+                # Absolute hard guard: A bank transaction can NEVER have both debit and credit > 0.
+                # Enforces database check constraint: bank_tx_not_both_debit_and_credit
+                if deb_amt > Decimal('0.00') and cred_amt > Decimal('0.00'):
+                    row_bal = row.get('balance')
+                    if row_bal is not None and abs(cred_amt - row_bal) <= Decimal('0.05'):
+                        cred_amt = Decimal('0.00')
+                    elif row_bal is not None and abs(deb_amt - row_bal) <= Decimal('0.05'):
+                        deb_amt = Decimal('0.00')
+                    elif cls.IS_CREDIT_REGEX.search(norm_desc):
+                        deb_amt = Decimal('0.00')
+                    elif cls.IS_DEBIT_REGEX.search(norm_desc):
+                        cred_amt = Decimal('0.00')
+                    else:
                         cred_amt = Decimal('0.00')
 
                 primary_id = ref_no if ref_no else norm_desc
