@@ -416,6 +416,26 @@ export default function EditSalesInvoiceModal({
           "Sales Invoice updated successfully!",
           "Rates, discounts, ledger entries, and inventory stock have been recalculated."
         );
+
+        try {
+          const updatedVoucher = res.data.voucher;
+          const existing = await offlineDb.syncedVouchers.get(voucher.id);
+          if (existing) {
+            await offlineDb.syncedVouchers.update(voucher.id, {
+              voucherNumber: updatedVoucher?.voucher_number || invoiceNumber.trim(),
+              voucherDate: updatedVoucher?.voucher_date || invoiceDate,
+              partyName: updatedVoucher?.party_name || (isCustomParty ? partyName.trim() : (displayLedgers.find((l: any) => l.id === partyLedgerId)?.name || partyName.trim())),
+              partyLedgerId: isCustomParty ? null : (partyLedgerId || null),
+              totalAmount: updatedVoucher?.total_amount ? Number(updatedVoucher.total_amount) : grandTotal,
+              narration: narration.trim(),
+              status: (updatedVoucher?.status as any) || "POSTED",
+              serverUpdatedAt: Date.now(),
+            });
+          }
+        } catch (cacheErr) {
+          console.warn("Failed to update offlineDb synced voucher:", cacheErr);
+        }
+
         onUpdateSuccess();
         onClose();
       } else {
