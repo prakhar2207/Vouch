@@ -73,7 +73,7 @@ export class VouchersRepository {
       let healedTotAmt = totAmt;
       let healedRoundOff = v.roundOff ?? (v as any).round_off;
 
-      if (vType === "PURCHASE" && (totAmt % 1 !== 0 || healedRoundOff === undefined)) {
+      if ((vType === "PURCHASE" || vType === "SALES") && (totAmt % 1 !== 0 || healedRoundOff === undefined)) {
         if (totAmt % 1 !== 0) {
           const integerPart = Math.floor(totAmt);
           const decimalPart = Math.round((totAmt - integerPart) * 100) / 100;
