@@ -425,30 +425,13 @@ export default function SalesInvoiceList() {
 
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="font-semibold text-foreground text-xs truncate max-w-[180px]">{inv.party_name}</span>
-                      <div className="flex flex-col items-end font-mono">
-                        <span className="font-bold text-emerald-400 text-sm">
-                          ₹{(() => {
-                            const raw = parseFloat(inv.total_amount) || 0;
-                            const rounded = Math.abs(raw % 1) > 0 ? (raw % 1 < 0.5 ? Math.floor(raw) : Math.ceil(raw)) : raw;
-                            return rounded.toLocaleString('en-IN', { minimumFractionDigits: 2 });
-                          })()}
-                        </span>
-                        {(() => {
-                          const ro = inv.round_off !== undefined && inv.round_off !== null && inv.round_off !== 0
-                            ? Number(inv.round_off)
-                            : (inv.total_amount % 1 !== 0 ? Number((Math.round(inv.total_amount) - inv.total_amount).toFixed(2)) : 0);
-                          if (Math.abs(ro) >= 0.005) {
-                            return (
-                              <span className={`text-[10px] font-semibold ${
-                                ro < 0 ? "text-emerald-500" : "text-amber-500"
-                              }`}>
-                                R/O: {ro > 0 ? `+₹${ro.toFixed(2)}` : `-₹${Math.abs(ro).toFixed(2)}`}
-                              </span>
-                            );
-                          }
-                          return null;
+                      <span className="font-bold text-emerald-400 font-mono text-sm">
+                        ₹{(() => {
+                          const raw = parseFloat(inv.total_amount) || 0;
+                          const rounded = Math.abs(raw % 1) > 0 ? (raw % 1 < 0.5 ? Math.floor(raw) : Math.ceil(raw)) : raw;
+                          return rounded.toLocaleString('en-IN', { minimumFractionDigits: 2 });
                         })()}
-                      </div>
+                      </span>
                     </div>
 
                     <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-border/40">
@@ -511,28 +494,10 @@ export default function SalesInvoiceList() {
                         <td className="p-4 text-muted-foreground font-mono">{inv.date}</td>
                         <td className="p-4 text-foreground font-semibold text-sm">{inv.party_name}</td>
                         <td className="p-4 font-bold text-foreground text-right font-mono tabular-nums text-sm">
-                          <div>
-                            ₹{(() => {
-                              const raw = parseFloat(inv.total_amount) || 0;
-                              const rounded = Math.abs(raw % 1) > 0 ? (raw % 1 < 0.5 ? Math.floor(raw) : Math.ceil(raw)) : raw;
-                              return rounded.toLocaleString('en-IN', { minimumFractionDigits: 2 });
-                            })()}
-                          </div>
-                          {(() => {
-                            const ro = inv.round_off !== undefined && inv.round_off !== null && inv.round_off !== 0
-                              ? Number(inv.round_off)
-                              : (inv.total_amount % 1 !== 0 ? Number((Math.round(inv.total_amount) - inv.total_amount).toFixed(2)) : 0);
-                            if (Math.abs(ro) >= 0.005) {
-                              return (
-                                <div className={`text-[11px] font-semibold font-mono flex items-center justify-end gap-1 ${
-                                  ro < 0 ? "text-emerald-500" : "text-amber-500"
-                                }`}>
-                                  <span className="text-[10px] text-muted-foreground font-sans">R/O:</span>
-                                  <span>{ro > 0 ? `+₹${ro.toFixed(2)}` : `-₹${Math.abs(ro).toFixed(2)}`}</span>
-                                </div>
-                              );
-                            }
-                            return null;
+                          ₹{(() => {
+                            const raw = parseFloat(inv.total_amount) || 0;
+                            const rounded = Math.abs(raw % 1) > 0 ? (raw % 1 < 0.5 ? Math.floor(raw) : Math.ceil(raw)) : raw;
+                            return rounded.toLocaleString('en-IN', { minimumFractionDigits: 2 });
                           })()}
                         </td>
                         <td className="p-4 text-center">
