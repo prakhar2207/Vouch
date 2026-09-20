@@ -43,6 +43,7 @@ interface ExtractedInvoice {
   cgst_amount: number;
   sgst_amount: number;
   igst_amount: number;
+  round_off?: number;
   total_amount: number;
   category_detected?: string;
   requires_category_confirmation?: boolean;
@@ -60,6 +61,32 @@ interface PurchaseOcrSplitViewProps {
   companyId: string;
   onSuccess?: () => void;
 }
+
+const reconcileInvoiceTotals = (data: ExtractedInvoice): ExtractedInvoice => {
+  const sub = Number(data.subtotal || 0);
+  const taxes = Number(data.cgst_amount || 0) + Number(data.sgst_amount || 0) + Number(data.igst_amount || 0);
+  const unrounded = Number((sub + taxes).toFixed(2));
+  let roundOff = data.round_off;
+  let totalAmount = data.total_amount;
+
+  if (roundOff !== undefined && roundOff !== null && roundOff !== 0) {
+    totalAmount = Number((unrounded + roundOff).toFixed(2));
+  } else if (totalAmount !== undefined && totalAmount !== null && Math.abs(totalAmount - Math.round(totalAmount)) < 0.001 && totalAmount > 0) {
+    roundOff = Number((totalAmount - unrounded).toFixed(2));
+  } else {
+    const integerPart = Math.floor(unrounded);
+    const decimalPart = Math.round((unrounded - integerPart) * 100) / 100;
+    const roundedTot = decimalPart < 0.5 ? integerPart : integerPart + 1;
+    roundOff = Number((roundedTot - unrounded).toFixed(2));
+    totalAmount = roundedTot;
+  }
+
+  return {
+    ...data,
+    round_off: roundOff,
+    total_amount: totalAmount,
+  };
+};
 
 export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseOcrSplitViewProps) {
   const router = useRouter();
@@ -236,7 +263,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       const cached = await offlineDb.ocrCache.get(cacheKey);
       if (cached && cached.result) {
         console.log("[PWA Cache] Loaded purchase OCR result from local IndexedDB cache!");
-        const data: ExtractedInvoice = cached.result;
+        const data: ExtractedInvoice = reconcileInvoiceTotals(cached.result);
         setInvoice(data);
         setAutoFilled(true);
         setScanStatusToast("⚡ Loaded instantly from local cache (0ms)!");
@@ -308,7 +335,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
             });
           }
 
-          setInvoice(data);
+          const reconciled = reconcileInvoiceTotals(data);
+          setInvoice(reconciled);
           setAutoFilled(true);
           success = true;
           setScanStatusToast(null);
@@ -379,7 +407,11 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
     const cgst = invoice.cgst_amount > 0 ? Number((sub * 0.09).toFixed(2)) : 0;
     const sgst = invoice.sgst_amount > 0 ? Number((sub * 0.09).toFixed(2)) : 0;
     const igst = invoice.igst_amount > 0 ? Number((sub * 0.18).toFixed(2)) : 0;
-    const tot = Number((sub + cgst + sgst + igst).toFixed(2));
+    const unrounded = Number((sub + cgst + sgst + igst).toFixed(2));
+    const integerPart = Math.floor(unrounded);
+    const decimalPart = Math.round((unrounded - integerPart) * 100) / 100;
+    const roundedTot = decimalPart < 0.5 ? integerPart : integerPart + 1;
+    const autoRoundOff = Number((roundedTot - unrounded).toFixed(2));
 
     setInvoice({
       ...invoice,
@@ -388,7 +420,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       cgst_amount: cgst,
       sgst_amount: sgst,
       igst_amount: igst,
-      total_amount: tot,
+      round_off: autoRoundOff,
+      total_amount: roundedTot,
     });
   };
 
@@ -407,7 +440,39 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
     if (!invoice || invoice.line_items.length <= 1) return;
     const updated = invoice.line_items.filter((_, i) => i !== index);
     const sub = updated.reduce((s, i) => s + (Number(i.amount) || 0), 0);
-    setInvoice({ ...invoice, line_items: updated, subtotal: sub });
+    const cgst = invoice.cgst_amount > 0 ? Number((sub * 0.09).toFixed(2)) : 0;
+    const sgst = invoice.sgst_amount > 0 ? Number((sub * 0.09).toFixed(2)) : 0;
+    const igst = invoice.igst_amount > 0 ? Number((sub * 0.18).toFixed(2)) : 0;
+    const unrounded = Number((sub + cgst + sgst + igst).toFixed(2));
+    const integerPart = Math.floor(unrounded);
+    const decimalPart = Math.round((unrounded - integerPart) * 100) / 100;
+    const roundedTot = decimalPart < 0.5 ? integerPart : integerPart + 1;
+    const autoRoundOff = Number((roundedTot - unrounded).toFixed(2));
+
+    setInvoice({
+      ...invoice,
+      line_items: updated,
+      subtotal: sub,
+      cgst_amount: cgst,
+      sgst_amount: sgst,
+      igst_amount: igst,
+      round_off: autoRoundOff,
+      total_amount: roundedTot,
+    });
+  };
+
+  const handleRoundOffChange = (val: number) => {
+    if (!invoice) return;
+    const sub = Number(invoice.subtotal || 0);
+    const taxes = Number(invoice.cgst_amount || 0) + Number(invoice.sgst_amount || 0) + Number(invoice.igst_amount || 0);
+    const unrounded = Number((sub + taxes).toFixed(2));
+    const roundVal = isNaN(val) ? 0 : Number(val.toFixed(2));
+    const newTotal = Number((unrounded + roundVal).toFixed(2));
+    setInvoice({
+      ...invoice,
+      round_off: roundVal,
+      total_amount: newTotal,
+    });
   };
 
   const handleSaveToAccounting = async () => {
@@ -494,6 +559,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         voucher_number: invoice.invoice_number || undefined,
         party_ledger_id: partyLedgerId,
         items: formattedItems,
+        round_off: invoice.round_off ?? 0,
+        total_amount: invoice.total_amount,
         narration: `AI-Extracted Purchase Invoice from ${invoice.supplier_name} (#${invoice.invoice_number})`,
         attachment_data: fileBase64,
         attachment_mime: fileMimeType,
@@ -1181,6 +1248,29 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                     <span className="text-foreground font-medium">₹{invoice.igst_amount.toFixed(2)}</span>
                   </div>
                 )}
+                {/* Round Off Row directly above Grand Total */}
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <div className="flex items-center gap-1.5">
+                    <span>Round Off:</span>
+                    <span className="text-[10px] text-muted-foreground font-sans">(Adjustable)</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] text-muted-foreground">₹</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={invoice.round_off !== undefined && invoice.round_off !== null ? invoice.round_off : 0}
+                      onChange={(e) => handleRoundOffChange(parseFloat(e.target.value) || 0)}
+                      className={`w-20 text-right bg-background border border-input px-2 py-0.5 rounded text-xs font-mono font-semibold outline-none focus:ring-1 focus:ring-blue-500 ${
+                        (invoice.round_off ?? 0) < 0
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : (invoice.round_off ?? 0) > 0
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-foreground"
+                      }`}
+                    />
+                  </div>
+                </div>
                 <div className="flex justify-between text-base font-bold text-foreground border-t border-border pt-2">
                   <span>Grand Total:</span>
                   <span className="text-emerald-600 dark:text-emerald-400 font-bold">₹{invoice.total_amount.toFixed(2)}</span>

@@ -23,7 +23,8 @@ class PurchaseInvoiceService:
         voucher_date=None,
         cartage_amount: Decimal = Decimal('0.00'),
         cartage_ledger: Ledger = None,
-        exclude_voucher_id = None
+        exclude_voucher_id = None,
+        round_off: Decimal = None
     ):
         """
         End-to-End orchestration of a Purchase Invoice.
@@ -333,16 +334,26 @@ class PurchaseInvoiceService:
             cartage_amt = Decimal('0.00')
 
         # Round Off calculation:
-        # If decimal value < 0.5 then floor, if >= 0.5 then ceiling
+        # If manual round_off is explicitly provided: use it!
+        # Otherwise: If decimal value < 0.5 then floor, if >= 0.5 then ceiling
         unrounded_total = total_invoice_value + cartage_amt
-        integer_part = Decimal(int(unrounded_total))
-        decimal_part = unrounded_total - integer_part
-        if decimal_part < Decimal('0.50'):
-            rounded_total = integer_part.quantize(Decimal('0.01'))
-        else:
-            rounded_total = (integer_part + Decimal('1.00')).quantize(Decimal('0.01'))
-            
-        round_off = (rounded_total - unrounded_total).quantize(Decimal('0.01'))
+        custom_round_off = None
+        if round_off is not None:
+            try:
+                custom_round_off = Decimal(str(round_off)).quantize(Decimal('0.01'))
+                rounded_total = (unrounded_total + custom_round_off).quantize(Decimal('0.01'))
+                round_off = custom_round_off
+            except Exception:
+                custom_round_off = None
+
+        if custom_round_off is None:
+            integer_part = Decimal(int(unrounded_total))
+            decimal_part = unrounded_total - integer_part
+            if decimal_part < Decimal('0.50'):
+                rounded_total = integer_part.quantize(Decimal('0.01'))
+            else:
+                rounded_total = (integer_part + Decimal('1.00')).quantize(Decimal('0.01'))
+            round_off = (rounded_total - unrounded_total).quantize(Decimal('0.01'))
 
         voucher.total_amount = rounded_total
         voucher.save(update_fields=['total_amount'])

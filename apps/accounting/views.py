@@ -256,7 +256,8 @@ class CreatePurchaseInvoiceAPIView(APIView):
                     supplier_invoice_number=data.get('supplier_invoice_number') or data.get('voucher_number') or data.get('external_invoice_number') or data.get('invoice_number'),
                     voucher_date=data.get('voucher_date'),
                     cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
-                    cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None
+                    cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None,
+                    round_off=data.get('round_off')
                 )
 
                 att_data = data.get('attachment_data') or data.get('file_base64')
@@ -2227,7 +2228,8 @@ class UniversalVoucherAPIView(APIView):
                             supplier_invoice_number=data.get('supplier_invoice_number') or manual_vnum or data.get('external_invoice_number') or data.get('invoice_number'),
                             voucher_date=voucher_date,
                             cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
-                            cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None
+                            cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None,
+                            round_off=data.get('round_off')
                         )
                     elif voucher_type == 'CREDIT_NOTE':
                         from apps.accounting.services.credit_debit_note_service import CreditDebitNoteService

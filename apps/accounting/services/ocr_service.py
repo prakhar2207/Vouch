@@ -29,6 +29,7 @@ class InvoiceExtractionSchema(BaseModel):
     cgst_amount: Optional[float] = Field(default=0.0, description="CGST amount if applicable")
     sgst_amount: Optional[float] = Field(default=0.0, description="SGST amount if applicable")
     igst_amount: Optional[float] = Field(default=0.0, description="IGST amount if applicable")
+    round_off: Optional[float] = Field(default=0.0, description="Round-off amount (+/-) if total differs from subtotal plus taxes")
     total_amount: float = Field(default=0.0, description="Grand total invoice amount")
     category_detected: Optional[str] = Field(default="", description="Dominant item category clearly stated or indicated on the bill (e.g., 'V Belts', 'Bearings', 'Pulleys', 'Hardware'). Empty if not clearly determinable.")
     requires_category_confirmation: bool = Field(default=False, description="Set to True if the bill does not clearly state a category, or if items might belong to multiple or ambiguous categories, so user confirmation is needed.")
@@ -122,7 +123,7 @@ class InvoiceOCRService:
                 "3. Interpret handwriting shorthand, abbreviations (e.g., 'pkg', 'bx', 'mtr', 'nos'), and handwritten digits accurately. "
                 "4. Extract the exact Supplier Name, Supplier GSTIN, Invoice/Bill Number, Invoice Date (in YYYY-MM-DD format), Place of Supply / State Code. "
                 "5. Accurately extract all itemized line items: clean Description, Category, Brand (e.g. Fenner, SKF, PIX, NBC if mentioned), HSN code, Quantity, Unit, Rate (MRP or price before discount), Discount Percentage, and Taxable Amount. "
-                "6. Extract Subtotal, CGST, SGST, IGST, and Grand Total Amount. Verify and reconcile mathematics where visible. "
+                "6. Extract Subtotal, CGST, SGST, IGST, Round Off, and Grand Total Amount. Verify and reconcile mathematics where visible. If the bill specifies a round-off or if grand total differs from subtotal + taxes by a small amount (e.g. within 2 rupees), set round_off = total_amount - (subtotal + taxes). "
                 "Output strict JSON following the schema."
             )
 
@@ -555,7 +556,25 @@ class InvoiceOCRService:
         ext_total = round(float(data.get("total_amount", 0.0) or 0.0), 2)
 
         subtotal_base = calc_sub if calc_sub > 0 else ext_sub
-        expected_total = round(subtotal_base + cgst + sgst + igst, 2)
+        unrounded_expected = round(subtotal_base + cgst + sgst + igst, 2)
+        ro_val = round(float(data.get("round_off", 0.0) or 0.0), 2)
+
+        if ro_val != 0.0:
+            expected_total = round(unrounded_expected + ro_val, 2)
+            data["total_amount"] = expected_total
+        elif ext_total > 0 and abs(ext_total - round(ext_total)) < 0.001 and abs(ext_total - unrounded_expected) <= 2.0:
+            ro_val = round(ext_total - unrounded_expected, 2)
+            data["round_off"] = ro_val
+            expected_total = ext_total
+        else:
+            int_part = int(unrounded_expected)
+            dec_part = unrounded_expected - int_part
+            rounded_tot = int_part if dec_part < 0.50 else int_part + 1
+            ro_val = round(rounded_tot - unrounded_expected, 2)
+            data["round_off"] = ro_val
+            expected_total = round(unrounded_expected + ro_val, 2)
+            data["total_amount"] = float(expected_total)
+
         diff = round(abs(expected_total - ext_total), 2)
         math_valid = (diff <= 1.0) and (ext_total > 0 or expected_total > 0)
 
@@ -619,6 +638,7 @@ class InvoiceOCRService:
             "cgst_amount": 0.00,
             "sgst_amount": 0.00,
             "igst_amount": 0.00,
+            "round_off": 0.00,
             "total_amount": 0.00,
             "category_detected": "",
             "requires_category_confirmation": True,
