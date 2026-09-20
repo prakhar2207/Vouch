@@ -33,7 +33,7 @@ def get_authorized_company(request, company_id=None):
     except (ValueError, TypeError, AttributeError):
         raise NotFound(f"Company ID '{target_id}' is not a valid UUID.")
 
-    company = Company.objects.filter(id=target_id).first()
+    company = Company.objects.filter(id=target_id).defer('signature_data').first()
     if not company:
         raise NotFound(f"Company with ID '{target_id}' not found.")
 
@@ -68,59 +68,66 @@ class BaseCompanyPermission(BasePermission):
     allowed_roles = ['OWNER', 'CA', 'EMPLOYEE', 'VIEWER']
 
     def resolve_company(self, request, view):
+        from apps.companies.models import Company
+
+        def get_company_by_id(cid):
+            if not cid:
+                return None
+            try:
+                return Company.objects.filter(id=cid).only('id', 'name', 'is_active').first()
+            except Exception:
+                return None
+
         # 1. From X-Company-ID header
         if hasattr(request, 'headers') and request.headers.get('X-Company-ID'):
-            from apps.companies.models import Company
-            try:
-                return Company.objects.get(id=request.headers.get('X-Company-ID'))
-            except Exception:
-                pass
+            comp = get_company_by_id(request.headers.get('X-Company-ID'))
+            if comp:
+                return comp
 
         # 2. From view kwargs
         company_id = view.kwargs.get('company_id') or view.kwargs.get('pk')
         if company_id:
-            from apps.companies.models import Company
-            try:
-                return Company.objects.get(id=company_id)
-            except Exception:
-                pass
+            comp = get_company_by_id(company_id)
+            if comp:
+                return comp
+
         # 3. From related IDs in view kwargs
         voucher_id = view.kwargs.get('voucher_id')
         if voucher_id:
             from apps.accounting.models import Voucher
-            v = Voucher.objects.filter(id=voucher_id).select_related('company').first()
-            if v:
-                return v.company
+            cid = Voucher.objects.filter(id=voucher_id).values_list('company_id', flat=True).first()
+            if cid:
+                return get_company_by_id(cid)
+
         product_id = view.kwargs.get('product_id')
         if product_id:
             from apps.inventory.models import Product
-            p = Product.objects.filter(id=product_id).select_related('company').first()
-            if p:
-                return p.company
+            cid = Product.objects.filter(id=product_id).values_list('company_id', flat=True).first()
+            if cid:
+                return get_company_by_id(cid)
+
         ledger_id = view.kwargs.get('ledger_id')
         if ledger_id:
             from apps.ledgers.models import Ledger
-            l = Ledger.objects.filter(id=ledger_id).select_related('company').first()
-            if l:
-                return l.company
+            cid = Ledger.objects.filter(id=ledger_id).values_list('company_id', flat=True).first()
+            if cid:
+                return get_company_by_id(cid)
 
         # 4. From request data or query params
         if hasattr(request, 'data') and isinstance(request.data, dict):
             company_id = request.data.get('company_id')
             if company_id:
-                from apps.companies.models import Company
-                try:
-                    return Company.objects.get(id=company_id)
-                except Exception:
-                    pass
+                comp = get_company_by_id(company_id)
+                if comp:
+                    return comp
+
         if hasattr(request, 'query_params'):
             company_id = request.query_params.get('company_id')
             if company_id:
-                from apps.companies.models import Company
-                try:
-                    return Company.objects.get(id=company_id)
-                except Exception:
-                    pass
+                comp = get_company_by_id(company_id)
+                if comp:
+                    return comp
+
         return None
 
     def has_permission(self, request, view):
@@ -142,7 +149,7 @@ class BaseCompanyPermission(BasePermission):
         company = getattr(obj, 'company', None)
         if company is None and hasattr(obj, 'company_id'):
             from apps.companies.models import Company
-            company = Company.objects.filter(id=obj.company_id).first()
+            company = Company.objects.filter(id=obj.company_id).only('id', 'name', 'is_active').first()
         if company:
             return user_has_company_roles(request.user, company, self.allowed_roles)
         return True

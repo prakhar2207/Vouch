@@ -298,3 +298,90 @@ class NeonTransferContainmentTests(APITestCase):
         self.assertEqual(v.external_invoice_number, "BILL-TEST-405")
         self.assertTrue(bool(v.attachment_mime))
 
+    def test_permission_resolution_never_selects_attachment_or_signature(self):
+        """
+        Verifies IsCompanyMember.resolve_company() resolving company via voucher_id
+        NEVER selects attachment_data or signature_data in SQL.
+        """
+        voucher_with_att = self.invoices[0]
+        # GET voucher detail endpoint which triggers IsCompanyMember permission class
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get(f"/api/v1/accounting/vouchers/detail/{voucher_with_att.id}/")
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        for q in ctx.captured_queries:
+            sql_lower = q["sql"].lower()
+            self.assertNotIn("signature_data", sql_lower)
+            # attachment_data should only not be in queries (default GET doesn't include attachments)
+            self.assertNotIn("attachment_data", sql_lower)
+
+    def test_sync_bank_transactions_defers_matched_voucher_attachments(self):
+        """
+        Verifies SyncPullAPIView hydration of bank transactions matched to vouchers
+        strictly defers matched_voucher.attachment_data.
+        """
+        from apps.accounting.models import BankTransaction, SyncEvent
+        voucher_with_att = self.invoices[0]
+
+        bt = BankTransaction.objects.create(
+            company=self.company,
+            bank_ledger=self.bank_ledger,
+            transaction_date=datetime.date(2026, 5, 2),
+            description="NEFT customer payment",
+            normalized_narration="NEFT CUSTOMER PAYMENT",
+            credit_amount=Decimal("5000.00"),
+            debit_amount=Decimal("0.00"),
+            balance=Decimal("55000.00"),
+            status="MATCHED_AUTO",
+            matched_voucher=voucher_with_att
+        )
+        SyncEvent.objects.create(
+            company=self.company,
+            entity_type="BANKTRANSACTION",
+            entity_id=bt.id,
+            operation="CREATE",
+            occurred_at=timezone.now()
+        )
+
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.post("/api/v1/sync/pull/", {"company_id": str(self.company.id)}, format="json")
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        for q in ctx.captured_queries:
+            sql_lower = q["sql"].lower()
+            if "accounting_voucher" in sql_lower:
+                self.assertNotIn("attachment_data", sql_lower)
+
+    def test_gstr_report_services_never_select_attachment_data(self):
+        """
+        Verifies GSTRReportService methods (health check, GSTR-1, GSTR-3B)
+        strictly defer attachment_data.
+        """
+        from apps.gst.services.gstr_report_service import GSTRReportService
+
+        with CaptureQueriesContext(connection) as ctx:
+            GSTRReportService.get_return_exceptions(self.company, "2026-04-01", "2026-06-30")
+            GSTRReportService.generate_gstr1(self.company, "2026-04-01", "2026-06-30")
+            GSTRReportService.generate_gstr3b_summary(self.company, "2026-04-01", "2026-06-30")
+
+        for q in ctx.captured_queries:
+            sql_lower = q["sql"].lower()
+            if "accounting_voucher" in sql_lower:
+                self.assertNotIn("attachment_data", sql_lower)
+
+    def test_voucher_audit_log_defers_attachment_and_signature(self):
+        """
+        Verifies GET /api/v1/accounting/vouchers/<id>/history/ defers attachment_data and signature_data.
+        """
+        voucher_with_att = self.invoices[0]
+        url = f"/api/v1/accounting/vouchers/{voucher_with_att.id}/history/"
+
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get(url)
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        for q in ctx.captured_queries:
+            sql_lower = q["sql"].lower()
+            self.assertNotIn("attachment_data", sql_lower)
+            self.assertNotIn("signature_data", sql_lower)
+

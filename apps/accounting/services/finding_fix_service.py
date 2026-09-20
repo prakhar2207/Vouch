@@ -83,6 +83,30 @@ class FindingFixService:
                 }
             }
 
+        elif fix_action == 'RECONCILE_FIFO':
+            v_id = evidence.get('voucher_id')
+            p_id = evidence.get('party_id')
+            voucher = Voucher.objects.filter(id=v_id).first() if v_id else None
+            party = Ledger.objects.filter(id=p_id).first() if p_id else (voucher.party_ledger if voucher else None)
+            party_name = party.name if party else "this party"
+            v_num = voucher.voucher_number if voucher else evidence.get('voucher_number', 'invoice')
+            return {
+                "supported": True,
+                "action": "RECONCILE_FIFO",
+                "summary": f"Re-run automated FIFO allocation for {party_name}",
+                "accounting_mechanism": f"Clears over-allocated payments and recalculates FIFO allocations chronologically for {party_name}.",
+                "before": {
+                    "voucher": v_num,
+                    "allocated_amount": evidence.get('allocated_amount', '0.00'),
+                    "invoice_total": evidence.get('total_amount', '0.00')
+                },
+                "after": {
+                    "voucher": v_num,
+                    "allocated_amount": evidence.get('total_amount', '0.00'),
+                    "excess": "0.00"
+                }
+            }
+
         return {
             "supported": False,
             "reason": f"No automatic fix preview supported for action '{fix_action}'."
@@ -212,6 +236,35 @@ class FindingFixService:
                 "status": "SUCCESS",
                 "message": f"Successfully recalculated balance for {party.name} to ₹{new_bal}.",
                 "new_balance": str(new_bal)
+            }
+
+        elif fix_action == 'RECONCILE_FIFO':
+            from apps.accounting.services.allocation_service import PaymentAllocationService
+            v_id = evidence.get('voucher_id')
+            p_id = evidence.get('party_id')
+            voucher = Voucher.objects.filter(id=v_id, company=finding.company).first() if v_id else None
+            party = Ledger.objects.filter(id=p_id, company=finding.company).first() if p_id else (voucher.party_ledger if voucher else None)
+
+            res = PaymentAllocationService.auto_reconcile_all_unallocated(finding.company, party)
+
+            finding.is_resolved = True
+            finding.resolved_at = timezone.now()
+            finding.resolved_by = user
+            finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
+
+            AuditService.log_action(
+                company=finding.company,
+                user=user,
+                action='UPDATE',
+                model_name='PaymentAllocation',
+                record_id=finding.id,
+                changes={"action": "RECONCILE_FIFO", "party": party.name if party else "ALL", "result": res}
+            )
+
+            return {
+                "status": "SUCCESS",
+                "message": f"Successfully re-allocated payments via FIFO: {res.get('message', '')}",
+                "allocations_count": res.get("allocations_count", 0)
             }
 
         else:

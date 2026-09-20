@@ -1,4 +1,4 @@
-﻿from rest_framework.views import APIView
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -28,6 +28,10 @@ class InwardVoucherInboxView(APIView):
         status_filter = request.query_params.get('status', 'ALL').upper()
         queryset = InwardVoucherRequest.objects.filter(target_company=company).select_related(
             'source_company', 'created_purchase_voucher'
+        ).defer(
+            'created_purchase_voucher__attachment_data',
+            'created_purchase_voucher__attachment_mime',
+            'source_company__signature_data'
         )
 
         # Counters

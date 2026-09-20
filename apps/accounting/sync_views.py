@@ -266,7 +266,9 @@ class SyncPullAPIView(APIView):
         # --- Hydrate BANK TRANSACTIONS ---
         bt_ids = grouped['BANKTRANSACTION']['CREATE'].union(grouped['BANKTRANSACTION']['UPDATE'])
         if bt_ids:
-            bts = BankTransaction.objects.filter(id__in=bt_ids).select_related('bank_ledger', 'matched_party', 'matched_voucher')
+            bts = BankTransaction.objects.filter(id__in=bt_ids).select_related(
+                'bank_ledger', 'matched_party', 'matched_voucher'
+            ).defer('matched_voucher__attachment_data', 'matched_voucher__attachment_mime')
             for bt in bts:
                 item = {
                     'id': str(bt.id),

@@ -687,10 +687,10 @@ class PublicVoucherDetailAPIView(APIView):
     def get(self, request, voucher_id):
         try:
             from apps.accounting.models import Voucher
-            voucher = Voucher.objects.select_related('company', 'party_ledger').defer('attachment_data').filter(
+            voucher = Voucher.objects.select_related('company', 'party_ledger').defer('attachment_data', 'attachment_mime').filter(
                 id=voucher_id
             ).first()
-            if not voucher:
+            if not voucher or voucher.voucher_type != 'SALES':
                 return Response({"success": False, "error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
             
             user = request.user if request.user and request.user.is_authenticated else None
@@ -706,7 +706,9 @@ class VoucherDownloadPermissionAPIView(APIView):
     def get(self, request, voucher_id):
         try:
             from apps.accounting.models import Voucher
-            voucher = Voucher.objects.select_related('company', 'party_ledger').filter(id=voucher_id).first()
+            voucher = Voucher.objects.select_related('company', 'party_ledger').defer(
+                'attachment_data', 'attachment_mime', 'company__signature_data'
+            ).filter(id=voucher_id).first()
             if not voucher:
                 return Response({"success": False, "error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -735,7 +737,7 @@ class VoucherDetailAPIView(APIView):
         try:
             from apps.accounting.models import Voucher
             include_attachment = request.query_params.get('include_attachment', 'false').lower() == 'true'
-            voucher_qs = Voucher.objects.select_related('company', 'party_ledger')
+            voucher_qs = Voucher.objects.select_related('company', 'party_ledger').defer('company__signature_data')
             if not include_attachment:
                 voucher_qs = voucher_qs.defer('attachment_data')
             voucher = voucher_qs.get(id=voucher_id, company__users__user=request.user)
@@ -2625,7 +2627,9 @@ class VoucherAuditHistoryAPIView(APIView):
     def get(self, request, voucher_id):
         try:
             from apps.accounting.models import Voucher
-            voucher = Voucher.objects.select_related('company', 'created_by', 'corrected_by', 'party_ledger').get(id=voucher_id)
+            voucher = Voucher.objects.select_related('company', 'created_by', 'corrected_by', 'party_ledger').defer(
+                'attachment_data', 'attachment_mime', 'company__signature_data'
+            ).get(id=voucher_id)
             # Find the root voucher in the revision chain
             root_v = voucher
             while root_v.revision_of:

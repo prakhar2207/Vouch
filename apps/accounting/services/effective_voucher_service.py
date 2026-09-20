@@ -26,7 +26,7 @@ class EffectiveVoucherService:
 
     @classmethod
     def get_active_vouchers(cls, company=None, **filters) -> QuerySet:
-        qs = Voucher.objects.filter(status__in=cls.ACTIVE_STATUSES)
+        qs = Voucher.objects.filter(status__in=cls.ACTIVE_STATUSES).defer('attachment_data', 'attachment_mime')
         if company:
             qs = qs.filter(company=company)
         if filters:
@@ -35,7 +35,7 @@ class EffectiveVoucherService:
 
     @classmethod
     def get_accounting_vouchers(cls, company=None, **filters) -> QuerySet:
-        qs = Voucher.objects.filter(status__in=cls.ACCOUNTING_STATUSES)
+        qs = Voucher.objects.filter(status__in=cls.ACCOUNTING_STATUSES).defer('attachment_data', 'attachment_mime')
         if company:
             qs = qs.filter(company=company)
         if filters:
@@ -44,7 +44,9 @@ class EffectiveVoucherService:
 
     @classmethod
     def get_accounting_ledger_entries(cls, company=None, **filters) -> QuerySet:
-        qs = LedgerEntry.objects.filter(voucher__status__in=cls.ACCOUNTING_STATUSES)
+        qs = LedgerEntry.objects.filter(
+            voucher__status__in=cls.ACCOUNTING_STATUSES
+        ).defer('voucher__attachment_data', 'voucher__attachment_mime')
         if company:
             qs = qs.filter(voucher__company=company)
         if filters:

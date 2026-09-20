@@ -307,7 +307,7 @@ class AccountingIntegrityEngine:
             company=company,
             voucher_type__in=['SALES', 'PURCHASE', 'OPENING_INVOICE', 'OPENING_BILL'],
             status='POSTED'
-        ).only('id', 'voucher_number', 'total_amount').defer('attachment_data', 'attachment_mime')
+        ).only('id', 'voucher_number', 'total_amount', 'party_ledger_id').defer('attachment_data', 'attachment_mime')
 
         for inv in invoices:
             total_alloc = alloc_map.get(inv.id, Decimal('0.00'))
@@ -324,6 +324,7 @@ class AccountingIntegrityEngine:
                         "evidence": {
                             "voucher_id": str(inv.id),
                             "voucher_number": inv.voucher_number,
+                            "party_id": str(inv.party_ledger_id) if inv.party_ledger_id else None,
                             "total_amount": str(inv.total_amount),
                             "allocated_amount": str(total_alloc),
                             "excess": str(total_alloc - inv.total_amount)
@@ -332,10 +333,18 @@ class AccountingIntegrityEngine:
                         "actual_state": f"Allocated: ₹{total_alloc}.",
                         "probable_cause": "Payment was allocated twice or unallocated advance was miscalculated.",
                         "suggested_action": "Re-run automated FIFO allocation for this party.",
-                        "confidence": 0.98
+                        "confidence": 0.98,
+                        "fix_action": "RECONCILE_FIFO"
                     }
                 )
                 findings.append(finding)
+            else:
+                AccountingFinding.objects.filter(
+                    company=company,
+                    category='PAYMENT',
+                    title=f"Invoice #{inv.voucher_number} is over-allocated",
+                    is_resolved=False
+                ).update(is_resolved=True, resolved_at=timezone.now())
 
         return findings
 

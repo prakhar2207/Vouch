@@ -309,7 +309,7 @@ export class VouchersRepository {
 
       if (vType === "SALES" || vType === "PURCHASE") {
         if (allocByInv[v.id] !== undefined) {
-          paidAmt = allocByInv[v.id];
+          paidAmt = Math.min(Number(allocByInv[v.id] || 0), totAmt);
           if (paidAmt >= totAmt && totAmt > 0) {
             pStatus = "PAID";
           } else if (paidAmt > 0) {
@@ -320,7 +320,7 @@ export class VouchersRepository {
         }
       } else if (vType === "PAYMENT" || vType === "RECEIPT") {
         if (allocByPmt[v.id] !== undefined) {
-          paidAmt = allocByPmt[v.id];
+          paidAmt = Math.min(Number(allocByPmt[v.id] || 0), totAmt);
           if (paidAmt >= totAmt && totAmt > 0) {
             pStatus = "ALLOCATED";
           } else if (paidAmt > 0) {

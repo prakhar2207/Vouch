@@ -1,6 +1,7 @@
 from decimal import Decimal
 from django.db import transaction
 from django.db.models import Sum
+from django.db.models.functions import Coalesce
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
 from apps.accounting.models import Voucher, PaymentAllocation
@@ -60,7 +61,7 @@ class PaymentAllocationService:
             party_ledger=party_ledger,
             voucher_type__in=target_vtypes,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).order_by('due_date', 'voucher_date', 'created_at'))
+        ).annotate(effective_due=Coalesce('due_date', 'voucher_date')).order_by('effective_due', 'created_at'))
 
         if not invoices:
             return []
@@ -125,7 +126,7 @@ class PaymentAllocationService:
             party_ledger=party,
             voucher_type__in=target_vtypes,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).order_by('due_date', 'voucher_date', 'created_at')
+        ).annotate(effective_due=Coalesce('due_date', 'voucher_date')).order_by('effective_due', 'created_at')
 
         # Check for explicit invoice reference match in reference_number
         preferred_inv = None
@@ -378,10 +379,17 @@ class PaymentAllocationService:
         if party_ledger:
             qs = qs.filter(party_ledger=party_ledger)
 
+        # Clear prior allocations for the targeted payment vouchers in bulk first,
+        # so earlier payments in FIFO sequence are not blocked by allocations from later payments.
+        PaymentAllocation.objects.filter(payment_voucher__in=qs).delete()
+
+        # Order chronologically so earlier receipts/payments are applied first
+        pvs = list(qs.order_by('voucher_date', 'created_at'))
+
         total_settled_amount = Decimal('0.00')
         allocations_made = 0
 
-        for pv in qs:
+        for pv in pvs:
             allocs = cls.auto_allocate_voucher(pv)
             for a in allocs:
                 total_settled_amount += Decimal(str(a.get('allocated_amount', 0)))

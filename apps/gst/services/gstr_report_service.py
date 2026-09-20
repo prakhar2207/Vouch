@@ -28,7 +28,7 @@ class GSTRReportService:
             voucher_date__gte=start_date,
             voucher_date__lte=end_date,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).select_related('party_ledger').prefetch_related('items__product').order_by('voucher_date', 'voucher_number')
+        ).select_related('party_ledger').prefetch_related('items__product').defer('attachment_data', 'attachment_mime').order_by('voucher_date', 'voucher_number')
 
         company_state = (company.state_code or '09').zfill(2)
 
@@ -117,7 +117,7 @@ class GSTRReportService:
             voucher_date__gte=start_date,
             voucher_date__lte=end_date,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).select_related('party_ledger').prefetch_related('items__product').order_by('voucher_date', 'voucher_number')
+        ).select_related('party_ledger').prefetch_related('items__product').defer('attachment_data', 'attachment_mime').order_by('voucher_date', 'voucher_number')
 
         company_state = (company.state_code or '09').zfill(2)
         
@@ -314,7 +314,7 @@ class GSTRReportService:
             voucher__voucher_date__gte=start_date,
             voucher__voucher_date__lte=end_date,
             voucher__status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).select_related('voucher')
+        ).select_related('voucher').defer('voucher__attachment_data', 'voucher__attachment_mime')
         
         sales_txval = Decimal('0.00')
         sales_igst = Decimal('0.00')
@@ -349,7 +349,7 @@ class GSTRReportService:
             voucher__voucher_date__gte=start_date,
             voucher__voucher_date__lte=end_date,
             voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
-        ).select_related('ledger', 'voucher')
+        ).select_related('ledger', 'voucher').defer('voucher__attachment_data', 'voucher__attachment_mime')
 
         ledger_output_cgst = Decimal('0.00')
         ledger_output_sgst = Decimal('0.00')
@@ -386,7 +386,7 @@ class GSTRReportService:
             voucher_date__gte=start_date,
             voucher_date__lte=end_date,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        )
+        ).defer('attachment_data', 'attachment_mime')
         total_sales_amount = Decimal('0.00')
         sales_count = 0
         for v in sales_vouchers:
@@ -401,7 +401,7 @@ class GSTRReportService:
             voucher_date__gte=start_date,
             voucher_date__lte=end_date,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        )
+        ).defer('attachment_data', 'attachment_mime')
         total_purchase_amount = Decimal('0.00')
         purchase_count = 0
         for v in purchase_vouchers:
@@ -606,7 +606,7 @@ class GSTRReportService:
             voucher_date__gte=start_date,
             voucher_date__lte=end_date,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).prefetch_related('items')
+        ).prefetch_related('items').defer('attachment_data', 'attachment_mime')
 
         # Inward supplies
         purchase_vouchers = Voucher.objects.filter(
@@ -615,7 +615,7 @@ class GSTRReportService:
             voucher_date__gte=start_date,
             voucher_date__lte=end_date,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).prefetch_related('items')
+        ).prefetch_related('items').defer('attachment_data', 'attachment_mime')
 
         annual_taxable = sum([v.total_amount for v in sales_vouchers], Decimal('0.00'))
         annual_itc = sum([v.total_amount for v in purchase_vouchers], Decimal('0.00'))
