@@ -217,16 +217,27 @@ def compute_scoped_ledger_balances(company, start_date=None, end_date=None, ledg
                     else:
                         dr += op_bal
 
+        # Stock-in-Hand / Inventory live valuation integration
+        is_stock = bool(
+            l.ledger_type == 'ASSET' and (
+                'STOCK' in l.name.upper() or 'INVENTORY' in l.name.upper() or
+                (l.group and ('STOCK' in l.group.name.upper() or 'INVENTORY' in l.group.name.upper()))
+            )
+        )
+        if is_stock and dr == Decimal('0.00') and cr == Decimal('0.00'):
+            from apps.accounting.services.financial_statements_service import FinancialStatementsService
+            dr = FinancialStatementsService.get_inventory_valuation(company)
+
         bal_info = PartyBalanceService.get_balance_from_components(
             l.canonical_role, dr, cr, l.normal_balance
         )
         scoped_map[str(l.id)] = {
             'display_amount': float(bal_info['display_amount']),
             'current_balance': float(bal_info['signed_balance']),
-            'balance_state': bal_info['balance_state'],
-            'balance_direction': bal_info['balance_direction'],
-            'explanation': bal_info.get('explanation', ''),
-            'owner_headline': bal_info.get('owner_headline', '')
+            'balance_state': 'DR' if is_stock and bal_info['display_amount'] > 0 else bal_info['balance_state'],
+            'balance_direction': 'DEBIT' if is_stock and bal_info['display_amount'] > 0 else bal_info['balance_direction'],
+            'explanation': 'Live physical stock in hand' if is_stock else bal_info.get('explanation', ''),
+            'owner_headline': 'STOCK IN HAND' if is_stock else bal_info.get('owner_headline', '')
         }
 
     return scoped_map
@@ -272,6 +283,20 @@ class LedgerListView(APIView):
                 disp_amt = s_bal['display_amount'] if s_bal else float(l.display_amount)
                 bal_state = s_bal['balance_state'] if s_bal else l.balance_state
                 bal_dir = s_bal['balance_direction'] if s_bal else l.balance_direction
+
+                is_stock = bool(
+                    l.ledger_type == 'ASSET' and (
+                        'STOCK' in l.name.upper() or 'INVENTORY' in l.name.upper() or
+                        (l.group and ('STOCK' in l.group.name.upper() or 'INVENTORY' in l.group.name.upper()))
+                    )
+                )
+                if is_stock and cur_bal == 0 and disp_amt == 0:
+                    from apps.accounting.services.financial_statements_service import FinancialStatementsService
+                    inv_val = float(FinancialStatementsService.get_inventory_valuation(company))
+                    cur_bal = inv_val
+                    disp_amt = inv_val
+                    bal_dir = 'DEBIT'
+                    bal_state = 'DR'
 
                 data.append({
                     "id": str(l.id),
@@ -566,6 +591,20 @@ class LedgerDetailView(APIView):
             disp_amt = s_bal['display_amount'] if s_bal else float(l.display_amount)
             bal_state = s_bal['balance_state'] if s_bal else l.balance_state
             bal_dir = s_bal['balance_direction'] if s_bal else l.balance_direction
+
+            is_stock = bool(
+                l.ledger_type == 'ASSET' and (
+                    'STOCK' in l.name.upper() or 'INVENTORY' in l.name.upper() or
+                    (l.group and ('STOCK' in l.group.name.upper() or 'INVENTORY' in l.group.name.upper()))
+                )
+            )
+            if is_stock and cur_bal == 0 and disp_amt == 0:
+                from apps.accounting.services.financial_statements_service import FinancialStatementsService
+                inv_val = float(FinancialStatementsService.get_inventory_valuation(company))
+                cur_bal = inv_val
+                disp_amt = inv_val
+                bal_dir = 'DEBIT'
+                bal_state = 'DR'
 
             data = {
                 "id": str(l.id),

@@ -1535,6 +1535,58 @@ class LedgerStatementAPIView(APIView):
             closing_type = cl_balance_info['balance_direction']
             semantic_state = cl_balance_info['balance_state']
 
+            # Stock-in-Hand / Inventory live valuation integration
+            is_stock_ledger = bool(
+                ledger.ledger_type == 'ASSET' and (
+                    'STOCK' in ledger.name.upper() or 'INVENTORY' in ledger.name.upper() or
+                    (ledger.group and ('STOCK' in ledger.group.name.upper() or 'INVENTORY' in ledger.group.name.upper()))
+                )
+            )
+            inventory_summary = None
+            if is_stock_ledger:
+                from apps.accounting.services.financial_statements_service import FinancialStatementsService
+                from apps.inventory.models import Product
+                live_stock_val = FinancialStatementsService.get_inventory_valuation(company)
+                op_stock_val = FinancialStatementsService.calculate_opening_stock_valuation(company, as_of_date=from_date)
+                in_stock_count = Product.objects.filter(company=company, is_active=True, stock_quantity__gt=0).count()
+                total_product_count = Product.objects.filter(company=company, is_active=True).count()
+
+                top_items = []
+                for p in Product.objects.filter(company=company, is_active=True, stock_quantity__gt=0):
+                    qty = Decimal(str(p.stock_quantity or 0))
+                    rate = Decimal(str(p.purchase_price or 0))
+                    val = qty * rate
+                    top_items.append({
+                        "id": str(p.id),
+                        "name": p.name,
+                        "sku": p.sku or "",
+                        "quantity": float(qty),
+                        "unit": p.unit or "Pcs",
+                        "purchase_price": float(rate),
+                        "valuation": float(val.quantize(Decimal('0.01')))
+                    })
+                top_items.sort(key=lambda x: x["valuation"], reverse=True)
+                top_items = top_items[:20]
+
+                inventory_summary = {
+                    "is_stock_ledger": True,
+                    "live_valuation": float(live_stock_val),
+                    "opening_valuation": float(op_stock_val),
+                    "in_stock_count": in_stock_count,
+                    "total_product_count": total_product_count,
+                    "top_products": top_items
+                }
+
+                if total_count == 0 and initial_op == Decimal('0.00'):
+                    period_opening_amount = op_stock_val
+                    period_opening_type = 'DR'
+                    closing_amount = live_stock_val
+                    closing_type = 'DR'
+                    semantic_state = 'IN_HAND'
+                    cl_balance_info = dict(cl_balance_info)
+                    cl_balance_info['owner_headline'] = 'LIVE STOCK IN HAND'
+                    cl_balance_info['explanation'] = f"Live inventory valuation across {in_stock_count} in-stock products"
+
             # 4. Running balance at start of page (Offset > 0)
             page_cumulative_dr = pre_period_dr
             page_cumulative_cr = pre_period_cr
@@ -1647,10 +1699,12 @@ class LedgerStatementAPIView(APIView):
                         "id": ledger.id,
                         "name": ledger.name,
                         "ledger_type": ledger.ledger_type,
+                        "group_name": ledger.group.name if ledger.group else "",
                         "normal_balance": normal_bal,
-                        "current_balance": str(ledger.current_balance),
+                        "current_balance": str(closing_amount if (is_stock_ledger and total_count == 0) else ledger.current_balance),
                         "balance_type": ledger.opening_balance_type
                     },
+                    "inventory_summary": inventory_summary,
                     "party_role": role,
                     "opening_balance": f"{Decimal(str(period_opening_amount)).quantize(Decimal('0.00'))}",
                     "opening_balance_type": period_opening_type,

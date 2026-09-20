@@ -23,7 +23,8 @@ import {
   ChevronRight,
   TrendingUp,
   TrendingDown,
-  Scale
+  Scale,
+  Package
 } from 'lucide-react';
 
 interface LedgerStatementViewProps {
@@ -160,9 +161,19 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
   const isParty = role === 'CUSTOMER' || role === 'SUPPLIER';
   const state = statementData?.semantic_state || 'SETTLED';
   const displayAmount = parseFloat(statementData?.display_amount || 0);
+  const isStockLedger = Boolean(statementData?.inventory_summary?.is_stock_ledger);
+  const invSummary = statementData?.inventory_summary;
 
   // Status badge & owner text
   const statusConfig = useMemo(() => {
+    if (isStockLedger || state === 'IN_HAND') {
+      return {
+        badgeBg: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400',
+        headline: statementData?.owner_headline || 'LIVE PHYSICAL STOCK',
+        explanation: statementData?.explanation || `Live inventory valuation across ${invSummary?.in_stock_count || 0} products in stock`,
+        colorClass: 'text-emerald-400'
+      };
+    }
     if (state === 'TO_PAY') {
       return {
         badgeBg: 'bg-rose-500/10 border-rose-500/30 text-rose-400',
@@ -374,7 +385,9 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
       {/* 4 Summary Metric Cards (Authoritative from Backend) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1">
-          <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Opening Balance</p>
+          <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+            {isStockLedger ? 'Opening Valuation' : 'Opening Balance'}
+          </p>
           <div className="flex items-baseline gap-1.5">
             <span className="text-lg sm:text-xl font-bold font-mono text-foreground">
               ₹{parseFloat(statementData?.opening_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -383,38 +396,65 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
               {statementData?.opening_balance_type}
             </span>
           </div>
-          <p className="text-[10px] text-muted-foreground">Before period transactions</p>
+          <p className="text-[10px] text-muted-foreground">
+            {isStockLedger ? 'Start of financial period' : 'Before period transactions'}
+          </p>
         </div>
 
         <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1">
           <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-            <span>Total Debits</span>
-            <TrendingUp className="w-3.5 h-3.5 text-blue-400" />
+            <span>{isStockLedger && statementData?.entries?.length === 0 ? 'In-Stock Items' : 'Total Debits'}</span>
+            {isStockLedger && statementData?.entries?.length === 0 ? (
+              <Package className="w-3.5 h-3.5 text-blue-400" />
+            ) : (
+              <TrendingUp className="w-3.5 h-3.5 text-blue-400" />
+            )}
           </p>
           <div className="flex items-baseline gap-1.5">
-            <span className="text-lg sm:text-xl font-bold font-mono text-blue-400">
-              ₹{parseFloat(statementData?.period_debit || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-            </span>
+            {isStockLedger && statementData?.entries?.length === 0 ? (
+              <span className="text-lg sm:text-xl font-bold font-mono text-blue-400">
+                {invSummary?.in_stock_count || 0}{' '}
+                <span className="text-xs font-normal text-muted-foreground">/ {invSummary?.total_product_count || 0}</span>
+              </span>
+            ) : (
+              <span className="text-lg sm:text-xl font-bold font-mono text-blue-400">
+                ₹{parseFloat(statementData?.period_debit || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              </span>
+            )}
           </div>
-          <p className="text-[10px] text-muted-foreground">Inflow / charges during period</p>
+          <p className="text-[10px] text-muted-foreground">
+            {isStockLedger && statementData?.entries?.length === 0 ? 'Active catalog products' : 'Inflow / charges during period'}
+          </p>
         </div>
 
         <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1">
           <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-            <span>Total Credits</span>
-            <TrendingDown className="w-3.5 h-3.5 text-emerald-400" />
+            <span>{isStockLedger && statementData?.entries?.length === 0 ? 'Tracking Mode' : 'Total Credits'}</span>
+            {isStockLedger && statementData?.entries?.length === 0 ? (
+              <Scale className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <TrendingDown className="w-3.5 h-3.5 text-emerald-400" />
+            )}
           </p>
           <div className="flex items-baseline gap-1.5">
-            <span className="text-lg sm:text-xl font-bold font-mono text-emerald-400">
-              ₹{parseFloat(statementData?.period_credit || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-            </span>
+            {isStockLedger && statementData?.entries?.length === 0 ? (
+              <span className="text-sm sm:text-base font-bold text-emerald-400 font-mono">
+                Real-Time Integrated
+              </span>
+            ) : (
+              <span className="text-lg sm:text-xl font-bold font-mono text-emerald-400">
+                ₹{parseFloat(statementData?.period_credit || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              </span>
+            )}
           </div>
-          <p className="text-[10px] text-muted-foreground">Outflow / payments during period</p>
+          <p className="text-[10px] text-muted-foreground">
+            {isStockLedger && statementData?.entries?.length === 0 ? 'Linked to Inventory Module' : 'Outflow / payments during period'}
+          </p>
         </div>
 
         <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm space-y-1">
           <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-            <span>Closing Balance</span>
+            <span>{isStockLedger ? 'Live Valuation' : 'Closing Balance'}</span>
             <Scale className="w-3.5 h-3.5 text-foreground" />
           </p>
           <div className="flex items-baseline gap-1.5">
@@ -425,7 +465,9 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
               {statementData?.closing_balance_type}
             </span>
           </div>
-          <p className="text-[10px] text-muted-foreground">Final net balance</p>
+          <p className="text-[10px] text-muted-foreground">
+            {isStockLedger ? 'Physical stock in hand' : 'Final net balance'}
+          </p>
         </div>
       </div>
 
@@ -433,26 +475,122 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
       <div className="bg-card border border-border/50 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-4 sm:p-5 border-b border-border/40 bg-muted/20 flex justify-between items-center flex-wrap gap-2">
           <div>
-            <h2 className="text-sm sm:text-base font-bold text-foreground">Transaction History</h2>
+            <h2 className="text-sm sm:text-base font-bold text-foreground">
+              {isStockLedger && statementData?.entries?.length === 0 ? 'Physical Inventory Details' : 'Transaction History'}
+            </h2>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              Showing {statementData?.entries?.length || 0} entries of {pagination.total_count || 0} total
+              {isStockLedger && statementData?.entries?.length === 0
+                ? `${invSummary?.in_stock_count || 0} in-stock products (${invSummary?.total_product_count || 0} total in catalog)`
+                : `Showing ${statementData?.entries?.length || 0} entries of ${pagination.total_count || 0} total`}
             </p>
           </div>
           <div className="text-xs font-mono text-muted-foreground">
-            Page {currentPage} of {totalPages}
+            {isStockLedger && statementData?.entries?.length === 0 ? 'Live Inventory' : `Page ${currentPage} of ${totalPages}`}
           </div>
         </div>
 
         {statementData?.entries?.length === 0 ? (
-          <div className="p-16 text-center space-y-3">
-            <div className="w-12 h-12 rounded-full bg-muted/50 border border-border/60 flex items-center justify-center mx-auto text-muted-foreground">
-              <Calendar className="w-6 h-6 opacity-60" />
+          isStockLedger ? (
+            <div className="p-5 sm:p-6 space-y-6">
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 sm:p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="flex items-start gap-3.5">
+                  <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0 mt-0.5">
+                    <Package className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-bold text-foreground flex items-center gap-2 flex-wrap">
+                      Accounts & Inventory Integrated
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                        Live Catalog Sync
+                      </span>
+                    </h3>
+                    <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
+                      This account reflects the real-time physical inventory owned and stored by your business. 
+                      In commercial double-entry bookkeeping, daily purchases debit Purchase A/c and sales credit Sales A/c, 
+                      while item-by-item quantities and valuations are maintained live in your Inventory Module.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0 w-full md:w-auto">
+                  <Link
+                    href="/inventory"
+                    className="px-3.5 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-sm cursor-pointer flex-1 md:flex-initial"
+                  >
+                    <Package className="w-3.5 h-3.5" />
+                    Inventory ({invSummary?.in_stock_count || 0})
+                  </Link>
+                  <Link
+                    href="/reports/balance-sheet"
+                    className="px-3.5 py-2 rounded-lg bg-card border border-border/60 hover:bg-muted text-foreground text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer flex-1 md:flex-initial"
+                  >
+                    <Scale className="w-3.5 h-3.5" />
+                    Balance Sheet
+                  </Link>
+                </div>
+              </div>
+
+              {invSummary?.top_products && invSummary.top_products.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                      Top In-Stock Products by Valuation
+                    </h4>
+                    <Link
+                      href="/inventory"
+                      className="text-xs text-primary hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      View all {invSummary.in_stock_count} products in Inventory &rarr;
+                    </Link>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-xl border border-border/40">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-muted/40 border-b border-border/40 text-muted-foreground font-bold uppercase tracking-wider text-[10px]">
+                        <tr>
+                          <th className="py-2.5 px-4">#</th>
+                          <th className="py-2.5 px-4">Product Name</th>
+                          <th className="py-2.5 px-4">SKU</th>
+                          <th className="py-2.5 px-4 text-right">In-Stock Qty</th>
+                          <th className="py-2.5 px-4 text-right">Purchase Cost</th>
+                          <th className="py-2.5 px-4 text-right">Stock Valuation</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/30">
+                        {invSummary.top_products.map((item: any, idx: number) => (
+                          <tr key={item.id || idx} className="hover:bg-muted/20 transition-colors">
+                            <td className="py-2.5 px-4 text-muted-foreground font-mono text-[11px]">{idx + 1}</td>
+                            <td className="py-2.5 px-4 font-medium text-foreground">{item.name}</td>
+                            <td className="py-2.5 px-4 text-muted-foreground font-mono text-[11px]">
+                              {item.sku ? <span className="bg-muted px-1.5 py-0.5 rounded text-[10px]">{item.sku}</span> : '-'}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono font-semibold text-foreground">
+                              {item.quantity.toLocaleString('en-IN')} <span className="text-[10px] font-normal text-muted-foreground">{item.unit}</span>
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono text-muted-foreground">
+                              ₹{item.purchase_price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono font-bold text-emerald-400">
+                              ₹{item.valuation.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
-            <p className="text-xs font-semibold text-foreground">No transactions found</p>
-            <p className="text-[11px] text-muted-foreground max-w-sm mx-auto">
-              There are no recorded vouchers for this account during the selected date range.
-            </p>
-          </div>
+          ) : (
+            <div className="p-16 text-center space-y-3">
+              <div className="w-12 h-12 rounded-full bg-muted/50 border border-border/60 flex items-center justify-center mx-auto text-muted-foreground">
+                <Calendar className="w-6 h-6 opacity-60" />
+              </div>
+              <p className="text-xs font-semibold text-foreground">No transactions found</p>
+              <p className="text-[11px] text-muted-foreground max-w-sm mx-auto">
+                There are no recorded vouchers for this account during the selected date range.
+              </p>
+            </div>
+          )
         ) : (
           <>
             {/* Desktop Table */}
