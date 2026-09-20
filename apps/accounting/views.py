@@ -2002,6 +2002,11 @@ class UniversalVoucherAPIView(APIView):
             alloc_by_inv = {row['invoice_voucher_id']: row['paid'] for row in PaymentAllocation.objects.filter(invoice_voucher_id__in=page_v_ids).values('invoice_voucher_id').annotate(paid=Sum('allocated_amount'))}
             alloc_by_pmt = {row['payment_voucher_id']: row['allocated'] for row in PaymentAllocation.objects.filter(payment_voucher_id__in=page_v_ids).values('payment_voucher_id').annotate(allocated=Sum('allocated_amount'))}
 
+            from apps.accounting.models import LedgerEntry
+            ro_entries = {}
+            for e in LedgerEntry.objects.filter(voucher_id__in=page_v_ids, ledger__name__iexact='round off'):
+                ro_entries[e.voucher_id] = float(e.debit_amount - e.credit_amount)
+
             data = []
             for v in page_vouchers:
                 tot = v.total_amount or Decimal('0.00')
@@ -2030,6 +2035,7 @@ class UniversalVoucherAPIView(APIView):
                 v_num = v.reference_number if (v.voucher_type == 'PURCHASE' and v.reference_number and not v.voucher_number.startswith('G/')) else v.voucher_number
                 p_name = v.party_ledger.name if v.party_ledger else (v.buyer_name or "General Entry")
                 d_str = v.voucher_date.strftime('%Y-%m-%d')
+                ro_val = ro_entries.get(v.id, 0.0)
                 data.append({
                     "id": str(v.id),
                     "voucher_number": v_num,
@@ -2045,6 +2051,8 @@ class UniversalVoucherAPIView(APIView):
                     "status": v.status,
                     "total_amount": str(v.total_amount),
                     "totalAmount": float(v.total_amount or 0),
+                    "round_off": ro_val,
+                    "roundOff": ro_val,
                     "paid_amount": paid_amt,
                     "payment_status": p_status,
                     "party_name": p_name,

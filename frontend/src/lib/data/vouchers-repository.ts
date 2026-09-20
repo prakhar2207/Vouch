@@ -69,13 +69,28 @@ export class VouchersRepository {
         continue;
       }
 
-      if (!v.voucherDate || !v.voucherNumber || !v.voucherType) {
+      let needsHealing = false;
+      let healedTotAmt = totAmt;
+      let healedRoundOff = v.roundOff ?? (v as any).round_off;
+
+      if (vType === "PURCHASE" && (totAmt % 1 !== 0 || healedRoundOff === undefined)) {
+        if (totAmt % 1 !== 0) {
+          const integerPart = Math.floor(totAmt);
+          const decimalPart = Math.round((totAmt - integerPart) * 100) / 100;
+          healedTotAmt = decimalPart < 0.5 ? integerPart : integerPart + 1;
+          healedRoundOff = Number((healedTotAmt - totAmt).toFixed(2));
+          needsHealing = true;
+        }
+      }
+
+      if (!v.voucherDate || !v.voucherNumber || !v.voucherType || needsHealing) {
         healedVouchers.push({
           ...v,
           voucherDate: vDate || new Date().toISOString().split("T")[0],
           voucherNumber: vNum || "VCH-0000",
           voucherType: String(vType || "SALES").toUpperCase(),
-          totalAmount: totAmt,
+          totalAmount: healedTotAmt,
+          roundOff: healedRoundOff,
           partyName: v.partyName || (v as any).party_name || "",
           partyLedgerId: v.partyLedgerId || (v as any).party_ledger_id || null,
           serverUpdatedAt: Number(v.serverUpdatedAt || (v as any).server_updated_at || Date.now()),
@@ -189,6 +204,7 @@ export class VouchersRepository {
               partyName: v.partyName || v.party_name || v.party_ledger?.name || "",
               status: v.status || "POSTED",
               totalAmount: Number(v.totalAmount ?? v.total_amount) || 0,
+              roundOff: Number(v.round_off ?? v.roundOff ?? 0),
               paymentStatus: v.paymentStatus || v.payment_status || "UNPAID",
               paidAmount: Number(v.paidAmount ?? v.paid_amount) || 0,
               narration: v.narration || "",
@@ -250,6 +266,8 @@ export class VouchersRepository {
           partyName: p.buyer_name || p.party_name || "Counter Party",
           total_amount: Number(p.total_amount || p.round_off_total || 0),
           totalAmount: Number(p.total_amount || p.round_off_total || 0),
+          round_off: Number(p.round_off || 0),
+          roundOff: Number(p.round_off || 0),
           status: o.status === "FAILED" ? "FAILED" : "PENDING",
           payment_status: "UNPAID",
           paid_amount: 0,
@@ -326,6 +344,8 @@ export class VouchersRepository {
         partyName: pName,
         total_amount: totAmt,
         totalAmount: totAmt,
+        round_off: v.roundOff ?? (v as any).round_off ?? (v as any).roundOff ?? 0,
+        roundOff: v.roundOff ?? (v as any).round_off ?? (v as any).roundOff ?? 0,
         payment_status: pStatus,
         paymentStatus: pStatus,
         paid_amount: paidAmt,

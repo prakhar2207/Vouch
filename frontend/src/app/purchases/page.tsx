@@ -853,9 +853,30 @@ export default function PurchaseInvoiceList() {
                     </div>
 
                     <div className="flex items-center justify-between pt-1">
-                      <span className="font-bold text-base font-mono text-foreground">
-                        ₹{parseFloat(inv.total_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </span>
+                      <div className="flex flex-col items-start font-mono">
+                        <span className="font-bold text-base text-foreground">
+                          ₹{(() => {
+                            const raw = parseFloat(inv.total_amount) || 0;
+                            const rounded = Math.abs(raw % 1) > 0 ? (raw % 1 < 0.5 ? Math.floor(raw) : Math.ceil(raw)) : raw;
+                            return rounded.toLocaleString("en-IN", { minimumFractionDigits: 2 });
+                          })()}
+                        </span>
+                        {(() => {
+                          const ro = inv.round_off !== undefined && inv.round_off !== null && inv.round_off !== 0
+                            ? Number(inv.round_off)
+                            : (inv.total_amount % 1 !== 0 ? Number((Math.round(inv.total_amount) - inv.total_amount).toFixed(2)) : 0);
+                          if (Math.abs(ro) >= 0.005) {
+                            return (
+                              <span className={`text-[10px] font-semibold ${
+                                ro < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
+                              }`}>
+                                R/O: {ro > 0 ? `+₹${ro.toFixed(2)}` : `-₹${Math.abs(ro).toFixed(2)}`}
+                              </span>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </div>
                       <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                         <button
                           onClick={() => handleOpenVoucherDetail(inv.id)}
@@ -933,7 +954,29 @@ export default function PurchaseInvoiceList() {
 
                       {/* Amount */}
                       <td className="p-4 font-bold text-foreground font-mono tabular-nums text-right text-sm">
-                        ₹{parseFloat(inv.total_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        <div>
+                          ₹{(() => {
+                            const raw = parseFloat(inv.total_amount) || 0;
+                            const rounded = Math.abs(raw % 1) > 0 ? (raw % 1 < 0.5 ? Math.floor(raw) : Math.ceil(raw)) : raw;
+                            return rounded.toLocaleString("en-IN", { minimumFractionDigits: 2 });
+                          })()}
+                        </div>
+                        {(() => {
+                          const ro = inv.round_off !== undefined && inv.round_off !== null && inv.round_off !== 0
+                            ? Number(inv.round_off)
+                            : (inv.total_amount % 1 !== 0 ? Number((Math.round(inv.total_amount) - inv.total_amount).toFixed(2)) : 0);
+                          if (Math.abs(ro) >= 0.005) {
+                            return (
+                              <div className={`text-[11px] font-semibold font-mono flex items-center justify-end gap-1 ${
+                                ro < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
+                              }`}>
+                                <span className="text-[10px] text-muted-foreground font-sans">R/O:</span>
+                                <span>{ro > 0 ? `+₹${ro.toFixed(2)}` : `-₹${Math.abs(ro).toFixed(2)}`}</span>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </td>
 
                       {/* Payment */}

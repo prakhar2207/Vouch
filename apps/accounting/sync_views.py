@@ -176,10 +176,14 @@ class SyncPullAPIView(APIView):
         # --- Hydrate VOUCHERS ---
         voucher_ids = grouped['VOUCHER']['CREATE'].union(grouped['VOUCHER']['UPDATE'])
         if voucher_ids:
-            from apps.accounting.models import PaymentAllocation
+            from apps.accounting.models import PaymentAllocation, LedgerEntry
             from django.db.models import Sum
             alloc_by_inv = {row['invoice_voucher_id']: row['paid'] for row in PaymentAllocation.objects.filter(invoice_voucher_id__in=voucher_ids).values('invoice_voucher_id').annotate(paid=Sum('allocated_amount'))}
             alloc_by_pmt = {row['payment_voucher_id']: row['allocated'] for row in PaymentAllocation.objects.filter(payment_voucher_id__in=voucher_ids).values('payment_voucher_id').annotate(allocated=Sum('allocated_amount'))}
+            ro_entries = {
+                e.voucher_id: float(e.debit_amount - e.credit_amount)
+                for e in LedgerEntry.objects.filter(voucher_id__in=voucher_ids, ledger__name__iexact='round off')
+            }
 
             vouchers = Voucher.objects.filter(id__in=voucher_ids).select_related('party_ledger').defer('attachment_data', 'attachment_mime')
             for v in vouchers:
@@ -209,6 +213,7 @@ class SyncPullAPIView(APIView):
                     'party_name': v.party_ledger.name if v.party_ledger else (v.buyer_name or ''),
                     'status': v.status,
                     'total_amount': str(v.total_amount or '0.00'),
+                    'round_off': ro_entries.get(v.id, 0.0),
                     'paid_amount': paid_amt,
                     'payment_status': p_status,
                     'narration': v.narration or '',
