@@ -59,30 +59,7 @@ class VoucherService:
         from apps.inventory.services.stock_service import StockService
         
         if process_stock:
-            if voucher.voucher_type == 'SALES':
-                total_cogs = StockService.process_voucher_stock(voucher)
-                # 2. Record perpetual inventory journal (Dr COGS / Cr Inventory)
-                if total_cogs > Decimal('0.00'):
-                    cogs_ledger, inv_ledger = VoucherService._get_or_create_cogs_and_inventory_ledgers(voucher.company)
-                    # Check if COGS lines already exist
-                    if not voucher.ledger_entries.filter(ledger=cogs_ledger).exists():
-                        LedgerEntry.objects.create(
-                            voucher=voucher,
-                            company=voucher.company,
-                            ledger=cogs_ledger,
-                            debit_amount=total_cogs,
-                            credit_amount=Decimal('0.00'),
-                            narration=f"COGS for {voucher.voucher_number}"
-                        )
-                        LedgerEntry.objects.create(
-                            voucher=voucher,
-                            company=voucher.company,
-                            ledger=inv_ledger,
-                            debit_amount=Decimal('0.00'),
-                            credit_amount=total_cogs,
-                            narration=f"Inventory reduction for {voucher.voucher_number}"
-                        )
-            elif voucher.voucher_type == 'PURCHASE':
+            if voucher.voucher_type in ('SALES', 'PURCHASE'):
                 StockService.process_voucher_stock(voucher)
         
         # 3. Process Accounting Ledger Entries with Concurrency Locks
