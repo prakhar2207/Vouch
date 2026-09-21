@@ -12,8 +12,9 @@ import { useFinancialYear } from '@/context/FinancialYearContext';
 import EditSalesInvoiceModal from '@/components/modals/EditSalesInvoiceModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 import EWayBillModal from '@/components/gst/EWayBillModal';
-import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight, CloudOff, CheckCircle, AlertTriangle, RefreshCw, Truck } from 'lucide-react';
+import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight, CloudOff, CheckCircle, AlertTriangle, RefreshCw, Truck, Download, MessageCircle } from 'lucide-react';
 import { offlineDb } from '@/lib/db/offlineDb';
+
 import { retryFailedVoucher, pullIncrementalChanges } from '@/lib/sync/sync-worker';
 import { vouchersRepository } from '@/lib/data';
 
@@ -219,7 +220,25 @@ export default function SalesInvoiceList() {
     }
   };
 
+  const handleShareWhatsApp = async (voucherId: string) => {
+    try {
+      const token = getAccessToken();
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${voucherId}/dispatch-details/`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-Company-ID': activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') || '' : ''),
+        },
+      });
+      if (res.data?.whatsapp_url) {
+        window.open(res.data.whatsapp_url, '_blank');
+      }
+    } catch {
+      toast.error('Failed to prepare WhatsApp share link.');
+    }
+  };
+
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
+
 
   const scrollToInvoice = (index: number) => {
     if (index >= 0 && index < invoices.length) {
@@ -594,12 +613,33 @@ export default function SalesInvoiceList() {
 
                             <Link
                               href={`/sales/${inv.id}/print`}
-                              className="px-3 py-1.5 bg-muted/60 hover:bg-muted text-foreground rounded-lg text-xs font-semibold border border-border transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+                              className="px-2.5 py-1.5 bg-muted/60 hover:bg-muted text-foreground rounded-lg text-xs font-semibold border border-border transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                               title="Print Invoice"
                             >
                               <Printer className="w-3.5 h-3.5" />
                               <span>Print</span>
                             </Link>
+
+                            <a
+                              href={`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/pdf/`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2.5 py-1.5 bg-blue-600/10 hover:bg-blue-600/20 text-blue-500 dark:text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/20 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+                              title="Download Official PDF"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>PDF</span>
+                            </a>
+
+                            <button
+                              onClick={() => handleShareWhatsApp(inv.id)}
+                              className="px-2.5 py-1.5 bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-500 rounded-lg text-xs font-semibold border border-emerald-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+                              title="Share on WhatsApp"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              <span>WhatsApp</span>
+                            </button>
+
 
                             <button
                               onClick={() => handleDeleteInvoice(inv.id, inv.voucher_number)}

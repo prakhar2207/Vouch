@@ -28,8 +28,10 @@ import {
   ArrowRight,
   Scale,
   ShieldCheck,
+  ShieldAlert,
   Activity,
   Landmark,
+
   Check,
   Plus,
 } from "lucide-react";
@@ -48,8 +50,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isFYDropdownOpen, setIsFYDropdownOpen] = useState(false);
   const [isCompanyDropdownOpen, setIsCompanyDropdownOpen] = useState(false);
+  const [isGstDropdownOpen, setIsGstDropdownOpen] = useState(false);
 
   const salesRef = useRef<HTMLDivElement>(null);
+  const gstRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const fyRef = useRef<HTMLDivElement>(null);
@@ -64,6 +68,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     setIsMobileNavOpen(false);
     setIsSalesDropdownOpen(false);
+    setIsGstDropdownOpen(false);
     setIsMoreDropdownOpen(false);
     setIsUserMenuOpen(false);
     setIsFYDropdownOpen(false);
@@ -75,6 +80,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const handleClickOutside = (e: MouseEvent) => {
       if (salesRef.current && !salesRef.current.contains(e.target as Node)) {
         setIsSalesDropdownOpen(false);
+      }
+      if (gstRef.current && !gstRef.current.contains(e.target as Node)) {
+        setIsGstDropdownOpen(false);
       }
       if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
         setIsMoreDropdownOpen(false);
@@ -89,6 +97,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         setIsCompanyDropdownOpen(false);
       }
     };
+
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
@@ -291,17 +300,56 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 Banking
               </Link>
 
-              {/* GST Returns */}
-              <Link
-                href="/gst/returns"
-                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
-                  pathname.startsWith("/gst")
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                }`}
-              >
-                GST Returns
-              </Link>
+              {/* GST & Tax Dropdown */}
+              <div ref={gstRef} className="relative">
+                <button
+                  id="tour-gst-btn"
+                  onClick={() => setIsGstDropdownOpen(!isGstDropdownOpen)}
+                  className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                    pathname.startsWith("/gst")
+                      ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  <span>GST & Tax</span>
+                  <span className="text-[9px] bg-rose-500/10 text-rose-500 font-bold px-1 rounded">Shield</span>
+                  <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-150 ${isGstDropdownOpen ? "rotate-180" : ""}`} />
+                </button>
+
+                {isGstDropdownOpen && (
+                  <div className="absolute left-0 mt-1.5 w-72 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95">
+                    <Link
+                      href="/gst/itc-shield"
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      onClick={() => setIsGstDropdownOpen(false)}
+                    >
+                      <div>
+                        <div className="font-semibold text-rose-500 flex items-center gap-1.5">
+                          <ShieldAlert className="w-3.5 h-3.5" />
+                          <span>Vendor ITC Risk Shield</span>
+                          <span className="text-[9px] bg-rose-500/20 text-rose-400 px-1 py-0.2 rounded font-bold">New</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground">GSTR-2B match, payment hold & WhatsApp chaser</div>
+                      </div>
+                    </Link>
+
+                    <Link
+                      href="/gst/returns"
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      onClick={() => setIsGstDropdownOpen(false)}
+                    >
+                      <div>
+                        <div className="font-medium flex items-center gap-1.5">
+                          <FileText className="w-3.5 h-3.5 text-primary" />
+                          <span>GST Returns Center</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground">GSTR-1, GSTR-3B tax summary & GSTR-9</div>
+                      </div>
+                    </Link>
+                  </div>
+                )}
+              </div>
+
 
               {/* More Dropdown */}
               <div ref={moreRef} className="relative">
@@ -886,7 +934,40 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 Banking
               </Link>
               
+              <div className="space-y-0.5 pt-1">
+                <div className="px-3 pt-2 pb-1 text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                  GST & Compliance
+                </div>
+                <Link
+                  href="/gst/itc-shield"
+                  onClick={() => setIsMobileNavOpen(false)}
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
+                    pathname.startsWith("/gst/itc-shield")
+                      ? "bg-muted font-semibold text-rose-500"
+                      : "text-muted-foreground hover:bg-muted/60"
+                  }`}
+                >
+                  <span className="font-semibold text-rose-500 flex items-center gap-1.5">
+                    <ShieldAlert className="w-3.5 h-3.5" />
+                    <span>Vendor ITC Risk Shield</span>
+                  </span>
+                  <span className="text-[9px] bg-rose-500/20 text-rose-400 px-1 py-0.2 rounded font-bold">New</span>
+                </Link>
+                <Link
+                  href="/gst/returns"
+                  onClick={() => setIsMobileNavOpen(false)}
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
+                    pathname.startsWith("/gst/returns")
+                      ? "bg-muted font-semibold text-foreground"
+                      : "text-muted-foreground hover:bg-muted/60"
+                  }`}
+                >
+                  <span>GST Returns Center</span>
+                </Link>
+              </div>
+
               <div className="border-t border-border/40 my-2"></div>
+
               
               <Link
                 href="/vouchers"

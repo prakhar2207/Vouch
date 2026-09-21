@@ -16,6 +16,15 @@ from .views import (
     GSTRDirectPortalUploadGSTR1APIView,
     GSTRDirectPortalStatusAPIView,
 )
+from .itc_views import (
+    GSTR2BUploadView,
+    ITCReconciliationListView,
+    ITCSmartPaymentHoldView,
+    ITCVendorNoticeView,
+    ITCSummaryView,
+    ITCRunReconciliationView,
+)
+
 
 urlpatterns = [
     # Party Creation & Verification via GSTIN
@@ -42,4 +51,13 @@ urlpatterns = [
     path('portal/verify-otp/', GSTRDirectPortalVerifyOTPAPIView.as_view(), name='gst_portal_verify_otp'),
     path('portal/upload-gstr1/', GSTRDirectPortalUploadGSTR1APIView.as_view(), name='gst_portal_upload_gstr1'),
     path('portal/status/<uuid:company_id>/<str:ref_id>/', GSTRDirectPortalStatusAPIView.as_view(), name='gst_portal_status'),
+
+    # Vendor ITC Risk Shield
+    path('itc/upload-2b/', GSTR2BUploadView.as_view(), name='itc_upload_2b'),
+    path('itc/reconciliation/', ITCReconciliationListView.as_view(), name='itc_reconciliation_list'),
+    path('itc/reconcile-now/', ITCRunReconciliationView.as_view(), name='itc_run_reconciliation'),
+    path('itc/hold-gst/', ITCSmartPaymentHoldView.as_view(), name='itc_hold_gst'),
+    path('itc/vendor-notice/<uuid:voucher_id>/', ITCVendorNoticeView.as_view(), name='itc_vendor_notice'),
+    path('itc/summary/', ITCSummaryView.as_view(), name='itc_summary'),
 ]
+

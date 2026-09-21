@@ -121,8 +121,14 @@ class VoucherService:
             record_id=voucher.id,
             changes={"total_amount": str(voucher.total_amount), "status": "POSTED"}
         )
+
+        # 6. Automated Invoice PDF & Viral Claim Dispatch for Sales Invoices
+        if voucher.voucher_type == 'SALES':
+            from apps.accounting.services.invoice_notification_service import InvoiceNotificationService
+            transaction.on_commit(lambda: InvoiceNotificationService.dispatch_invoice_on_post(voucher))
         
         return voucher
+
 
     @staticmethod
     @transaction.atomic

@@ -1,7 +1,10 @@
 import uuid
 from django.db import models
+from django.conf import settings
 from apps.companies.models import Company
 from apps.accounting.models import Voucher
+
+
 
 class CompanyGSTConfig(models.Model):
     PROVIDER_CHOICES = (
@@ -142,3 +145,91 @@ class GSTTaxpayerCache(models.Model):
 
     def __str__(self):
         return f"{self.gstin} - {self.trade_name or self.legal_name} ({self.status})"
+
+
+class GSTR2BImport(models.Model):
+    STATUS_CHOICES = (
+        ('PROCESSING', 'Processing'),
+        ('PROCESSED', 'Processed'),
+        ('FAILED', 'Failed'),
+    )
+    FILE_FORMAT_CHOICES = (
+        ('JSON', 'GST Portal JSON'),
+        ('EXCEL', 'GSTR-2B Excel'),
+        ('API', 'GSP Direct API'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gstr2b_imports')
+    return_period = models.CharField(max_length=10, db_index=True)  # e.g. "082026" or "2026-08"
+    financial_year = models.CharField(max_length=10, blank=True, default='')  # e.g. "2026-27"
+    file_format = models.CharField(max_length=10, choices=FILE_FORMAT_CHOICES, default='JSON')
+    file_name = models.CharField(max_length=255, blank=True, default='')
+    
+    total_invoices_count = models.PositiveIntegerField(default=0)
+    total_taxable_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    total_itc_available = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PROCESSED')
+    error_log = models.TextField(blank=True, default='')
+    
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"GSTR-2B {self.return_period} - {self.company.name} ({self.status})"
+
+
+class GSTR2BRecord(models.Model):
+    MATCH_STATUS_CHOICES = (
+        ('MATCHED', 'Matched in Books'),
+        ('MISMATCHED', 'Value / Tax Mismatch'),
+        ('MISSING_IN_BOOKS', 'Missing in Purchase Books'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    import_batch = models.ForeignKey(GSTR2BImport, on_delete=models.CASCADE, related_name='records')
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gstr2b_records', db_index=True)
+    
+    supplier_gstin = models.CharField(max_length=15, db_index=True)
+    supplier_name = models.CharField(max_length=255, blank=True, default='')
+    invoice_number = models.CharField(max_length=100, db_index=True)
+    normalized_invoice_number = models.CharField(max_length=100, db_index=True)
+    invoice_type = models.CharField(max_length=10, default='R')  # Regular, Deemed, SEZ, etc.
+    invoice_date = models.DateField()
+    invoice_value = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    
+    taxable_value = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    igst_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    cgst_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    sgst_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    cess_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    
+    place_of_supply = models.CharField(max_length=10, blank=True, default='')
+    reverse_charge = models.CharField(max_length=5, default='N')
+    itc_available = models.BooleanField(default=True)
+    itc_ineligible_reason = models.CharField(max_length=100, blank=True, default='')
+    
+    gstr1_filing_date = models.DateField(null=True, blank=True)
+    gstr3b_status = models.CharField(max_length=20, default='UNKNOWN')
+    
+    matched_voucher = models.ForeignKey(Voucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='gstr2b_matches')
+    match_status = models.CharField(max_length=30, choices=MATCH_STATUS_CHOICES, default='MISSING_IN_BOOKS')
+    mismatch_details = models.JSONField(default=dict, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['company', 'supplier_gstin', 'normalized_invoice_number']),
+        ]
+
+    def __str__(self):
+        return f"{self.supplier_gstin} - {self.invoice_number} (₹{self.invoice_value}) - {self.match_status}"
+

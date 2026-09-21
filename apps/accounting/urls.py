@@ -16,7 +16,14 @@ from .b2b_views import (
     InwardVoucherInboxView, InwardVoucherDetailView, InwardVoucherAcceptView, InwardVoucherRejectView
 )
 from .tally_views import TallyExportAPIView
+from .claim_views import (
+    InvoiceClaimPreviewAPIView,
+    InvoicePDFDownloadAPIView,
+    InvoiceClaimRegisterAPIView,
+    InvoiceDispatchDetailsAPIView,
+)
 import apps.accounting.banking_views
+
 import apps.accounting.health_views
 
 urlpatterns = [
@@ -56,6 +63,13 @@ urlpatterns = [
     path('b2b/inbox/<uuid:pk>/', InwardVoucherDetailView.as_view(), name='b2b_inbox_detail'),
     path('b2b/inbox/<uuid:pk>/accept/', InwardVoucherAcceptView.as_view(), name='b2b_inbox_accept'),
     path('b2b/inbox/<uuid:pk>/reject/', InwardVoucherRejectView.as_view(), name='b2b_inbox_reject'),
+
+    # Viral Invoice Claim & Automated PDF Dispatch
+    path('vouchers/claim-preview/', InvoiceClaimPreviewAPIView.as_view(), name='claim_preview'),
+    path('vouchers/claim-register/', InvoiceClaimRegisterAPIView.as_view(), name='claim_register'),
+    path('vouchers/<uuid:voucher_id>/pdf/', InvoicePDFDownloadAPIView.as_view(), name='invoice_pdf_download'),
+    path('vouchers/<uuid:voucher_id>/dispatch-details/', InvoiceDispatchDetailsAPIView.as_view(), name='invoice_dispatch_details'),
+
 
     # Tally Export
     path('export/tally/xml/', TallyExportAPIView.as_view(), name='export_tally_xml'),

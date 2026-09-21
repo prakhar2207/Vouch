@@ -153,6 +153,18 @@ class Voucher(models.Model):
     buyer_gstin = models.CharField(max_length=15, null=True, blank=True)
     buyer_state_code = models.CharField(max_length=10, null=True, blank=True)
     buyer_phone = models.CharField(max_length=20, null=True, blank=True)
+    buyer_email = models.EmailField(max_length=255, null=True, blank=True)
+
+    # Vendor ITC Risk Shield Fields
+    ITC_MATCH_CHOICES = (
+        ('UNCHECKED', 'Unchecked'),
+        ('MATCHED', 'Matched in 2B'),
+        ('MISMATCHED', 'Mismatch with 2B'),
+        ('MISSING_IN_2B', 'Missing in 2B'),
+    )
+    itc_match_status = models.CharField(max_length=30, choices=ITC_MATCH_CHOICES, default='UNCHECKED', null=True, blank=True)
+    itc_held_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00, null=True, blank=True)
+    itc_notes = models.TextField(null=True, blank=True)
     
     narration = models.TextField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DRAFT')
