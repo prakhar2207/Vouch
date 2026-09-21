@@ -716,29 +716,24 @@ export default function PrintInvoicePage() {
 
       // ================= 1. MOBILE / PWA MODE =================
       if (isMobile) {
-        // Pass file + message to native Web Share API
-        if (typeof navigator !== 'undefined' && navigator.share && pdfFile) {
-          if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
-            try {
-              await navigator.share({
-                files: [pdfFile],
-                title: filename,
-                text: waMessage,
-              });
-              return;
-            } catch (shareErr: any) {
-              if (shareErr?.name === 'AbortError') {
-                return; // User cancelled share sheet
-              }
-              console.warn('Native share with file failed, falling back to direct link:', shareErr);
-            }
-          }
+        // Copy message to clipboard so user can also paste anywhere
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+          try {
+            await navigator.clipboard.writeText(waMessage);
+          } catch (clipErr) {}
         }
 
-        // Direct WhatsApp launch on mobile without downloading file to phone
+        // Directly launch WhatsApp with complete pre-filled message
+        // containing document details, PDF link, and 1-Click Import link
         const encoded = encodeURIComponent(waMessage);
         const appUrl = phone ? `whatsapp://send?phone=${phone}&text=${encoded}` : `whatsapp://send?text=${encoded}`;
-        window.location.href = appUrl;
+        const fallbackUrl = phone ? `https://api.whatsapp.com/send?phone=${phone}&text=${encoded}` : `https://api.whatsapp.com/send?text=${encoded}`;
+
+        try {
+          window.location.href = appUrl;
+        } catch (e) {
+          window.open(fallbackUrl, '_blank');
+        }
         return;
       }
 

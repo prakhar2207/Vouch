@@ -7,29 +7,52 @@ from reportlab.lib import colors
 
 logger = logging.getLogger(__name__)
 
-# Register Roboto fonts once
+# Register Segoe UI and Roboto fonts once
 def ensure_fonts():
     font_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'accounting', 'fonts')
-    font_paths = {
+    
+    segoe_paths = {
+        'SegoeUI': os.path.join(font_dir, 'segoeui.ttf'),
+        'SegoeUI-Bold': os.path.join(font_dir, 'segoeuib.ttf'),
+        'SegoeUI-Italic': os.path.join(font_dir, 'segoeuii.ttf'),
+        'SegoeUI-BoldItalic': os.path.join(font_dir, 'segoeuiz.ttf'),
+        'SegoeUI-Semibold': os.path.join(font_dir, 'seguisb.ttf'),
+        'SegoeUI-Black': os.path.join(font_dir, 'seguibl.ttf'),
+    }
+    
+    segoe_loaded = True
+    for name, path in segoe_paths.items():
+        if os.path.exists(path):
+            try:
+                pdfmetrics.registerFont(TTFont(name, path))
+            except Exception as e:
+                logger.warning(f"Error registering font {name}: {e}")
+                segoe_loaded = False
+        else:
+            segoe_loaded = False
+
+    roboto_paths = {
         'Roboto': os.path.join(font_dir, 'Roboto-Regular.ttf'),
         'Roboto-Bold': os.path.join(font_dir, 'Roboto-Bold.ttf'),
         'Roboto-Oblique': os.path.join(font_dir, 'Roboto-Italic.ttf'),
         'Roboto-BoldOblique': os.path.join(font_dir, 'Roboto-BoldItalic.ttf'),
     }
     
-    loaded = True
-    for name, path in font_paths.items():
+    roboto_loaded = True
+    for name, path in roboto_paths.items():
         if os.path.exists(path):
             try:
                 pdfmetrics.registerFont(TTFont(name, path))
             except Exception as e:
                 logger.warning(f"Error registering font {name}: {e}")
-                loaded = False
+                roboto_loaded = False
         else:
-            loaded = False
-    return loaded
+            roboto_loaded = False
+            
+    return segoe_loaded, roboto_loaded
 
-FONTS_LOADED = ensure_fonts()
+SEGOE_LOADED, ROBOTO_LOADED = ensure_fonts()
+FONTS_LOADED = SEGOE_LOADED or ROBOTO_LOADED
 
 
 class NumberedCanvas(canvas.Canvas):
