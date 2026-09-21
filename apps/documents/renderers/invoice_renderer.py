@@ -20,51 +20,68 @@ from reportlab.platypus import (
 )
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.pdfgen import canvas
 
 from apps.documents.renderers.base import FONTS_LOADED
 
 logger = logging.getLogger(__name__)
 
 
+class NumberedCanvas(canvas.Canvas):
+    """
+    Two-pass canvas that counts total pages and writes 'Page X of Y' on every page.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self.draw_page_decorations(num_pages)
+            super().showPage()
+        super().save()
+
+    def draw_page_decorations(self, total_pages):
+        self.saveState()
+        fnt = 'Roboto' if FONTS_LOADED else 'Helvetica'
+        self.setFont(fnt, 7.5)
+        self.setFillColor(colors.HexColor('#475569'))
+        # Margin X = 19.5, Width = 556
+        margin_x = 19.5
+        page_w = A4[0]
+        self.drawString(margin_x, 10, "This is a Computer Generated Invoice")
+        self.drawRightString(page_w - margin_x, 10, f"Page {self._pageNumber} of {total_pages}")
+        self.restoreState()
+
+
 class InvoicePDFRenderer:
     """
     Renders deterministic, high-definition GST Tax Invoices strictly from Canonical DTO.
     Replicates the exact standard Indian B2B boxed layout (matching INVOICE-105.pdf benchmark).
-    Guarantees a complete, full single A4 page fit without empty white space or overflow.
+    Guarantees:
+      - Strictly 1 single A4 page for normal/moderate invoices (<= ~12 items).
+      - Seamless multi-page flow for large invoices (> 12 items) with the footer present
+        on EVERY page and 'Page X of Y' on every page.
     """
 
     @classmethod
     def render(cls, dto: Dict[str, Any]) -> bytes:
         buffer = io.BytesIO()
 
-        # Page Dimensions & Margins (Exact 1-page fit on 595.27 x 841.89 pt A4)
+        # Page Dimensions & Margins
         PAGE_WIDTH, PAGE_HEIGHT = A4
-        WIDTH = 556
-        MARGIN_X = (PAGE_WIDTH - WIDTH) / 2   # ~19.64 pt
-        MARGIN_Y = 20.0
-        USABLE_HEIGHT = PAGE_HEIGHT - (2 * MARGIN_Y)  # ~801.89 pt
-        TARGET_DOC_HEIGHT = 792.0  # Guarantees strictly 1 single page fit with exact boxed alignment
-
-        doc = BaseDocTemplate(
-            buffer,
-            pagesize=A4,
-            leftMargin=MARGIN_X,
-            rightMargin=MARGIN_X,
-            topMargin=MARGIN_Y,
-            bottomMargin=MARGIN_Y,
-        )
-        frame = Frame(
-            MARGIN_X,
-            MARGIN_Y,
-            WIDTH,
-            USABLE_HEIGHT,
-            leftPadding=0,
-            rightPadding=0,
-            topPadding=0,
-            bottomPadding=0,
-            id='normal',
-        )
-        doc.addPageTemplates([PageTemplate(id='First', frames=frame, pagesize=A4)])
+        WIDTH = 556.0
+        MARGIN_X = (PAGE_WIDTH - WIDTH) / 2.0   # ~19.64 pt
+        FOOTER_HEIGHT = 86.0
+        TOP_MARGIN = 16.0
+        FRAME_BOTTOM = 22.0 + FOOTER_HEIGHT + 2.0  # = 110.0 pt
+        FRAME_HEIGHT = PAGE_HEIGHT - TOP_MARGIN - FRAME_BOTTOM  # ~715.89 pt
 
         doc_meta = dto.get('document', {})
         seller = dto.get('seller', {})
@@ -107,10 +124,10 @@ class InvoicePDFRenderer:
         s_words = ParagraphStyle('Words', fontName=fnt, fontSize=9, leading=12, textColor=colors.black)
         s_bank_text = ParagraphStyle('BankText', fontName=fnt, fontSize=8.5, leading=11, alignment=TA_CENTER, textColor=colors.black)
 
-        s_terms = ParagraphStyle('Terms', fontName=fnt, fontSize=7.5, leading=9.5, textColor=colors.black)
-        s_qr_label = ParagraphStyle('QRLabel', fontName=fnt_b, fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
-        s_sign_rcvr = ParagraphStyle('SignRcvr', fontName=fnt_b, fontSize=8, leading=10, alignment=TA_LEFT, textColor=colors.black)
-        s_sign_auth = ParagraphStyle('SignAuth', fontName=fnt_b, fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
+        s_terms = ParagraphStyle('Terms', fontName=fnt, fontSize=7, leading=8.5, textColor=colors.black)
+        s_qr_label = ParagraphStyle('QRLabel', fontName=fnt_b, fontSize=7, leading=8.5, alignment=TA_CENTER, textColor=colors.black)
+        s_sign_rcvr = ParagraphStyle('SignRcvr', fontName=fnt_b, fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
+        s_sign_auth = ParagraphStyle('SignAuth', fontName=fnt_b, fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
 
         # ================= 1. HEADER =================
         gstin_str = seller.get('gstin', 'Unregistered')
@@ -135,8 +152,8 @@ class InvoicePDFRenderer:
             ('SPAN', (0, 3), (1, 3)),
             ('SPAN', (0, 4), (1, 4)),
             ('PADDING', (0, 0), (-1, -1), 1.5),
-            ('TOPPADDING', (0, 0), (-1, 0), 2.5),
-            ('BOTTOMPADDING', (0, -1), (-1, -1), 2.5),
+            ('TOPPADDING', (0, 0), (-1, 0), 2),
+            ('BOTTOMPADDING', (0, -1), (-1, -1), 2),
             ('LINEBELOW', (0, -1), (-1, -1), 1, colors.black),
         ]
         if seller.get('tagline'):
@@ -215,7 +232,7 @@ class InvoicePDFRenderer:
             ('BOX', (0, 0), (-1, -1), 1, colors.black),
             ('LINEAFTER', (0, 0), (0, -1), 1, colors.black),
             ('LINEBELOW', (0, -1), (-1, -1), 1, colors.black),
-            ('PADDING', (0, 0), (-1, -1), 2.5),
+            ('PADDING', (0, 0), (-1, -1), 2),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ]))
 
@@ -269,7 +286,7 @@ class InvoicePDFRenderer:
         words_table.setStyle(TableStyle([
             ('BOX', (0, 0), (-1, -1), 1, colors.black),
             ('LINEBELOW', (0, 0), (-1, -1), 1, colors.black),
-            ('PADDING', (0, 0), (-1, -1), 2.5),
+            ('PADDING', (0, 0), (-1, -1), 2),
         ]))
 
         # ================= 7. BANK DETAILS =================
@@ -286,10 +303,21 @@ class InvoicePDFRenderer:
         bank_table.setStyle(TableStyle([
             ('BOX', (0, 0), (-1, -1), 1, colors.black),
             ('LINEBELOW', (0, 0), (-1, -1), 1, colors.black),
-            ('PADDING', (0, 0), (-1, -1), 2),
+            ('PADDING', (0, 0), (-1, -1), 1.5),
         ]))
 
-        # ================= 8. BOTTOM FOOTER =================
+        # Measure fixed top and bottom heights
+        h_header = header_table.wrap(WIDTH, 2000)[1]
+        h_meta = meta_table.wrap(WIDTH, 2000)[1]
+        h_party = party_table.wrap(WIDTH, 2000)[1]
+        h_top = h_header + h_meta + h_party
+
+        h_tax = tax_table.wrap(WIDTH, 2000)[1]
+        h_words = words_table.wrap(WIDTH, 2000)[1]
+        h_bank = bank_table.wrap(WIDTH, 2000)[1]
+        h_bottom = h_tax + h_words + h_bank
+
+        # ================= 8. BOTTOM FOOTER (Rendered on EVERY Page) =================
         city = seller.get('city', 'Kanpur')
         terms_list = dto.get('terms', [
             "Goods once sold will not be taken back.",
@@ -311,12 +339,12 @@ class InvoicePDFRenderer:
                 qr_buf = io.BytesIO()
                 pil_qr.save(qr_buf, format='PNG')
                 qr_buf.seek(0)
-                qr_img = RLImage(qr_buf, width=22 * mm, height=22 * mm)
+                qr_img = RLImage(qr_buf, width=20 * mm, height=20 * mm)
         except Exception as e:
             logger.warning(f"Could not generate QR code: {e}")
 
         qr_cell_content = [
-            Paragraph("<b>E-Invoice QR Code</b>", s_qr_label),
+            Paragraph("<b>Scan to Verify</b>", s_qr_label),
             Spacer(1, 1),
             qr_img if qr_img else Paragraph("", s_terms),
         ]
@@ -332,21 +360,21 @@ class InvoicePDFRenderer:
         comp_name_str = seller.get('name', 'Vouch')
         sig_inner_elements = [Paragraph(f"<b>for {comp_name_str}</b>", s_sign_auth)]
         if sig_img:
-            sig_inner_elements.append(Spacer(1, 2))
+            sig_inner_elements.append(Spacer(1, 1))
             sig_inner_elements.append(sig_img)
-            sig_inner_elements.append(Spacer(1, 2))
+            sig_inner_elements.append(Spacer(1, 1))
         else:
-            sig_inner_elements.append(Paragraph("<br/><br/><br/>", s_sign_auth))
+            sig_inner_elements.append(Paragraph("<br/><br/>", s_sign_auth))
         sig_inner_elements.append(Paragraph("<b>Authorised Signatory</b>", s_sign_auth))
 
         sig_subtable = Table([
             [Paragraph("<b>Receiver's Signature :</b>", s_sign_rcvr)],
             [sig_inner_elements]
-        ], colWidths=[210], rowHeights=[24, 76])
+        ], colWidths=[200], rowHeights=[20, 66])
         sig_subtable.setStyle(TableStyle([
             ('LINEBELOW', (0, 0), (-1, 0), 1, colors.black),
-            ('LEFTPADDING', (0, 0), (-1, -1), 4),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (-1, -1), 3),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 3),
             ('TOPPADDING', (0, 0), (-1, -1), 2),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
             ('VALIGN', (0, 0), (-1, 0), 'TOP'),
@@ -359,31 +387,20 @@ class InvoicePDFRenderer:
                 qr_cell_content,
                 sig_subtable
             ]],
-            colWidths=[236, 110, 210],
-            rowHeights=[100]
+            colWidths=[246, 110, 200],
+            rowHeights=[FOOTER_HEIGHT]
         )
         footer_table.setStyle(TableStyle([
             ('BOX', (0, 0), (-1, -1), 1, colors.black),
             ('LINEAFTER', (0, 0), (0, -1), 1, colors.black),
             ('LINEAFTER', (1, 0), (1, -1), 1, colors.black),
-            ('PADDING', (0, 0), (1, -1), 2.5),
+            ('PADDING', (0, 0), (1, -1), 2),
             ('LEFTPADDING', (2, 0), (2, -1), 0),
             ('RIGHTPADDING', (2, 0), (2, -1), 0),
             ('TOPPADDING', (2, 0), (2, -1), 0),
             ('BOTTOMPADDING', (2, 0), (2, -1), 0),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ]))
-
-        # Measure fixed heights
-        h_header = header_table.wrap(WIDTH, 2000)[1]
-        h_meta = meta_table.wrap(WIDTH, 2000)[1]
-        h_party = party_table.wrap(WIDTH, 2000)[1]
-        h_tax = tax_table.wrap(WIDTH, 2000)[1]
-        h_words = words_table.wrap(WIDTH, 2000)[1]
-        h_bank = bank_table.wrap(WIDTH, 2000)[1]
-        h_footer = footer_table.wrap(WIDTH, 2000)[1]
-
-        fixed_height = h_header + h_meta + h_party + h_tax + h_words + h_bank + h_footer
 
         # ================= 4. ITEMS TABLE =================
         col_w = [30, 196, 54, 40, 32, 50, 58, 96]
@@ -423,28 +440,7 @@ class InvoicePDFRenderer:
             ])
 
         num_item_rows = len(items)
-        filler_idx = len(items_data)
-        items_data.append(["", "", "", "", "", "", "", ""])
-
-        # Subtotal row
-        subtotal_idx = len(items_data)
         tot_taxable = subtotals.get('total_taxable', 0.0)
-        items_data.append([
-            "", "", "", "", "", "", "",
-            Paragraph(f"{tot_taxable:,.2f}", s_td_r)
-        ])
-
-        # Taxes rows
-        num_tax_rows = 0
-        def add_tax_row(label, rate_label, amount_str):
-            items_data.append([
-                "", "", "", "",
-                Paragraph(label, s_td_tax_label),
-                "",
-                Paragraph(rate_label, s_td_tax_label),
-                Paragraph(amount_str, s_td_r)
-            ])
-
         first_item_gst = items[0].get('gst_rate', 18.0) if items else 18.0
         tot_igst = subtotals.get('total_igst', 0.0)
         tot_cgst = subtotals.get('total_cgst', 0.0)
@@ -454,25 +450,53 @@ class InvoicePDFRenderer:
         final_grand_total = subtotals.get('grand_total', 0.0)
         tot_qty = subtotals.get('total_quantity', 0.0)
 
+        num_tax_rows = 1 if (is_inter_state or tot_igst > 0.0) else 2
+        if cartage > 0.0:
+            num_tax_rows += 1
+        if abs(round_off) >= 0.005:
+            num_tax_rows += 1
+
+        content_rows_height = 18 + (num_item_rows * 16) + 16 + (num_tax_rows * 14.5) + 20
+        total_needed = h_top + content_rows_height + h_bottom
+        is_single_page = total_needed <= FRAME_HEIGHT
+
+        filler_idx = -1
+        if is_single_page:
+            filler_height = max(4.0, FRAME_HEIGHT - total_needed - 4.0)
+            filler_idx = len(items_data)
+            items_data.append(["", "", "", "", "", "", "", ""])
+
+        # Subtotal row
+        subtotal_idx = len(items_data)
+        items_data.append([
+            "", "", "", "", "", "", "",
+            Paragraph(f"{tot_taxable:,.2f}", s_td_r)
+        ])
+
+        def add_tax_row(label, rate_label, amount_str):
+            items_data.append([
+                "", "", "", "",
+                Paragraph(label, s_td_tax_label),
+                "",
+                Paragraph(rate_label, s_td_tax_label),
+                Paragraph(amount_str, s_td_r)
+            ])
+
         if is_inter_state or tot_igst > 0.0:
             rate_disp = f"@ {first_item_gst:.2f} %"
             add_tax_row("Add : IGST", rate_disp, f"{tot_igst:,.2f}")
-            num_tax_rows += 1
         else:
             half_rate = f"@ {(first_item_gst / 2.0):.2f} %"
             add_tax_row("Add : CGST", half_rate, f"{tot_cgst:,.2f}")
             add_tax_row("Add : SGST", half_rate, f"{tot_sgst:,.2f}")
-            num_tax_rows += 2
 
         if cartage > 0.0:
             add_tax_row("Add : Cartage", "", f"{cartage:,.2f}")
-            num_tax_rows += 1
 
         if abs(round_off) >= 0.005:
             lbl = "Add : Round Off" if round_off > 0.0 else "Less : Round Off"
             sign_str = f"+{round_off:.2f}" if round_off > 0.0 else f"{round_off:.2f}"
             add_tax_row(lbl, "", sign_str)
-            num_tax_rows += 1
 
         grand_total_idx = len(items_data)
         items_data.append([
@@ -483,24 +507,23 @@ class InvoicePDFRenderer:
             Paragraph(f"<b>{final_grand_total:,.2f}</b>", s_td_bold_r)
         ])
 
-        target_items_table_height = TARGET_DOC_HEIGHT - fixed_height
-        content_rows_height = 18 + (num_item_rows * 16) + 16 + (num_tax_rows * 14.5) + 20
-        filler_height = max(10.0, target_items_table_height - content_rows_height)
+        if is_single_page:
+            row_heights = [18] + [16] * num_item_rows + [filler_height] + [16] + [14.5] * num_tax_rows + [20]
+        else:
+            row_heights = [18] + [16] * num_item_rows + [16] + [14.5] * num_tax_rows + [20]
 
-        row_heights = [18] + [16] * num_item_rows + [filler_height] + [16] + [14.5] * num_tax_rows + [20]
-        items_table = Table(items_data, colWidths=col_w, rowHeights=row_heights)
+        items_table = Table(items_data, colWidths=col_w, rowHeights=row_heights, repeatRows=1)
 
         it_style = [
             ('BOX', (0, 0), (-1, -1), 1, colors.black),
             ('LINEBELOW', (0, 0), (-1, 0), 1, colors.black),
-            ('LINEAFTER', (0, 0), (0, filler_idx), 1, colors.black),
-            ('LINEAFTER', (1, 0), (1, filler_idx), 1, colors.black),
-            ('LINEAFTER', (2, 0), (2, filler_idx), 1, colors.black),
-            ('LINEAFTER', (3, 0), (3, filler_idx), 1, colors.black),
-            ('LINEAFTER', (4, 0), (4, filler_idx), 1, colors.black),
-            ('LINEAFTER', (5, 0), (5, filler_idx), 1, colors.black),
+            ('LINEAFTER', (0, 0), (0, -1), 1, colors.black),
+            ('LINEAFTER', (1, 0), (1, -1), 1, colors.black),
+            ('LINEAFTER', (2, 0), (2, -1), 1, colors.black),
+            ('LINEAFTER', (3, 0), (3, -1), 1, colors.black),
+            ('LINEAFTER', (4, 0), (4, -1), 1, colors.black),
+            ('LINEAFTER', (5, 0), (5, -1), 1, colors.black),
             ('LINEAFTER', (6, 0), (6, -1), 1, colors.black),
-            ('LINEBELOW', (0, filler_idx), (-1, filler_idx), 1, colors.black),
             ('LINEABOVE', (0, grand_total_idx), (-1, grand_total_idx), 1, colors.black),
             ('LINEBELOW', (0, grand_total_idx), (-1, grand_total_idx), 1, colors.black),
             ('SPAN', (0, grand_total_idx), (3, grand_total_idx)),
@@ -509,12 +532,41 @@ class InvoicePDFRenderer:
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]
 
+        if is_single_page and filler_idx > 0:
+            it_style.append(('LINEBELOW', (0, filler_idx), (-1, filler_idx), 1, colors.black))
+
         it_style.append(('SPAN', (0, subtotal_idx), (6, subtotal_idx)))
         for r in range(subtotal_idx + 1, grand_total_idx):
             it_style.append(('SPAN', (0, r), (3, r)))
             it_style.append(('SPAN', (4, r), (5, r)))
 
         items_table.setStyle(TableStyle(it_style))
+
+        # onPage callback: Draws footer on EVERY page at fixed bottom position
+        def draw_page_footer(canv, doc):
+            footer_table.wrapOn(canv, WIDTH, FOOTER_HEIGHT)
+            footer_table.drawOn(canv, MARGIN_X, 22)
+
+        doc = BaseDocTemplate(
+            buffer,
+            pagesize=A4,
+            leftMargin=MARGIN_X,
+            rightMargin=MARGIN_X,
+            topMargin=TOP_MARGIN,
+            bottomMargin=FRAME_BOTTOM,
+        )
+        frame = Frame(
+            MARGIN_X,
+            FRAME_BOTTOM,
+            WIDTH,
+            FRAME_HEIGHT,
+            leftPadding=0,
+            rightPadding=0,
+            topPadding=0,
+            bottomPadding=0,
+            id='normal',
+        )
+        doc.addPageTemplates([PageTemplate(id='All', frames=frame, pagesize=A4, onPage=draw_page_footer)])
 
         elements = [
             header_table,
@@ -524,9 +576,8 @@ class InvoicePDFRenderer:
             tax_table,
             words_table,
             bank_table,
-            footer_table,
         ]
 
-        doc.build(elements)
+        doc.build(elements, canvasmaker=NumberedCanvas)
         buffer.seek(0)
         return buffer.getvalue()

@@ -159,15 +159,21 @@ class DocumentShareService:
                 doc_title = "DEBIT NOTE"
 
             grand_total = subtotals.get('grand_total', 0.0)
+            voucher_id = snapshot.source_id
+            pdf_url = f"{base_url}/sales/{voucher_id}/print" if voucher_id else share_url
+            claim_url = f"{base_url}/claim?token={voucher_id}" if voucher_id else share_url
+
             msg = (
                 f"🧾 *{doc_title} #{doc.get('document_number', '')}*\n\n"
                 f"Dear *{buyer.get('name', 'Valued Customer')}*,\n\n"
-                f"Here is your document from *{seller.get('name', 'Vouch')}*:\n"
-                f"• *Document No:* {doc.get('document_number', '')}\n"
-                f"• *Date:* {doc.get('document_date', '')}\n"
-                f"• *Amount:* ₹{grand_total:,.2f}\n\n"
-                f"📄 *View Online, Download PDF & 1-Click Auto-Book:*\n"
-                f"{share_url}\n\n"
+                f"Here is your tax invoice from *{seller.get('name', 'Vouch')}*:\n"
+                f"• *Invoice Number:* {doc.get('document_number', '')}\n"
+                f"• *Invoice Date:* {doc.get('document_date', '')}\n"
+                f"• *Invoice Amount:* ₹{grand_total:,.2f}\n\n"
+                f"📄 *View & Download Official PDF:*\n"
+                f"{pdf_url}\n\n"
+                f"⚡ *1-Click Import (Auto-Book Purchase in Vouch):*\n"
+                f"{claim_url}\n\n"
                 f"Thank you for doing business with us!\n"
                 f"*{seller.get('name', 'Vouch')}*"
             )

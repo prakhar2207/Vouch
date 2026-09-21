@@ -375,9 +375,9 @@ export default function PrintInvoicePage() {
   const isMobileOrPWA = () => {
     if (typeof window === 'undefined') return false;
     const ua = navigator.userAgent || '';
-    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua);
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
-    const isTouch = (navigator.maxTouchPoints > 0 || 'ontouchstart' in window) && window.innerWidth <= 1024;
+    const isTouch = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
     return isMobileUA || isStandalone || isTouch;
   };
 
@@ -551,23 +551,30 @@ export default function PrintInvoicePage() {
     if (!invoice) return '';
     const invoiceNo = invoice.voucher_number || 'Invoice';
     const companyName = invoice.company?.name || 'Our Company';
-    const partyName = invoice.party?.name || 'Valued Customer';
+    const partyName = invoice.party?.name || invoice.buyer_name || 'Valued Customer';
     const total = Number(invoice.total_amount || 0).toLocaleString('en-IN', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
     
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vouch-pi-one.vercel.app';
     const publicInvoiceUrl = `${origin}/sales/${invoiceId}/print`;
+    const claimUrl = `${origin}/claim?token=${invoiceId}`;
+    const invDate = invoice.date || invoice.voucher_date || 'Today';
 
     return (
-      `*TAX INVOICE: ${invoiceNo}*\n` +
-      `*Company:* ${companyName}\n` +
-      `*Customer:* ${partyName}\n` +
-      `*Total Amount:* ₹${total}\n\n` +
-      `📄 *View & Download Official PDF Invoice:*\n` +
+      `🧾 *TAX INVOICE #${invoiceNo}*\n\n` +
+      `Dear *${partyName}*,\n\n` +
+      `Here is your tax invoice from *${companyName}*:\n` +
+      `• *Invoice Number:* ${invoiceNo}\n` +
+      `• *Invoice Date:* ${invDate}\n` +
+      `• *Invoice Amount:* ₹${total}\n\n` +
+      `📄 *View & Download Official PDF:*\n` +
       `${publicInvoiceUrl}\n\n` +
-      `Thank you for your business!`
+      `⚡ *1-Click Import (Auto-Book Purchase in Vouch):*\n` +
+      `${claimUrl}\n\n` +
+      `Thank you for doing business with us!\n` +
+      `*${companyName}*`
     );
   };
 
@@ -629,7 +636,8 @@ export default function PrintInvoicePage() {
     try {
       const pdfResult = await generateInvoicePdf();
       const filename = getCleanInvoiceFilename();
-      if (pdfResult) {
+      const isMobile = isMobileOrPWA();
+      if (!isMobile && pdfResult) {
         triggerPdfDownload(pdfResult.blobUrl, filename);
       }
       const { appUrl, webUrl } = getWhatsAppUrls();
@@ -829,7 +837,16 @@ export default function PrintInvoicePage() {
               : `
             @page {
               size: A4 portrait;
-              margin: 8mm;
+              margin: 8mm 6mm;
+            }
+            #invoice-sheet {
+              width: 100% !important;
+              min-width: 100% !important;
+              max-width: 100% !important;
+              min-height: auto !important;
+              padding: 0 !important;
+              margin: 0 !important;
+              box-shadow: none !important;
             }
             `
           }
@@ -1208,7 +1225,7 @@ export default function PrintInvoicePage() {
       ) : (
         /* ================= A4 STANDARD TAX INVOICE LAYOUT ================= */
         <div className="w-full overflow-x-auto p-4 sm:p-8 flex justify-center bg-slate-200 print:bg-white print:p-0">
-          <div id="invoice-sheet" className="w-[210mm] min-w-[210mm] max-w-[210mm] shrink-0 min-h-[297mm] print:min-h-[95vh] bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none print:p-6 print:pt-10 flex flex-col mx-auto">
+          <div id="invoice-sheet" className="w-[210mm] max-w-[210mm] shrink-0 min-h-[265mm] print:min-h-0 print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none flex flex-col mx-auto">
           
           {/* Main Border Box */}
           <div className="border-2 border-black flex-1 flex flex-col justify-between">
@@ -1316,7 +1333,7 @@ export default function PrintInvoicePage() {
                             ))}
                             {/* Filler Row */}
                             <tr className="border-b border-black">
-                                <td className="border-r border-black h-full min-h-[60px]"></td>
+                                <td className="border-r border-black h-full min-h-[40px] print:min-h-[16px]"></td>
                                 <td className="border-r border-black"></td>
                                 <td className="border-r border-black"></td>
                                 <td className="border-r border-black"></td>
@@ -1471,7 +1488,7 @@ export default function PrintInvoicePage() {
               </div>
 
               {/* Bottom Footer Section */}
-              <div className="flex h-44 text-xs shrink-0">
+              <div className="flex h-44 print:h-38 text-xs shrink-0">
                   {/* Column 1: Terms */}
                   <div className="w-[45%] p-2 border-r-2 border-black flex flex-col justify-between">
                       <div>
@@ -1519,6 +1536,11 @@ export default function PrintInvoicePage() {
                   </div>
               </div>
 
+          </div>
+          {/* Bottom Page Decorations bar matching exact PDF NumberedCanvas */}
+          <div className="flex justify-between items-center text-[10px] text-slate-500 pt-1 px-1">
+            <span>This is a Computer Generated Invoice</span>
+            <span>Page 1 of 1</span>
           </div>
         </div>
         </div>

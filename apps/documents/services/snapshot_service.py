@@ -48,13 +48,14 @@ class DocumentSnapshotService:
         doc_type = VOUCHER_TYPE_TO_DOC_TYPE.get(voucher.voucher_type, 'SALES_INVOICE')
         source_id = str(voucher.id)
 
+        CURRENT_TEMPLATE_VERSION = '2.0'
         if not force_refresh:
             existing = DocumentSnapshot.objects.filter(
                 company=voucher.company,
                 source_type='Voucher',
                 source_id=source_id,
             ).first()
-            if existing:
+            if existing and existing.template_version == CURRENT_TEMPLATE_VERSION:
                 return existing
 
         # Build Canonical DTO
@@ -77,7 +78,7 @@ class DocumentSnapshotService:
                     'total_amount': voucher.total_amount,
                     'snapshot_json': dto,
                     'template_code': template_code,
-                    'template_version': '1.0',
+                    'template_version': CURRENT_TEMPLATE_VERSION,
                     'created_by': user or voucher.created_by,
                 }
             )

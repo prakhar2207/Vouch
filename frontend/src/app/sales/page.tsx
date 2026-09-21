@@ -254,9 +254,9 @@ export default function SalesInvoiceList() {
   const isMobileOrPWA = (): boolean => {
     if (typeof window === 'undefined') return false;
     const ua = navigator.userAgent || '';
-    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua);
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
-    const isTouchDevice = (navigator.maxTouchPoints > 0 || 'ontouchstart' in window) && window.innerWidth <= 1024;
+    const isTouchDevice = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
     return isMobileUA || isStandalone || isTouchDevice;
   };
 
@@ -303,7 +303,23 @@ export default function SalesInvoiceList() {
         const invoiceNo = inv.voucher_number || 'INVOICE';
         const total = Number(inv.total_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
         const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vouch-pi-one.vercel.app';
-        waMessage = `*TAX INVOICE: ${invoiceNo}*\nTotal Amount: ₹${total}\n\n📄 View & Download PDF:\n${origin}/sales/${inv.id}/print\n\nThank you!`;
+        const partyName = inv.party?.name || inv.buyer_name || 'Valued Customer';
+        const companyName = inv.company?.name || 'Our Company';
+        const invDate = inv.voucher_date || inv.date || 'Today';
+        waMessage = (
+          `🧾 *TAX INVOICE #${invoiceNo}*\n\n` +
+          `Dear *${partyName}*,\n\n` +
+          `Here is your tax invoice from *${companyName}*:\n` +
+          `• *Invoice Number:* ${invoiceNo}\n` +
+          `• *Invoice Date:* ${invDate}\n` +
+          `• *Invoice Amount:* ₹${total}\n\n` +
+          `📄 *View & Download Official PDF:*\n` +
+          `${origin}/sales/${inv.id}/print\n\n` +
+          `⚡ *1-Click Import (Auto-Book Purchase in Vouch):*\n` +
+          `${origin}/claim?token=${inv.id}\n\n` +
+          `Thank you for doing business with us!\n` +
+          `*${companyName}*`
+        );
       }
 
       // Clean phone number
