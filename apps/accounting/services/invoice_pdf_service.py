@@ -43,60 +43,47 @@ def _ensure_roboto_fonts():
 FONTS_LOADED = _ensure_roboto_fonts()
 
 
-def amount_to_words_indian(num: Decimal) -> str:
-    """Converts a Decimal amount to words using the Indian numbering system (Lakhs, Crores)."""
-    try:
-        num = Decimal(str(num)).quantize(Decimal('0.01'))
-    except Exception:
-        return ""
+def number_to_words(num_amount: Decimal) -> str:
+    """Converts a Decimal amount to words using the exact Indian numbering system from print page."""
+    a = ['', 'One ', 'Two ', 'Three ', 'Four ', 'Five ', 'Six ', 'Seven ', 'Eight ', 'Nine ', 'Ten ', 'Eleven ', 'Twelve ', 'Thirteen ', 'Fourteen ', 'Fifteen ', 'Sixteen ', 'Seventeen ', 'Eighteen ', 'Nineteen ']
+    b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety']
 
-    ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
-            "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
-            "Seventeen", "Eighteen", "Nineteen"]
-    tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
+    num_val = int(round(float(num_amount)))
+    num_str = str(num_val)
+    if len(num_str) > 9:
+        return 'overflow'
 
-    def convert_upto_999(n):
-        res = ""
-        hundreds = n // 100
-        remainder = n % 100
-        if hundreds > 0:
-            res += ones[hundreds] + " Hundred "
-        if remainder > 0:
-            if remainder < 20:
-                res += ones[remainder] + " "
-            else:
-                res += tens[remainder // 10] + " " + (ones[remainder % 10] + " " if remainder % 10 != 0 else "")
-        return res.strip()
+    padded = num_str.zfill(9)
+    c_crore = int(padded[0:2])
+    c_lakh = int(padded[2:4])
+    c_th = int(padded[4:6])
+    c_h = int(padded[6:7])
+    c_tens = int(padded[7:9])
 
-    integer_part = int(num)
-    paise_part = int(round((num - integer_part) * 100))
+    def two_digits(val):
+        if val < 20:
+            return a[val]
+        return b[val // 10] + ' ' + a[val % 10]
 
-    if integer_part == 0:
-        words = "Zero Rupees"
-    else:
-        crores = integer_part // 10000000
-        rem_cr = integer_part % 10000000
-        lakhs = rem_cr // 100000
-        rem_lakh = rem_cr % 100000
-        thousands = rem_lakh // 1000
-        rem_th = rem_lakh % 1000
+    s = ''
+    if c_crore > 0:
+        s += two_digits(c_crore).strip() + ' Crore '
+    if c_lakh > 0:
+        s += two_digits(c_lakh).strip() + ' Lakh '
+    if c_th > 0:
+        s += two_digits(c_th).strip() + ' Thousand '
+    if c_h > 0:
+        s += two_digits(c_h).strip() + ' Hundred '
+    if c_tens > 0:
+        if s:
+            s += 'and '
+        s += two_digits(c_tens).strip()
 
-        parts = []
-        if crores > 0:
-            parts.append(convert_upto_999(crores) + " Crore")
-        if lakhs > 0:
-            parts.append(convert_upto_999(lakhs) + " Lakh")
-        if thousands > 0:
-            parts.append(convert_upto_999(thousands) + " Thousand")
-        if rem_th > 0:
-            parts.append(convert_upto_999(rem_th))
+    return s.strip() + ' Only'
 
-        words = " ".join(parts).strip() + " Rupees"
 
-    if paise_part > 0:
-        words += f" and {convert_upto_999(paise_part)} Paise"
-
-    return words + " Only"
+# Alias for backwards compatibility
+amount_to_words_indian = number_to_words
 
 
 class InvoicePDFService:
@@ -150,19 +137,21 @@ class InvoicePDFService:
         s_party_cell = ParagraphStyle('PartyCell', fontName=fnt, fontSize=9, leading=12, textColor=colors.black)
 
         s_th = ParagraphStyle('TH', fontName=fnt_b, fontSize=9, leading=12, alignment=TA_CENTER, textColor=colors.black)
+        s_th_l = ParagraphStyle('THL', fontName=fnt_b, fontSize=9, leading=12, alignment=TA_LEFT, textColor=colors.black)
+        s_th_r = ParagraphStyle('THR', fontName=fnt_b, fontSize=9, leading=12, alignment=TA_RIGHT, textColor=colors.black)
         s_td_c = ParagraphStyle('TDC', fontName=fnt, fontSize=9, leading=12, alignment=TA_CENTER, textColor=colors.black)
         s_td_l = ParagraphStyle('TDL', fontName=fnt, fontSize=9, leading=12, alignment=TA_LEFT, textColor=colors.black)
         s_td_r = ParagraphStyle('TDR', fontName=fnt, fontSize=9, leading=12, alignment=TA_RIGHT, textColor=colors.black)
         s_td_bold_r = ParagraphStyle('TDBoldR', fontName=fnt_b, fontSize=9, leading=12, alignment=TA_RIGHT, textColor=colors.black)
         s_td_bold_c = ParagraphStyle('TDBoldC', fontName=fnt_b, fontSize=9, leading=12, alignment=TA_CENTER, textColor=colors.black)
-        s_td_tax_label = ParagraphStyle('TaxLabel', fontName=fnt_i, fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
+        s_td_tax_label = ParagraphStyle('TaxLabel', fontName=fnt_i, fontSize=8.5, leading=10.5, alignment=TA_RIGHT, textColor=colors.black)
 
-        s_tax_th_l = ParagraphStyle('TaxTHL', fontName=fnt_b, fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
-        s_tax_th_r = ParagraphStyle('TaxTHR', fontName=fnt_b, fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
-        s_tax_td_l = ParagraphStyle('TaxTDL', fontName=fnt, fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
-        s_tax_td_r = ParagraphStyle('TaxTDR', fontName=fnt, fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
+        s_tax_th_l = ParagraphStyle('TaxTHL', fontName=fnt_b, fontSize=8, leading=10, alignment=TA_LEFT, textColor=colors.black)
+        s_tax_th_r = ParagraphStyle('TaxTHR', fontName=fnt_b, fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
+        s_tax_td_l = ParagraphStyle('TaxTDL', fontName=fnt, fontSize=8, leading=10, alignment=TA_LEFT, textColor=colors.black)
+        s_tax_td_r = ParagraphStyle('TaxTDR', fontName=fnt, fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
 
-        s_words = ParagraphStyle('Words', fontName=fnt, fontSize=8.5, leading=11, textColor=colors.black)
+        s_words = ParagraphStyle('Words', fontName=fnt, fontSize=9, leading=12, textColor=colors.black)
         s_bank_text = ParagraphStyle('BankText', fontName=fnt, fontSize=8.5, leading=11, alignment=TA_CENTER, textColor=colors.black)
 
         s_terms = ParagraphStyle('Terms', fontName=fnt, fontSize=7.5, leading=9.5, textColor=colors.black)
@@ -216,29 +205,43 @@ class InvoicePDFService:
         vehicle_no = getattr(ewb_rec, 'vehicle_no', 'N/A') or 'N/A'
         ewb_no = getattr(ewb_rec, 'eway_bill_number', 'N/A') or 'N/A'
 
-        meta_left = (
-            f"Invoice No. &nbsp;&nbsp;&nbsp;&nbsp;: <b>{inv_no}</b><br/>"
-            f"Dated &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <b>{inv_date}</b><br/>"
-            f"Place of Supply : {pos}<br/>"
-            f"Reverse Charge : N"
-        )
-        meta_right = (
-            f"GR/RR No. &nbsp;&nbsp;&nbsp;&nbsp;: {gr_rr}<br/>"
-            f"Transport &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {transport}<br/>"
-            f"Vehicle No. &nbsp;&nbsp;&nbsp;&nbsp;: <b>{vehicle_no}</b><br/>"
-            f"E-Way Bill No. : <b>{ewb_no}</b>"
-        )
+        meta_rows = [
+            [
+                Paragraph("Invoice No.", s_meta_cell),
+                Paragraph(f": <b>{inv_no}</b>", s_meta_cell),
+                Paragraph("GR/RR No.", s_meta_cell),
+                Paragraph(f": {gr_rr}", s_meta_cell),
+            ],
+            [
+                Paragraph("Dated", s_meta_cell),
+                Paragraph(f": <b>{inv_date}</b>", s_meta_cell),
+                Paragraph("Transport", s_meta_cell),
+                Paragraph(f": {transport}", s_meta_cell),
+            ],
+            [
+                Paragraph("Place of Supply", s_meta_cell),
+                Paragraph(f": {pos}", s_meta_cell),
+                Paragraph("Vehicle No.", s_meta_cell),
+                Paragraph(f": <b>{vehicle_no}</b>", s_meta_cell),
+            ],
+            [
+                Paragraph("Reverse Charge", s_meta_cell),
+                Paragraph(": N", s_meta_cell),
+                Paragraph("E-Way Bill No.", s_meta_cell),
+                Paragraph(f": <b>{ewb_no}</b>", s_meta_cell),
+            ],
+        ]
 
         meta_table = Table(
-            [[Paragraph(meta_left, s_meta_cell), Paragraph(meta_right, s_meta_cell)]],
-            colWidths=[WIDTH / 2, WIDTH / 2]
+            meta_rows,
+            colWidths=[85, 193, 85, 193]
         )
         meta_table.setStyle(TableStyle([
             ('BOX', (0, 0), (-1, -1), 1, colors.black),
-            ('LINEAFTER', (0, 0), (0, -1), 1, colors.black),
+            ('LINEAFTER', (1, 0), (1, -1), 1, colors.black),
             ('LINEBELOW', (0, -1), (-1, -1), 1, colors.black),
-            ('PADDING', (0, 0), (-1, -1), 2.5),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('PADDING', (0, 0), (-1, -1), 1.5),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
 
         # ================= 3. BILLED TO / SHIPPED TO GRID =================
@@ -274,18 +277,42 @@ class InvoicePDFService:
 
         # ================= 5. TAX DETAILS TABLE (Constructed early to measure exact height) =================
         items = list(voucher.items.all().select_related('product'))
-        tot_cgst = sum(i.cgst_amount for i in items)
-        tot_sgst = sum(i.sgst_amount for i in items)
-        tot_igst = sum(i.igst_amount for i in items)
-        tot_taxable = sum(i.taxable_amount for i in items)
-        tot_qty = sum(i.quantity for i in items)
-        grand_total = voucher.total_amount
+        tot_qty = Decimal('0.00')
+        tot_taxable = Decimal('0.00')
+        tot_cgst = Decimal('0.00')
+        tot_sgst = Decimal('0.00')
+        tot_igst = Decimal('0.00')
 
         is_inter_state = False
         if company.state_code and voucher.buyer_state_code:
             is_inter_state = str(company.state_code) != str(voucher.buyer_state_code)
         elif company.state_code and party and party.state_code:
             is_inter_state = str(company.state_code) != str(party.state_code)
+
+        for itm in items:
+            tot_qty += itm.quantity
+            tot_taxable += itm.taxable_amount
+            tax_amt = itm.total_amount - itm.taxable_amount
+            if is_inter_state:
+                tot_igst += tax_amt
+            else:
+                half = (tax_amt / Decimal('2')).quantize(Decimal('0.01'))
+                tot_cgst += half
+                tot_sgst += half
+
+        cartage = getattr(voucher, 'cartage_amount', Decimal('0.00')) or Decimal('0.00')
+        subtotal_with_taxes = tot_taxable + (tot_igst if is_inter_state else (tot_cgst + tot_sgst)) + cartage
+
+        final_grand_total = voucher.total_amount
+        round_off = (final_grand_total - subtotal_with_taxes).quantize(Decimal('0.01'))
+
+        int_part = Decimal(int(subtotal_with_taxes))
+        dec_part = subtotal_with_taxes - int_part
+        if abs(round_off) < Decimal('0.005') and dec_part > Decimal('0.00'):
+            final_grand_total = int_part if dec_part < Decimal('0.5') else int_part + Decimal('1.00')
+            round_off = (final_grand_total - subtotal_with_taxes).quantize(Decimal('0.01'))
+
+        has_round_off = abs(round_off) >= Decimal('0.005')
 
         tax_rates = sorted(list(set(itm.gst_rate for itm in items))) if items else [Decimal('18.00')]
         tax_col_w = [90, 115, 115, 115, 121] if not is_inter_state else [120, 145, 145, 146]
@@ -302,8 +329,9 @@ class InvoicePDFService:
             for r in tax_rates:
                 rate_items = [i for i in items if i.gst_rate == r]
                 r_taxable = sum(i.taxable_amount for i in rate_items)
-                r_cgst = sum(i.cgst_amount for i in rate_items)
-                r_sgst = sum(i.sgst_amount for i in rate_items)
+                r_tax = sum(i.total_amount - i.taxable_amount for i in rate_items)
+                r_cgst = (r_tax / Decimal('2')).quantize(Decimal('0.01'))
+                r_sgst = (r_tax / Decimal('2')).quantize(Decimal('0.01'))
                 r_tot = r_cgst + r_sgst
                 tax_rows.append([
                     Paragraph(f"{r:.0f}%", s_tax_td_l),
@@ -322,7 +350,7 @@ class InvoicePDFService:
             for r in tax_rates:
                 rate_items = [i for i in items if i.gst_rate == r]
                 r_taxable = sum(i.taxable_amount for i in rate_items)
-                r_igst = sum(i.igst_amount for i in rate_items)
+                r_igst = sum(i.total_amount - i.taxable_amount for i in rate_items)
                 tax_rows.append([
                     Paragraph(f"{r:.0f}%", s_tax_td_l),
                     Paragraph(f"{r_taxable:,.2f}", s_tax_td_r),
@@ -340,7 +368,7 @@ class InvoicePDFService:
 
         # ================= 6. AMOUNT IN WORDS =================
         curr_sym = '\u20B9' if FONTS_LOADED else 'Rs.'
-        words_text = f"Total Amount in Words : <b>{curr_sym} {amount_to_words_indian(grand_total)}</b>"
+        words_text = f"Total Amount in Words : <b>{curr_sym} {number_to_words(final_grand_total)}</b>"
         words_table = Table([[Paragraph(words_text, s_words)]], colWidths=[WIDTH])
         words_table.setStyle(TableStyle([
             ('BOX', (0, 0), (-1, -1), 1, colors.black),
@@ -382,7 +410,7 @@ class InvoicePDFService:
             upi_url = (
                 f"upi://pay?pa={upi_id}"
                 f"&pn={urllib.parse.quote(company.name)}"
-                f"&am={float(grand_total):.2f}"
+                f"&am={float(final_grand_total):.2f}"
                 f"&cu=INR"
                 f"&tn={urllib.parse.quote(f'Inv {inv_no}')}"
             )
@@ -470,17 +498,17 @@ class InvoicePDFService:
         fixed_height = h_header + h_meta + h_party + h_tax + h_words + h_bank + h_footer
 
         # ================= 4. ITEMS TABLE =================
-        col_w = [30, 216, 56, 40, 34, 48, 42, 90]  # sum = 556
+        col_w = [30, 196, 54, 40, 32, 50, 58, 96]  # sum = 556
         items_data = [
             [
                 Paragraph("<b>S.N.</b>", s_th),
-                Paragraph("<b>Description of Goods</b>", s_th),
+                Paragraph("<b>Description of Goods</b>", s_th_l),
                 Paragraph("<b>HSN</b>", s_th),
                 Paragraph("<b>Qty.</b>", s_th),
                 Paragraph("<b>Unit</b>", s_th),
                 Paragraph("<b>Price</b>", s_th),
                 Paragraph("<b>Disc%</b>", s_th),
-                Paragraph("<b>Amount(₹)</b>", s_th),
+                Paragraph("<b>Amount(Rs.)</b>", s_th_r),
             ]
         ]
 
@@ -526,44 +554,42 @@ class InvoicePDFService:
         num_tax_rows = 0
         
         # Helper to add tax rows aligned perfectly to columns
-        def add_tax_row(label, rate_label, amount):
+        def add_tax_row(label, rate_label, amount_str):
             items_data.append([
-
                 "", "", "", "",
                 Paragraph(label, s_td_tax_label),
                 "",
                 Paragraph(rate_label, s_td_tax_label),
-                Paragraph(f"{amount:,.2f}", s_td_r)
+                Paragraph(amount_str, s_td_r)
             ])
             
-        if is_inter_state or tot_igst > 0:
+        if is_inter_state or tot_igst > Decimal('0.00'):
             rate_disp = f"@ {(first_item_gst):.2f} %"
-            add_tax_row("Add : IGST", rate_disp, tot_igst)
+            add_tax_row("Add : IGST", rate_disp, f"{tot_igst:,.2f}")
             num_tax_rows += 1
         else:
-            half_rate = f"@ {(first_item_gst / 2):.2f} %"
-            add_tax_row("Add : CGST", half_rate, tot_cgst)
-            add_tax_row("Add : SGST", half_rate, tot_sgst)
+            half_rate = f"@ {(first_item_gst / Decimal('2')):.2f} %"
+            add_tax_row("Add : CGST", half_rate, f"{tot_cgst:,.2f}")
+            add_tax_row("Add : SGST", half_rate, f"{tot_sgst:,.2f}")
             num_tax_rows += 2
 
-        cartage = getattr(voucher, 'cartage_amount', Decimal('0.00')) or Decimal('0.00')
-        if cartage > 0:
-            add_tax_row("Add : Cartage", "", cartage)
+        if cartage > Decimal('0.00'):
+            add_tax_row("Add : Cartage", "", f"{cartage:,.2f}")
             num_tax_rows += 1
 
-        round_off = getattr(voucher, 'round_off', Decimal('0.00')) or Decimal('0.00')
-        if abs(round_off) >= Decimal('0.005'):
-            lbl = "Add : Round Off" if round_off > 0 else "Less : Round Off"
-            add_tax_row(lbl, "", round_off)
+        if has_round_off:
+            lbl = "Add : Round Off" if round_off > Decimal('0.00') else "Less : Round Off"
+            sign_str = f"+{round_off:.2f}" if round_off > Decimal('0.00') else f"{round_off:.2f}"
+            add_tax_row(lbl, "", sign_str)
             num_tax_rows += 1
 
         grand_total_idx = len(items_data)
         items_data.append([
             Paragraph("<b>Grand Total</b>", s_td_bold_r),
             "", "", "",
-            Paragraph(f"<b>{tot_qty:.2f} {unit_label}</b>", s_td_bold_c),
+            Paragraph(f"<b><u>&nbsp;&nbsp;{tot_qty:.2f} {unit_label}&nbsp;&nbsp;</u></b>", s_td_bold_c),
             "", "",
-            Paragraph(f"<b>{grand_total:,.2f}</b>", s_td_bold_r)
+            Paragraph(f"<b>{final_grand_total:,.2f}</b>", s_td_bold_r)
         ])
 
         # Dynamic filler height calculation:
