@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import QRCode from 'react-qr-code';
 import { gstApi, EWayBillData } from '@/lib/api/gst';
+import { offlineDb } from '@/lib/db/offlineDb';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { 
@@ -126,8 +127,65 @@ export default function PrintInvoicePage() {
     fetchInvoice();
   }, [invoiceId]);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const fetchInvoice = async () => {
     try {
+      // 1. Handle offline invoices directly from client IndexedDB
+      if (invoiceId && String(invoiceId).startsWith('offline_')) {
+        const localId = String(invoiceId).replace('offline_', '');
+        try {
+          const localVoucher = await offlineDb.vouchers.where('localId').equals(localId).first();
+          if (localVoucher && localVoucher.payload) {
+            const p = localVoucher.payload;
+            const activeCompId = (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : '') || p.company_id || '';
+            let compInfo = { name: p.company_name || 'My Company', gstin: p.company_gstin || '', state_code: p.company_state_code || '' };
+            if (activeCompId) {
+              try {
+                const cachedComp = await offlineDb.masters.get(`company_${activeCompId}`);
+                if (cachedComp && cachedComp.data) {
+                  compInfo = { ...compInfo, ...cachedComp.data };
+                }
+              } catch {}
+            }
+
+            const offlineInvoice = {
+              id: invoiceId,
+              voucher_number: localVoucher.voucherNumber || p.voucher_number || 'PENDING SYNC',
+              voucher_date: localVoucher.voucherDate || p.voucher_date || new Date().toISOString().split('T')[0],
+              total_amount: Number(p.total_amount || p.round_off_total || 0),
+              round_off: Number(p.round_off || 0),
+              is_offline: true,
+              sync_status: localVoucher.status,
+              error_message: localVoucher.errorMessage,
+              company: compInfo,
+              party: {
+                name: p.party_name || p.buyer_name || 'Customer',
+                gstin: p.party_gstin || p.buyer_gstin || '',
+                phone: p.party_phone || p.buyer_phone || '',
+                state_code: p.party_state_code || p.buyer_state_code || '',
+              },
+              items: (p.items || []).map((it: any) => ({
+                product_name: it.product_name || it.name || it.description || 'Item',
+                hsn_code: it.hsn_code || '',
+                quantity: Number(it.quantity || 1),
+                unit_rate: Number(it.unit_rate || it.rate || 0),
+                taxable_amount: Number(it.taxable_amount || 0),
+                cgst_rate: Number(it.cgst_rate || 0),
+                sgst_rate: Number(it.sgst_rate || 0),
+                igst_rate: Number(it.igst_rate || 0),
+                total_amount: Number(it.total_amount || 0),
+              })),
+            };
+            setInvoice(offlineInvoice);
+            setDownloadPermission({ can_download: true });
+            return;
+          }
+        } catch (offlineErr) {
+          console.warn('Failed to load local offline voucher:', offlineErr);
+        }
+      }
+
       let res;
       const token = getAccessToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -164,9 +222,12 @@ export default function PrintInvoicePage() {
             // E-Way Bill is optional
           }
         }
+      } else {
+        setLoadError('Invoice data not found.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load invoice:', err);
+      setLoadError(err.response?.data?.error || 'Invoice not found or could not be loaded.');
     }
   };
 
@@ -219,6 +280,26 @@ export default function PrintInvoicePage() {
       }
     }
   }, [invoice]);
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white p-4">
+        <div className="max-w-md w-full bg-slate-800 border border-slate-700 rounded-2xl p-6 text-center space-y-4">
+          <div className="w-12 h-12 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
+            <FileText className="w-6 h-6" />
+          </div>
+          <h2 className="text-lg font-bold">Invoice Not Found</h2>
+          <p className="text-xs text-slate-400">{loadError}</p>
+          <button
+            onClick={() => router.push('/sales')}
+            className="w-full py-2.5 px-4 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors cursor-pointer"
+          >
+            Back to Sales Invoices
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!invoice) return <div className="p-10 text-center font-mono">Loading Invoice Data...</div>;
 
@@ -720,20 +801,6 @@ export default function PrintInvoicePage() {
         }
       `}</style>
 
-      {/* Floating Status Notification */}
-      {shareStatusMessage && (
-        <div className="fixed bottom-5 right-5 z-50 bg-slate-900 border border-emerald-500/50 text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 text-xs animate-in fade-in slide-in-from-bottom-3 print:hidden">
-          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
-          <div>
-            <p className="font-bold">{shareStatusMessage}</p>
-            <p className="text-slate-400 text-[11px] mt-0.5">Press <strong>Ctrl + V</strong> in the chat to paste the invoice image, or attach the downloaded PDF.</p>
-          </div>
-          <button onClick={() => setShareStatusMessage(null)} className="text-slate-400 hover:text-white p-1">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
       {/* Print Controls Bar (Hidden on Print) */}
       <div className="print:hidden p-3 bg-slate-900 text-white flex flex-wrap gap-3 justify-between items-center sticky top-0 z-50 shadow-md">
         <div className="flex items-center gap-2">
@@ -805,47 +872,6 @@ export default function PrintInvoicePage() {
             </button>
           )}
 
-          {/* Download PDF Button */}
-          <button
-            onClick={handleDownloadPdf}
-            disabled={isGeneratingPdf}
-            className="bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
-            title={downloadPermission && !downloadPermission.can_download ? "Download restricted to authorized company members" : "Download PDF directly to your device"}
-          >
-            {isGeneratingPdf ? (
-              <Loader2 className="w-4 h-4 animate-spin text-primary" />
-            ) : downloadPermission && !downloadPermission.can_download ? (
-              <Lock className="w-4 h-4 text-amber-400" />
-            ) : (
-              <Download className="w-4 h-4" />
-            )}
-            <span>Download PDF</span>
-          </button>
-
-          {/* Smart WhatsApp Share Button with Split Options */}
-          <div className="inline-flex rounded-xl shadow-sm">
-            <button
-              onClick={handleWhatsAppShareClick}
-              disabled={isGeneratingPdf}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-l-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
-              title="Share PDF of this invoice via WhatsApp"
-            >
-              {isGeneratingPdf ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <MessageCircle className="w-4 h-4 fill-current" />
-              )}
-              <span>{isGeneratingPdf ? 'Preparing PDF...' : 'Share on WhatsApp'}</span>
-            </button>
-            <button
-              onClick={() => setIsWhatsAppModalOpen(true)}
-              className="bg-emerald-700 hover:bg-emerald-600 text-white px-2.5 py-2 rounded-r-xl border-l border-emerald-800 text-xs transition-colors cursor-pointer"
-              title="Choose WhatsApp Web or Desktop Application manually"
-            >
-              <ChevronDown className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
           {/* Print Button */}
           <button
             onClick={() => window.print()}
@@ -856,130 +882,6 @@ export default function PrintInvoicePage() {
           </button>
         </div>
       </div>
-
-      {/* WHATSAPP MANUAL SELECTION MODAL */}
-      {isWhatsAppModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs print:hidden animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-slate-700 text-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 relative">
-            <button
-              onClick={() => setIsWhatsAppModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400">
-                <MessageCircle className="w-6 h-6 fill-current" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-white">Share Invoice on WhatsApp</h3>
-                <p className="text-xs text-slate-400">
-                  Send PDF & invoice link directly to {invoice.party?.name || 'customer'}
-                </p>
-              </div>
-            </div>
-
-            {/* Status Checklist */}
-            <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/80 space-y-2 text-xs">
-              <div className="flex items-center gap-2 text-emerald-400">
-                <Check className="w-4 h-4 shrink-0" />
-                <span>
-                  Invoice PDF <strong>{filename}</strong> generated & ready
-                </span>
-              </div>
-              <div className="flex items-center gap-2 text-slate-300">
-                <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Customer: <strong>{invoice.party?.name}</strong> {invoice.party?.phone ? `(${invoice.party.phone})` : ''}</span>
-              </div>
-              <div className="flex items-center gap-2 text-blue-400">
-                <Globe className="w-3.5 h-3.5 shrink-0" />
-                <span>Public direct-view & download link included in message</span>
-              </div>
-            </div>
-
-            {/* 3 WAYS TO SHARE EXPLANATION BOX */}
-            <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 space-y-1.5 text-xs text-slate-300">
-              <p className="font-semibold text-white flex items-center gap-1.5">
-                <span>💡 How WhatsApp Web Sharing Works:</span>
-              </p>
-              <p className="text-[11px] text-slate-400">
-                Due to browser security policies, WhatsApp Web cannot automatically attach files from external websites. We have made sharing effortless with 3 methods:
-              </p>
-              <ul className="text-[11px] space-y-1 text-slate-300 list-disc list-inside">
-                <li><strong>Direct PDF Link:</strong> The WhatsApp chat will already contain the secure link for your customer to view & download this PDF directly.</li>
-                <li><strong>Drag & Drop PDF:</strong> <strong>{filename}</strong> is downloaded to your browser — simply drag it into the WhatsApp chat.</li>
-                <li><strong>Instant Image Paste:</strong> Press <strong>Ctrl + V</strong> in the WhatsApp chat to paste the invoice image.</li>
-              </ul>
-            </div>
-
-            {/* Selection Options */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-              {/* WhatsApp Web */}
-              <button
-                onClick={() => handleOpenExplicitWhatsApp('web')}
-                disabled={isGeneratingPdf}
-                className={`flex flex-col items-center text-center p-4 rounded-xl border transition-all cursor-pointer group disabled:opacity-50 relative ${
-                  preferredWhatsAppClient === 'web'
-                    ? 'border-emerald-500 bg-emerald-500/10'
-                    : 'border-slate-700 bg-slate-800 hover:bg-slate-750 hover:border-emerald-500/60'
-                }`}
-              >
-                {preferredWhatsAppClient === 'web' && (
-                  <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">
-                    Default
-                  </span>
-                )}
-                <div className="p-3 rounded-xl bg-blue-500/10 text-blue-400 group-hover:bg-blue-500/20 mb-2">
-                  <Globe className="w-6 h-6" />
-                </div>
-                <span className="text-sm font-bold text-white">WhatsApp Web</span>
-                <span className="text-[11px] text-slate-400 mt-1">Directly opens web.whatsapp.com in Chrome/Edge</span>
-              </button>
-
-              {/* WhatsApp Application */}
-              <button
-                onClick={() => handleOpenExplicitWhatsApp('app')}
-                disabled={isGeneratingPdf}
-                className={`flex flex-col items-center text-center p-4 rounded-xl border transition-all cursor-pointer group disabled:opacity-50 relative ${
-                  preferredWhatsAppClient === 'app'
-                    ? 'border-emerald-500 bg-emerald-500/10'
-                    : 'border-slate-700 bg-slate-800 hover:bg-slate-750 hover:border-emerald-500/60'
-                }`}
-              >
-                {preferredWhatsAppClient === 'app' && (
-                  <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">
-                    Default
-                  </span>
-                )}
-                <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500/20 mb-2">
-                  <Laptop className="w-6 h-6" />
-                </div>
-                <span className="text-sm font-bold text-white">WhatsApp Desktop App</span>
-                <span className="text-[11px] text-slate-400 mt-1">Launch installed Windows/Mac WhatsApp app</span>
-              </button>
-            </div>
-
-            {/* Quick Copy Action Buttons */}
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={handleCopyInvoiceLink}
-                className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-medium text-slate-200 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-              >
-                {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedLink ? 'Link Copied!' : 'Copy PDF Link'}</span>
-              </button>
-              <button
-                onClick={handleCopyMessageText}
-                className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-medium text-slate-200 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-              >
-                {copiedMessage ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <FileText className="w-3.5 h-3.5" />}
-                <span>{copiedMessage ? 'Message Copied!' : 'Copy Text Summary'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* DOWNLOAD AUTHENTICATION / PERMISSION MODAL */}
       {authModalOpen && (

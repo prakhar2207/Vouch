@@ -250,8 +250,16 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
   }
 }
 
-export async function retryFailedVoucher(id: number) {
-  await offlineDb.vouchers.update(id, { status: "PENDING", errorMessage: undefined, nextRetryAt: undefined, retryCount: 0 });
+export async function retryFailedVoucher(idOrLocalId: number | string) {
+  if (typeof idOrLocalId === "number") {
+    await offlineDb.vouchers.update(idOrLocalId, { status: "PENDING", errorMessage: undefined, nextRetryAt: undefined, retryCount: 0 });
+  } else {
+    const cleanId = String(idOrLocalId).replace("offline_", "");
+    const item = await offlineDb.vouchers.where("localId").equals(cleanId).first();
+    if (item && item.id) {
+      await offlineDb.vouchers.update(item.id, { status: "PENDING", errorMessage: undefined, nextRetryAt: undefined, retryCount: 0 });
+    }
+  }
   await triggerOutboxSync();
 }
 

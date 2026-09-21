@@ -61,14 +61,16 @@ class InvoiceNotificationService:
             raise ValueError("This invoice claim link has expired (validity: 30 days).")
 
     @classmethod
-    def get_claim_url(cls, voucher: Voucher) -> str:
+    def get_claim_url(cls, voucher: Voucher, frontend_url: Optional[str] = None) -> str:
         """Constructs the full viral claim URL for this voucher."""
         token = cls.generate_claim_token(voucher)
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
+        if not frontend_url:
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'https://vouch-pi-one.vercel.app' if not getattr(settings, 'DEBUG', False) else 'http://localhost:3000')
+        frontend_url = str(frontend_url).rstrip('/')
         return f"{frontend_url}/claim?token={token}"
 
     @classmethod
-    def generate_whatsapp_share_payload(cls, voucher: Voucher) -> Dict[str, Any]:
+    def generate_whatsapp_share_payload(cls, voucher: Voucher, frontend_url: Optional[str] = None) -> Dict[str, Any]:
         """
         Creates the WhatsApp text message and direct wa.me link for sharing
         the invoice and claim link with the buyer.
@@ -79,7 +81,7 @@ class InvoiceNotificationService:
         if len(clean_phone) == 10:
             clean_phone = '91' + clean_phone
 
-        claim_url = cls.get_claim_url(voucher)
+        claim_url = cls.get_claim_url(voucher, frontend_url=frontend_url)
         company_name = voucher.company.name
         buyer_name = voucher.buyer_name or (party.name if party else 'Customer')
         inv_no = voucher.voucher_number
@@ -89,7 +91,6 @@ class InvoiceNotificationService:
             inv_date = str(voucher.voucher_date or 'Today')
         amount_str = f"₹{voucher.total_amount:,.2f}"
 
-
         message = (
             f"📄 *TAX INVOICE #{inv_no}*\n\n"
             f"Dear *{buyer_name}*,\n\n"
@@ -97,9 +98,11 @@ class InvoiceNotificationService:
             f"• *Invoice Number:* {inv_no}\n"
             f"• *Invoice Date:* {inv_date}\n"
             f"• *Invoice Amount:* {amount_str}\n\n"
+            f"📥 *View & Download Official PDF:*\n"
+            f"{claim_url}\n\n"
             f"🚀 *Instant 1-Click Import into Books:*\n"
             f"{claim_url}\n\n"
-            f"_Open the link above to view your official invoice and automatically add this purchase into your accounts with zero manual data entry._\n\n"
+            f"_Open the link above to view/download your official PDF invoice and add this purchase into your accounts with zero manual data entry._\n\n"
             f"Thank you for doing business with us!\n"
             f"*{company_name}*"
         )

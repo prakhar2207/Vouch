@@ -220,15 +220,86 @@ export default function SalesInvoiceList() {
     }
   };
 
-  const handleShareWhatsApp = async (voucherId: string) => {
+  const handleDownloadPdf = async (inv: any) => {
+    if (inv.isOffline || String(inv.id).startsWith('offline_')) {
+      toast.error('This invoice is saved offline and waiting to sync. Please sync before downloading the server PDF.');
+      return;
+    }
     try {
+      toast.info('Downloading Tax Invoice PDF...');
       const token = getAccessToken();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${voucherId}/dispatch-details/`, {
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/pdf/?download=true`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      const cleanNum = (inv.voucher_number || 'INVOICE').replace(/[/\\:*?"<>|]/g, '-').trim();
+      link.download = `Tax_Invoice_${cleanNum}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+      toast.success('Invoice PDF downloaded!');
+    } catch (err: any) {
+      console.error('Failed to download invoice PDF:', err);
+      toast.error('Failed to download invoice PDF.');
+    }
+  };
+
+  const handleShareWhatsApp = async (inv: any) => {
+    if (inv.isOffline || String(inv.id).startsWith('offline_')) {
+      toast.error('This invoice is waiting to sync with the cloud. Please sync before sharing.');
+      return;
+    }
+    try {
+      toast.info('Preparing WhatsApp share & PDF...');
+      const token = getAccessToken();
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/dispatch-details/`, {
         headers: {
           Authorization: `Bearer ${token}`,
           'X-Company-ID': activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') || '' : ''),
         },
       });
+
+      // Also pre-download or share PDF file
+      try {
+        const pdfRes = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/pdf/?download=true`, {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob',
+        });
+        const blob = new Blob([pdfRes.data], { type: 'application/pdf' });
+        const cleanNum = (inv.voucher_number || 'INVOICE').replace(/[/\\:*?"<>|]/g, '-').trim();
+        const pdfFile = new File([blob], `Tax_Invoice_${cleanNum}.pdf`, { type: 'application/pdf' });
+
+        // Mobile / PWA share with file support
+        if (typeof navigator !== 'undefined' && (navigator as any).canShare && (navigator as any).canShare({ files: [pdfFile] })) {
+          await (navigator as any).share({
+            files: [pdfFile],
+            title: `Tax_Invoice_${cleanNum}.pdf`,
+            text: res.data.message_text,
+          });
+          return;
+        }
+
+        // Desktop: trigger direct download so user can attach to WhatsApp chat
+        const blobUrl = window.URL.createObjectURL(blob);
+        const dlLink = document.createElement('a');
+        dlLink.href = blobUrl;
+        dlLink.download = `Tax_Invoice_${cleanNum}.pdf`;
+        document.body.appendChild(dlLink);
+        dlLink.click();
+        document.body.removeChild(dlLink);
+        window.URL.revokeObjectURL(blobUrl);
+      } catch (pdfErr) {
+        console.warn('PDF pre-download for WhatsApp failed:', pdfErr);
+      }
+
+      toast.success('Invoice PDF downloaded! Opening WhatsApp...');
       if (res.data?.whatsapp_url) {
         window.open(res.data.whatsapp_url, '_blank');
       }
@@ -561,12 +632,12 @@ export default function SalesInvoiceList() {
                                 <AlertTriangle className="w-3.5 h-3.5" />
                                 Sync failed — action requires attention
                               </span>
-                              {inv.dexieId && (
+                              {(inv.dexieId || inv.localId || inv.id) && (
                                 <button
                                   type="button"
                                   onClick={async (e) => {
                                     e.stopPropagation();
-                                    await retryFailedVoucher(inv.dexieId);
+                                    await retryFailedVoucher(inv.dexieId || inv.localId || inv.id);
                                     fetchInvoices(page);
                                   }}
                                   className="p-1 hover:bg-rose-500/20 text-rose-400 rounded transition-colors cursor-pointer"
@@ -620,19 +691,17 @@ export default function SalesInvoiceList() {
                               <span>Print</span>
                             </Link>
 
-                            <a
-                              href={`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/pdf/`}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                            <button
+                              onClick={() => handleDownloadPdf(inv)}
                               className="px-2.5 py-1.5 bg-blue-600/10 hover:bg-blue-600/20 text-blue-500 dark:text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/20 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                               title="Download Official PDF"
                             >
                               <Download className="w-3.5 h-3.5" />
                               <span>PDF</span>
-                            </a>
+                            </button>
 
                             <button
-                              onClick={() => handleShareWhatsApp(inv.id)}
+                              onClick={() => handleShareWhatsApp(inv)}
                               className="px-2.5 py-1.5 bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-500 rounded-lg text-xs font-semibold border border-emerald-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                               title="Share on WhatsApp"
                             >

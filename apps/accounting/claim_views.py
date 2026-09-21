@@ -1,4 +1,5 @@
 import logging
+import urllib.parse
 from decimal import Decimal
 from django.http import HttpResponse
 from django.db import transaction
@@ -88,19 +89,22 @@ class InvoiceClaimPreviewAPIView(APIView):
 class InvoicePDFDownloadAPIView(APIView):
     """
     Renders and streams the official GST Tax Invoice PDF.
-    Accessible if user is logged in for the company OR provides a valid claim token.
+    Accessible if:
+      - Valid claim token provided in ?token=...
+      - User is logged in via Bearer header or ?auth_token=... and has access to company
     """
     permission_classes = [AllowAny]
 
     def get(self, request, voucher_id, *args, **kwargs):
         token = request.query_params.get('token', '').strip()
+        auth_token = request.query_params.get('auth_token', '').strip()
 
         try:
             voucher = Voucher.objects.select_related('company', 'party_ledger').prefetch_related('items__product').get(id=voucher_id)
         except Voucher.DoesNotExist:
             return Response({'error': 'Invoice not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Authorization: either valid claim token or user has access to voucher's company
+        # Authorization: either valid claim token, authenticated user session, or valid JWT auth_token in query
         authorized = False
         if token:
             try:
@@ -114,6 +118,18 @@ class InvoicePDFDownloadAPIView(APIView):
             if UserCompany.objects.filter(company=voucher.company, user=request.user).exists():
                 authorized = True
 
+        if not authorized and auth_token:
+            try:
+                from rest_framework_simplejwt.tokens import AccessToken
+                from django.contrib.auth import get_user_model
+                User = get_user_model()
+                decoded = AccessToken(auth_token)
+                user_id = decoded['user_id']
+                jwt_user = User.objects.get(id=user_id)
+                if UserCompany.objects.filter(company=voucher.company, user=jwt_user).exists():
+                    authorized = True
+            except Exception as e:
+                logger.warning(f"Could not validate auth_token for PDF download: {e}")
 
         if not authorized:
             return Response({'error': 'Unauthorized to view this invoice PDF.'}, status=status.HTTP_403_FORBIDDEN)
@@ -320,7 +336,18 @@ class InvoiceDispatchDetailsAPIView(APIView):
         except Voucher.DoesNotExist:
             return Response({'error': 'Invoice not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        payload = InvoiceNotificationService.generate_whatsapp_share_payload(voucher)
+        # Dynamically determine frontend_url from request origin or referer
+        origin = request.headers.get('Origin') or request.headers.get('Referer') or ''
+        frontend_url = None
+        if origin:
+            try:
+                parsed = urllib.parse.urlparse(origin)
+                if parsed.scheme and parsed.netloc:
+                    frontend_url = f"{parsed.scheme}://{parsed.netloc}"
+            except Exception:
+                pass
+
+        payload = InvoiceNotificationService.generate_whatsapp_share_payload(voucher, frontend_url=frontend_url)
         claim_token = InvoiceNotificationService.generate_claim_token(voucher)
         payload['claim_token'] = claim_token
         payload['pdf_download_url'] = f"/api/v1/accounting/vouchers/{voucher.id}/pdf/?token={claim_token}"

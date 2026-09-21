@@ -252,6 +252,7 @@ export class VouchersRepository {
         return {
           id: `offline_${o.localId}`,
           localId: o.localId,
+          dexieId: o.id,
           isOffline: true,
           syncStatus: o.status,
           financial_year_id: p.financial_year_id || p.financialYearId || null,

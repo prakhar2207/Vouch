@@ -254,7 +254,7 @@ EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='Vouch Invoicing <billing@vouchapp.in>')
 
 # Frontend URL for viral claim / invitation links
-FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:3000')
+FRONTEND_URL = env('FRONTEND_URL', default='https://vouch-pi-one.vercel.app' if not DEBUG else 'http://localhost:3000')
 
 
 

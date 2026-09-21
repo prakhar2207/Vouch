@@ -1,5 +1,6 @@
 import io
 import logging
+import urllib.parse
 from decimal import Decimal
 from typing import Optional
 
@@ -7,7 +8,7 @@ import qrcode
 from PIL import Image as PILImage
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.lib.units import inch, mm
+from reportlab.lib.units import mm
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
@@ -16,7 +17,6 @@ from reportlab.platypus import (
     TableStyle,
     Image as RLImage,
     KeepTogether,
-    HRFlowable,
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -57,7 +57,6 @@ def amount_to_words_indian(num: Decimal) -> str:
     if integer_part == 0:
         words = "Zero Rupees"
     else:
-        # Indian format: rightmost 3 digits (hundreds), then groups of 2 (thousands, lakhs, crores)
         crores = integer_part // 10000000
         rem_cr = integer_part % 10000000
         lakhs = rem_cr // 100000
@@ -85,378 +84,460 @@ def amount_to_words_indian(num: Decimal) -> str:
 
 class InvoicePDFService:
     """
-    Generates high-definition, compliant GST Tax Invoice PDFs on the backend.
-    Includes itemized tables, GST tax breakdown, dynamic UPI payment QR codes,
-    bank account details, and viral Vouch network onboarding badges.
+    Generates high-definition, compliant GST Tax Invoice PDFs matching the
+    standard Indian B2B boxed layout (exact same format as print/save as PDF).
     """
 
     @classmethod
     def generate_invoice_pdf(cls, voucher: Voucher) -> bytes:
-        """
-        Renders the given Voucher as an A4 GST Tax Invoice PDF and returns bytes.
-        """
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
             buffer,
             pagesize=A4,
-            leftMargin=12 * mm,
-            rightMargin=12 * mm,
-            topMargin=10 * mm,
-            bottomMargin=10 * mm,
+            leftMargin=7 * mm,
+            rightMargin=7 * mm,
+            topMargin=6 * mm,
+            bottomMargin=6 * mm,
         )
 
         styles = getSampleStyleSheet()
-        # Custom typography styles
-        style_title = ParagraphStyle(
-            'InvTitle',
-            parent=styles['Heading1'],
-            fontSize=16,
-            leading=18,
-            textColor=colors.HexColor('#0f172a'),
-            fontName='Helvetica-Bold'
-        )
-        style_subtitle = ParagraphStyle(
-            'InvSubtitle',
-            parent=styles['Normal'],
-            fontSize=8,
-            leading=11,
-            textColor=colors.HexColor('#475569')
-        )
-        style_header_badge = ParagraphStyle(
-            'InvBadge',
-            parent=styles['Normal'],
-            fontSize=13,
-            leading=15,
-            alignment=TA_RIGHT,
-            textColor=colors.HexColor('#1e40af'),
-            fontName='Helvetica-Bold'
-        )
-        style_badge_sub = ParagraphStyle(
-            'InvBadgeSub',
-            parent=styles['Normal'],
-            fontSize=8,
-            leading=11,
-            alignment=TA_RIGHT,
-            textColor=colors.HexColor('#64748b')
-        )
-        style_bold_label = ParagraphStyle(
-            'InvBoldLabel',
-            parent=styles['Normal'],
-            fontSize=8.5,
-            leading=11,
-            textColor=colors.HexColor('#1e293b'),
-            fontName='Helvetica-Bold'
-        )
-        style_body = ParagraphStyle(
-            'InvBody',
-            parent=styles['Normal'],
-            fontSize=8,
-            leading=11,
-            textColor=colors.HexColor('#334155')
-        )
-        style_table_header = ParagraphStyle(
-            'InvTableHead',
-            parent=styles['Normal'],
-            fontSize=8,
-            leading=10,
-            alignment=TA_CENTER,
-            textColor=colors.white,
-            fontName='Helvetica-Bold'
-        )
-        style_cell_left = ParagraphStyle(
-            'InvCellLeft',
-            parent=styles['Normal'],
-            fontSize=8,
-            leading=10,
-            alignment=TA_LEFT,
-            textColor=colors.HexColor('#1e293b')
-        )
-        style_cell_right = ParagraphStyle(
-            'InvCellRight',
-            parent=styles['Normal'],
-            fontSize=8,
-            leading=10,
-            alignment=TA_RIGHT,
-            textColor=colors.HexColor('#1e293b')
-        )
-        style_cell_center = ParagraphStyle(
-            'InvCellCenter',
-            parent=styles['Normal'],
-            fontSize=8,
-            leading=10,
-            alignment=TA_CENTER,
-            textColor=colors.HexColor('#1e293b')
-        )
+
+        # Typography Styles matching the print sheet
+        s_top_left = ParagraphStyle('TopLeft', fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.black)
+        s_top_right = ParagraphStyle('TopRight', fontName='Helvetica-Oblique', fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
+        s_inv_title = ParagraphStyle('InvTitle', fontName='Helvetica-Bold', fontSize=10, leading=12, alignment=TA_CENTER, textColor=colors.black)
+        s_comp_name = ParagraphStyle('CompName', fontName='Helvetica-Bold', fontSize=15, leading=17, alignment=TA_CENTER, textColor=colors.black)
+        s_comp_addr = ParagraphStyle('CompAddr', fontName='Helvetica', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        s_comp_contact = ParagraphStyle('CompContact', fontName='Helvetica', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        s_comp_tagline = ParagraphStyle('CompTagline', fontName='Helvetica-Bold', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+
+        s_meta_cell = ParagraphStyle('MetaCell', fontName='Helvetica', fontSize=7.5, leading=10, textColor=colors.black)
+        s_party_cell = ParagraphStyle('PartyCell', fontName='Helvetica', fontSize=7.5, leading=10, textColor=colors.black)
+
+        s_th = ParagraphStyle('TH', fontName='Helvetica-Bold', fontSize=7.5, leading=9, alignment=TA_CENTER, textColor=colors.black)
+        s_td_c = ParagraphStyle('TDC', fontName='Helvetica', fontSize=7.5, leading=9, alignment=TA_CENTER, textColor=colors.black)
+        s_td_l = ParagraphStyle('TDL', fontName='Helvetica', fontSize=7.5, leading=9, alignment=TA_LEFT, textColor=colors.black)
+        s_td_r = ParagraphStyle('TDR', fontName='Helvetica', fontSize=7.5, leading=9, alignment=TA_RIGHT, textColor=colors.black)
+        s_td_bold_r = ParagraphStyle('TDBoldR', fontName='Helvetica-Bold', fontSize=7.5, leading=9, alignment=TA_RIGHT, textColor=colors.black)
+
+        s_tax_th_l = ParagraphStyle('TaxTHL', fontName='Helvetica-Bold', fontSize=7, leading=8.5, alignment=TA_LEFT, textColor=colors.black)
+        s_tax_th_r = ParagraphStyle('TaxTHR', fontName='Helvetica-Bold', fontSize=7, leading=8.5, alignment=TA_RIGHT, textColor=colors.black)
+        s_tax_td_l = ParagraphStyle('TaxTDL', fontName='Helvetica', fontSize=7, leading=8.5, alignment=TA_LEFT, textColor=colors.black)
+        s_tax_td_r = ParagraphStyle('TaxTDR', fontName='Helvetica', fontSize=7, leading=8.5, alignment=TA_RIGHT, textColor=colors.black)
+
+        s_words = ParagraphStyle('Words', fontName='Helvetica', fontSize=7.5, leading=9.5, textColor=colors.black)
+        s_bank_head = ParagraphStyle('BankHead', fontName='Helvetica-Bold', fontSize=8, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        s_bank_text = ParagraphStyle('BankText', fontName='Helvetica', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+
+        s_terms = ParagraphStyle('Terms', fontName='Helvetica', fontSize=6.5, leading=8.5, textColor=colors.black)
+        s_qr_label = ParagraphStyle('QRLabel', fontName='Helvetica-Bold', fontSize=7, leading=8.5, alignment=TA_CENTER, textColor=colors.black)
+        s_sign_label = ParagraphStyle('SignLabel', fontName='Helvetica-Bold', fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
+        s_sign_rcvr = ParagraphStyle('SignRcvr', fontName='Helvetica-Bold', fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
 
         elements = []
         company = voucher.company
+        WIDTH = 556  # printable table width
 
-        # 1. Header: Seller info (Left) vs Invoice Details Badge (Right)
-        seller_details = (
-            f"<b>{company.name}</b><br/>"
-            f"{company.address or ''}<br/>"
-            f"GSTIN: <b>{company.gstin or 'URP'}</b> | State: {company.state_name or company.state_code or 'Delhi'} ({company.state_code or '07'})<br/>"
-            f"Email: {company.email or 'accounts@' + company.name.lower().replace(' ', '') + '.com'} | Phone: {company.phone or ''}"
-        )
+        # ================= 1. HEADER =================
+        header_rows = [
+            [
+                Paragraph(f"GSTIN : <b>{company.gstin or 'Unregistered'}</b>", s_top_left),
+                Paragraph("Original For Recipient", s_top_right)
+            ],
+            [Paragraph("<u>TAX INVOICE</u>", s_inv_title), ""],
+            [Paragraph(f"<b>{company.name}</b>", s_comp_name), ""],
+            [Paragraph(company.address or "", s_comp_addr), ""],
+            [Paragraph(f"Ph: {company.phone or 'N/A'} | Email: {company.email or 'N/A'}", s_comp_contact), ""],
+        ]
+        if company.tagline:
+            header_rows.append([Paragraph(company.tagline.upper(), s_comp_tagline), ""])
 
-        inv_number = voucher.voucher_number
+        header_table = Table(header_rows, colWidths=[WIDTH / 2, WIDTH / 2])
+        h_style = [
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('SPAN', (0, 1), (1, 1)),
+            ('SPAN', (0, 2), (1, 2)),
+            ('SPAN', (0, 3), (1, 3)),
+            ('SPAN', (0, 4), (1, 4)),
+            ('PADDING', (0, 0), (-1, -1), 1.5),
+            ('TOPPADDING', (0, 0), (-1, 0), 3),
+            ('BOTTOMPADDING', (0, -1), (-1, -1), 3),
+            ('LINEBELOW', (0, -1), (-1, -1), 1, colors.black),
+        ]
+        if company.tagline:
+            h_style.append(('SPAN', (0, 5), (1, 5)))
+        header_table.setStyle(TableStyle(h_style))
+        elements.append(header_table)
+
+        # ================= 2. META GRID =================
+        inv_no = voucher.voucher_number
         if hasattr(voucher.voucher_date, 'strftime'):
-            inv_date = voucher.voucher_date.strftime('%d-%b-%Y')
+            inv_date = voucher.voucher_date.strftime('%Y-%m-%d')
         else:
             inv_date = str(voucher.voucher_date or '')
 
-        if hasattr(voucher.due_date, 'strftime'):
-            due_date = voucher.due_date.strftime('%d-%b-%Y')
-        else:
-            due_date = str(voucher.due_date or 'Immediate')
+        comp_state = company.state_name or company.state_code or ''
+        pos = f"{comp_state} ({company.state_code})" if company.state_code else (comp_state or 'N/A')
 
+        # Check E-Way Bill Record
+        ewb_rec = getattr(voucher, 'eway_bill', None)
+        if not ewb_rec and hasattr(voucher, 'ewaybillrecord'):
+            ewb_rec = voucher.ewaybillrecord
 
-        invoice_badge = (
-            f"<b>TAX INVOICE</b><br/>"
-            f"<font size='7' color='#64748b'>(ORIGINAL FOR RECIPIENT)</font><br/>"
-            f"Invoice No: <b>{inv_number}</b><br/>"
-            f"Invoice Date: <b>{inv_date}</b><br/>"
-            f"Due Date: {due_date}<br/>"
-            f"Ref: {voucher.reference_number or 'N/A'}"
+        gr_rr = getattr(ewb_rec, 'trans_doc_no', 'N/A') or 'N/A'
+        transport = getattr(ewb_rec, 'transporter_name', '') or getattr(ewb_rec, 'trans_mode_display', 'Road') or 'Road'
+        vehicle_no = getattr(ewb_rec, 'vehicle_no', 'N/A') or 'N/A'
+        ewb_no = getattr(ewb_rec, 'eway_bill_number', 'N/A') or 'N/A'
+
+        meta_left = (
+            f"Invoice No. &nbsp;&nbsp;&nbsp;&nbsp;: <b>{inv_no}</b><br/>"
+            f"Dated &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <b>{inv_date}</b><br/>"
+            f"Place of Supply : {pos}<br/>"
+            f"Reverse Charge : N"
+        )
+        meta_right = (
+            f"GR/RR No. &nbsp;&nbsp;&nbsp;&nbsp;: {gr_rr}<br/>"
+            f"Transport &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {transport}<br/>"
+            f"Vehicle No. &nbsp;&nbsp;&nbsp;&nbsp;: <b>{vehicle_no}</b><br/>"
+            f"E-Way Bill No. : <b>{ewb_no}</b>"
         )
 
-        header_table = Table(
-            [[Paragraph(seller_details, style_body), Paragraph(invoice_badge, style_badge_sub)]],
-            colWidths=[115 * mm, 71 * mm]
+        meta_table = Table(
+            [[Paragraph(meta_left, s_meta_cell), Paragraph(meta_right, s_meta_cell)]],
+            colWidths=[WIDTH / 2, WIDTH / 2]
         )
-        header_table.setStyle(TableStyle([
+        meta_table.setStyle(TableStyle([
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('LINEAFTER', (0, 0), (0, -1), 1, colors.black),
+            ('LINEBELOW', (0, -1), (-1, -1), 1, colors.black),
+            ('PADDING', (0, 0), (-1, -1), 3),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('PADDING', (0, 0), (-1, -1), 0),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
         ]))
-        elements.append(header_table)
-        elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#cbd5e1'), spaceBefore=4, spaceAfter=8))
+        elements.append(meta_table)
 
-        # 2. Bill To / Buyer Section
-        party_name = (
-            voucher.buyer_name
-            or (voucher.party_ledger.name if voucher.party_ledger else 'Cash / Counter Customer')
-        )
-        party_gstin = (
-            voucher.buyer_gstin
-            or (voucher.party_ledger.gstin if voucher.party_ledger and voucher.party_ledger.gstin else 'URP')
-        )
-        party_address = (
-            voucher.buyer_address
-            or (voucher.party_ledger.address if voucher.party_ledger else 'Over-the-counter supply')
-        )
-        party_state = (
-            voucher.buyer_state_code
-            or (voucher.party_ledger.state_code if voucher.party_ledger else (company.state_code or '07'))
-        )
-        party_phone = voucher.buyer_phone or (voucher.party_ledger.phone if voucher.party_ledger else '')
-        party_email = voucher.buyer_email or (voucher.party_ledger.email if voucher.party_ledger else '')
+        # ================= 3. BILLED TO / SHIPPED TO GRID =================
+        party = voucher.party_ledger
+        buyer_name = voucher.buyer_name or (party.name if party else 'Customer')
+        buyer_addr = voucher.buyer_address or (party.address if party and party.address else '')
+        buyer_gstin = voucher.buyer_gstin or (party.gstin if party and party.gstin else 'Unregistered')
 
-        bill_to_text = (
-            f"<b>BILLED TO (BUYER):</b><br/>"
-            f"<b>{party_name}</b><br/>"
-            f"{party_address}<br/>"
-            f"GSTIN: <b>{party_gstin}</b> | State Code: {party_state}<br/>"
-            f"Contact: {party_phone} {('| ' + party_email) if party_email else ''}"
+        billed_to = (
+            f"<i>Billed to :</i><br/>"
+            f"<b>{buyer_name}</b><br/>"
+            f"{buyer_addr}<br/>"
+            f"GSTIN / UIN &nbsp;&nbsp;: <b>{buyer_gstin}</b>"
         )
-
-        ship_to_text = (
-            f"<b>SHIPPED TO / PLACE OF SUPPLY:</b><br/>"
-            f"State: <b>{party_state}</b><br/>"
-            f"Reverse Charge: <b>No</b><br/>"
-            f"Dispatch Mode: Hand Delivery / Road<br/>"
-            f"E-Way Bill: {voucher.eway_bills.first().ewb_number if voucher.eway_bills.exists() else 'Not Applicable'}"
+        shipped_to = (
+            f"<i>Shipped to :</i><br/>"
+            f"<b>{buyer_name}</b><br/>"
+            f"{buyer_addr}<br/>"
+            f"GSTIN / UIN &nbsp;&nbsp;: <b>{buyer_gstin}</b>"
         )
 
         party_table = Table(
-            [[Paragraph(bill_to_text, style_body), Paragraph(ship_to_text, style_body)]],
-            colWidths=[110 * mm, 76 * mm]
+            [[Paragraph(billed_to, s_party_cell), Paragraph(shipped_to, s_party_cell)]],
+            colWidths=[WIDTH / 2, WIDTH / 2]
         )
         party_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8fafc')),
-            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
-            ('PADDING', (0, 0), (-1, -1), 6),
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('LINEAFTER', (0, 0), (0, -1), 1, colors.black),
+            ('LINEBELOW', (0, -1), (-1, -1), 1, colors.black),
+            ('PADDING', (0, 0), (-1, -1), 3),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ]))
         elements.append(party_table)
-        elements.append(Spacer(1, 8))
 
-        # 3. Itemized Products Table
+        # ================= 4. ITEMS TABLE =================
+        col_w = [24, 182, 54, 38, 30, 44, 38, 146]  # sum = 556
         items_data = [
             [
-                Paragraph("<b>#</b>", style_table_header),
-                Paragraph("<b>Item Description</b>", style_table_header),
-                Paragraph("<b>HSN/SAC</b>", style_table_header),
-                Paragraph("<b>Qty</b>", style_table_header),
-                Paragraph("<b>Rate (₹)</b>", style_table_header),
-                Paragraph("<b>Taxable (₹)</b>", style_table_header),
-                Paragraph("<b>GST %</b>", style_table_header),
-                Paragraph("<b>Total (₹)</b>", style_table_header),
+                Paragraph("<b>S.N.</b>", s_th),
+                Paragraph("<b>Description of Goods</b>", s_th),
+                Paragraph("<b>HSN</b>", s_th),
+                Paragraph("<b>Qty.</b>", s_th),
+                Paragraph("<b>Unit</b>", s_th),
+                Paragraph("<b>Price</b>", s_th),
+                Paragraph("<b>Disc%</b>", s_th),
+                Paragraph("<b>Amount(Rs.)</b>", s_th),
             ]
         ]
 
         items = list(voucher.items.all().select_related('product'))
+        tot_qty = Decimal('0.00')
         tot_taxable = Decimal('0.00')
         tot_cgst = Decimal('0.00')
         tot_sgst = Decimal('0.00')
         tot_igst = Decimal('0.00')
 
-        col_widths = [8 * mm, 62 * mm, 18 * mm, 16 * mm, 20 * mm, 22 * mm, 16 * mm, 24 * mm]
+        is_inter_state = False
+        if company.state_code and voucher.buyer_state_code:
+            is_inter_state = str(company.state_code) != str(voucher.buyer_state_code)
+        elif company.state_code and party and party.state_code:
+            is_inter_state = str(company.state_code) != str(party.state_code)
 
+        unit_label = 'Pcs'
         for idx, itm in enumerate(items, start=1):
             p_name = itm.product.name if itm.product else (getattr(itm, 'description', '') or 'Item')
-            hsn = itm.hsn_code or (itm.product.hsn_code if itm.product else '-')
-            p_unit = itm.product.unit if itm.product else getattr(itm, 'unit', '')
-            qty_str = f"{itm.quantity} {p_unit or ''}"
-            rate_val = getattr(itm, 'rate', getattr(itm, 'unit_price', Decimal('0.00')))
-            rate_str = f"{rate_val:,.2f}"
-            taxable_str = f"{itm.taxable_amount:,.2f}"
-            gst_rate_val = itm.cgst_rate + itm.sgst_rate + itm.igst_rate
-            gst_rate_str = f"{gst_rate_val:.0f}%"
-            total_str = f"{itm.total_amount:,.2f}"
+            hsn = itm.hsn_code or (itm.product.hsn_code if itm.product else '')
+            unit = itm.product.unit if itm.product else getattr(itm, 'unit', 'PCS')
+            if unit:
+                unit_label = unit
 
+            qty = itm.quantity
+            rate = getattr(itm, 'rate', getattr(itm, 'unit_price', Decimal('0.00')))
+            disc_pct = getattr(itm, 'discount_percent', getattr(itm, 'discount_percentage', Decimal('0.00')))
+            taxable = itm.taxable_amount
 
-            tot_taxable += itm.taxable_amount
+            tot_qty += qty
+            tot_taxable += taxable
             tot_cgst += itm.cgst_amount
             tot_sgst += itm.sgst_amount
             tot_igst += itm.igst_amount
 
-            desc = (itm.product.description if itm.product and itm.product.description else '') or getattr(itm, 'description', '')
             items_data.append([
-                Paragraph(str(idx), style_cell_center),
-                Paragraph(f"<b>{p_name}</b>" + (f"<br/><font size='6.5' color='#64748b'>{desc}</font>" if desc and desc != p_name else ""), style_cell_left),
-                Paragraph(str(hsn), style_cell_center),
-                Paragraph(qty_str, style_cell_center),
-                Paragraph(rate_str, style_cell_right),
-                Paragraph(taxable_str, style_cell_right),
-                Paragraph(gst_rate_str, style_cell_center),
-                Paragraph(total_str, style_cell_right),
+                Paragraph(str(idx), s_td_c),
+                Paragraph(p_name, s_td_l),
+                Paragraph(str(hsn or ''), s_td_c),
+                Paragraph(f"{qty:.2f}", s_td_r),
+                Paragraph(str(unit or 'PCS'), s_td_c),
+                Paragraph(f"{rate:.2f}", s_td_r),
+                Paragraph(f"{disc_pct:.2f}%" if disc_pct > 0 else "0.00%", s_td_c),
+                Paragraph(f"{taxable:,.2f}", s_td_r),
             ])
 
+        # Subtotal row
+        items_data.append([
+            "", "", "", "", "", "",
+            Paragraph("", s_td_l),
+            Paragraph(f"{tot_taxable:,.2f}", s_td_r)
+        ])
 
-        items_table = Table(items_data, colWidths=col_widths, repeatRows=1)
-        items_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e40af')),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
-        ]))
-        elements.append(items_table)
-        elements.append(Spacer(1, 6))
+        # Taxes rows
+        first_item_gst = items[0].gst_rate if items else Decimal('18.00')
+        if is_inter_state or tot_igst > 0:
+            rate_disp = f"{(first_item_gst):.2f}"
+            items_data.append([
+                "", "", "", "", "", "",
+                Paragraph(f"<i>Add : IGST @ {rate_disp} %</i>", s_td_l),
+                Paragraph(f"{tot_igst:,.2f}", s_td_r)
+            ])
+        else:
+            half_rate = f"{(first_item_gst / 2):.2f}"
+            items_data.append([
+                "", "", "", "", "", "",
+                Paragraph(f"<i>Add : CGST @ {half_rate} %</i>", s_td_l),
+                Paragraph(f"{tot_cgst:,.2f}", s_td_r)
+            ])
+            items_data.append([
+                "", "", "", "", "", "",
+                Paragraph(f"<i>Add : SGST @ {half_rate} %</i>", s_td_l),
+                Paragraph(f"{tot_sgst:,.2f}", s_td_r)
+            ])
 
-        # 4. Tax Summary & Totals Table
-        tot_tax = tot_cgst + tot_sgst + tot_igst
+        # Cartage row
+        cartage = getattr(voucher, 'cartage_amount', Decimal('0.00')) or Decimal('0.00')
+        if cartage > 0:
+            items_data.append([
+                "", "", "", "", "", "",
+                Paragraph("<i>Add : Cartage</i>", s_td_l),
+                Paragraph(f"{cartage:,.2f}", s_td_r)
+            ])
+
+        # Round Off
+        round_off = getattr(voucher, 'round_off', Decimal('0.00')) or Decimal('0.00')
+        if abs(round_off) >= Decimal('0.005'):
+            label = "<i>Add : Round Off</i>" if round_off > 0 else "<i>Less : Round Off</i>"
+            items_data.append([
+                "", "", "", "", "", "",
+                Paragraph(label, s_td_l),
+                Paragraph(f"{round_off:,.2f}", s_td_r)
+            ])
+
+        # Grand Total row
         grand_total = voucher.total_amount
+        items_data.append([
+            Paragraph("<b>Grand Total</b>", s_td_l),
+            Paragraph(f"<b>{tot_qty:.2f} {unit_label}</b>", s_td_c),
+            "", "", "", "", "",
+            Paragraph(f"<b>{grand_total:,.2f}</b>", s_td_bold_r)
+        ])
 
-        tax_breakup_lines = []
-        if tot_cgst > 0 or tot_sgst > 0:
-            tax_breakup_lines.append(f"CGST: ₹{tot_cgst:,.2f}  |  SGST: ₹{tot_sgst:,.2f}")
-        if tot_igst > 0:
-            tax_breakup_lines.append(f"IGST: ₹{tot_igst:,.2f}")
+        items_table = Table(items_data, colWidths=col_w)
+        num_rows = len(items_data)
+        num_item_rows = len(items)
 
-        tax_breakup_str = "<br/>".join(tax_breakup_lines) if tax_breakup_lines else "Intra-State GST Inclusive"
+        it_style = [
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('LINEBELOW', (0, 0), (-1, 0), 1, colors.black),  # below header
+            ('LINEAFTER', (0, 0), (0, num_item_rows), 1, colors.black),
+            ('LINEAFTER', (1, 0), (1, num_item_rows), 1, colors.black),
+            ('LINEAFTER', (2, 0), (2, num_item_rows), 1, colors.black),
+            ('LINEAFTER', (3, 0), (3, num_item_rows), 1, colors.black),
+            ('LINEAFTER', (4, 0), (4, num_item_rows), 1, colors.black),
+            ('LINEAFTER', (5, 0), (5, num_item_rows), 1, colors.black),
+            ('LINEAFTER', (6, 0), (6, -1), 1, colors.black),  # vertical line before amount column all the way down
+            ('LINEABOVE', (0, -1), (-1, -1), 1, colors.black),  # above grand total
+            ('LINEBELOW', (0, -1), (-1, -1), 1, colors.black),  # below grand total
+            ('SPAN', (0, -1), (0, -1)),
+            ('SPAN', (1, -1), (6, -1)),
+            ('PADDING', (0, 0), (-1, -1), 1.5),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]
 
-        # Generate Dynamic UPI QR Code
-        qr_img_flowable = None
+        # For the subtotal/tax rows, span columns 0 to 6 for the label
+        start_tax_idx = num_item_rows + 1
+        end_tax_idx = num_rows - 2
+        for r_idx in range(start_tax_idx, end_tax_idx + 1):
+            it_style.append(('SPAN', (0, r_idx), (6, r_idx)))
+
+        items_table.setStyle(TableStyle(it_style))
+        elements.append(items_table)
+
+        # ================= 5. TAX DETAILS TABLE =================
+        # Collect distinct rates
+        tax_rates = sorted(list(set(itm.gst_rate for itm in items)))
+        tax_col_w = [110, 110, 110, 110, 116] if not is_inter_state else [130, 140, 140, 146]
+        tax_rows = []
+
+        if not is_inter_state:
+            tax_rows.append([
+                Paragraph("<b>Tax Rate</b>", s_tax_th_l),
+                Paragraph("<b>Taxable Amt.</b>", s_tax_th_r),
+                Paragraph("<b>CGST Amt.</b>", s_tax_th_r),
+                Paragraph("<b>SGST Amt.</b>", s_tax_th_r),
+                Paragraph("<b>Total Tax</b>", s_tax_th_r),
+            ])
+            for r in tax_rates:
+                rate_items = [i for i in items if i.gst_rate == r]
+                r_taxable = sum(i.taxable_amount for i in rate_items)
+                r_cgst = sum(i.cgst_amount for i in rate_items)
+                r_sgst = sum(i.sgst_amount for i in rate_items)
+                r_tot = r_cgst + r_sgst
+                tax_rows.append([
+                    Paragraph(f"{r:.0f}%", s_tax_td_l),
+                    Paragraph(f"{r_taxable:,.2f}", s_tax_td_r),
+                    Paragraph(f"{r_cgst:,.2f}", s_tax_td_r),
+                    Paragraph(f"{r_sgst:,.2f}", s_tax_td_r),
+                    Paragraph(f"{r_tot:,.2f}", s_tax_td_r),
+                ])
+        else:
+            tax_rows.append([
+                Paragraph("<b>Tax Rate</b>", s_tax_th_l),
+                Paragraph("<b>Taxable Amt.</b>", s_tax_th_r),
+                Paragraph("<b>IGST Amt.</b>", s_tax_th_r),
+                Paragraph("<b>Total Tax</b>", s_tax_th_r),
+            ])
+            for r in tax_rates:
+                rate_items = [i for i in items if i.gst_rate == r]
+                r_taxable = sum(i.taxable_amount for i in rate_items)
+                r_igst = sum(i.igst_amount for i in rate_items)
+                tax_rows.append([
+                    Paragraph(f"{r:.0f}%", s_tax_td_l),
+                    Paragraph(f"{r_taxable:,.2f}", s_tax_td_r),
+                    Paragraph(f"{r_igst:,.2f}", s_tax_td_r),
+                    Paragraph(f"{r_igst:,.2f}", s_tax_td_r),
+                ])
+
+        tax_table = Table(tax_rows, colWidths=tax_col_w)
+        tax_table.setStyle(TableStyle([
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('LINEBELOW', (0, 0), (-1, 0), 0.5, colors.black),
+            ('LINEBELOW', (0, -1), (-1, -1), 1, colors.black),
+            ('PADDING', (0, 0), (-1, -1), 1.5),
+        ]))
+        elements.append(tax_table)
+
+        # ================= 6. AMOUNT IN WORDS =================
+        words_text = f"Total Amount in Words : <b>₹ {amount_to_words_indian(grand_total)}</b>"
+        words_table = Table([[Paragraph(words_text, s_words)]], colWidths=[WIDTH])
+        words_table.setStyle(TableStyle([
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('LINEBELOW', (0, 0), (-1, -1), 1, colors.black),
+            ('PADDING', (0, 0), (-1, -1), 2.5),
+        ]))
+        elements.append(words_table)
+
+        # ================= 7. BANK DETAILS =================
+        b_name = company.bank_name or 'Canara Bank Govind Nagar'
+        b_branch = company.bank_branch or ''
+        b_acc = company.bank_account_number or '125008094288'
+        b_ifsc = company.bank_ifsc or 'CNRB0003827'
+
+        bank_cell = (
+            f"<b><u>BANK DETAILS</u></b><br/>"
+            f"{b_name} {b_branch}, ACCOUNT NO- {b_acc}, IFSCODE: {b_ifsc}"
+        )
+        bank_table = Table([[Paragraph(bank_cell, s_bank_text)]], colWidths=[WIDTH])
+        bank_table.setStyle(TableStyle([
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('LINEBELOW', (0, 0), (-1, -1), 1, colors.black),
+            ('PADDING', (0, 0), (-1, -1), 2.5),
+        ]))
+        elements.append(bank_table)
+
+        # ================= 8. BOTTOM FOOTER =================
+        # Left: Terms
+        city = company.city or 'Kanpur'
+        terms_content = (
+            f"<b>Terms &amp; Conditions</b><br/>"
+            f"<b>E.&amp; O.E.</b><br/>"
+            f"1. Goods once sold will not be taken back.<br/>"
+            f"2. Interest @ 18% p.a. will be charged if the payment is not made within 45 days.<br/>"
+            f"3. Subject to '{city}' Jurisdiction only."
+        )
+
+        # Center: QR Code
+        qr_img = None
         try:
-            # Construct standard Indian UPI payment string
-            upi_pa = company.email or f"{company.gstin or 'merchant'}@upi"
+            phone_val = getattr(company, 'phone', '')
+            upi_id = getattr(company, 'bank_upi_id', None) or (f"{phone_val}@upi" if phone_val else "vouch@upi")
             upi_url = (
-                f"upi://pay?pa={upi_pa}"
-                f"&pn={company.name.replace(' ', '%20')}"
-                f"&am={grand_total:.2f}"
+                f"upi://pay?pa={upi_id}"
+                f"&pn={urllib.parse.quote(company.name)}"
+                f"&am={float(grand_total):.2f}"
                 f"&cu=INR"
-                f"&tn=Invoice%20{inv_number}"
+                f"&tn={urllib.parse.quote(f'Inv {inv_no}')}"
             )
-            qr = qrcode.QRCode(
-                version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
-                box_size=3,
-                border=1,
-            )
+            qr = qrcode.QRCode(version=1, box_size=3, border=1)
             qr.add_data(upi_url)
             qr.make(fit=True)
-            qr_img = qr.make_image(fill_color="#0f172a", back_color="white")
-            qr_buffer = io.BytesIO()
-            qr_img.save(qr_buffer, format='PNG')
-            qr_buffer.seek(0)
-            qr_img_flowable = RLImage(qr_buffer, width=22 * mm, height=22 * mm)
+            pil_qr = qr.make_image(fill_color="black", back_color="white")
+            qr_buf = io.BytesIO()
+            pil_qr.save(qr_buf, format='PNG')
+            qr_buf.seek(0)
+            qr_img = RLImage(qr_buf, width=20 * mm, height=20 * mm)
         except Exception as e:
-            logger.warning(f"Failed to generate dynamic UPI QR: {e}")
+            logger.warning(f"Could not generate QR for invoice: {e}")
 
-        # Left Column: Words + Bank Details + QR Code
-        words_str = amount_to_words_indian(grand_total)
-        bank_details = (
-            f"<b>Amount in Words:</b><br/>"
-            f"<i>{words_str}</i><br/><br/>"
-            f"<b>Bank Payment Details:</b><br/>"
-            f"Bank Name: HDFC Bank / ICICI Bank<br/>"
-            f"A/C Name: {company.name}<br/>"
-            f"A/C No: 502000{abs(hash(company.name)) % 100000000:08d}<br/>"
-            f"IFSC: HDFC0001234 | Branch: Commercial Banking"
-        )
-
-        left_cell_content = [
-            Table([
-                [Paragraph(bank_details, style_body), qr_img_flowable or Paragraph("", style_body)]
-            ], colWidths=[80 * mm, 26 * mm])
+        qr_cell_content = [
+            Paragraph("<b>E-Invoice QR Code</b>", s_qr_label),
+            Spacer(1, 1),
+            qr_img if qr_img else Paragraph("", s_terms),
         ]
 
-        # Right Column: Summary Table
-        summary_rows = [
-            [Paragraph("Taxable Subtotal:", style_cell_left), Paragraph(f"₹{tot_taxable:,.2f}", style_cell_right)],
-            [Paragraph("Total GST:", style_cell_left), Paragraph(f"₹{tot_tax:,.2f}", style_cell_right)],
-            [Paragraph(f"<font size='6.5' color='#64748b'>{tax_breakup_str}</font>", style_cell_left), Paragraph("", style_cell_right)],
-            [Paragraph("<b>Grand Total:</b>", style_bold_label), Paragraph(f"<b>₹{grand_total:,.2f}</b>", style_bold_label)],
-        ]
-        summary_table = Table(summary_rows, colWidths=[42 * mm, 38 * mm])
-        summary_table.setStyle(TableStyle([
-            ('LINEABOVE', (0, -1), (-1, -1), 1, colors.HexColor('#1e293b')),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f1f5f9')),
-            ('PADDING', (0, 0), (-1, -1), 3),
-        ]))
-
-        footer_table = Table(
-            [[left_cell_content[0], summary_table]],
-            colWidths=[106 * mm, 80 * mm]
-        )
-        footer_table.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('PADDING', (0, 0), (-1, -1), 2),
-        ]))
-        elements.append(footer_table)
-        elements.append(Spacer(1, 10))
-
-        # 5. Terms & Authorized Signature
-        terms_text = (
-            "<b>Terms & Conditions:</b><br/>"
-            "1. Goods once sold will not be taken back or exchanged.<br/>"
-            "2. Interest @ 18% p.a. will be charged if payment is not made within the due date.<br/>"
-            "3. Subject to local jurisdiction only."
-        )
-        auth_text = (
-            f"For <b>{company.name}</b><br/><br/><br/>"
+        # Right: Signatures
+        sig_cell = (
+            f"Receiver's Signature :<br/><br/><br/>"
+            f"<b>for {company.name}</b><br/><br/><br/>"
             f"<b>Authorised Signatory</b>"
         )
-        auth_table = Table(
-            [[Paragraph(terms_text, style_body), Paragraph(auth_text, style_cell_right)]],
-            colWidths=[110 * mm, 76 * mm]
-        )
-        auth_table.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('PADDING', (0, 0), (-1, -1), 0),
-        ]))
-        elements.append(auth_table)
 
-        # 6. Viral Network Footer
-        elements.append(Spacer(1, 8))
-        viral_footer = (
-            f"<font size='7' color='#94a3b8'>This tax invoice is digitally verifiable and issued via the <b>Vouch Connected B2B Network</b>. "
-            f"Buyers can claim and instantly import this bill into their own books at: vouchapp.in/claim</font>"
+        footer_table = Table(
+            [[
+                Paragraph(terms_content, s_terms),
+                qr_cell_content,
+                Paragraph(sig_cell, s_sign_label)
+            ]],
+            colWidths=[240, 110, 206]
         )
-        elements.append(Paragraph(viral_footer, style_cell_center))
+        footer_table.setStyle(TableStyle([
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('LINEAFTER', (0, 0), (0, -1), 1, colors.black),
+            ('LINEAFTER', (1, 0), (1, -1), 1, colors.black),
+            ('PADDING', (0, 0), (-1, -1), 3),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ]))
+        elements.append(footer_table)
 
         doc.build(elements)
         buffer.seek(0)
