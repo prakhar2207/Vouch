@@ -318,10 +318,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
 
                 {isMoreDropdownOpen && (
-                  <div className="absolute left-0 mt-1.5 w-64 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95">
+                  <div className="absolute left-0 mt-1.5 w-72 max-h-[calc(100vh-5rem)] overflow-y-auto bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 pb-3 z-50 animate-in fade-in zoom-in-95 overscroll-contain">
+                    <div className="px-3 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                      Accounting & Entries
+                    </div>
                     <Link
                       href="/vouchers"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
@@ -331,7 +334,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <Link
                       href="/vouchers/credit-note"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
@@ -341,7 +344,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <Link
                       href="/vouchers/new"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
@@ -351,7 +354,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <Link
                       href="/vouchers/grid"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
@@ -360,11 +363,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       </div>
                     </Link>
                     
-                    <div className="border-t border-border/40 my-1"></div>
+                    <div className="border-t border-border/40 my-1.5"></div>
+                    <div className="px-3 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                      Reports & Statements
+                    </div>
                     
                     <Link
                       href="/reports/aging"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
@@ -375,7 +381,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     
                     <Link
                       href="/ledgers"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
@@ -385,7 +391,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <Link
                       href="/reports/trial-balance"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
@@ -395,7 +401,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <Link
                       href="/reports/profit-and-loss"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
@@ -405,7 +411,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <Link
                       href="/reports/balance-sheet"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
@@ -415,7 +421,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <Link
                       href="/export/tally"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
@@ -424,11 +430,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       </div>
                     </Link>
 
-                    <div className="border-t border-border/40 my-1"></div>
+                    <div className="border-t border-border/40 my-1.5"></div>
+                    <div className="px-3 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                      Tools & Operations
+                    </div>
 
                     <Link
                       href="/health"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
@@ -438,7 +447,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <Link
                       href="/audit"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
@@ -451,7 +460,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         setIsMoreDropdownOpen(false);
                         setIsClosingModalOpen(true);
                       }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors flex items-center justify-between cursor-pointer"
+                      className="w-full text-left px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors flex items-center justify-between cursor-pointer"
                     >
                       <div>
                         <div className="font-medium">Close Financial Year</div>
@@ -463,7 +472,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         setIsMoreDropdownOpen(false);
                         setIsSplitModalOpen(true);
                       }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors flex items-center justify-between cursor-pointer"
+                      className="w-full text-left px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors flex items-center justify-between cursor-pointer"
                     >
                       <div>
                         <div className="font-medium">Archive Company Data</div>
@@ -472,7 +481,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </button>
                     <Link
                       href="/network/inbox"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
                       onClick={() => setIsMoreDropdownOpen(false)}
                     >
                       <div>
