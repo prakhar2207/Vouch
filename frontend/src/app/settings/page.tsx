@@ -57,7 +57,7 @@ export default function SettingsPage() {
   const [enableManualInvoice, setEnableManualInvoice] = useState(false);
   const [enableAdvancedItemCreation, setEnableAdvancedItemCreation] = useState(false);
   const [complexityLevel, setComplexityLevel] = useState(1);
-  const [allowNegativeStock, setAllowNegativeStock] = useState(false);
+  const [allowNegativeStock, setAllowNegativeStock] = useState(true);
   const [salesInvoicePrefix, setSalesInvoicePrefix] = useState('');
   const [purchaseInvoicePrefix, setPurchaseInvoicePrefix] = useState('');
   const [saving, setSaving] = useState(false);
@@ -125,7 +125,7 @@ export default function SettingsPage() {
         setEnableManualInvoice(comp.settings?.enable_manual_invoice_number || false);
         setEnableAdvancedItemCreation(comp.settings?.enable_advanced_item_creation || false);
         setComplexityLevel(comp.settings?.complexity_level || 1);
-        setAllowNegativeStock(comp.settings?.allow_negative_stock || false);
+        setAllowNegativeStock(comp.settings?.allow_negative_stock !== false);
         setSalesInvoicePrefix(comp.settings?.sales_invoice_prefix || '');
         setPurchaseInvoicePrefix(comp.settings?.purchase_invoice_prefix || '');
 

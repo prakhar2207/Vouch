@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
@@ -131,20 +131,20 @@ export default function NewCategoryPage() {
               </select>
               
               {/* GST Visual Breakdown */}
-              <div className="mt-3 bg-zinc-900/50 border border-border rounded-lg p-3">
+              <div className="mt-3 bg-muted/40 border border-border rounded-lg p-3">
                 <p className="text-xs text-muted-foreground mb-2">System automatically applies tax based on customer state:</p>
                 <div className="grid grid-cols-2 gap-2 text-sm text-foreground/80">
-                    <div className="bg-zinc-800/80 px-2 py-1.5 rounded flex justify-between border border-input/50">
+                    <div className="bg-background px-2.5 py-1.5 rounded flex justify-between border border-border shadow-xs">
                         <span className="text-muted-foreground">CGST (Local)</span>
-                        <span className="font-medium text-foreground">{(formData.gst_rate / 2).toFixed(1)}%</span>
+                        <span className="font-semibold text-foreground">{(formData.gst_rate / 2).toFixed(1)}%</span>
                     </div>
-                    <div className="bg-zinc-800/80 px-2 py-1.5 rounded flex justify-between border border-input/50">
+                    <div className="bg-background px-2.5 py-1.5 rounded flex justify-between border border-border shadow-xs">
                         <span className="text-muted-foreground">SGST (Local)</span>
-                        <span className="font-medium text-foreground">{(formData.gst_rate / 2).toFixed(1)}%</span>
+                        <span className="font-semibold text-foreground">{(formData.gst_rate / 2).toFixed(1)}%</span>
                     </div>
-                    <div className="col-span-2 bg-blue-900/10 px-2 py-1.5 rounded flex justify-between border border-blue-800/30">
-                        <span className="text-blue-400">IGST (Inter-state)</span>
-                        <span className="font-medium text-blue-300">{formData.gst_rate.toFixed(1)}%</span>
+                    <div className="col-span-2 bg-blue-500/10 px-2.5 py-1.5 rounded flex justify-between border border-blue-500/20">
+                        <span className="text-blue-600 dark:text-blue-400 font-medium">IGST (Inter-state)</span>
+                        <span className="font-bold text-blue-700 dark:text-blue-300">{formData.gst_rate.toFixed(1)}%</span>
                     </div>
                 </div>
               </div>
@@ -160,24 +160,24 @@ export default function NewCategoryPage() {
               <button 
                 type="button" 
                 onClick={() => setEnableLedgerMapping(!enableLedgerMapping)} 
-                className={`w-12 h-7 rounded-full transition-all relative ${enableLedgerMapping ? 'bg-blue-600' : 'bg-zinc-700'}`}
+                className={`w-12 h-7 rounded-full transition-all relative cursor-pointer ${enableLedgerMapping ? 'bg-primary' : 'bg-muted-foreground/30'}`}
               >
-                <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all ${enableLedgerMapping ? 'left-6' : 'left-1'}`}></div>
+                <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${enableLedgerMapping ? 'left-6' : 'left-1'}`}></div>
               </button>
             </div>
             
             {enableLedgerMapping && (
-              <div className="grid grid-cols-2 gap-6 mt-6 bg-zinc-900/30 p-4 rounded-xl border border-border/50">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mt-6 bg-muted/30 dark:bg-muted/10 p-4 rounded-xl border border-border">
                 <div>
                   <label className="block text-sm font-medium text-muted-foreground mb-1.5">Sales Ledger</label>
                   <select
                     value={formData.sales_ledger_id || ''}
                     onChange={e => setFormData({ ...formData, sales_ledger_id: e.target.value })}
-                    className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                    className="w-full bg-background border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all shadow-xs cursor-pointer"
                   >
-                    <option value="">-- Default Sales Account --</option>
+                    <option value="" className="bg-background text-foreground">-- Default Sales Account --</option>
                     {ledgers.filter(l => l.group_name && l.group_name.includes('Sales')).map(l => (
-                      <option key={l.id} value={l.id}>{l.name}</option>
+                      <option key={l.id} value={l.id} className="bg-background text-foreground">{l.name}</option>
                     ))}
                   </select>
                   <p className="text-xs text-muted-foreground mt-1">Income account for selling items in this category</p>
@@ -187,11 +187,11 @@ export default function NewCategoryPage() {
                   <select
                     value={formData.purchase_ledger_id || ''}
                     onChange={e => setFormData({ ...formData, purchase_ledger_id: e.target.value })}
-                    className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                    className="w-full bg-background border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all shadow-xs cursor-pointer"
                   >
-                    <option value="">-- Default Purchase Account --</option>
+                    <option value="" className="bg-background text-foreground">-- Default Purchase Account --</option>
                     {ledgers.filter(l => l.group_name && l.group_name.includes('Purchase')).map(l => (
-                      <option key={l.id} value={l.id}>{l.name}</option>
+                      <option key={l.id} value={l.id} className="bg-background text-foreground">{l.name}</option>
                     ))}
                   </select>
                   <p className="text-xs text-muted-foreground mt-1">Expense account for buying items in this category</p>
@@ -202,15 +202,15 @@ export default function NewCategoryPage() {
 
           {/* Preview */}
           {formData.name && (
-            <div className="bg-zinc-900/50 border border-border rounded-xl p-5">
-              <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium mb-3">Preview</p>
+            <div className="bg-muted/30 dark:bg-muted/10 border border-border rounded-xl p-5">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-3">Preview</p>
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-blue-500/10 text-blue-400 rounded-full flex items-center justify-center">
+                <div className="w-12 h-12 bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center">
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
                 </div>
                 <div>
                   <p className="text-foreground font-bold text-lg">{formData.name}</p>
-                  <p className="text-muted-foreground text-sm">HSN: {formData.hsn_code || '—'} &middot; GST: {formData.gst_rate}%</p>
+                  <p className="text-muted-foreground text-sm font-mono">HSN: {formData.hsn_code || '—'} &middot; GST: {formData.gst_rate}%</p>
                 </div>
               </div>
             </div>

@@ -1865,8 +1865,8 @@ export default function SalesPage() {
                                                     );
                                                     if (matched && Number(matched.stock_quantity ?? 0) < Number(item.quantity)) {
                                                         return (
-                                                            <div className="text-xs text-amber-500 font-mono tabular-nums text-center font-medium mt-0.5" title={`Available stock: ${matched.stock_quantity ?? 0} ${matched.unit || 'PCS'}`}>
-                                                                Max: {matched.stock_quantity ?? 0}
+                                                            <div className="text-xs text-amber-500 font-mono tabular-nums text-center font-medium mt-0.5" title={`Available warehouse inventory: ${matched.stock_quantity ?? 0} ${matched.unit || 'PCS'}. Billing into negative stock permitted.`}>
+                                                                Avail: {matched.stock_quantity ?? 0}
                                                             </div>
                                                         );
                                                     }

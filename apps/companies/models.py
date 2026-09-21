@@ -56,7 +56,7 @@ class CompanySettings(models.Model):
     company = models.OneToOneField(Company, on_delete=models.CASCADE, primary_key=True, related_name='settings')
     sales_invoice_prefix = models.CharField(max_length=10, default='SAL')
     purchase_invoice_prefix = models.CharField(max_length=10, default='PUR')
-    allow_negative_stock = models.BooleanField(default=False)
+    allow_negative_stock = models.BooleanField(default=True)
     complexity_level = models.IntegerField(default=1, help_text="1: Small (1-5), 2: Medium (6-10), 3: Large (10+)")
     enable_ledger_mapping = models.BooleanField(default=False)
     enable_manual_invoice_number = models.BooleanField(default=False)

@@ -200,7 +200,7 @@ class StockService:
         Reverses stock movements atomically with row-level locking when a voucher is cancelled.
         """
         company_settings = getattr(voucher.company, 'settings', None)
-        allow_negative = getattr(company_settings, 'allow_negative_stock', False)
+        allow_negative = getattr(company_settings, 'allow_negative_stock', True)
 
         entries = InventoryEntry.objects.filter(voucher_id=voucher.id)
         if entries.exists():
@@ -284,7 +284,7 @@ class StockService:
                 new_qty_map[it.product_id] += Decimal(str(it.quantity))
 
         company_settings = getattr(new_voucher.company, 'settings', None)
-        allow_negative = getattr(company_settings, 'allow_negative_stock', False)
+        allow_negative = getattr(company_settings, 'allow_negative_stock', True)
 
         for pid in prod_ids:
             product = locked_products.get(pid)
