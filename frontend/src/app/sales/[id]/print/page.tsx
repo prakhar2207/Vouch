@@ -1,5 +1,5 @@
 "use client";
-import { API_BASE_URL } from '@/utils/api';
+import { API_BASE_URL, api } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useParams, useRouter } from 'next/navigation';
@@ -673,55 +673,85 @@ export default function PrintInvoicePage() {
     setIsGeneratingPdf(true);
 
     try {
-      const pdfResult = await generateInvoicePdf();
-      if (!pdfResult) {
-        alert('Could not render invoice PDF. Please try again.');
-        return;
-      }
-
-      const { file, blobUrl } = pdfResult;
       const filename = getCleanInvoiceFilename();
       const phone = getCleanPhone();
       const isMobile = isMobileOrPWA();
 
+      // Create official secure share token and message
+      let waMessage = buildWhatsAppTextMessage();
+
+      try {
+        const shareRes = await api.post(`/api/v1/documents/vouchers/${invoiceId}/share/`, { expires_in_days: 30 });
+        if (shareRes.data?.whatsapp_message) {
+          waMessage = shareRes.data.whatsapp_message;
+        }
+      } catch (shareErr) {
+        console.warn('Could not generate document share token, using fallback URL:', shareErr);
+      }
+
+      // Fetch official high-definition deterministic PDF
+      let pdfFile: File | null = null;
+      let pdfBlobUrl: string | null = null;
+
+      try {
+        const pdfResp = await api.get(`/api/v1/documents/vouchers/${invoiceId}/pdf/`, { responseType: 'blob' });
+        pdfFile = new File([pdfResp.data], filename, { type: 'application/pdf' });
+        pdfBlobUrl = window.URL.createObjectURL(pdfResp.data);
+      } catch (pdfErr) {
+        const fallbackResult = await generateInvoicePdf();
+        if (fallbackResult) {
+          pdfFile = fallbackResult.file;
+          pdfBlobUrl = fallbackResult.blobUrl;
+        }
+      }
+
       // ================= 1. MOBILE / PWA MODE =================
       if (isMobile) {
-        // Use Web Share API if available.
-        // CRITICAL: We pass ONLY files: [file] without any 'text' parameter!
-        // On Android WhatsApp, if 'text' is provided with 'files', WhatsApp discards the file and only sends text.
-        // Passing ONLY files: [file] ensures WhatsApp attaches the actual PDF!
-        if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [file] })) {
+        // Pass file to native Web Share API
+        if (typeof navigator !== 'undefined' && navigator.canShare && pdfFile && navigator.canShare({ files: [pdfFile] })) {
           try {
             await navigator.share({
-              files: [file],
+              files: [pdfFile],
               title: filename,
             });
             return;
           } catch (shareErr: any) {
             if (shareErr?.name === 'AbortError') {
-              return; // User cancelled share dialog
+              return;
             }
           }
         }
 
-        // If Web Share API is not available on mobile, launch WhatsApp with prefilled text and public link
-        const { appUrl } = getWhatsAppUrls();
+        const encoded = encodeURIComponent(waMessage);
+        const appUrl = phone ? `whatsapp://send?phone=${phone}&text=${encoded}` : `whatsapp://send?text=${encoded}`;
         window.location.href = appUrl;
         return;
       }
 
       // ================= 2. LAPTOP / DESKTOP MODE =================
-      // 1. Download the PDF with the exact invoice number filename
-      triggerPdfDownload(blobUrl, filename);
+      if (pdfBlobUrl) {
+        triggerPdfDownload(pdfBlobUrl, filename);
+      }
 
-      // 2. Open according to user's preference
+      const encoded = encodeURIComponent(waMessage);
+      const webUrl = phone ? `https://web.whatsapp.com/send?phone=${phone}&text=${encoded}` : `https://web.whatsapp.com/send?text=${encoded}`;
+      const appUrl = phone ? `whatsapp://send?phone=${phone}&text=${encoded}` : `whatsapp://send?text=${encoded}`;
+
       if (preferredWhatsAppClient === 'web') {
-        const { webUrl } = getWhatsAppUrls();
         window.open(webUrl, '_blank');
-        setShareStatusMessage(`WhatsApp Web opened! Invoice PDF (${filename}) downloaded. Press Ctrl+V in chat to paste image.`);
+        setShareStatusMessage(`WhatsApp Web opened! Official Invoice PDF (${filename}) downloaded.`);
         setTimeout(() => setShareStatusMessage(null), 8000);
       } else {
-        openDesktopWithAutoFallback(phone, filename);
+        setShareStatusMessage(`Opening WhatsApp with invoice details & PDF link...`);
+        setTimeout(() => setShareStatusMessage(null), 8000);
+        try {
+          window.location.href = appUrl;
+        } catch (e) {}
+        setTimeout(() => {
+          if (document.hasFocus()) {
+            window.open(webUrl, '_blank');
+          }
+        }, 1500);
       }
 
     } catch (err: any) {
@@ -739,9 +769,22 @@ export default function PrintInvoicePage() {
 
     setIsGeneratingPdf(true);
     try {
+      const filename = getCleanInvoiceFilename();
+      // 1. Download official high-definition deterministic vector PDF from backend
+      try {
+        const response = await api.get(`/api/v1/documents/vouchers/${invoiceId}/pdf/?download=1`, {
+          responseType: 'blob',
+        });
+        const blobUrl = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+        triggerPdfDownload(blobUrl, filename);
+        return;
+      } catch (backendErr) {
+        console.warn('Backend PDF stream failed, falling back to client-side renderer:', backendErr);
+      }
+
+      // 2. Offline fallback
       const pdfResult = await generateInvoicePdf();
       if (!pdfResult) return;
-      const filename = getCleanInvoiceFilename();
       triggerPdfDownload(pdfResult.blobUrl, filename);
     } catch (err: any) {
       console.error('PDF download failed:', err);

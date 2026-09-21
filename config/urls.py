@@ -96,6 +96,7 @@ urlpatterns = [
     path('api/v1/ledgers/', include('apps.ledgers.urls')),
     path('api/v1/audit/', include('apps.audit.urls')),
     path('api/v1/gst/', include('apps.gst.urls')),
+    path('api/v1/documents/', include('apps.documents.urls')),
 
     # Offline-First Batch Sync Endpoints
     path('api/v1/sync/pull/', apps.accounting.sync_views.SyncPullAPIView.as_view(), name='api_sync_pull'),

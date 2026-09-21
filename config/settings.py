@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     'apps.gst',
     'apps.analytics',
     'apps.audit',
+    'apps.documents',
 ]
 
 AUTH_USER_MODEL = 'accounts.User'

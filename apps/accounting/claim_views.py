@@ -135,7 +135,8 @@ class InvoicePDFDownloadAPIView(APIView):
             return Response({'error': 'Unauthorized to view this invoice PDF.'}, status=status.HTTP_403_FORBIDDEN)
 
         try:
-            pdf_bytes = InvoicePDFService.generate_invoice_pdf(voucher)
+            from apps.documents.services import DocumentPDFService
+            pdf_bytes = DocumentPDFService.generate_pdf_for_voucher(voucher)
             sanitized_num = voucher.voucher_number.replace('/', '_').replace('-', '_')
             filename = f"Tax_Invoice_{sanitized_num}.pdf"
 
