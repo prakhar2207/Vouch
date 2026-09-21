@@ -454,57 +454,15 @@ export default function SalesInvoiceList() {
               {/* Mobile Cards (block md:hidden) */}
               <div className="block md:hidden divide-y divide-border/60">
                 {invoices.map((inv, idx) => (
-                  <div key={inv.id || idx} className="p-3.5 space-y-2.5 bg-card">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-foreground text-sm">{inv.voucher_number}</span>
-                        {inv.status === 'SUPERSEDED' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30" title="This invoice was superseded/corrected by a newer revision">
-                            SUPERSEDED
-                          </span>
-                        ) : inv.status === 'CANCELLED' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30" title="This invoice was cancelled and reversed">
-                            CANCELLED
-                          </span>
-                        ) : inv.syncStatus === 'SYNC_FAILED' ? (
-                          <div className="flex items-center gap-1">
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30" title={inv.errorMessage || "Action requires attention"}>
-                              <AlertTriangle className="w-2.5 h-2.5" />
-                              Sync failed
-                            </span>
-                            {inv.dexieId && (
-                              <button
-                                type="button"
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  await retryFailedVoucher(inv.dexieId);
-                                  fetchInvoices(page);
-                                }}
-                                className="p-0.5 hover:bg-rose-500/20 text-rose-400 rounded"
-                                title="Retry sync now"
-                              >
-                                <RefreshCw className="w-2.5 h-2.5" />
-                              </button>
-                            )}
-                          </div>
-                        ) : inv.syncStatus === 'OFFLINE_PENDING' || inv.isOffline || inv.status === 'PENDING_SYNC' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30" title="Saved locally on this device. Will sync automatically when connected.">
-                            <CloudOff className="w-2.5 h-2.5" />
-                            Saved offline — waiting to sync
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" title="Authoritatively synced and posted on server">
-                            <CheckCircle className="w-2.5 h-2.5" />
-                            Saved &amp; synced
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-xs text-muted-foreground font-mono">{inv.date}</span>
+                  <div key={inv.id || idx} className="p-3.5 space-y-3 bg-card">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-mono font-bold text-foreground text-sm whitespace-nowrap truncate">{inv.voucher_number}</span>
+                      <span className="text-xs text-muted-foreground font-mono whitespace-nowrap shrink-0">{inv.date}</span>
                     </div>
 
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="font-semibold text-foreground text-xs truncate max-w-[180px]">{inv.party_name}</span>
-                      <span className="font-bold text-emerald-400 font-mono text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-foreground text-sm truncate">{inv.party_name}</span>
+                      <span className="font-bold text-emerald-500 dark:text-emerald-400 font-mono text-[15px] whitespace-nowrap shrink-0">
                         ₹{(() => {
                           const raw = parseFloat(inv.total_amount) || 0;
                           const rounded = Math.abs(raw % 1) > 0 ? (raw % 1 < 0.5 ? Math.floor(raw) : Math.ceil(raw)) : raw;
@@ -513,24 +471,102 @@ export default function SalesInvoiceList() {
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-border/40">
+                    <div>
+                      {inv.status === 'SUPERSEDED' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30">
+                          SUPERSEDED
+                        </span>
+                      ) : inv.status === 'CANCELLED' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30">
+                          CANCELLED
+                        </span>
+                      ) : inv.syncStatus === 'SYNC_FAILED' ? (
+                        <div className="flex items-center gap-1">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30">
+                            <AlertTriangle className="w-2.5 h-2.5" />
+                            Sync failed
+                          </span>
+                          {inv.dexieId && (
+                            <button
+                              type="button"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                await retryFailedVoucher(inv.dexieId);
+                                fetchInvoices(page);
+                              }}
+                              className="p-0.5 hover:bg-rose-500/20 text-rose-400 rounded"
+                            >
+                              <RefreshCw className="w-2.5 h-2.5" />
+                            </button>
+                          )}
+                        </div>
+                      ) : inv.syncStatus === 'OFFLINE_PENDING' || inv.isOffline || inv.status === 'PENDING_SYNC' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30">
+                          <CloudOff className="w-2.5 h-2.5" />
+                          Saved offline — waiting to sync
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                          <CheckCircle className="w-2.5 h-2.5" />
+                          Saved &amp; synced
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2 border-t border-border/40 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
                       <button
                         onClick={() => handleStartEdit(inv)}
-                        className="px-2.5 py-1 bg-blue-600/15 text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/30 flex items-center gap-1"
+                        className="px-3 py-1.5 bg-blue-600/10 text-blue-500 dark:text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/20 flex items-center gap-1.5 whitespace-nowrap shrink-0"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                         <span>Edit</span>
                       </button>
                       <Link
                         href={`/sales/${inv.id}/print`}
-                        className="px-2.5 py-1 bg-muted/60 text-foreground rounded-lg text-xs font-semibold border border-border/70 flex items-center gap-1"
+                        className="px-3 py-1.5 bg-muted/60 text-foreground rounded-lg text-xs font-semibold border border-border/70 flex items-center gap-1.5 whitespace-nowrap shrink-0"
                       >
                         <Printer className="w-3.5 h-3.5" />
                         <span>Print</span>
                       </Link>
                       <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (navigator.share) {
+                            try {
+                              await navigator.share({
+                                title: `Tax Invoice ${inv.voucher_number}`,
+                                text: `Here is your tax invoice ${inv.voucher_number} for ₹${inv.total_amount}.`,
+                                url: `${window.location.origin}/sales/${inv.id}/print`
+                              });
+                            } catch (err) {
+                              console.log('Share error:', err);
+                            }
+                          } else {
+                            toast.error('Share API is not supported in this browser.');
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-purple-600/10 text-purple-500 rounded-lg text-xs font-semibold border border-purple-500/20 flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                        <span>Share</span>
+                      </button>
+                      <button
+                        onClick={() => handleShareWhatsApp(inv)}
+                        className="px-3 py-1.5 bg-emerald-600/10 text-emerald-500 rounded-lg text-xs font-semibold border border-emerald-500/20 flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>WhatsApp</span>
+                      </button>
+                      <button
+                        onClick={() => handleDownloadPdf(inv)}
+                        className="px-3 py-1.5 bg-blue-600/10 text-blue-500 dark:text-blue-400 rounded-lg text-xs font-semibold border border-blue-500/20 flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>PDF</span>
+                      </button>
+                      <button
                         onClick={() => handleDeleteInvoice(inv.id, inv.voucher_number)}
-                        className="px-2.5 py-1 bg-rose-600/15 text-rose-400 rounded-lg text-xs font-semibold border border-rose-500/30 flex items-center gap-1"
+                        className="px-3 py-1.5 bg-rose-600/10 text-rose-500 rounded-lg text-xs font-semibold border border-rose-500/20 flex items-center gap-1.5 whitespace-nowrap shrink-0"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                         <span>Delete</span>
