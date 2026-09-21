@@ -12,7 +12,7 @@ import { useFinancialYear } from '@/context/FinancialYearContext';
 import EditSalesInvoiceModal from '@/components/modals/EditSalesInvoiceModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 import EWayBillModal from '@/components/gst/EWayBillModal';
-import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight, CloudOff, CheckCircle, AlertTriangle, RefreshCw, Truck, Download, MessageCircle } from 'lucide-react';
+import { Edit2, Trash2, Printer, Plus, ChevronLeft, ChevronRight, CloudOff, CheckCircle, AlertTriangle, RefreshCw, Truck, Download, MessageCircle, Share2 } from 'lucide-react';
 import { offlineDb } from '@/lib/db/offlineDb';
 
 import { retryFailedVoucher, pullIncrementalChanges } from '@/lib/sync/sync-worker';
@@ -696,6 +696,30 @@ export default function SalesInvoiceList() {
                             >
                               <MessageCircle className="w-3.5 h-3.5" />
                               <span>WhatsApp</span>
+                            </button>
+
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (navigator.share) {
+                                  try {
+                                    await navigator.share({
+                                      title: `Tax Invoice ${inv.voucher_number}`,
+                                      text: `Here is your tax invoice ${inv.voucher_number} for ₹${inv.total_amount}.`,
+                                      url: `${window.location.origin}/sales/${inv.id}/print`
+                                    });
+                                  } catch (err) {
+                                    console.log('Share error:', err);
+                                  }
+                                } else {
+                                  toast.error('Share API is not supported in this browser.');
+                                }
+                              }}
+                              className="px-2.5 py-1.5 bg-purple-600/10 hover:bg-purple-600/20 text-purple-500 rounded-lg text-xs font-semibold border border-purple-500/20 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+                              title="Native Share"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                              <span>Share</span>
                             </button>
 
 

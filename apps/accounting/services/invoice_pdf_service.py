@@ -460,7 +460,7 @@ class InvoicePDFService:
         fixed_height = h_header + h_meta + h_party + h_tax + h_words + h_bank + h_footer
 
         # ================= 4. ITEMS TABLE =================
-        col_w = [24, 182, 54, 38, 30, 44, 38, 146]  # sum = 556
+        col_w = [30, 216, 56, 40, 34, 48, 42, 90]  # sum = 556
         items_data = [
             [
                 Paragraph("<b>S.N.</b>", s_th),
@@ -518,6 +518,7 @@ class InvoicePDFService:
         # Helper to add tax rows aligned perfectly to columns
         def add_tax_row(label, rate_label, amount):
             items_data.append([
+
                 "", "", "", "",
                 Paragraph(label, s_td_tax_label),
                 "",
