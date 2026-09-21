@@ -81,7 +81,7 @@ class InvoiceNotificationService:
         if len(clean_phone) == 10:
             clean_phone = '91' + clean_phone
 
-        claim_url = cls.get_claim_url(voucher, frontend_url=frontend_url)
+        public_url = f"{frontend_url}/sales/{voucher.id}/print"
         company_name = voucher.company.name
         buyer_name = voucher.buyer_name or (party.name if party else 'Customer')
         inv_no = voucher.voucher_number
@@ -99,10 +99,7 @@ class InvoiceNotificationService:
             f"• *Invoice Date:* {inv_date}\n"
             f"• *Invoice Amount:* {amount_str}\n\n"
             f"📥 *View & Download Official PDF:*\n"
-            f"{claim_url}\n\n"
-            f"🚀 *Instant 1-Click Import into Books:*\n"
-            f"{claim_url}\n\n"
-            f"_Open the link above to view/download your official PDF invoice and add this purchase into your accounts with zero manual data entry._\n\n"
+            f"{public_url}\n\n"
             f"Thank you for doing business with us!\n"
             f"*{company_name}*"
         )
@@ -115,7 +112,7 @@ class InvoiceNotificationService:
             'buyer_name': buyer_name,
             'invoice_number': inv_no,
             'total_amount': float(voucher.total_amount),
-            'claim_url': claim_url,
+            'public_url': public_url,
             'message_text': message,
             'whatsapp_url': wa_url
         }

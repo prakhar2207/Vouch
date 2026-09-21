@@ -125,8 +125,8 @@ class InvoicePDFAndClaimTests(TestCase):
     def test_whatsapp_share_payload(self):
         payload = InvoiceNotificationService.generate_whatsapp_share_payload(self.sales_voucher)
         self.assertIn('919876543210', payload['whatsapp_url'])
-        self.assertIn('INV/2026-27/0101', payload['message_text'])
-        self.assertIn('claim?token=', payload['claim_url'])
+        self.assertIn('/print', payload['public_url'])
+        self.assertIn(str(self.sales_voucher.id), payload['public_url'])
 
     def test_claim_preview_api(self):
         token = InvoiceNotificationService.generate_claim_token(self.sales_voucher)

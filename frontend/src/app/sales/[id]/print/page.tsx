@@ -184,6 +184,8 @@ export default function PrintInvoicePage() {
         } catch (offlineErr) {
           console.warn('Failed to load local offline voucher:', offlineErr);
         }
+        setLoadError('This offline invoice is not available on this device. Please ensure it has synced to the cloud.');
+        return;
       }
 
       let res;

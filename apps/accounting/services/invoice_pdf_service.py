@@ -20,10 +20,22 @@ from reportlab.platypus import (
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 from apps.accounting.models import Voucher
 
 logger = logging.getLogger(__name__)
+
+# Register Roboto fonts for Rupee symbol support
+try:
+    font_dir = os.path.join(os.path.dirname(__file__), '..', 'fonts')
+    pdfmetrics.registerFont(TTFont('Roboto', os.path.join(font_dir, 'Roboto-Regular.ttf')))
+    pdfmetrics.registerFont(TTFont('Roboto-Bold', os.path.join(font_dir, 'Roboto-Bold.ttf')))
+    pdfmetrics.registerFont(TTFont('Roboto-Oblique', os.path.join(font_dir, 'Roboto-Italic.ttf')))
+    pdfmetrics.registerFont(TTFont('Roboto-BoldOblique', os.path.join(font_dir, 'Roboto-BoldItalic.ttf')))
+except Exception as e:
+    logger.warning(f"Failed to register fonts: {e}")
 
 
 def amount_to_words_indian(num: Decimal) -> str:
@@ -117,37 +129,37 @@ class InvoicePDFService:
         party = voucher.party_ledger
 
         # Typography Styles matching the print sheet
-        s_top_left = ParagraphStyle('TopLeft', fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.black)
-        s_top_right = ParagraphStyle('TopRight', fontName='Helvetica-Oblique', fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
-        s_inv_title = ParagraphStyle('InvTitle', fontName='Helvetica-Bold', fontSize=10, leading=12, alignment=TA_CENTER, textColor=colors.black)
-        s_comp_name = ParagraphStyle('CompName', fontName='Helvetica-Bold', fontSize=16, leading=18, alignment=TA_CENTER, textColor=colors.black)
-        s_comp_addr = ParagraphStyle('CompAddr', fontName='Helvetica', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
-        s_comp_contact = ParagraphStyle('CompContact', fontName='Helvetica', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
-        s_comp_tagline = ParagraphStyle('CompTagline', fontName='Helvetica-Bold', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        s_top_left = ParagraphStyle('TopLeft', fontName='Roboto-Bold', fontSize=8, leading=10, textColor=colors.black)
+        s_top_right = ParagraphStyle('TopRight', fontName='Roboto-Oblique', fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
+        s_inv_title = ParagraphStyle('InvTitle', fontName='Roboto-Bold', fontSize=10, leading=12, alignment=TA_CENTER, textColor=colors.black)
+        s_comp_name = ParagraphStyle('CompName', fontName='Roboto-Bold', fontSize=16, leading=18, alignment=TA_CENTER, textColor=colors.black)
+        s_comp_addr = ParagraphStyle('CompAddr', fontName='Roboto', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        s_comp_contact = ParagraphStyle('CompContact', fontName='Roboto', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        s_comp_tagline = ParagraphStyle('CompTagline', fontName='Roboto-Bold', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
 
-        s_meta_cell = ParagraphStyle('MetaCell', fontName='Helvetica', fontSize=7.5, leading=10.5, textColor=colors.black)
-        s_party_cell = ParagraphStyle('PartyCell', fontName='Helvetica', fontSize=7.5, leading=10, textColor=colors.black)
+        s_meta_cell = ParagraphStyle('MetaCell', fontName='Roboto', fontSize=9, leading=12, textColor=colors.black)
+        s_party_cell = ParagraphStyle('PartyCell', fontName='Roboto', fontSize=9, leading=12, textColor=colors.black)
 
-        s_th = ParagraphStyle('TH', fontName='Helvetica-Bold', fontSize=7.5, leading=9, alignment=TA_CENTER, textColor=colors.black)
-        s_td_c = ParagraphStyle('TDC', fontName='Helvetica', fontSize=7.5, leading=9, alignment=TA_CENTER, textColor=colors.black)
-        s_td_l = ParagraphStyle('TDL', fontName='Helvetica', fontSize=7.5, leading=9, alignment=TA_LEFT, textColor=colors.black)
-        s_td_r = ParagraphStyle('TDR', fontName='Helvetica', fontSize=7.5, leading=9, alignment=TA_RIGHT, textColor=colors.black)
-        s_td_bold_r = ParagraphStyle('TDBoldR', fontName='Helvetica-Bold', fontSize=7.5, leading=9, alignment=TA_RIGHT, textColor=colors.black)
-        s_td_bold_c = ParagraphStyle('TDBoldC', fontName='Helvetica-Bold', fontSize=7.5, leading=9, alignment=TA_CENTER, textColor=colors.black)
-        s_td_tax_label = ParagraphStyle('TaxLabel', fontName='Helvetica-Oblique', fontSize=7.5, leading=9, alignment=TA_RIGHT, textColor=colors.black)
+        s_th = ParagraphStyle('TH', fontName='Roboto-Bold', fontSize=9, leading=12, alignment=TA_CENTER, textColor=colors.black)
+        s_td_c = ParagraphStyle('TDC', fontName='Roboto', fontSize=9, leading=12, alignment=TA_CENTER, textColor=colors.black)
+        s_td_l = ParagraphStyle('TDL', fontName='Roboto', fontSize=9, leading=12, alignment=TA_LEFT, textColor=colors.black)
+        s_td_r = ParagraphStyle('TDR', fontName='Roboto', fontSize=9, leading=12, alignment=TA_RIGHT, textColor=colors.black)
+        s_td_bold_r = ParagraphStyle('TDBoldR', fontName='Roboto-Bold', fontSize=9, leading=12, alignment=TA_RIGHT, textColor=colors.black)
+        s_td_bold_c = ParagraphStyle('TDBoldC', fontName='Roboto-Bold', fontSize=9, leading=12, alignment=TA_CENTER, textColor=colors.black)
+        s_td_tax_label = ParagraphStyle('TaxLabel', fontName='Roboto-Oblique', fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
 
-        s_tax_th_l = ParagraphStyle('TaxTHL', fontName='Helvetica-Bold', fontSize=7, leading=8.5, alignment=TA_LEFT, textColor=colors.black)
-        s_tax_th_r = ParagraphStyle('TaxTHR', fontName='Helvetica-Bold', fontSize=7, leading=8.5, alignment=TA_RIGHT, textColor=colors.black)
-        s_tax_td_l = ParagraphStyle('TaxTDL', fontName='Helvetica', fontSize=7, leading=8.5, alignment=TA_LEFT, textColor=colors.black)
-        s_tax_td_r = ParagraphStyle('TaxTDR', fontName='Helvetica', fontSize=7, leading=8.5, alignment=TA_RIGHT, textColor=colors.black)
+        s_tax_th_l = ParagraphStyle('TaxTHL', fontName='Roboto-Bold', fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
+        s_tax_th_r = ParagraphStyle('TaxTHR', fontName='Roboto-Bold', fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
+        s_tax_td_l = ParagraphStyle('TaxTDL', fontName='Roboto', fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
+        s_tax_td_r = ParagraphStyle('TaxTDR', fontName='Roboto', fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
 
-        s_words = ParagraphStyle('Words', fontName='Helvetica', fontSize=7.5, leading=9.5, textColor=colors.black)
-        s_bank_text = ParagraphStyle('BankText', fontName='Helvetica', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        s_words = ParagraphStyle('Words', fontName='Roboto', fontSize=8.5, leading=11, textColor=colors.black)
+        s_bank_text = ParagraphStyle('BankText', fontName='Roboto', fontSize=8.5, leading=11, alignment=TA_CENTER, textColor=colors.black)
 
-        s_terms = ParagraphStyle('Terms', fontName='Helvetica', fontSize=6.5, leading=8.5, textColor=colors.black)
-        s_qr_label = ParagraphStyle('QRLabel', fontName='Helvetica-Bold', fontSize=7, leading=8.5, alignment=TA_CENTER, textColor=colors.black)
-        s_sign_rcvr = ParagraphStyle('SignRcvr', fontName='Helvetica-Bold', fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
-        s_sign_auth = ParagraphStyle('SignAuth', fontName='Helvetica-Bold', fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
+        s_terms = ParagraphStyle('Terms', fontName='Roboto', fontSize=7.5, leading=9.5, textColor=colors.black)
+        s_qr_label = ParagraphStyle('QRLabel', fontName='Roboto-Bold', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        s_sign_rcvr = ParagraphStyle('SignRcvr', fontName='Roboto-Bold', fontSize=8, leading=10, alignment=TA_LEFT, textColor=colors.black)
+        s_sign_auth = ParagraphStyle('SignAuth', fontName='Roboto-Bold', fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
 
         # ================= 1. HEADER =================
         header_rows = [
@@ -318,7 +330,7 @@ class InvoicePDFService:
         ]))
 
         # ================= 6. AMOUNT IN WORDS =================
-        words_text = f"Total Amount in Words : <b>INR {amount_to_words_indian(grand_total)}</b>"
+        words_text = f"Total Amount in Words : <b>₹ {amount_to_words_indian(grand_total)}</b>"
         words_table = Table([[Paragraph(words_text, s_words)]], colWidths=[WIDTH])
         words_table.setStyle(TableStyle([
             ('BOX', (0, 0), (-1, -1), 1, colors.black),
@@ -458,7 +470,7 @@ class InvoicePDFService:
                 Paragraph("<b>Unit</b>", s_th),
                 Paragraph("<b>Price</b>", s_th),
                 Paragraph("<b>Disc%</b>", s_th),
-                Paragraph("<b>Amount(Rs.)</b>", s_th),
+                Paragraph("<b>Amount(₹)</b>", s_th),
             ]
         ]
 
@@ -502,53 +514,44 @@ class InvoicePDFService:
         # Taxes rows
         first_item_gst = items[0].gst_rate if items else Decimal('18.00')
         num_tax_rows = 0
-        if is_inter_state or tot_igst > 0:
-            rate_disp = f"{(first_item_gst):.2f}"
+        
+        # Helper to add tax rows aligned perfectly to columns
+        def add_tax_row(label, rate_label, amount):
             items_data.append([
-                Paragraph(f"Add : IGST &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; @ {rate_disp} % &nbsp;&nbsp;", s_td_tax_label),
-                "", "", "", "", "", "",
-                Paragraph(f"{tot_igst:,.2f}", s_td_r)
+                "", "", "", "",
+                Paragraph(label, s_td_tax_label),
+                "",
+                Paragraph(rate_label, s_td_tax_label),
+                Paragraph(f"{amount:,.2f}", s_td_r)
             ])
+            
+        if is_inter_state or tot_igst > 0:
+            rate_disp = f"@ {(first_item_gst):.2f} %"
+            add_tax_row("Add : IGST", rate_disp, tot_igst)
             num_tax_rows += 1
         else:
-            half_rate = f"{(first_item_gst / 2):.2f}"
-            items_data.append([
-                Paragraph(f"Add : CGST &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; @ {half_rate} % &nbsp;&nbsp;", s_td_tax_label),
-                "", "", "", "", "", "",
-                Paragraph(f"{tot_cgst:,.2f}", s_td_r)
-            ])
-            items_data.append([
-                Paragraph(f"Add : SGST &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; @ {half_rate} % &nbsp;&nbsp;", s_td_tax_label),
-                "", "", "", "", "", "",
-                Paragraph(f"{tot_sgst:,.2f}", s_td_r)
-            ])
+            half_rate = f"@ {(first_item_gst / 2):.2f} %"
+            add_tax_row("Add : CGST", half_rate, tot_cgst)
+            add_tax_row("Add : SGST", half_rate, tot_sgst)
             num_tax_rows += 2
 
         cartage = getattr(voucher, 'cartage_amount', Decimal('0.00')) or Decimal('0.00')
         if cartage > 0:
-            items_data.append([
-                Paragraph("Add : Cartage &nbsp;&nbsp;", s_td_tax_label),
-                "", "", "", "", "", "",
-                Paragraph(f"{cartage:,.2f}", s_td_r)
-            ])
+            add_tax_row("Add : Cartage", "", cartage)
             num_tax_rows += 1
 
         round_off = getattr(voucher, 'round_off', Decimal('0.00')) or Decimal('0.00')
         if abs(round_off) >= Decimal('0.005'):
-            lbl = "Add : Round Off &nbsp;&nbsp;" if round_off > 0 else "Less : Round Off &nbsp;&nbsp;"
-            items_data.append([
-                Paragraph(lbl, s_td_tax_label),
-                "", "", "", "", "", "",
-                Paragraph(f"{round_off:,.2f}", s_td_r)
-            ])
+            lbl = "Add : Round Off" if round_off > 0 else "Less : Round Off"
+            add_tax_row(lbl, "", round_off)
             num_tax_rows += 1
 
         grand_total_idx = len(items_data)
         items_data.append([
-            Paragraph("<b>Grand Total</b>", s_td_r),
-            "", "",
-            Paragraph(f"<b>{tot_qty:.2f} {unit_label}</b>", s_td_bold_c),
+            Paragraph("<b>Grand Total</b>", s_td_bold_r),
             "", "", "",
+            Paragraph(f"<b>{tot_qty:.2f} {unit_label}</b>", s_td_bold_c),
+            "", "",
             Paragraph(f"<b>{grand_total:,.2f}</b>", s_td_bold_r)
         ])
 
@@ -573,16 +576,21 @@ class InvoicePDFService:
             ('LINEBELOW', (0, filler_idx), (-1, filler_idx), 1, colors.black),
             ('LINEABOVE', (0, grand_total_idx), (-1, grand_total_idx), 1, colors.black),
             ('LINEBELOW', (0, grand_total_idx), (-1, grand_total_idx), 1, colors.black),
-            ('SPAN', (0, grand_total_idx), (2, grand_total_idx)),
-            ('SPAN', (3, grand_total_idx), (4, grand_total_idx)),
-            ('SPAN', (5, grand_total_idx), (6, grand_total_idx)),
+            ('SPAN', (0, grand_total_idx), (3, grand_total_idx)),
+            ('SPAN', (4, grand_total_idx), (6, grand_total_idx)),
             ('PADDING', (0, 0), (-1, -1), 1.5),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]
 
-        for r in range(subtotal_idx, grand_total_idx):
-            it_style.append(('SPAN', (0, r), (6, r)))
-
+        # For Subtotal row
+        it_style.append(('SPAN', (0, subtotal_idx), (6, subtotal_idx)))
+        
+        # For Tax rows
+        for r in range(subtotal_idx + 1, grand_total_idx):
+            it_style.append(('SPAN', (0, r), (3, r)))
+            it_style.append(('SPAN', (4, r), (5, r)))
+            # Col 6 is unspanned for rate
+            
         items_table.setStyle(TableStyle(it_style))
 
         elements = [
@@ -599,3 +607,4 @@ class InvoicePDFService:
         doc.build(elements)
         buffer.seek(0)
         return buffer.getvalue()
+
