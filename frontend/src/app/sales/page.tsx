@@ -257,7 +257,7 @@ export default function SalesInvoiceList() {
       return;
     }
     try {
-      toast.info('Preparing WhatsApp share & PDF...');
+      toast.info('Preparing WhatsApp share...');
       const token = getAccessToken();
       const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/dispatch-details/`, {
         headers: {
@@ -266,7 +266,7 @@ export default function SalesInvoiceList() {
         },
       });
 
-      // Also pre-download or share PDF file
+      // Trigger direct PDF download so user has the file ready to attach
       try {
         const pdfRes = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/pdf/?download=true`, {
           headers: { Authorization: `Bearer ${token}` },
@@ -274,19 +274,6 @@ export default function SalesInvoiceList() {
         });
         const blob = new Blob([pdfRes.data], { type: 'application/pdf' });
         const cleanNum = (inv.voucher_number || 'INVOICE').replace(/[/\\:*?"<>|]/g, '-').trim();
-        const pdfFile = new File([blob], `Tax_Invoice_${cleanNum}.pdf`, { type: 'application/pdf' });
-
-        // Mobile / PWA share with file support
-        if (typeof navigator !== 'undefined' && (navigator as any).canShare && (navigator as any).canShare({ files: [pdfFile] })) {
-          await (navigator as any).share({
-            files: [pdfFile],
-            title: `Tax_Invoice_${cleanNum}.pdf`,
-            text: res.data.message_text,
-          });
-          return;
-        }
-
-        // Desktop: trigger direct download so user can attach to WhatsApp chat
         const blobUrl = window.URL.createObjectURL(blob);
         const dlLink = document.createElement('a');
         dlLink.href = blobUrl;
@@ -302,6 +289,8 @@ export default function SalesInvoiceList() {
       toast.success('Invoice PDF downloaded! Opening WhatsApp...');
       if (res.data?.whatsapp_url) {
         window.open(res.data.whatsapp_url, '_blank');
+      } else {
+        toast.error('WhatsApp link could not be generated.');
       }
     } catch {
       toast.error('Failed to prepare WhatsApp share link.');

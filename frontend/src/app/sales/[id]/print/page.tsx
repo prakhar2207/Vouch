@@ -709,22 +709,6 @@ export default function PrintInvoicePage() {
       }
 
       // ================= 2. LAPTOP / DESKTOP MODE =================
-      // Check if Desktop browser supports Web Share with files (Windows 10/11 Chrome/Edge native share)
-      if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({
-            files: [file],
-            title: filename,
-          });
-          return;
-        } catch (shareErr: any) {
-          if (shareErr?.name === 'AbortError') {
-            return;
-          }
-        }
-      }
-
-      // On desktop browsers without Web Share file integration:
       // 1. Download the PDF with the exact invoice number filename
       triggerPdfDownload(blobUrl, filename);
 
