@@ -206,13 +206,43 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
         colorClass: 'text-amber-400'
       };
     }
+    // General ledger accounts (Cash, Bank, Asset, Expense, Liability)
+    if (state === 'DR') {
+      const isOverdrawn = statementData?.ledger?.normal_balance === 'CREDIT';
+      return {
+        badgeBg: isOverdrawn ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400',
+        headline: statementData?.owner_headline || (isOverdrawn ? 'DEBIT DEFICIT (DR)' : 'DEBIT BALANCE'),
+        explanation: statementData?.explanation || `Net account balance is ₹${displayAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} Dr`,
+        colorClass: isOverdrawn ? 'text-rose-400' : 'text-emerald-400'
+      };
+    }
+    if (state === 'CR') {
+      const isOverdrawn = statementData?.ledger?.normal_balance === 'DEBIT';
+      return {
+        badgeBg: isOverdrawn ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-blue-500/10 border-blue-500/30 text-blue-400',
+        headline: statementData?.owner_headline || (isOverdrawn ? 'OVERDRAWN (CR)' : 'CREDIT BALANCE'),
+        explanation: statementData?.explanation || (isOverdrawn
+          ? `Account is overdrawn by ₹${displayAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (recorded outflows exceed inflows)`
+          : `Net account balance is ₹${displayAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} Cr`),
+        colorClass: isOverdrawn ? 'text-rose-400' : 'text-blue-400'
+      };
+    }
+    if (statementData?.owner_headline && statementData?.owner_headline !== 'SETTLED') {
+      const isNegative = statementData.owner_headline.includes('OVERDRAWN') || statementData.owner_headline.includes('DEFICIT');
+      return {
+        badgeBg: isNegative ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400',
+        headline: statementData.owner_headline,
+        explanation: statementData.explanation || '',
+        colorClass: isNegative ? 'text-rose-400' : 'text-emerald-400'
+      };
+    }
     return {
       badgeBg: 'bg-muted border-border/40 text-muted-foreground',
       headline: 'SETTLED',
-      explanation: 'Nothing outstanding. All bills and payments are balanced.',
+      explanation: 'Nothing outstanding. Balance is ₹0.00.',
       colorClass: 'text-foreground'
     };
-  }, [state, displayAmount, statementData]);
+  }, [state, displayAmount, statementData, isStockLedger, invSummary]);
 
   if (loading && !statementData) {
     return (
@@ -328,11 +358,9 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
               <span className={`text-3xl sm:text-4xl font-extrabold font-mono tracking-tight ${statusConfig.colorClass}`}>
                 ₹{displayAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </span>
-              {showAccountingDetails && (
-                <span className="text-xs font-bold text-muted-foreground uppercase">
-                  {statementData?.closing_balance_type}
-                </span>
-              )}
+              <span className="text-xs font-bold text-muted-foreground uppercase font-mono">
+                {statementData?.closing_balance_short_type || (statementData?.closing_balance_type === 'DEBIT' ? 'Dr' : (statementData?.closing_balance_type === 'CREDIT' ? 'Cr' : ''))}
+              </span>
             </div>
             <p className="text-xs sm:text-sm text-muted-foreground font-medium pt-0.5">
               {statusConfig.explanation}
@@ -623,6 +651,8 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
                     const cr = parseFloat(entry.credit || 0);
                     const amt = parseFloat(entry.amount || (dr > 0 ? dr : cr));
                     const isPositive = entry.effect_sign === '+';
+                    const isOverdrawn = Boolean(entry.is_overdrawn);
+                    const shortDirection = entry.running_balance_short_type || (entry.running_balance_type === 'DEBIT' ? 'Dr' : (entry.running_balance_type === 'CREDIT' ? 'Cr' : ''));
 
                     return (
                       <tr key={entry.id} className="hover:bg-muted/20 transition-colors">
@@ -634,7 +664,7 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
                         </td>
                         <td className="py-3 px-4 whitespace-nowrap">
                           <span className="bg-muted text-muted-foreground text-[10px] font-semibold px-2 py-0.5 rounded border border-border/40">
-                            {entry.voucher_type || 'VOUCHER'}
+                            {entry.voucher_type_display || entry.voucher_type || 'VOUCHER'}
                           </span>
                         </td>
                         <td className="py-3 px-4 max-w-xs truncate text-foreground font-medium">
@@ -654,10 +684,17 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
                             <td className="py-3 px-4 text-right font-mono font-semibold tabular-nums text-emerald-400">
                               {cr > 0 ? `₹${cr.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
                             </td>
-                            <td className="py-3 px-4 text-right font-mono font-bold tabular-nums text-foreground">
-                              ₹{parseFloat(entry.running_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}{' '}
-                              <span className="text-[10px] font-semibold text-muted-foreground">
-                                {entry.running_balance_type}
+                            <td className="py-3 px-4 text-right font-mono font-bold tabular-nums">
+                              <span className={isOverdrawn ? 'text-rose-400' : 'text-foreground'}>
+                                ₹{parseFloat(entry.running_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </span>{' '}
+                              <span className={`text-[10px] font-semibold px-1 py-0.5 rounded ${
+                                isOverdrawn
+                                  ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                                  : 'text-muted-foreground'
+                              }`}>
+                                {entry.running_balance_type || shortDirection}
+                                {isOverdrawn && ' (Deficit)'}
                               </span>
                             </td>
                           </>
@@ -671,8 +708,20 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
                                 {entry.effect_on_balance || `₹${amt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
                               </span>
                             </td>
-                            <td className="py-3 px-4 text-right font-mono font-bold tabular-nums text-foreground">
-                              ₹{parseFloat(entry.running_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            <td className="py-3 px-4 text-right font-mono font-bold tabular-nums">
+                              <span className={isOverdrawn ? 'text-rose-400' : 'text-foreground'}>
+                                ₹{parseFloat(entry.running_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </span>
+                              {shortDirection && (
+                                <span className={`text-[10px] font-bold ml-1.5 px-1.5 py-0.5 rounded ${
+                                  isOverdrawn
+                                    ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                                    : 'text-muted-foreground bg-muted/60 border border-border/40'
+                                }`}>
+                                  {shortDirection}
+                                  {isOverdrawn && ' (Deficit)'}
+                                </span>
+                              )}
                             </td>
                           </>
                         )}
@@ -690,13 +739,15 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
                 const cr = parseFloat(entry.credit || 0);
                 const amt = parseFloat(entry.amount || (dr > 0 ? dr : cr));
                 const isPositive = entry.effect_sign === '+';
+                const isOverdrawn = Boolean(entry.is_overdrawn);
+                const shortDirection = entry.running_balance_short_type || (entry.running_balance_type === 'DEBIT' ? 'Dr' : (entry.running_balance_type === 'CREDIT' ? 'Cr' : ''));
 
                 return (
                   <div key={entry.id} className="p-4 space-y-2">
                     <div className="flex items-center justify-between text-[11px]">
                       <span className="font-mono text-muted-foreground">{entry.date || '-'}</span>
                       <span className="bg-muted text-muted-foreground text-[10px] font-semibold px-2 py-0.5 rounded border border-border/40">
-                        {entry.voucher_type}
+                        {entry.voucher_type_display || entry.voucher_type}
                       </span>
                     </div>
 
@@ -720,9 +771,20 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
 
                     <div className="flex items-center justify-between pt-2 border-t border-border/20 text-[11px] text-muted-foreground">
                       <span>Running Balance:</span>
-                      <span className="font-mono font-bold text-foreground">
-                        ₹{parseFloat(entry.running_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}{' '}
-                        {showAccountingDetails ? entry.running_balance_type : ''}
+                      <span className="font-mono font-bold">
+                        <span className={isOverdrawn ? 'text-rose-400' : 'text-foreground'}>
+                          ₹{parseFloat(entry.running_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </span>
+                        {shortDirection && (
+                          <span className={`text-[10px] font-bold ml-1.5 px-1.5 py-0.5 rounded ${
+                            isOverdrawn
+                              ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                              : 'text-muted-foreground bg-muted/60 border border-border/40'
+                          }`}>
+                            {shortDirection}
+                            {isOverdrawn && ' (Deficit)'}
+                          </span>
+                        )}
                       </span>
                     </div>
                   </div>

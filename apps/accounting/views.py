@@ -1390,7 +1390,7 @@ class LedgerStatementAPIView(APIView):
     
     def get(self, request, *args, **kwargs):
         company_id = kwargs.get('company_id')
-        ledger_id = kwargs.get('ledger_id')
+        ledger_id = kwargs.get('ledger_id') or kwargs.get('pk')
         if not company_id and len(args) == 2:
             company_id, ledger_id = args
         elif not company_id and len(args) == 1:
@@ -1587,6 +1587,33 @@ class LedgerStatementAPIView(APIView):
                     cl_balance_info['owner_headline'] = 'LIVE STOCK IN HAND'
                     cl_balance_info['explanation'] = f"Live inventory valuation across {in_stock_count} in-stock products"
 
+            # Cash and Bank specialized headlines
+            is_cash_ledger = bool(ledger.ledger_type == 'CASH' or 'CASH' in ledger.name.upper())
+            is_bank_ledger = bool(ledger.ledger_type == 'BANK' or 'BANK' in ledger.name.upper())
+
+            if is_cash_ledger:
+                cl_balance_info = dict(cl_balance_info)
+                if closing_amount == Decimal('0.00'):
+                    cl_balance_info['owner_headline'] = 'CASH BALANCE: ₹0.00'
+                    cl_balance_info['explanation'] = 'No cash in hand currently.'
+                elif closing_type == 'DEBIT':
+                    cl_balance_info['owner_headline'] = 'CASH IN HAND'
+                    cl_balance_info['explanation'] = f"Available physical cash balance: ₹{Decimal(str(closing_amount)).quantize(Decimal('0.00')):,.2f}"
+                else:
+                    cl_balance_info['owner_headline'] = 'CASH OVERDRAWN (CR)'
+                    cl_balance_info['explanation'] = f"Cash account is negative by ₹{Decimal(str(closing_amount)).quantize(Decimal('0.00')):,.2f}. Recorded outflows exceed inflows."
+            elif is_bank_ledger:
+                cl_balance_info = dict(cl_balance_info)
+                if closing_amount == Decimal('0.00'):
+                    cl_balance_info['owner_headline'] = 'BANK BALANCE: ₹0.00'
+                    cl_balance_info['explanation'] = 'Zero bank balance.'
+                elif closing_type == 'DEBIT':
+                    cl_balance_info['owner_headline'] = 'BANK BALANCE'
+                    cl_balance_info['explanation'] = f"Available bank balance: ₹{Decimal(str(closing_amount)).quantize(Decimal('0.00')):,.2f}"
+                else:
+                    cl_balance_info['owner_headline'] = 'BANK OVERDRAFT (OD)'
+                    cl_balance_info['explanation'] = f"Bank account has overdraft / credit balance of ₹{Decimal(str(closing_amount)).quantize(Decimal('0.00')):,.2f}."
+
             # 4. Running balance at start of page (Offset > 0)
             page_cumulative_dr = pre_period_dr
             page_cumulative_cr = pre_period_cr
@@ -1666,12 +1693,62 @@ class LedgerStatementAPIView(APIView):
                         "amount": str(opp_amt)
                     })
 
-                if not opposing_details:
-                    particulars = e.narration or (e.voucher.narration if e.voucher else "")
-                elif len(opposing_details) == 1:
-                    particulars = f"{prefix}{opposing_details[0]['ledger_name']}"
+                v_type = e.voucher.voucher_type if e.voucher else ""
+                v_type_display = v_type
+                raw_particulars = ""
+
+                if v_type == 'SALES' and (is_cash_ledger or is_bank_ledger):
+                    v_type_display = "CASH SALE" if is_cash_ledger else "BANK SALE"
+                    buyer = (e.voucher.buyer_name or '').strip() if e.voucher else ''
+                    if buyer and buyer.upper() != 'CASH':
+                        raw_particulars = f"Cash Sale ({buyer})"
+                    else:
+                        raw_particulars = f"Cash Sale (Inv #{e.voucher.voucher_number})" if e.voucher else "Cash Sale"
+                elif v_type == 'PURCHASE' and (is_cash_ledger or is_bank_ledger):
+                    v_type_display = "CASH PURCHASE" if is_cash_ledger else "BANK PURCHASE"
+                    party = (e.voucher.party_ledger.name if (e.voucher and e.voucher.party_ledger and e.voucher.party_ledger.id != ledger.id) else '')
+                    if party and party.upper() != 'CASH':
+                        raw_particulars = f"Cash Purchase ({party})"
+                    else:
+                        raw_particulars = f"Cash Purchase (Bill #{e.voucher.voucher_number})" if e.voucher else "Cash Purchase"
+                elif v_type == 'RECEIPT' and is_cash_ledger:
+                    bank_sibs = [s for s in opposing_details if 'bank' in s['ledger_name'].lower()]
+                    if cr > 0 and bank_sibs:
+                        raw_particulars = f"Deposit to {bank_sibs[0]['ledger_name']}"
+                        v_type_display = "DEPOSIT"
+                    elif dr > 0 and bank_sibs:
+                        raw_particulars = f"Withdrawal from {bank_sibs[0]['ledger_name']}"
+                        v_type_display = "WITHDRAWAL"
+                    elif dr > 0 and opposing_details:
+                        raw_particulars = f"Received from {opposing_details[0]['ledger_name']}"
+                    elif opposing_details:
+                        raw_particulars = f"Paid to {opposing_details[0]['ledger_name']}"
+                elif v_type == 'PAYMENT' and is_cash_ledger:
+                    if opposing_details:
+                        raw_particulars = f"Paid to {opposing_details[0]['ledger_name']}"
+                    else:
+                        raw_particulars = f"Payment #{e.voucher.voucher_number}" if e.voucher else "Payment"
+
+                if not raw_particulars:
+                    if not opposing_details:
+                        particulars = e.narration or (e.voucher.narration if e.voucher else "")
+                    else:
+                        non_tax = [s for s in opposing_details if not any(t in s['ledger_name'].upper() for t in ['IGST', 'CGST', 'SGST', 'ROUND'])]
+                        if len(non_tax) == 1:
+                            particulars = f"{prefix}{non_tax[0]['ledger_name']}"
+                        elif len(opposing_details) == 1:
+                            particulars = f"{prefix}{opposing_details[0]['ledger_name']}"
+                        else:
+                            first_name = (non_tax[0]['ledger_name'] if non_tax else opposing_details[0]['ledger_name'])
+                            particulars = f"{prefix}{first_name} & others"
                 else:
-                    particulars = f"{prefix}As per details"
+                    particulars = raw_particulars
+
+                is_overdrawn = bool(
+                    (normal_bal == 'DEBIT' and row_bal_info['balance_direction'] == 'CREDIT') or
+                    (normal_bal == 'CREDIT' and row_bal_info['balance_direction'] == 'DEBIT')
+                )
+                direction_short = 'Dr' if row_bal_info['balance_direction'] == 'DEBIT' else ('Cr' if row_bal_info['balance_direction'] == 'CREDIT' else '')
 
                 statement_rows.append({
                     "id": str(e.id),
@@ -1679,6 +1756,7 @@ class LedgerStatementAPIView(APIView):
                     "voucher_id": str(e.voucher.id) if e.voucher else None,
                     "voucher_number": e.voucher.voucher_number if e.voucher else "",
                     "voucher_type": e.voucher.voucher_type if e.voucher else "",
+                    "voucher_type_display": v_type_display,
                     "particulars": particulars,
                     "narration": e.narration or (e.voucher.narration if e.voucher else ""),
                     "amount": f"{Decimal(str(amt)).quantize(Decimal('0.00'))}",
@@ -1688,7 +1766,9 @@ class LedgerStatementAPIView(APIView):
                     "credit": str(cr),
                     "running_balance": f"{Decimal(str(row_bal_info['display_amount'])).quantize(Decimal('0.00'))}",
                     "running_balance_type": row_bal_info['balance_direction'],
+                    "running_balance_short_type": direction_short,
                     "running_balance_state": row_bal_info['balance_state'],
+                    "is_overdrawn": is_overdrawn,
                     "opposing_details": opposing_details
                 })
 
@@ -1702,7 +1782,9 @@ class LedgerStatementAPIView(APIView):
                         "group_name": ledger.group.name if ledger.group else "",
                         "normal_balance": normal_bal,
                         "current_balance": str(closing_amount if (is_stock_ledger and total_count == 0) else ledger.current_balance),
-                        "balance_type": ledger.opening_balance_type
+                        "balance_type": ledger.opening_balance_type,
+                        "is_cash_ledger": is_cash_ledger,
+                        "is_bank_ledger": is_bank_ledger,
                     },
                     "inventory_summary": inventory_summary,
                     "party_role": role,

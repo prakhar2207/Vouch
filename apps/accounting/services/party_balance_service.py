@@ -56,8 +56,18 @@ class PartyBalanceService:
         elif state == 'ADVANCE_PAID':
             explanation = f"You have paid ₹{disp_amt:,.2f} more than billed"
             owner_headline = "ADVANCE PAID"
+        elif state == 'DR':
+            owner_headline = "DEBIT BALANCE"
+            explanation = f"Account balance is ₹{disp_amt:,.2f} Dr"
+        elif state == 'CR':
+            if normal_bal == 'DEBIT':
+                owner_headline = "OVERDRAWN (CR)"
+                explanation = f"Account is overdrawn by ₹{disp_amt:,.2f} (recorded outflows exceed inflows)"
+            else:
+                owner_headline = "CREDIT BALANCE"
+                explanation = f"Account balance is ₹{disp_amt:,.2f} Cr"
         else:
-            explanation = "Nothing outstanding"
+            explanation = "Nothing outstanding. Balance is ₹0.00."
             owner_headline = "SETTLED"
 
         return {
@@ -138,8 +148,18 @@ class PartyBalanceService:
         elif state == 'ADVANCE_PAID':
             explanation = f"You have paid ₹{disp_amt:,.2f} more than billed"
             owner_headline = "ADVANCE PAID"
+        elif state == 'DR':
+            owner_headline = "DEBIT BALANCE"
+            explanation = f"Account balance is ₹{disp_amt:,.2f} Dr"
+        elif state == 'CR':
+            if normal_balance == 'DEBIT':
+                owner_headline = "OVERDRAWN (CR)"
+                explanation = f"Account is overdrawn by ₹{disp_amt:,.2f} (recorded outflows exceed inflows)"
+            else:
+                owner_headline = "CREDIT BALANCE"
+                explanation = f"Account balance is ₹{disp_amt:,.2f} Cr"
         else:
-            explanation = "Nothing outstanding"
+            explanation = "Nothing outstanding. Balance is ₹0.00."
             owner_headline = "SETTLED"
 
         direction = 'NONE'
