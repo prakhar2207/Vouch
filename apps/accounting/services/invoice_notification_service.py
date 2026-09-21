@@ -26,39 +26,76 @@ class InvoiceNotificationService:
 
     @classmethod
     def generate_claim_token(cls, voucher: Voucher) -> str:
-        """Generates a tamper-proof cryptographic token encoding invoice details."""
-        party = voucher.party_ledger
-        v_date = voucher.voucher_date
-        v_date_str = v_date.isoformat() if hasattr(v_date, 'isoformat') else str(v_date or '')
-        payload = {
-            'voucher_id': str(voucher.id),
-            'voucher_number': voucher.voucher_number,
-            'seller_company_id': str(voucher.company.id),
-            'seller_name': voucher.company.name,
-            'seller_gstin': voucher.company.gstin or '',
-            'buyer_name': voucher.buyer_name or (party.name if party else ''),
-            'buyer_gstin': voucher.buyer_gstin or (party.gstin if party else ''),
-            'buyer_phone': voucher.buyer_phone or (str(party.phone) if party and party.phone else ''),
-            'buyer_email': voucher.buyer_email or (party.email if party and party.email else ''),
-            'total_amount': float(voucher.total_amount),
-            'voucher_date': v_date_str,
-            'created_at': timezone.now().timestamp(),
-        }
-
-        return signing.dumps(payload, salt=CLAIM_TOKEN_SALT)
+        """Generates a clean, compact claim token (voucher ID)."""
+        return str(voucher.id)
 
     @classmethod
     def verify_claim_token(cls, token: str) -> Dict[str, Any]:
         """
         Verifies and decodes the claim token.
-        Token is valid for 30 days.
+        Supports clean voucher UUIDs as well as legacy signed cryptographic tokens.
         """
+        clean_token = str(token or '').strip()
+        if not clean_token:
+            raise ValueError("Claim token is required.")
+
+        # 1. Direct Voucher UUID (Short & clean link)
         try:
-            return signing.loads(token, salt=CLAIM_TOKEN_SALT, max_age=60 * 60 * 24 * 30)
+            import uuid
+            v_uuid = uuid.UUID(clean_token)
+            voucher = Voucher.objects.select_related('company', 'party_ledger').filter(id=v_uuid).first()
+            if voucher:
+                party = voucher.party_ledger
+                v_date = voucher.voucher_date
+                v_date_str = v_date.isoformat() if hasattr(v_date, 'isoformat') else str(v_date or '')
+                return {
+                    'voucher_id': str(voucher.id),
+                    'voucher_number': voucher.voucher_number,
+                    'seller_company_id': str(voucher.company.id),
+                    'seller_name': voucher.company.name,
+                    'seller_gstin': voucher.company.gstin or '',
+                    'buyer_name': voucher.buyer_name or (party.name if party else ''),
+                    'buyer_gstin': voucher.buyer_gstin or (party.gstin if party else ''),
+                    'buyer_phone': voucher.buyer_phone or (str(party.phone) if party and party.phone else ''),
+                    'buyer_email': voucher.buyer_email or (party.email if party and party.email else ''),
+                    'total_amount': float(voucher.total_amount),
+                    'voucher_date': v_date_str,
+                    'created_at': timezone.now().timestamp(),
+                }
+        except (ValueError, AttributeError):
+            pass
+
+        # 2. Legacy Signed Tokens (For backwards compatibility)
+        try:
+            payload = signing.loads(clean_token, salt=CLAIM_TOKEN_SALT, max_age=60 * 60 * 24 * 30)
+            if isinstance(payload, dict):
+                return payload
+            elif isinstance(payload, str):
+                v = Voucher.objects.select_related('company', 'party_ledger').filter(id=payload).first()
+                if v:
+                    party = v.party_ledger
+                    v_date = v.voucher_date
+                    v_date_str = v_date.isoformat() if hasattr(v_date, 'isoformat') else str(v_date or '')
+                    return {
+                        'voucher_id': str(v.id),
+                        'voucher_number': v.voucher_number,
+                        'seller_company_id': str(v.company.id),
+                        'seller_name': v.company.name,
+                        'seller_gstin': v.company.gstin or '',
+                        'buyer_name': v.buyer_name or (party.name if party else ''),
+                        'buyer_gstin': v.buyer_gstin or (party.gstin if party else ''),
+                        'buyer_phone': v.buyer_phone or (str(party.phone) if party and party.phone else ''),
+                        'buyer_email': v.buyer_email or (party.email if party and party.email else ''),
+                        'total_amount': float(v.total_amount),
+                        'voucher_date': v_date_str,
+                        'created_at': timezone.now().timestamp(),
+                    }
         except signing.BadSignature:
             raise ValueError("Invalid or tampered invoice claim link.")
         except signing.SignatureExpired:
             raise ValueError("This invoice claim link has expired (validity: 30 days).")
+
+        raise ValueError("Invalid invoice claim link.")
 
     @classmethod
     def get_claim_url(cls, voucher: Voucher, frontend_url: Optional[str] = None) -> str:
@@ -81,8 +118,12 @@ class InvoiceNotificationService:
         if len(clean_phone) == 10:
             clean_phone = '91' + clean_phone
 
+        if not frontend_url:
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'https://vouch-pi-one.vercel.app' if not getattr(settings, 'DEBUG', False) else 'http://localhost:3000')
+        frontend_url = str(frontend_url).rstrip('/')
+
         public_url = f"{frontend_url}/sales/{voucher.id}/print"
-        claim_url = cls.get_claim_url(voucher)
+        claim_url = cls.get_claim_url(voucher, frontend_url=frontend_url)
         company_name = voucher.company.name
         buyer_name = voucher.buyer_name or (party.name if party else 'Customer')
         inv_no = voucher.voucher_number

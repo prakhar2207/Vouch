@@ -54,7 +54,7 @@ interface InvoicePreviewData {
 function ClaimContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const token = searchParams.get("token") || "";
+  const token = searchParams.get("token") || searchParams.get("id") || "";
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
