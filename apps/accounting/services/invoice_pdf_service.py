@@ -28,14 +28,19 @@ from apps.accounting.models import Voucher
 logger = logging.getLogger(__name__)
 
 # Register Roboto fonts for Rupee symbol support
-try:
+def _ensure_roboto_fonts():
     font_dir = os.path.join(os.path.dirname(__file__), '..', 'fonts')
-    pdfmetrics.registerFont(TTFont('Roboto', os.path.join(font_dir, 'Roboto-Regular.ttf')))
-    pdfmetrics.registerFont(TTFont('Roboto-Bold', os.path.join(font_dir, 'Roboto-Bold.ttf')))
-    pdfmetrics.registerFont(TTFont('Roboto-Oblique', os.path.join(font_dir, 'Roboto-Italic.ttf')))
-    pdfmetrics.registerFont(TTFont('Roboto-BoldOblique', os.path.join(font_dir, 'Roboto-BoldItalic.ttf')))
-except Exception as e:
-    logger.warning(f"Failed to register fonts: {e}")
+    try:
+        pdfmetrics.registerFont(TTFont('Roboto', os.path.join(font_dir, 'Roboto-Regular.ttf')))
+        pdfmetrics.registerFont(TTFont('Roboto-Bold', os.path.join(font_dir, 'Roboto-Bold.ttf')))
+        pdfmetrics.registerFont(TTFont('Roboto-Oblique', os.path.join(font_dir, 'Roboto-Italic.ttf')))
+        pdfmetrics.registerFont(TTFont('Roboto-BoldOblique', os.path.join(font_dir, 'Roboto-BoldItalic.ttf')))
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to register fonts: {e}")
+        return False
+
+FONTS_LOADED = _ensure_roboto_fonts()
 
 
 def amount_to_words_indian(num: Decimal) -> str:
@@ -129,37 +134,41 @@ class InvoicePDFService:
         party = voucher.party_ledger
 
         # Typography Styles matching the print sheet
-        s_top_left = ParagraphStyle('TopLeft', fontName='Roboto-Bold', fontSize=8, leading=10, textColor=colors.black)
-        s_top_right = ParagraphStyle('TopRight', fontName='Roboto-Oblique', fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
-        s_inv_title = ParagraphStyle('InvTitle', fontName='Roboto-Bold', fontSize=10, leading=12, alignment=TA_CENTER, textColor=colors.black)
-        s_comp_name = ParagraphStyle('CompName', fontName='Roboto-Bold', fontSize=16, leading=18, alignment=TA_CENTER, textColor=colors.black)
-        s_comp_addr = ParagraphStyle('CompAddr', fontName='Roboto', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
-        s_comp_contact = ParagraphStyle('CompContact', fontName='Roboto', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
-        s_comp_tagline = ParagraphStyle('CompTagline', fontName='Roboto-Bold', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        fnt = 'Roboto' if FONTS_LOADED else 'Helvetica'
+        fnt_b = 'Roboto-Bold' if FONTS_LOADED else 'Helvetica-Bold'
+        fnt_i = 'Roboto-Oblique' if FONTS_LOADED else 'Helvetica-Oblique'
 
-        s_meta_cell = ParagraphStyle('MetaCell', fontName='Roboto', fontSize=9, leading=12, textColor=colors.black)
-        s_party_cell = ParagraphStyle('PartyCell', fontName='Roboto', fontSize=9, leading=12, textColor=colors.black)
+        s_top_left = ParagraphStyle('TopLeft', fontName=fnt_b, fontSize=8, leading=10, textColor=colors.black)
+        s_top_right = ParagraphStyle('TopRight', fontName=fnt_i, fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
+        s_inv_title = ParagraphStyle('InvTitle', fontName=fnt_b, fontSize=10, leading=12, alignment=TA_CENTER, textColor=colors.black)
+        s_comp_name = ParagraphStyle('CompName', fontName=fnt_b, fontSize=16, leading=20, alignment=TA_CENTER, textColor=colors.black)
+        s_comp_addr = ParagraphStyle('CompAddr', fontName=fnt, fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        s_comp_contact = ParagraphStyle('CompContact', fontName=fnt, fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        s_comp_tagline = ParagraphStyle('CompTagline', fontName=fnt_b, fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
 
-        s_th = ParagraphStyle('TH', fontName='Roboto-Bold', fontSize=9, leading=12, alignment=TA_CENTER, textColor=colors.black)
-        s_td_c = ParagraphStyle('TDC', fontName='Roboto', fontSize=9, leading=12, alignment=TA_CENTER, textColor=colors.black)
-        s_td_l = ParagraphStyle('TDL', fontName='Roboto', fontSize=9, leading=12, alignment=TA_LEFT, textColor=colors.black)
-        s_td_r = ParagraphStyle('TDR', fontName='Roboto', fontSize=9, leading=12, alignment=TA_RIGHT, textColor=colors.black)
-        s_td_bold_r = ParagraphStyle('TDBoldR', fontName='Roboto-Bold', fontSize=9, leading=12, alignment=TA_RIGHT, textColor=colors.black)
-        s_td_bold_c = ParagraphStyle('TDBoldC', fontName='Roboto-Bold', fontSize=9, leading=12, alignment=TA_CENTER, textColor=colors.black)
-        s_td_tax_label = ParagraphStyle('TaxLabel', fontName='Roboto-Oblique', fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
+        s_meta_cell = ParagraphStyle('MetaCell', fontName=fnt, fontSize=9, leading=12, textColor=colors.black)
+        s_party_cell = ParagraphStyle('PartyCell', fontName=fnt, fontSize=9, leading=12, textColor=colors.black)
 
-        s_tax_th_l = ParagraphStyle('TaxTHL', fontName='Roboto-Bold', fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
-        s_tax_th_r = ParagraphStyle('TaxTHR', fontName='Roboto-Bold', fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
-        s_tax_td_l = ParagraphStyle('TaxTDL', fontName='Roboto', fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
-        s_tax_td_r = ParagraphStyle('TaxTDR', fontName='Roboto', fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
+        s_th = ParagraphStyle('TH', fontName=fnt_b, fontSize=9, leading=12, alignment=TA_CENTER, textColor=colors.black)
+        s_td_c = ParagraphStyle('TDC', fontName=fnt, fontSize=9, leading=12, alignment=TA_CENTER, textColor=colors.black)
+        s_td_l = ParagraphStyle('TDL', fontName=fnt, fontSize=9, leading=12, alignment=TA_LEFT, textColor=colors.black)
+        s_td_r = ParagraphStyle('TDR', fontName=fnt, fontSize=9, leading=12, alignment=TA_RIGHT, textColor=colors.black)
+        s_td_bold_r = ParagraphStyle('TDBoldR', fontName=fnt_b, fontSize=9, leading=12, alignment=TA_RIGHT, textColor=colors.black)
+        s_td_bold_c = ParagraphStyle('TDBoldC', fontName=fnt_b, fontSize=9, leading=12, alignment=TA_CENTER, textColor=colors.black)
+        s_td_tax_label = ParagraphStyle('TaxLabel', fontName=fnt_i, fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
 
-        s_words = ParagraphStyle('Words', fontName='Roboto', fontSize=8.5, leading=11, textColor=colors.black)
-        s_bank_text = ParagraphStyle('BankText', fontName='Roboto', fontSize=8.5, leading=11, alignment=TA_CENTER, textColor=colors.black)
+        s_tax_th_l = ParagraphStyle('TaxTHL', fontName=fnt_b, fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
+        s_tax_th_r = ParagraphStyle('TaxTHR', fontName=fnt_b, fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
+        s_tax_td_l = ParagraphStyle('TaxTDL', fontName=fnt, fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
+        s_tax_td_r = ParagraphStyle('TaxTDR', fontName=fnt, fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
 
-        s_terms = ParagraphStyle('Terms', fontName='Roboto', fontSize=7.5, leading=9.5, textColor=colors.black)
-        s_qr_label = ParagraphStyle('QRLabel', fontName='Roboto-Bold', fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
-        s_sign_rcvr = ParagraphStyle('SignRcvr', fontName='Roboto-Bold', fontSize=8, leading=10, alignment=TA_LEFT, textColor=colors.black)
-        s_sign_auth = ParagraphStyle('SignAuth', fontName='Roboto-Bold', fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
+        s_words = ParagraphStyle('Words', fontName=fnt, fontSize=8.5, leading=11, textColor=colors.black)
+        s_bank_text = ParagraphStyle('BankText', fontName=fnt, fontSize=8.5, leading=11, alignment=TA_CENTER, textColor=colors.black)
+
+        s_terms = ParagraphStyle('Terms', fontName=fnt, fontSize=7.5, leading=9.5, textColor=colors.black)
+        s_qr_label = ParagraphStyle('QRLabel', fontName=fnt_b, fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        s_sign_rcvr = ParagraphStyle('SignRcvr', fontName=fnt_b, fontSize=8, leading=10, alignment=TA_LEFT, textColor=colors.black)
+        s_sign_auth = ParagraphStyle('SignAuth', fontName=fnt_b, fontSize=8, leading=10, alignment=TA_RIGHT, textColor=colors.black)
 
         # ================= 1. HEADER =================
         header_rows = [
@@ -330,7 +339,8 @@ class InvoicePDFService:
         ]))
 
         # ================= 6. AMOUNT IN WORDS =================
-        words_text = f"Total Amount in Words : <b>₹ {amount_to_words_indian(grand_total)}</b>"
+        curr_sym = '\u20B9' if FONTS_LOADED else 'Rs.'
+        words_text = f"Total Amount in Words : <b>{curr_sym} {amount_to_words_indian(grand_total)}</b>"
         words_table = Table([[Paragraph(words_text, s_words)]], colWidths=[WIDTH])
         words_table.setStyle(TableStyle([
             ('BOX', (0, 0), (-1, -1), 1, colors.black),
