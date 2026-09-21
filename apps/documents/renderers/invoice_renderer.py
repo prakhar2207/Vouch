@@ -9,7 +9,9 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import mm
 from reportlab.platypus import (
-    SimpleDocTemplate,
+    BaseDocTemplate,
+    PageTemplate,
+    Frame,
     Paragraph,
     Spacer,
     Table,
@@ -37,12 +39,13 @@ class InvoicePDFRenderer:
 
         # Page Dimensions & Margins (Exact 1-page fit on 595.27 x 841.89 pt A4)
         PAGE_WIDTH, PAGE_HEIGHT = A4
-        MARGIN_X = 19.5
+        WIDTH = 556
+        MARGIN_X = (PAGE_WIDTH - WIDTH) / 2   # ~19.64 pt
         MARGIN_Y = 20.0
-        WIDTH = PAGE_WIDTH - (2 * MARGIN_X)   # ~556.27 pt
-        TARGET_DOC_HEIGHT = PAGE_HEIGHT - (2 * MARGIN_Y)  # ~801.89 pt
+        USABLE_HEIGHT = PAGE_HEIGHT - (2 * MARGIN_Y)  # ~801.89 pt
+        TARGET_DOC_HEIGHT = 792.0  # Guarantees strictly 1 single page fit with exact boxed alignment
 
-        doc = SimpleDocTemplate(
+        doc = BaseDocTemplate(
             buffer,
             pagesize=A4,
             leftMargin=MARGIN_X,
@@ -50,6 +53,18 @@ class InvoicePDFRenderer:
             topMargin=MARGIN_Y,
             bottomMargin=MARGIN_Y,
         )
+        frame = Frame(
+            MARGIN_X,
+            MARGIN_Y,
+            WIDTH,
+            USABLE_HEIGHT,
+            leftPadding=0,
+            rightPadding=0,
+            topPadding=0,
+            bottomPadding=0,
+            id='normal',
+        )
+        doc.addPageTemplates([PageTemplate(id='First', frames=frame, pagesize=A4)])
 
         doc_meta = dto.get('document', {})
         seller = dto.get('seller', {})

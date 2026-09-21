@@ -251,6 +251,15 @@ export default function SalesInvoiceList() {
     }
   };
 
+  const isMobileOrPWA = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
+    const isTouchDevice = (navigator.maxTouchPoints > 0 || 'ontouchstart' in window) && window.innerWidth <= 1024;
+    return isMobileUA || isStandalone || isTouchDevice;
+  };
+
   const handleShareWhatsApp = async (inv: any) => {
     if (inv.isOffline || String(inv.id).startsWith('offline_')) {
       toast.error('This invoice is waiting to sync with the cloud. Please sync before sharing.');
@@ -259,41 +268,119 @@ export default function SalesInvoiceList() {
     try {
       toast.info('Preparing WhatsApp share...');
       const token = getAccessToken();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/dispatch-details/`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'X-Company-ID': activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') || '' : ''),
-        },
-      });
+      const activeCo = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') || '' : '');
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        'X-Company-ID': activeCo,
+      };
 
-      // Trigger direct PDF download so user has the file ready to attach
+      // 1. Obtain official secure document share token & message
+      let waMessage = '';
       try {
-        const pdfRes = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/pdf/?download=true`, {
-          headers: { Authorization: `Bearer ${token}` },
+        const shareRes = await axios.post(
+          `${API_BASE_URL}/api/v1/documents/vouchers/${inv.id}/share/`,
+          { expires_in_days: 30 },
+          { headers }
+        );
+        if (shareRes.data?.whatsapp_message) {
+          waMessage = shareRes.data.whatsapp_message;
+        }
+      } catch (e) {
+        console.warn('Documents share endpoint fallback:', e);
+      }
+
+      // Fallback to legacy dispatch-details if documents share didn't supply waMessage
+      if (!waMessage) {
+        try {
+          const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/dispatch-details/`, { headers });
+          waMessage = res.data?.whatsapp_message || '';
+        } catch (e) {
+          console.warn('Dispatch details fallback failed:', e);
+        }
+      }
+
+      if (!waMessage) {
+        const invoiceNo = inv.voucher_number || 'INVOICE';
+        const total = Number(inv.total_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+        const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vouch-pi-one.vercel.app';
+        waMessage = `*TAX INVOICE: ${invoiceNo}*\nTotal Amount: ₹${total}\n\n📄 View & Download PDF:\n${origin}/sales/${inv.id}/print\n\nThank you!`;
+      }
+
+      // Clean phone number
+      const rawPhone = inv.party?.phone || inv.party_phone || '';
+      let phone = String(rawPhone).replace(/[^0-9]/g, '');
+      if (phone.length === 10) phone = '91' + phone;
+
+      const cleanNum = (inv.voucher_number || 'INVOICE').replace(/[/\\:*?"<>|]/g, '-').trim();
+      const filename = `Tax_Invoice_${cleanNum}.pdf`;
+
+      // Fetch official PDF blob
+      let pdfFile: File | null = null;
+      let pdfBlobUrl: string | null = null;
+      try {
+        const pdfRes = await axios.get(`${API_BASE_URL}/api/v1/documents/vouchers/${inv.id}/pdf/`, {
+          headers,
           responseType: 'blob',
         });
-        const blob = new Blob([pdfRes.data], { type: 'application/pdf' });
-        const cleanNum = (inv.voucher_number || 'INVOICE').replace(/[/\\:*?"<>|]/g, '-').trim();
-        const blobUrl = window.URL.createObjectURL(blob);
+        pdfFile = new File([pdfRes.data], filename, { type: 'application/pdf' });
+        pdfBlobUrl = window.URL.createObjectURL(pdfRes.data);
+      } catch (pdfErr) {
+        console.warn('PDF fetch failed:', pdfErr);
+      }
+
+      const isMobile = isMobileOrPWA();
+
+      // ================= 1. MOBILE / PWA FLOW =================
+      if (isMobile) {
+        // Use native Web Share API to share BOTH PDF file and link message into WhatsApp!
+        if (typeof navigator !== 'undefined' && navigator.share && pdfFile) {
+          if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+            try {
+              await navigator.share({
+                files: [pdfFile],
+                title: filename,
+                text: waMessage,
+              });
+              toast.success('Shared to WhatsApp successfully!');
+              return;
+            } catch (shareErr: any) {
+              if (shareErr?.name === 'AbortError') {
+                return; // User dismissed share sheet
+              }
+              console.warn('Native share with file failed, falling back to WhatsApp direct link:', shareErr);
+            }
+          }
+        }
+
+        // Direct WhatsApp deep link on mobile without downloading file to device
+        const encoded = encodeURIComponent(waMessage);
+        const appUrl = phone ? `whatsapp://send?phone=${phone}&text=${encoded}` : `whatsapp://send?text=${encoded}`;
+        window.location.href = appUrl;
+        return;
+      }
+
+      // ================= 2. DESKTOP / LAPTOP FLOW =================
+      // On desktop, download file for convenience so user can drag into WhatsApp Web
+      if (pdfBlobUrl) {
         const dlLink = document.createElement('a');
-        dlLink.href = blobUrl;
-        dlLink.download = `Tax_Invoice_${cleanNum}.pdf`;
+        dlLink.href = pdfBlobUrl;
+        dlLink.download = filename;
         document.body.appendChild(dlLink);
         dlLink.click();
         document.body.removeChild(dlLink);
-        window.URL.revokeObjectURL(blobUrl);
-      } catch (pdfErr) {
-        console.warn('PDF pre-download for WhatsApp failed:', pdfErr);
+        window.URL.revokeObjectURL(pdfBlobUrl);
       }
 
-      toast.success('Invoice PDF downloaded! Opening WhatsApp...');
-      if (res.data?.whatsapp_url) {
-        window.open(res.data.whatsapp_url, '_blank');
-      } else {
-        toast.error('WhatsApp link could not be generated.');
-      }
-    } catch {
-      toast.error('Failed to prepare WhatsApp share link.');
+      toast.success('Opening WhatsApp Web...');
+      const encoded = encodeURIComponent(waMessage);
+      const webUrl = phone 
+        ? `https://web.whatsapp.com/send?phone=${phone}&text=${encoded}` 
+        : `https://web.whatsapp.com/send?text=${encoded}`;
+      window.open(webUrl, '_blank');
+
+    } catch (err: any) {
+      console.error('Failed to prepare WhatsApp share:', err);
+      toast.error('Failed to prepare WhatsApp share.');
     }
   };
 

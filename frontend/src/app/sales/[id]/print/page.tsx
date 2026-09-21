@@ -374,9 +374,10 @@ export default function PrintInvoicePage() {
 
   const isMobileOrPWA = () => {
     if (typeof window === 'undefined') return false;
-    const isMobileUA = /Android|iPhone|iPad|iPod|Windows Phone|webOS/i.test(navigator.userAgent);
+    const ua = navigator.userAgent || '';
+    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
-    const isTouch = 'ontouchstart' in window && window.innerWidth <= 820;
+    const isTouch = (navigator.maxTouchPoints > 0 || 'ontouchstart' in window) && window.innerWidth <= 1024;
     return isMobileUA || isStandalone || isTouch;
   };
 
@@ -707,21 +708,26 @@ export default function PrintInvoicePage() {
 
       // ================= 1. MOBILE / PWA MODE =================
       if (isMobile) {
-        // Pass file to native Web Share API
-        if (typeof navigator !== 'undefined' && navigator.canShare && pdfFile && navigator.canShare({ files: [pdfFile] })) {
-          try {
-            await navigator.share({
-              files: [pdfFile],
-              title: filename,
-            });
-            return;
-          } catch (shareErr: any) {
-            if (shareErr?.name === 'AbortError') {
+        // Pass file + message to native Web Share API
+        if (typeof navigator !== 'undefined' && navigator.share && pdfFile) {
+          if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+            try {
+              await navigator.share({
+                files: [pdfFile],
+                title: filename,
+                text: waMessage,
+              });
               return;
+            } catch (shareErr: any) {
+              if (shareErr?.name === 'AbortError') {
+                return; // User cancelled share sheet
+              }
+              console.warn('Native share with file failed, falling back to direct link:', shareErr);
             }
           }
         }
 
+        // Direct WhatsApp launch on mobile without downloading file to phone
         const encoded = encodeURIComponent(waMessage);
         const appUrl = phone ? `whatsapp://send?phone=${phone}&text=${encoded}` : `whatsapp://send?text=${encoded}`;
         window.location.href = appUrl;
@@ -901,6 +907,36 @@ export default function PrintInvoicePage() {
             </button>
           )}
 
+          {/* WhatsApp Share Button */}
+          <button
+            onClick={handleWhatsAppShareClick}
+            disabled={isGeneratingPdf}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+            title="Share on WhatsApp with Official PDF & Link"
+          >
+            {isGeneratingPdf ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <MessageCircle className="w-4 h-4" />
+            )}
+            <span>Share</span>
+          </button>
+
+          {/* Download PDF Button */}
+          <button
+            onClick={handleDownloadPdf}
+            disabled={isGeneratingPdf}
+            className="bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+            title="Download Official PDF"
+          >
+            {isGeneratingPdf ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Download className="w-4 h-4 text-primary" />
+            )}
+            <span>PDF</span>
+          </button>
+
           {/* Print Button */}
           <button
             onClick={() => window.print()}
@@ -911,6 +947,19 @@ export default function PrintInvoicePage() {
           </button>
         </div>
       </div>
+
+      {/* Share Status Message Banner */}
+      {shareStatusMessage && (
+        <div className="print:hidden bg-emerald-950/90 border-b border-emerald-500/30 text-emerald-200 px-4 py-2.5 text-xs flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{shareStatusMessage}</span>
+          </div>
+          <button onClick={() => setShareStatusMessage(null)} className="text-emerald-400 hover:text-white p-1 cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* DOWNLOAD AUTHENTICATION / PERMISSION MODAL */}
       {authModalOpen && (

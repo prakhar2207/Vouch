@@ -11,7 +11,9 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import mm
 from reportlab.platypus import (
-    SimpleDocTemplate,
+    BaseDocTemplate,
+    PageTemplate,
+    Frame,
     Paragraph,
     Spacer,
     Table,
@@ -97,18 +99,18 @@ class InvoicePDFService:
     def generate_invoice_pdf(cls, voucher: Voucher) -> bytes:
         buffer = io.BytesIO()
 
-        # Page Dimensions & Margins
-        # A4 = 595.27 x 841.89 pt
+        PAGE_WIDTH, PAGE_HEIGHT = A4
         TOP_MARGIN = 5 * mm      # 14.17 pt
         BOTTOM_MARGIN = 5 * mm   # 14.17 pt
         LEFT_MARGIN = 6.5 * mm   # 18.43 pt
         RIGHT_MARGIN = 6.5 * mm  # 18.43 pt
 
         WIDTH = 556
-        # Usable frame height is ~801.5 pt; target 792 pt ensures exactly 1 single full page
+        USABLE_HEIGHT = PAGE_HEIGHT - (TOP_MARGIN + BOTTOM_MARGIN)
+        # Usable frame height is ~813 pt; target 792 pt ensures exactly 1 single full page
         TARGET_DOC_HEIGHT = 792.0
 
-        doc = SimpleDocTemplate(
+        doc = BaseDocTemplate(
             buffer,
             pagesize=A4,
             leftMargin=LEFT_MARGIN,
@@ -116,6 +118,18 @@ class InvoicePDFService:
             topMargin=TOP_MARGIN,
             bottomMargin=BOTTOM_MARGIN,
         )
+        frame = Frame(
+            LEFT_MARGIN,
+            BOTTOM_MARGIN,
+            WIDTH,
+            USABLE_HEIGHT,
+            leftPadding=0,
+            rightPadding=0,
+            topPadding=0,
+            bottomPadding=0,
+            id='normal',
+        )
+        doc.addPageTemplates([PageTemplate(id='First', frames=frame, pagesize=A4)])
 
         company = voucher.company
         party = voucher.party_ledger
