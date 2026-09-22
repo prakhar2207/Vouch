@@ -31,6 +31,10 @@ export default function EditPartyPage() {
     email: '',
     address: '',
     discount_percent: '',
+    opening_balance: '0',
+    opening_balance_type: 'DEBIT',
+    credit_period_days: '',
+    credit_limit: '',
   });
 
   useEffect(() => {
@@ -50,6 +54,7 @@ export default function EditPartyPage() {
 
       const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/${partyId}/`, { headers });
       const d = res.data.data;
+      const isCust = (d.group || '').toLowerCase().includes('debtor') || d.ledger_type === 'CUSTOMER';
       setFormData({
         name: d.name || '',
         group: d.group || '',
@@ -59,6 +64,10 @@ export default function EditPartyPage() {
         email: d.email || '',
         address: d.address || '',
         discount_percent: d.discount_percent !== undefined && d.discount_percent !== null ? String(d.discount_percent) : '',
+        opening_balance: d.opening_balance !== undefined && d.opening_balance !== null ? String(d.opening_balance) : '0',
+        opening_balance_type: d.opening_balance_type || (isCust ? 'DEBIT' : 'CREDIT'),
+        credit_period_days: d.credit_period_days !== undefined && d.credit_period_days !== null ? String(d.credit_period_days) : '',
+        credit_limit: d.credit_limit !== undefined && d.credit_limit !== null ? String(d.credit_limit) : '',
       });
     } catch (err) {
       console.error(err);
@@ -89,9 +98,23 @@ export default function EditPartyPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
 
+      const payload: any = {
+        name: formData.name,
+        gstin: formData.gstin,
+        state_code: formData.state_code,
+        phone: formData.phone,
+        email: formData.email,
+        address: formData.address,
+        discount_percent: formData.discount_percent ? parseFloat(formData.discount_percent) : 0,
+        opening_balance: formData.opening_balance ? parseFloat(formData.opening_balance) : 0,
+        opening_balance_type: formData.opening_balance_type,
+        credit_period_days: formData.credit_period_days ? parseInt(formData.credit_period_days) : 0,
+        credit_limit: formData.credit_limit ? parseFloat(formData.credit_limit) : null,
+      };
+
       const res = await axios.patch(
         `${API_BASE_URL}/api/v1/ledgers/${companyId}/${partyId}/`,
-        formData,
+        payload,
         { headers }
       );
 
@@ -265,6 +288,116 @@ export default function EditPartyPage() {
               <p className="text-xs text-muted-foreground">
                 This discount automatically populates on invoice line items whenever this customer is selected, and can still be edited or customized per order.
               </p>
+            </div>
+
+            {/* Opening Balance & Credit Terms Card */}
+            <div className="col-span-2 bg-muted/20 border border-border/70 rounded-2xl p-5 sm:p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/40 pb-3">
+                <div>
+                  <h3 className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-2">
+                    <span>Opening Balance</span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                      Initial Accounting Balance
+                    </span>
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {isCustomer 
+                      ? 'Balance owed by this customer at start of financial year (Debit = Receivable)' 
+                      : 'Balance owed to this supplier at start of financial year (Credit = Payable)'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
+                {/* Amount */}
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-foreground/80 uppercase tracking-wider mb-1.5">
+                    Opening Balance Amount (₹)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-3 text-muted-foreground text-sm font-bold font-mono">₹</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={formData.opening_balance}
+                      onChange={e => setFormData({ ...formData, opening_balance: e.target.value })}
+                      className="w-full bg-background border border-input text-foreground p-3 pl-8 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all font-mono font-bold text-base"
+                    />
+                  </div>
+                </div>
+
+                {/* Balance Type */}
+                <div>
+                  <label className="block text-xs font-semibold text-foreground/80 uppercase tracking-wider mb-1.5">
+                    Balance Type
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, opening_balance_type: 'DEBIT' })}
+                      className={`p-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center ${
+                        formData.opening_balance_type === 'DEBIT'
+                          ? 'bg-blue-500/15 border-blue-500 text-blue-400 shadow-xs'
+                          : 'bg-muted/40 border-input text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <span>Dr (Debit)</span>
+                      <span className="text-[10px] font-normal opacity-80">
+                        {isCustomer ? 'To Collect' : 'Advance Paid'}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, opening_balance_type: 'CREDIT' })}
+                      className={`p-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center ${
+                        formData.opening_balance_type === 'CREDIT'
+                          ? 'bg-amber-500/15 border-amber-500 text-amber-400 shadow-xs'
+                          : 'bg-muted/40 border-input text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <span>Cr (Credit)</span>
+                      <span className="text-[10px] font-normal opacity-80">
+                        {isCustomer ? 'Advance Rcvd' : 'To Pay'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Credit Terms */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-border/40">
+                <div>
+                  <label className="block text-xs font-semibold text-foreground/80 uppercase tracking-wider mb-1.5">
+                    Credit Period (Days)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="e.g. 30"
+                    value={formData.credit_period_days}
+                    onChange={e => setFormData({ ...formData, credit_period_days: e.target.value })}
+                    className="w-full bg-background border border-input text-foreground p-3 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all font-mono"
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">Payment terms in days for invoices</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-foreground/80 uppercase tracking-wider mb-1.5">
+                    Credit Limit (₹)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="e.g. 100000"
+                    value={formData.credit_limit}
+                    onChange={e => setFormData({ ...formData, credit_limit: e.target.value })}
+                    className="w-full bg-background border border-input text-foreground p-3 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all font-mono"
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">Maximum allowed outstanding credit</p>
+                </div>
+              </div>
             </div>
 
             {/* Address */}

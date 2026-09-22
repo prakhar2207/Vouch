@@ -675,10 +675,17 @@ class LedgerDetailView(APIView):
                 except Exception:
                     pass
 
+            ledger.save()
+
             # Opening balance modifications must go through OpeningBalanceService
             if 'opening_balance' in data or 'opening_balance_type' in data:
-                new_op = Decimal(str(data.get('opening_balance', ledger.opening_balance)))
+                raw_op = data.get('opening_balance', ledger.opening_balance)
+                if raw_op is None or str(raw_op).strip() == '':
+                    raw_op = Decimal('0.00')
+                new_op = Decimal(str(raw_op))
                 new_type = data.get('opening_balance_type', ledger.opening_balance_type)
+                if not new_type:
+                    new_type = 'DEBIT' if (ledger.group and ledger.group.nature == 'ASSET') else 'CREDIT'
                 OpeningBalanceService.adjust_opening_balance(
                     ledger=ledger,
                     new_amount=new_op,
@@ -686,8 +693,6 @@ class LedgerDetailView(APIView):
                     user=request.user,
                     reason=data.get('reason', 'Opening balance modification')
                 )
-            else:
-                ledger.save()
 
             return Response({
                 "success": True, 
@@ -725,7 +730,7 @@ class LedgerDetailView(APIView):
             if vouchers_count > 0 or entries_count > 0:
                 return Response({
                     "success": False, 
-                    "error": f"Cannot delete '{ledger.name}' because it has {vouchers_count} linked vouchers and {entries_count} accounting ledger entries. Please use 'Archive Party' instead to preserve financial history."
+                    "error": f"Cannot delete '{ledger.name}' because it has {vouchers_count} linked vouchers and {entries_count} accounting ledger entries. Party accounts with financial transactions cannot be deleted to preserve accounting integrity."
                 }, status=400)
 
             party_name = ledger.name
@@ -734,7 +739,7 @@ class LedgerDetailView(APIView):
         except Ledger.DoesNotExist:
             return Response({"success": False, "error": "Party not found."}, status=404)
         except ProtectedError:
-            return Response({"success": False, "error": f"Cannot delete '{ledger.name}' as it is protected by existing financial transactions. Use Archive Party instead."}, status=400)
+            return Response({"success": False, "error": f"Cannot delete '{ledger.name}' as it is protected by existing financial transactions."}, status=400)
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 

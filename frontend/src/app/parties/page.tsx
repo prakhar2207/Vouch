@@ -21,9 +21,7 @@ import {
   UserCheck, 
   ArrowUpRight,
   Plus,
-  RefreshCw,
-  Archive,
-  RotateCcw
+  RefreshCw
 } from 'lucide-react';
 
 export default function PartiesPage() {
@@ -89,23 +87,6 @@ export default function PartiesPage() {
       console.error(err);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleArchiveParty = async (party: any) => {
-    if (!companyId) return;
-    try {
-      const token = getAccessToken();
-      const action = party.is_archived ? 'unarchive' : 'archive';
-      const res = await axios.post(
-        `${API_BASE_URL}/api/v1/ledgers/${companyId}/${party.id}/archive/`,
-        { action },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      toast.success(party.is_archived ? "Party Restored" : "Party Archived", res.data.message);
-      await fetchParties();
-    } catch (err: any) {
-      toast.error("Action Failed", err.response?.data?.error || err.message);
     }
   };
 
@@ -458,11 +439,6 @@ export default function PartiesPage() {
                             {party.gstin}
                           </span>
                         )}
-                        {party.is_archived && (
-                          <span className="text-xs font-mono text-muted-foreground bg-muted/80 px-2 py-0.5 rounded border border-border/60 font-semibold">
-                            Archived
-                          </span>
-                        )}
                         {party.credit_period_days > 0 && (
                           <span className="text-xs font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded font-medium">
                             {party.credit_period_days}d terms
@@ -547,19 +523,6 @@ export default function PartiesPage() {
                         <Edit2 className="w-3.5 h-3.5" />
                         <span>Edit</span>
                       </Link>
-                      <span className="text-border">•</span>
-                      <button 
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleArchiveParty(party);
-                        }}
-                        className={`hover:text-foreground flex items-center gap-1 transition-colors font-medium p-1 cursor-pointer ${party.is_archived ? 'text-emerald-400' : 'text-muted-foreground hover:text-amber-400'}`}
-                        title={party.is_archived ? "Restore Party" : "Archive Party"}
-                      >
-                        {party.is_archived ? <RotateCcw className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
-                        <span>{party.is_archived ? 'Restore' : 'Archive'}</span>
-                      </button>
                       <span className="text-border">•</span>
                       <button 
                         type="button"
