@@ -333,7 +333,7 @@ export default function PurchaseInvoiceList() {
       const res = await axios.delete(`${API_BASE_URL}/api/vouchers/${voucherId}/`, { headers });
 
       if (res.data.success) {
-        toast.success(res.data.message || `Invoice deleted and reversed successfully!`);
+        toast.success(res.data.message || `Invoice deleted successfully!`);
         setInvoices((prev) => prev.filter((i) => i.id !== voucherId));
         await vouchersRepository.deleteVoucher(voucherId);
         setDeleteConfirmParams(null);

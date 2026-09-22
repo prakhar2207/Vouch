@@ -71,7 +71,15 @@ class InvoiceSequenceService:
             return 0
 
         v_type = voucher_type.upper()
-        prefix = (prefix or DEFAULT_PREFIXES.get(v_type, 'VCH')).strip().upper()
+        existing_seq = VoucherSequence.objects.filter(
+            company=company,
+            financial_year=financial_year,
+            voucher_type=v_type
+        ).first()
+        if existing_seq and not prefix:
+            prefix = existing_seq.prefix
+        else:
+            prefix = (prefix or DEFAULT_PREFIXES.get(v_type, 'VCH')).strip().upper()
 
         vouchers = Voucher.objects.filter(
             company=company,
@@ -124,8 +132,7 @@ class InvoiceSequenceService:
             }
         )
         # Monotonicity invariant: sequence numbers are NEVER decremented/reused unless force=True.
-        # If an invoice is deleted or cancelled, its number is retired.
-        # Only advance last_number forward if an imported or higher-numbered invoice exists.
+        # When force=True (e.g. after voucher deletion), reset counter to highest remaining voucher (Tally behavior).
         if not created and (force or max_num > seq.last_number):
             seq.last_number = max_num
             seq.save(update_fields=['last_number', 'updated_at'])

@@ -135,7 +135,7 @@ export default function VouchersPage() {
       const res = await axios.delete(`${API_BASE_URL}/api/vouchers/${voucherId}/`, { headers });
 
       if (res.data.success) {
-        toast.success(res.data.message || 'Voucher deleted and reversed successfully!');
+        toast.success(res.data.message || 'Voucher deleted successfully!');
         setVouchers((prev) => prev.filter((v) => v.id !== voucherId));
         await vouchersRepository.deleteVoucher(voucherId);
         setDeleteConfirmParams(null);

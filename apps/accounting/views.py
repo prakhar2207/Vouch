@@ -770,73 +770,15 @@ class VoucherDetailAPIView(APIView):
                     "error": "Permission denied: Only Owner or CA can delete or cancel vouchers."
                 }, status=status.HTTP_403_FORBIDDEN)
 
-            with transaction.atomic():
-                company = voucher.company
-                voucher_type = voucher.voucher_type
-                product_ids = list(voucher.items.values_list('product_id', flat=True))
-                voucher_num = voucher.voucher_number
-                
-                # Track all affected ledgers (party ledger + any ledger referenced in ledger entries)
-                affected_ledger_ids = set(voucher.ledger_entries.values_list('ledger_id', flat=True))
-                if voucher.party_ledger_id:
-                    affected_ledger_ids.add(voucher.party_ledger_id)
-
-                if voucher.status in ['POSTED', 'VALIDATING', 'REVERSED', 'CANCELLED', 'CORRECTED']:
-                    if voucher.status in ['POSTED', 'VALIDATING']:
-                        if voucher.voucher_type in ['CREDIT_NOTE', 'DEBIT_NOTE']:
-                            # Revert inventory if any items were restocked
-                            for itm in voucher.items.all():
-                                if itm.product and voucher.voucher_type == 'CREDIT_NOTE':
-                                    itm.product.stock_quantity = max(Decimal('0.00'), itm.product.stock_quantity - itm.quantity)
-                                    itm.product.save(update_fields=['stock_quantity'])
-                                elif itm.product and voucher.voucher_type == 'DEBIT_NOTE':
-                                    itm.product.stock_quantity = itm.product.stock_quantity + itm.quantity
-                                    itm.product.save(update_fields=['stock_quantity'])
-                            VoucherService.cancel_voucher(voucher, user=request.user)
-                            action_msg = "cancelled and removed from active books"
-                        else:
-                            VoucherService.create_reversal_voucher(voucher, user=request.user, reason="User Cancellation")
-                            action_msg = "cancelled and reversed (accounting records preserved)"
-                    else:
-                        action_msg = "is already cancelled/reversed"
-                else:
-                    # DRAFT vouchers can be deleted safely
-                    voucher.delete()
-                    action_msg = "deleted"
-                    
-                    # Safe cleanup: only delete auto-created ad-hoc products with no category, no stock, no other entries
-                    from apps.inventory.models import Product
-                    for pid in set(product_ids):
-                        try:
-                            prod = Product.objects.filter(id=pid).first()
-                            if (prod and 
-                                prod.category is None and 
-                                prod.stock_quantity <= 0 and 
-                                not prod.voucher_items.exists() and 
-                                not prod.entries.exists()):
-                                prod.delete()
-                        except Exception:
-                            pass
-
-                # Emit SyncEvent so offline/local storage drops the cancelled/deleted voucher
-                from apps.accounting.models import SyncEvent
-                SyncEvent.objects.create(
-                    company=company,
-                    entity_type='voucher',
-                    entity_id=str(voucher_id),
-                    operation='DELETE'
-                )
-
-                # Single-source-of-truth recalculation for all affected ledgers
-                for lid in affected_ledger_ids:
-                    l = Ledger.objects.filter(id=lid).first()
-                    if l:
-                        VoucherService.recalculate_ledger_balance(l)
-
+            voucher_type = voucher.voucher_type
+            voucher_num = voucher.voucher_number
             type_label = "Credit Note" if voucher_type == 'CREDIT_NOTE' else ("Debit Note" if voucher_type == 'DEBIT_NOTE' else ("Voucher" if voucher_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL'] else "Invoice"))
+
+            VoucherService.delete_voucher(voucher, user=request.user, reason="User Deletion")
+
             return Response({
                 "success": True, 
-                "message": f"{type_label} #{voucher_num} {action_msg} successfully."
+                "message": f"{type_label} #{voucher_num} deleted successfully."
             })
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -1274,14 +1216,17 @@ class VoucherDetailAPIView(APIView):
                     if voucher.party_ledger_id:
                         affected_ledger_ids.add(voucher.party_ledger_id)
 
-                    # 1. Reverse previous accounting if posted or validating
-                    if voucher.status in ['POSTED', 'VALIDATING']:
-                        VoucherService.cancel_voucher(voucher, user=request.user)
-
-                    # 2. Clear old ledger entries
+                    # 1. Clear old allocations and ledger entries without creating cancellation/reversal artifacts
+                    from apps.accounting.models import PaymentAllocation
+                    from django.db.models import Q
+                    PaymentAllocation.objects.filter(
+                        Q(payment_voucher=voucher) | Q(invoice_voucher=voucher)
+                    ).delete()
                     voucher.ledger_entries.all().delete()
+                    voucher.status = 'DRAFT'
+                    voucher.save(update_fields=['status'])
 
-                    # 3. Determine updated party and cash/bank ledgers
+                    # 2. Determine updated party and cash/bank ledgers
                     if 'party_ledger_id' in data and data['party_ledger_id']:
                         party_ledger = Ledger.objects.get(id=data['party_ledger_id'], company=company)
                         voucher.party_ledger = party_ledger
@@ -1340,6 +1285,23 @@ class VoucherDetailAPIView(APIView):
                             VoucherService.recalculate_ledger_balance(l)
                 else:
                     voucher.save()
+
+                from apps.audit.services.audit_service import AuditService
+                AuditService.log_action(
+                    company=company,
+                    user=request.user,
+                    action='UPDATE',
+                    model_name='Voucher',
+                    record_id=voucher.id,
+                    changes={
+                        "voucher_number": voucher.voucher_number,
+                        "voucher_type": voucher.voucher_type,
+                        "voucher_date": str(voucher.voucher_date),
+                        "total_amount": str(voucher.total_amount),
+                        "party": voucher.party_ledger.name if voucher.party_ledger else None,
+                        "narration": voucher.narration
+                    }
+                )
 
             type_label = "Voucher" if voucher.voucher_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL'] else "Invoice"
             return Response({
@@ -1474,7 +1436,7 @@ class LedgerStatementAPIView(APIView):
                 voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
             ).exists()
 
-            # Pre-period transactions (strictly effective vouchers)
+            # Pre-period transactions (strictly effective vouchers, excluding pure OPENING vouchers)
             pre_period_dr = Decimal('0.00')
             pre_period_cr = Decimal('0.00')
             
@@ -1484,6 +1446,8 @@ class LedgerStatementAPIView(APIView):
                     voucher__company=company,
                     voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED'],
                     voucher__voucher_date__lt=from_date
+                ).exclude(
+                    voucher__voucher_type='OPENING'
                 ).aggregate(
                     dr=Sum('debit_amount'),
                     cr=Sum('credit_amount')
@@ -1491,8 +1455,8 @@ class LedgerStatementAPIView(APIView):
                 pre_period_dr = Decimal(str(pre_agg['dr'] or '0.00'))
                 pre_period_cr = Decimal(str(pre_agg['cr'] or '0.00'))
 
-            # Initial opening balance (only if not already captured in double-entry vouchers)
-            initial_op = Decimal('0.00') if has_opening_entries else Decimal(str(ledger.opening_balance or '0.00'))
+            # Initial opening balance from ledger master
+            initial_op = Decimal(str(ledger.opening_balance or '0.00'))
             if ledger.opening_balance_type == 'CREDIT':
                 pre_period_cr += initial_op
             else:
@@ -1503,11 +1467,13 @@ class LedgerStatementAPIView(APIView):
             period_opening_amount = op_balance_info['display_amount']
             period_opening_type = op_balance_info['balance_direction']
 
-            # 2. Period Transactions Query (strictly effective vouchers)
+            # 2. Period Transactions Query (strictly effective business vouchers, excluding pure OPENING vouchers)
             entries_qs = LedgerEntry.objects.filter(
                 ledger=ledger,
                 voucher__company=company,
                 voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED']
+            ).exclude(
+                voucher__voucher_type='OPENING'
             ).select_related('voucher', 'voucher__party_ledger')
 
             if from_date:

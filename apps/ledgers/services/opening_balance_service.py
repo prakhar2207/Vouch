@@ -251,9 +251,9 @@ class OpeningBalanceService:
     ):
         """
         Edits an existing ledger's opening balance:
-        - If no subsequent non-opening transactions exist: direct safe update.
-        - If subsequent transactions exist: generates an explicit differential Journal Voucher
-          and preserves full audit history.
+        - Directly updates the ledger's opening balance and balance type.
+        - Purges any legacy differential adjustment vouchers (ADJ-OP-*) to prevent statement clutter.
+        - Recalculates current balances and logs full audit history.
         """
         new_amount = Decimal(str(new_amount or '0.00'))
         if not new_balance_type:
@@ -264,100 +264,21 @@ class OpeningBalanceService:
         old_type = ledger.opening_balance_type or 'DEBIT'
         company = ledger.company
 
-        # Check if non-opening transactions exist
-        has_subsequent = LedgerEntry.objects.filter(
-            ledger=ledger,
-            voucher__status='POSTED'
-        ).exclude(
-            voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
-        ).exists()
-
-        if not has_subsequent:
-            # Safe direct update: delete old opening vouchers and recreate
-            old_opening_vouchers = list(Voucher.objects.filter(
-                party_ledger=ledger,
-                voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL'],
-                company=company
-            ))
-            for ov in old_opening_vouchers:
-                ov.ledger_entries.all().delete()
-                ov.delete()
-
-            return cls.record_opening_balance(
-                ledger=ledger,
-                amount=new_amount,
-                balance_type=new_balance_type,
-                opening_date=ledger.opening_date,
-                user=user
-            )
-
-        # Subsequent transactions exist: Create differential adjustment
-        net_old = old_amount if old_type == 'DEBIT' else -old_amount
-        net_new = new_amount if new_balance_type == 'DEBIT' else -new_amount
-        diff = net_new - net_old
-
-        if diff != Decimal('0.00'):
-            from apps.accounting.services.sequence_service import InvoiceSequenceService
-            adj_date = timezone.now().date()
-            fy = InvoiceSequenceService.get_or_create_active_fy(company, adj_date)
-            adj_ledger = cls.get_or_create_opening_adjustment_ledger(company)
-
-            v_num = f"ADJ-OP-{str(ledger.id)[:6].upper()}-{int(timezone.now().timestamp()) % 10000}"
-            adj_voucher = Voucher.objects.create(
-                company=company,
-                financial_year=fy,
-                voucher_type='JOURNAL',
-                voucher_number=v_num,
-                voucher_date=adj_date,
-                due_date=adj_date,
-                party_ledger=ledger,
-                status='POSTED',
-                total_amount=abs(diff),
-                narration=f"Differential Opening Balance Adjustment for {ledger.name}: {reason}",
-                correction_reason=reason,
-                correction_type='PAYMENT',
-                created_by=user
-            )
-
-            if diff > Decimal('0.00'):
-                # Net increase in Debit (Customer owes more)
-                LedgerEntry.objects.create(
-                    company=company,
-                    voucher=adj_voucher,
-                    ledger=ledger,
-                    debit_amount=abs(diff),
-                    credit_amount=Decimal('0.00'),
-                    narration=f"Opening balance differential Dr adjustment ({reason})"
-                )
-                LedgerEntry.objects.create(
-                    company=company,
-                    voucher=adj_voucher,
-                    ledger=adj_ledger,
-                    debit_amount=Decimal('0.00'),
-                    credit_amount=abs(diff),
-                    narration=f"Opening balance differential Cr offset ({reason})"
-                )
-            else:
-                # Net increase in Credit (Supplier owed more or customer overpaid)
-                LedgerEntry.objects.create(
-                    company=company,
-                    voucher=adj_voucher,
-                    ledger=adj_ledger,
-                    debit_amount=abs(diff),
-                    credit_amount=Decimal('0.00'),
-                    narration=f"Opening balance differential Dr offset ({reason})"
-                )
-                LedgerEntry.objects.create(
-                    company=company,
-                    voucher=adj_voucher,
-                    ledger=ledger,
-                    debit_amount=Decimal('0.00'),
-                    credit_amount=abs(diff),
-                    narration=f"Opening balance differential Cr adjustment ({reason})"
-                )
-
-            from apps.accounting.services.voucher_service import VoucherService
-            VoucherService.recalculate_ledger_balance(adj_ledger)
+        # Clean up any legacy opening or differential adjustment vouchers for this ledger
+        old_vouchers = list(Voucher.objects.filter(
+            party_ledger=ledger,
+            voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL'],
+            company=company
+        ))
+        prefix_adj = f"ADJ-OP-{str(ledger.id)[:6].upper()}"
+        old_vouchers += list(Voucher.objects.filter(
+            company=company,
+            voucher_number__startswith=prefix_adj
+        ))
+        for ov in old_vouchers:
+            ov.items.all().delete()
+            ov.ledger_entries.all().delete()
+            ov.delete()
 
         ledger.opening_balance = new_amount
         ledger.opening_balance_type = new_balance_type
@@ -365,6 +286,14 @@ class OpeningBalanceService:
 
         from apps.accounting.services.voucher_service import VoucherService
         VoucherService.recalculate_ledger_balance(ledger)
+
+        adj_ledger = cls.get_or_create_opening_adjustment_ledger(company)
+        if adj_ledger:
+            VoucherService.recalculate_ledger_balance(adj_ledger)
+
+        net_old = old_amount if old_type == 'DEBIT' else -old_amount
+        net_new = new_amount if new_balance_type == 'DEBIT' else -new_amount
+        diff = net_new - net_old
 
         AuditService.log_action(
             company=company,

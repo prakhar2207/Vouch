@@ -191,6 +191,164 @@ class VoucherService:
 
     @staticmethod
     @transaction.atomic
+    def delete_voucher(voucher: Voucher, user=None, reason="User Deletion"):
+        """
+        Permanently deletes a voucher and all associated ledger entries and line items.
+        Stores full snapshot in AuditLog for audit trail compliance.
+        Reverts inventory stock if the voucher was posted.
+        Deletes payment allocations.
+        Resets voucher sequence counter if the latest voucher was deleted (Tally behavior).
+        Recalculates ledger balances for all affected ledgers.
+        Emits SyncEvent.
+        """
+        from apps.audit.services.audit_service import AuditService
+        from apps.inventory.services.stock_service import StockService
+        from apps.accounting.models import PaymentAllocation, SyncEvent
+        from apps.accounting.services.sequence_service import InvoiceSequenceService
+        from apps.inventory.models import Product
+        from django.db.models import Q
+
+        company = voucher.company
+        financial_year = voucher.financial_year
+        voucher_type = voucher.voucher_type
+        voucher_id = voucher.id
+        voucher_num = voucher.voucher_number
+
+        # 1. Take full snapshot for AuditLog
+        items_snapshot = [
+            {
+                "product_id": str(itm.product_id) if itm.product_id else None,
+                "product_name": itm.product.name if itm.product else (itm.description or ""),
+                "quantity": str(itm.quantity),
+                "rate": str(itm.rate),
+                "discount_percent": str(itm.discount_percent),
+                "taxable_amount": str(itm.taxable_amount),
+                "gst_rate": str(itm.gst_rate),
+                "total_amount": str(itm.total_amount),
+            }
+            for itm in voucher.items.select_related('product').all()
+        ]
+        entries_snapshot = [
+            {
+                "ledger_id": str(ent.ledger_id),
+                "ledger_name": ent.ledger.name if ent.ledger else None,
+                "debit_amount": str(ent.debit_amount),
+                "credit_amount": str(ent.credit_amount),
+                "narration": ent.narration,
+            }
+            for ent in voucher.ledger_entries.select_related('ledger').all()
+        ]
+        snapshot = {
+            "voucher_id": str(voucher.id),
+            "voucher_number": voucher.voucher_number,
+            "voucher_type": voucher.voucher_type,
+            "voucher_date": str(voucher.voucher_date),
+            "status": voucher.status,
+            "total_amount": str(voucher.total_amount),
+            "party_ledger_id": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
+            "party_ledger_name": voucher.party_ledger.name if voucher.party_ledger else None,
+            "narration": voucher.narration,
+            "buyer_name": voucher.buyer_name,
+            "buyer_gstin": voucher.buyer_gstin,
+            "reason": reason,
+            "items": items_snapshot,
+            "ledger_entries": entries_snapshot,
+        }
+
+        # 2. Log full trail to AuditLog
+        AuditService.log_action(
+            company=company,
+            user=user or voucher.created_by,
+            action='DELETE',
+            model_name='Voucher',
+            record_id=voucher_id,
+            changes=snapshot
+        )
+
+        # 3. Track affected ledgers and products
+        affected_ledger_ids = set(voucher.ledger_entries.values_list('ledger_id', flat=True))
+        if voucher.party_ledger_id:
+            affected_ledger_ids.add(voucher.party_ledger_id)
+        product_ids = list(voucher.items.values_list('product_id', flat=True))
+
+        # 4. Revert stock if posted or validating
+        if voucher.status in ['POSTED', 'VALIDATING']:
+            if voucher.voucher_type in ['SALES', 'PURCHASE']:
+                StockService.revert_voucher_stock(voucher)
+            elif voucher.voucher_type == 'CREDIT_NOTE':
+                for itm in voucher.items.all():
+                    if itm.product:
+                        itm.product.stock_quantity = max(Decimal('0.00'), itm.product.stock_quantity - itm.quantity)
+                        itm.product.save(update_fields=['stock_quantity'])
+            elif voucher.voucher_type == 'DEBIT_NOTE':
+                for itm in voucher.items.all():
+                    if itm.product:
+                        itm.product.stock_quantity = itm.product.stock_quantity + itm.quantity
+                        itm.product.save(update_fields=['stock_quantity'])
+
+        # 5. Delete payment allocations
+        PaymentAllocation.objects.filter(
+            Q(payment_voucher=voucher) | Q(invoice_voucher=voucher)
+        ).delete()
+
+        # 6. Unlink any self-referencing reversal voucher relationships
+        if voucher.reversal_voucher_id:
+            rev_v = voucher.reversal_voucher
+            voucher.reversal_voucher = None
+            voucher.save(update_fields=['reversal_voucher'])
+            if rev_v:
+                rev_v.items.all().delete()
+                rev_v.ledger_entries.all().delete()
+                rev_v.delete()
+        Voucher.objects.filter(reversal_voucher=voucher).update(reversal_voucher=None)
+
+        # 7. Delete items and ledger entries
+        voucher.items.all().delete()
+        voucher.ledger_entries.all().delete()
+
+        # 8. Delete the voucher
+        voucher.delete()
+
+        # 9. Clean up empty ad-hoc products
+        for pid in set(product_ids):
+            try:
+                prod = Product.objects.filter(id=pid).first()
+                if (prod and 
+                    prod.category is None and 
+                    prod.stock_quantity <= 0 and 
+                    not prod.voucher_items.exists() and 
+                    not prod.entries.exists()):
+                    prod.delete()
+            except Exception:
+                pass
+
+        # 10. Resync voucher sequence counter (resets to highest remaining voucher)
+        if financial_year:
+            InvoiceSequenceService.resync_sequence(
+                company=company,
+                financial_year=financial_year,
+                voucher_type=voucher_type,
+                force=True
+            )
+
+        # 11. Recalculate affected ledger balances
+        for lid in affected_ledger_ids:
+            l = Ledger.objects.filter(id=lid).first()
+            if l:
+                VoucherService.recalculate_ledger_balance(l)
+
+        # 12. Emit SyncEvent for offline sync
+        SyncEvent.objects.create(
+            company=company,
+            entity_type='voucher',
+            entity_id=str(voucher_id),
+            operation='DELETE'
+        )
+
+        return voucher_num
+
+    @staticmethod
+    @transaction.atomic
     def create_reversal_voucher(voucher: Voucher, user=None, reason="Correction Reversal", revert_stock=True, revert_allocations=True) -> Voucher:
         """
         P0-4 & P0-5: Strictly immutable posted transaction reversal.
