@@ -188,8 +188,13 @@ class ListCreateProformaAPIView(APIView):
             v_date = datetime.date.fromisoformat(v_date.split('T')[0])
 
         valid_until = data.get('valid_until')
-        if valid_until and isinstance(valid_until, str):
-            valid_until = datetime.date.fromisoformat(valid_until.split('T')[0])
+        if valid_until and isinstance(valid_until, str) and valid_until.strip():
+            try:
+                valid_until = datetime.date.fromisoformat(valid_until.strip().split('T')[0])
+            except (ValueError, TypeError):
+                valid_until = None
+        else:
+            valid_until = None
 
         # Party
         party_ledger = None
@@ -198,7 +203,7 @@ class ListCreateProformaAPIView(APIView):
             party_ledger = Ledger.objects.filter(id=party_ledger_id, company=company).first()
 
         # Sequential document number
-        manual_number = data.get('proforma_number', '').strip()
+        manual_number = (data.get('proforma_number') or '').strip()
         if manual_number:
             proforma_number = manual_number
             fy = InvoiceSequenceService.get_or_create_active_fy(company, v_date)
@@ -268,11 +273,15 @@ class ListCreateProformaAPIView(APIView):
 
                 name = it.get('item_name') or (product.name if product else "Item")
                 hsn = it.get('hsn_code') or (product.hsn_code if product else "")
-                qty = Decimal(str(it.get('quantity', 1)))
+                qty = Decimal(str(it.get('quantity') if it.get('quantity') is not None else 1))
                 unit = it.get('unit') or (product.unit if product else 'PCS')
-                rate = Decimal(str(it.get('rate', 0)))
-                disc_pct = Decimal(str(it.get('discount_percent', 0)))
-                gst_pct = Decimal(str(it.get('gst_rate', product.tax_rate if product else 18)))
+                rate = Decimal(str(it.get('rate') if it.get('rate') is not None else 0))
+                disc_pct = Decimal(str(it.get('discount_percent') if it.get('discount_percent') is not None else 0))
+                
+                gst_val = it.get('gst_rate')
+                if gst_val is None or gst_val == '':
+                    gst_val = getattr(product, 'gst_rate', 18) if product else 18
+                gst_pct = Decimal(str(gst_val if gst_val is not None else 18))
 
                 gross = qty * rate
                 discount_val = gross * (disc_pct / Decimal('100.00'))
@@ -481,6 +490,7 @@ class ConvertProformaToInvoiceAPIView(APIView):
         for it in proforma.items.all():
             items_data.append({
                 'product_id': str(it.product_id) if it.product_id else None,
+                'product_name': it.item_name,
                 'item_name': it.item_name,
                 'hsn_code': it.hsn_code,
                 'quantity': float(it.quantity),

@@ -35,6 +35,8 @@ interface LineItem {
   rate: number;
   discount_percent: number;
   gst_rate: number;
+  brand?: string;
+  stock_quantity?: number;
 }
 
 function NewProformaQuotationForm() {
@@ -71,6 +73,7 @@ function NewProformaQuotationForm() {
 
   // Inventory products for autocomplete
   const [products, setProducts] = useState<any[]>([]);
+  const [activeSearch, setActiveSearch] = useState<string | null>(null);
 
   // Line items
   const [items, setItems] = useState<LineItem[]>([
@@ -144,15 +147,43 @@ function NewProformaQuotationForm() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
 
-      // 1. Fetch parties (Sundry Debtors)
+      // 1. Fetch parties (Sundry Debtors / Customers)
       const partiesRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/?limit=500`, { headers }).catch(() => null);
       if (partiesRes?.data?.data) {
-        const partyList = partiesRes.data.data.filter((l: any) => 
-          l.ledger_type === 'PARTY' || 
-          l.group_nature === 'ASSET' ||
-          (l.group_name && l.group_name.toLowerCase().includes('debtor'))
-        );
-        setParties(partyList.length > 0 ? partyList : partiesRes.data.data);
+        const partyList = partiesRes.data.data.filter((l: any) => {
+          const grp = (l.group || l.group_name || '').toLowerCase();
+          const lt = (l.ledger_type || '').toUpperCase();
+          const role = (l.canonical_role || '').toUpperCase();
+
+          // Explicitly exclude non-parties (Cash, Bank, Tax, Expenses, Incomes, etc.)
+          const nonPartyTypes = ['BANK', 'CASH', 'TAX', 'EXPENSE', 'ROUND_OFF', 'SALES', 'PURCHASE', 'GENERAL', 'EQUITY', 'ASSET'];
+          if (nonPartyTypes.includes(lt)) return false;
+          if (
+            grp.includes('bank') ||
+            grp.includes('cash') ||
+            grp.includes('tax') ||
+            grp.includes('expense') ||
+            grp.includes('income') ||
+            grp.includes('duties')
+          ) {
+            if (!grp.includes('debtor') && !grp.includes('creditor')) return false;
+          }
+
+          return (
+            lt === 'CUSTOMER' ||
+            lt === 'PARTY' ||
+            lt === 'SUPPLIER' ||
+            role === 'CUSTOMER' ||
+            role === 'SUPPLIER' ||
+            grp.includes('debtor') ||
+            grp.includes('creditor') ||
+            grp.includes('customer') ||
+            grp.includes('party')
+          );
+        });
+
+        partyList.sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
+        setParties(partyList);
       }
 
       // 2. Fetch products
@@ -225,8 +256,10 @@ function NewProformaQuotationForm() {
     });
   };
 
-  const handleSelectProduct = (index: number, productId: string) => {
-    const prod = products.find((p) => p.id === productId);
+  const handleSelectProduct = (index: number, productOrId: any) => {
+    const prod = typeof productOrId === 'string' 
+      ? products.find((p) => p.id === productOrId)
+      : productOrId;
     if (!prod) return;
 
     setItems((prev) => {
@@ -236,9 +269,11 @@ function NewProformaQuotationForm() {
         product_id: prod.id,
         item_name: prod.name,
         hsn_code: prod.hsn_code || '',
-        rate: Number(prod.sale_price || prod.price || 0),
+        rate: Number(prod.selling_price || prod.sale_price || prod.price || 0),
         unit: prod.unit || 'PCS',
-        gst_rate: Number(prod.tax_rate || 18),
+        gst_rate: Number(prod.gst_rate ?? (prod.tax_rate ?? 18)),
+        brand: prod.brand || '',
+        stock_quantity: prod.stock_quantity ?? 0,
       };
       return next;
     });
@@ -468,10 +503,10 @@ function NewProformaQuotationForm() {
                       onChange={(e) => handleSelectParty(e.target.value)}
                       className="w-full px-3 py-2 bg-background border border-border rounded-xl text-xs text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/30"
                     >
-                      <option value="">-- Select Customer / Ledger --</option>
+                      <option value="">-- Select Customer / Party --</option>
                       {parties.map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.name} {p.gstin ? `(${p.gstin})` : ''}
+                          {p.name} {p.gstin ? `(${p.gstin})` : ''} {p.group ? `[${p.group}]` : ''}
                         </option>
                       ))}
                     </select>
@@ -502,13 +537,16 @@ function NewProformaQuotationForm() {
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="block text-xs font-medium text-muted-foreground mb-1">Billing Address</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">Billing Address</label>
+                      <span className="text-[10px] text-muted-foreground">Auto-expands with content</span>
+                    </div>
                     <textarea
-                      rows={2}
+                      rows={Math.max(2, Math.min(8, (buyerAddress || '').split('\n').length + Math.floor((buyerAddress || '').length / 45)))}
                       value={buyerAddress}
                       onChange={(e) => setBuyerAddress(e.target.value)}
                       placeholder="Customer address..."
-                      className="w-full px-3 py-2 bg-background border border-border rounded-xl text-xs text-foreground focus:outline-hidden resize-none"
+                      className="w-full px-3 py-2 bg-background border border-border rounded-xl text-xs text-foreground focus:outline-hidden resize-y min-h-[60px] leading-relaxed transition-all"
                     />
                   </div>
                 </div>
@@ -563,13 +601,16 @@ function NewProformaQuotationForm() {
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="block text-xs font-medium text-muted-foreground mb-1">Billing Address</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">Billing Address</label>
+                      <span className="text-[10px] text-muted-foreground">Auto-expands with content</span>
+                    </div>
                     <textarea
-                      rows={2}
+                      rows={Math.max(2, Math.min(8, (buyerAddress || '').split('\n').length + Math.floor((buyerAddress || '').length / 45)))}
                       value={buyerAddress}
                       onChange={(e) => setBuyerAddress(e.target.value)}
                       placeholder="Customer address..."
-                      className="w-full px-3 py-2 bg-background border border-border rounded-xl text-xs text-foreground focus:outline-hidden resize-none"
+                      className="w-full px-3 py-2 bg-background border border-border rounded-xl text-xs text-foreground focus:outline-hidden resize-y min-h-[60px] leading-relaxed transition-all"
                     />
                   </div>
                 </div>
@@ -637,28 +678,125 @@ function NewProformaQuotationForm() {
                           <label className="block text-[11px] font-medium text-muted-foreground mb-1">
                             Item Description / Product Name <span className="text-rose-500">*</span>
                           </label>
-                          <div className="space-y-1.5">
-                            {products.length > 0 && (
-                              <select
-                                value={item.product_id || ''}
-                                onChange={(e) => handleSelectProduct(idx, e.target.value)}
-                                className="w-full px-2.5 py-1.5 bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden mb-1"
-                              >
-                                <option value="">-- Choose from Inventory Product Catalog --</option>
-                                {products.map((prod) => (
-                                  <option key={prod.id} value={prod.id}>
-                                    {prod.name} {prod.hsn_code ? `[HSN: ${prod.hsn_code}]` : ''} — ₹{prod.sale_price || prod.price || 0}
-                                  </option>
-                                ))}
-                              </select>
-                            )}
+                          <div className="relative">
                             <input
                               type="text"
                               value={item.item_name}
-                              onChange={(e) => handleItemChange(idx, 'item_name', e.target.value)}
-                              placeholder="Type item description..."
-                              className="w-full px-3 py-1.5 bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
+                              onChange={(e) => {
+                                handleItemChange(idx, 'item_name', e.target.value);
+                                setActiveSearch(item.id);
+                              }}
+                              onFocus={() => setActiveSearch(item.id)}
+                              onBlur={() => setTimeout(() => setActiveSearch(null), 250)}
+                              placeholder="Type item description or choose catalog product..."
+                              className="w-full px-3 py-2 bg-background border border-border focus:border-primary rounded-xl text-xs text-foreground focus:outline-hidden transition-all font-medium"
                             />
+
+                            {/* Autocomplete Dropdown Popover */}
+                            {activeSearch === item.id && (
+                              <div
+                                className="absolute left-0 top-full mt-1 z-50 w-full min-w-[340px] max-w-[500px] bg-card border border-border rounded-xl shadow-2xl overflow-hidden max-h-64 overflow-y-auto"
+                                onMouseDown={(e) => e.preventDefault()}
+                              >
+                                {(() => {
+                                  const query = String(item.item_name || '').trim().toLowerCase();
+                                  const queryAlpha = query.replace(/[\s\-_/.]/g, '');
+                                  const filteredProds = products.filter((p: any) => {
+                                    if (!query) return true;
+                                    const pName = (p.name || '').toLowerCase();
+                                    const pAlpha = pName.replace(/[\s\-_/.]/g, '');
+                                    const pBrand = (p.brand || '').toLowerCase();
+                                    const pAlias = (p.alias || '').toLowerCase();
+                                    const pSku = (p.sku || '').toLowerCase();
+                                    const pHsn = (p.hsn_code || '').toLowerCase();
+                                    return (
+                                      pName.includes(query) ||
+                                      pAlpha.includes(queryAlpha) ||
+                                      pBrand.includes(query) ||
+                                      pAlias.includes(query) ||
+                                      pSku.includes(query) ||
+                                      pHsn.includes(query)
+                                    );
+                                  });
+
+                                  if (filteredProds.length === 0) {
+                                    return (
+                                      <div className="p-3 text-xs text-muted-foreground italic">
+                                        No catalog product matching &ldquo;{item.item_name}&rdquo;. Type manually or check spelling.
+                                      </div>
+                                    );
+                                  }
+
+                                  return (
+                                    <div className="divide-y divide-border">
+                                      <div className="bg-muted px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex justify-between border-b border-border">
+                                        <span>Catalog Products</span>
+                                        <span>{filteredProds.length} match{filteredProds.length > 1 ? 'es' : ''}</span>
+                                      </div>
+                                      {filteredProds.slice(0, 30).map((p: any) => {
+                                        const mrp = parseFloat(p.selling_price || p.price || 0);
+                                        const stock = Number(p.stock_quantity ?? 0);
+                                        const isSelected = item.product_id === p.id;
+                                        return (
+                                          <button
+                                            key={p.id}
+                                            type="button"
+                                            onClick={() => {
+                                              handleSelectProduct(idx, p);
+                                              setActiveSearch(null);
+                                            }}
+                                            className={`w-full text-left p-2.5 hover:bg-muted/80 flex items-center justify-between gap-3 cursor-pointer transition-colors ${
+                                              isSelected ? 'bg-primary/10 border-l-2 border-primary' : ''
+                                            }`}
+                                          >
+                                            <div className="flex-1 min-w-0">
+                                              <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="font-semibold text-foreground text-xs truncate">{p.name}</span>
+                                                {p.brand && (
+                                                  <span className="text-[10px] px-1.5 py-0.2 rounded font-bold uppercase bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                                                    {p.brand}
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="text-[10px] text-muted-foreground truncate mt-0.5">
+                                                {p.category || 'General'} {p.hsn_code ? `• HSN: ${p.hsn_code}` : ''} {p.sku ? `• SKU: ${p.sku}` : ''}
+                                              </div>
+                                            </div>
+                                            <div className="text-right whitespace-nowrap pl-2">
+                                              <div className="text-xs font-mono font-bold text-foreground">
+                                                {mrp > 0 ? `₹${mrp.toFixed(2)}` : '₹0.00'}
+                                              </div>
+                                              <div className={`text-[10px] font-mono font-medium ${stock > 0 ? 'text-emerald-500' : 'text-muted-foreground'}`}>
+                                                Stock: {stock} {p.unit || 'PCS'}
+                                              </div>
+                                            </div>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            )}
+
+                            {/* Linked Catalog Badge */}
+                            {item.product_id && (
+                              <div className="flex items-center gap-2 mt-1.5 flex-wrap text-[10px]">
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-medium">
+                                  ✓ Catalog Linked
+                                </span>
+                                {item.brand && (
+                                  <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                                    Brand: {item.brand}
+                                  </span>
+                                )}
+                                {item.stock_quantity !== undefined && (
+                                  <span className="text-muted-foreground font-mono">
+                                    Stock: {item.stock_quantity} {item.unit}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
 
