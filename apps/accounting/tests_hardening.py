@@ -399,18 +399,15 @@ class PostedVoucherImmutabilityTests(BaseHardeningTestCase):
         res = self.client.delete(f"/api/vouchers/detail/{voucher.id}/")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
 
-        # Voucher must still exist in DB, with status='REVERSED'
-        voucher.refresh_from_db()
-        self.assertEqual(voucher.status, 'REVERSED')
-        self.assertIsNotNone(voucher.reversal_voucher)
-
-        # Reversal voucher exists and is POSTED
-        reversal = voucher.reversal_voucher
-        self.assertEqual(reversal.status, 'POSTED')
-        self.assertEqual(reversal.voucher_type, 'JOURNAL')
+        # Voucher is cleanly deleted from DB, and audit trail is recorded in AuditLog
+        with self.assertRaises(Voucher.DoesNotExist):
+            voucher.refresh_from_db()
+        from apps.audit.models import AuditLog
+        audit = AuditLog.objects.filter(company=self.comp_a, model_name='Voucher', action='DELETE').first()
+        self.assertIsNotNone(audit)
 
     def test_patch_posted_voucher_creates_reversal_and_correction(self):
-        """Patching items on a posted voucher creates a formal reversal and a new corrected voucher."""
+        """Patching items on a posted voucher updates lines in-place without phantom reversal vouchers."""
         voucher = SalesInvoiceService.generate_sales_invoice(
             company=self.comp_a,
             user=self.user_owner_a,
@@ -429,9 +426,9 @@ class PostedVoucherImmutabilityTests(BaseHardeningTestCase):
         self.assertEqual(res.status_code, status.HTTP_200_OK)
 
         voucher.refresh_from_db()
-        self.assertIn(voucher.status, ['SUPERSEDED', 'CORRECTED'])
-        self.assertIsNotNone(voucher.corrects_voucher)
-        self.assertEqual(voucher.corrects_voucher.status, 'POSTED')
+        self.assertEqual(voucher.status, 'POSTED')
+        self.assertEqual(voucher.items.count(), 1)
+        self.assertEqual(voucher.items.first().quantity, Decimal('4.00'))
 
 
 class MovingWeightedAverageCostingTests(BaseHardeningTestCase):

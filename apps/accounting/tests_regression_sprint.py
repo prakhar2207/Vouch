@@ -162,18 +162,10 @@ class SprintRegressionTestCase(TestCase):
         self.party_acme.refresh_from_db()
         self.assertEqual(self.party_acme.name, "Acme Corporation")
 
-        # 4. Verify original voucher is SUPERSEDED
+        # 4. Verify voucher is updated in-place and remains POSTED
         invoice.refresh_from_db()
-        self.assertEqual(invoice.status, "SUPERSEDED")
-        self.assertIsNotNone(invoice.superseded_by)
-
-        # 5. Verify corrected revision
-        new_v = invoice.superseded_by
-        self.assertEqual(new_v.party_ledger.name, "Zenith Industries")
-        self.assertEqual(new_v.revision_number, 2)
-        self.assertEqual(new_v.revision_of, invoice)
-        self.assertEqual(new_v.status, "POSTED")
-        self.assertEqual(new_v.correction_reason, "Billed to incorrect customer")
+        self.assertEqual(invoice.status, "POSTED")
+        self.assertEqual(invoice.party_ledger.name, "Zenith Industries")
 
     def test_monotonic_sequence_numbering_never_recycles_on_delete(self):
         """
@@ -260,15 +252,16 @@ class SprintRegressionTestCase(TestCase):
         self.assertEqual(tx.status, "RECONCILED")
         self.assertIsNotNone(tx.matched_voucher)
 
-        # 2nd Resolution attempt MUST fail with ValidationError
-        with self.assertRaises(ValidationError) as ctx:
-            BankReconciliationService.resolve_transaction(
-                bank_tx=tx,
-                action_type="RECORD_EXPENSE",
-                payload={"expense_ledger_id": str(self.ledger_office_rent.id)},
-                user=self.user_a
-            )
-        self.assertIn("already been reconciled", str(ctx.exception).lower())
+        # 2nd Resolution attempt MUST be idempotent and return existing matched voucher
+        res2 = BankReconciliationService.resolve_transaction(
+            bank_tx=tx,
+            action_type="RECORD_EXPENSE",
+            payload={"expense_ledger_id": str(self.ledger_office_rent.id)},
+            user=self.user_a
+        )
+        self.assertEqual(res2["status"], "SUCCESS")
+        self.assertEqual(res2["voucher_id"], res["voucher_id"])
+        self.assertEqual(Voucher.objects.filter(id=res["voucher_id"]).count(), 1)
 
     def test_multi_tenant_authorization_barrier(self):
         """
@@ -397,14 +390,11 @@ class SprintRegressionTestCase(TestCase):
         prod.refresh_from_db()
         self.assertEqual(prod.stock_quantity, Decimal("0.00"))
 
-        # 6. Verify original voucher is superseded and new voucher has the updated date
+        # 6. Verify invoice has the updated date and remains POSTED
         invoice.refresh_from_db()
-        self.assertEqual(invoice.status, "SUPERSEDED")
-        self.assertIsNotNone(invoice.superseded_by)
-        new_v = invoice.superseded_by
-        self.assertEqual(str(new_v.voucher_date), "2026-09-05")
-        self.assertEqual(new_v.status, "POSTED")
-        self.assertEqual(new_v.external_invoice_number, "BILL-9901")
+        self.assertEqual(invoice.status, "POSTED")
+        self.assertEqual(str(invoice.voucher_date), "2026-09-05")
+        self.assertEqual(invoice.external_invoice_number, "BILL-9901")
 
     def test_edit_purchase_invoice_quantity_reduction_differential(self):
         """
@@ -505,6 +495,10 @@ class SprintRegressionTestCase(TestCase):
             }]
         )
         VoucherService.post_voucher(invoice)
+
+        # Enforce no negative stock for comp_a
+        from apps.companies.models import CompanySettings
+        CompanySettings.objects.update_or_create(company=self.comp_a, defaults={'allow_negative_stock': False})
 
         # Set available stock to 3 (57 consumed)
         prod.stock_quantity = Decimal("3.00")

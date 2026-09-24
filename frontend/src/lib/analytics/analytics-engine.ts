@@ -321,10 +321,12 @@ export class LocalAnalyticsEngine {
     for (const l of ledgers) {
       const bal = Number(l.currentBalance) || 0;
       const lt = (l.ledgerType || "").toUpperCase();
+      const grp = (l.group || "").toUpperCase();
 
-      const isCustomer = lt === "CUSTOMER" || lt.includes("DEBTOR");
-      const isSupplier = lt === "SUPPLIER" || lt.includes("CREDITOR");
+      const isCustomer = lt === "CUSTOMER" || lt.includes("DEBTOR") || grp.includes("DEBTOR");
+      const isSupplier = lt === "SUPPLIER" || lt.includes("CREDITOR") || grp.includes("CREDITOR");
       const isParty = lt === "PARTY" || lt === "BOTH";
+      const isCashOrBank = lt === "CASH" || lt === "BANK" || grp.includes("BANK") || grp.includes("CASH");
 
       if (l.balanceState === "TO_COLLECT") {
         moneyToCollect += Number(l.displayAmount || Math.abs(bal));
@@ -340,7 +342,7 @@ export class LocalAnalyticsEngine {
         else if (bal < 0) billsToPay += Math.abs(bal);
       }
 
-      if (lt === "CASH" || lt === "BANK") {
+      if (isCashOrBank) {
         cashAndBank += bal;
       }
     }

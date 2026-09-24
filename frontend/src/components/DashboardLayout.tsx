@@ -366,190 +366,193 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
 
                 {isMoreDropdownOpen && (
-                  <div className="absolute left-0 mt-1.5 w-72 max-h-[calc(100vh-5rem)] overflow-y-auto bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 pb-3 z-50 animate-in fade-in zoom-in-95 overscroll-contain">
-                    <div className="px-3 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
-                      Accounting & Entries
-                    </div>
-                    <Link
-                      href="/vouchers"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium">Transactions</div>
-                        <div className="text-xs text-muted-foreground">View all transactions</div>
+                  <div className="absolute left-0 mt-1.5 w-[540px] max-h-[85vh] overflow-y-auto bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-2xl shadow-black/20 p-3 z-50 animate-in fade-in zoom-in-95 grid grid-cols-2 gap-3 divide-x divide-border/30">
+                    <div className="space-y-1">
+                      <div className="px-2 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                        Accounting & Entries
                       </div>
-                    </Link>
-                    <Link
-                      href="/vouchers/credit-note"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium text-amber-400">Credit / Debit Note</div>
-                        <div className="text-xs text-muted-foreground">Sales & purchase returns</div>
-                      </div>
-                    </Link>
-                    <Link
-                      href="/vouchers/new"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium">Payments & Receipts</div>
-                        <div className="text-xs text-muted-foreground">Record money in/out (On Account)</div>
-                      </div>
-                    </Link>
-                    <Link
-                      href="/vouchers/grid"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium">Journal Entry</div>
-                        <div className="text-xs text-muted-foreground">Manual accounting entries</div>
-                      </div>
-                    </Link>
-                    
-                    <div className="border-t border-border/40 my-1.5"></div>
-                    <div className="px-3 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
-                      Reports & Statements
-                    </div>
-                    
-                    <Link
-                      href="/reports/aging"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium text-purple-400">Aging Analysis (MSME)</div>
-                        <div className="text-xs text-muted-foreground">Overdue debtors & creditors</div>
-                      </div>
-                    </Link>
-                    
-                    <Link
-                      href="/ledgers"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium">Accounts</div>
-                        <div className="text-xs text-muted-foreground">Account heads & ledgers</div>
-                      </div>
-                    </Link>
-                    <Link
-                      href="/reports/trial-balance"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium">Trial Balance</div>
-                        <div className="text-xs text-muted-foreground">Account balances summary</div>
-                      </div>
-                    </Link>
-                    <Link
-                      href="/reports/profit-and-loss"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium">Profit & Loss</div>
-                        <div className="text-xs text-muted-foreground">Trading & P&L statement</div>
-                      </div>
-                    </Link>
-                    <Link
-                      href="/reports/balance-sheet"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium">Balance Sheet</div>
-                        <div className="text-xs text-muted-foreground">Financial position & net worth</div>
-                      </div>
-                    </Link>
-                    <Link
-                      href="/export/tally"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium">Export to Tally</div>
-                        <div className="text-xs text-muted-foreground">Export data to TallyPrime</div>
-                      </div>
-                    </Link>
-
-                    <div className="border-t border-border/40 my-1.5"></div>
-                    <div className="px-3 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
-                      Tools & Operations
-                    </div>
-
-                    <Link
-                      href="/health"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium">Books Health</div>
-                        <div className="text-xs text-muted-foreground">Check your books</div>
-                      </div>
-                    </Link>
-                    <Link
-                      href="/audit"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium">Activity Log</div>
-                        <div className="text-xs text-muted-foreground">View change history</div>
-                      </div>
-                    </Link>
-                    <button
-                      onClick={() => {
-                        setIsMoreDropdownOpen(false);
-                        setIsClosingModalOpen(true);
-                      }}
-                      className="w-full text-left px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors flex items-center justify-between cursor-pointer"
-                    >
-                      <div>
-                        <div className="font-medium">Close Financial Year</div>
-                        <div className="text-xs text-muted-foreground">Year-end closing</div>
-                      </div>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setIsMoreDropdownOpen(false);
-                        setIsSplitModalOpen(true);
-                      }}
-                      className="w-full text-left px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors flex items-center justify-between cursor-pointer"
-                    >
-                      <div>
-                        <div className="font-medium">Archive Company Data</div>
-                        <div className="text-xs text-muted-foreground">Split or archive data</div>
-                      </div>
-                    </button>
-                    <Link
-                      href="/network/inbox"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium">B2B Network</div>
-                        <div className="text-xs text-muted-foreground">Supplier e-invoices</div>
-                      </div>
-                    </Link>
-                    <Link
-                      href="/admin"
-                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsMoreDropdownOpen(false)}
-                    >
-                      <div>
-                        <div className="font-medium flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-bold">
-                          <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
-                          <span>Superadmin Portal</span>
+                      <Link
+                        href="/vouchers"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs">Transactions</div>
+                          <div className="text-[11px] text-muted-foreground">View all transactions</div>
                         </div>
-                        <div className="text-xs text-muted-foreground">Fleet &amp; tenant telemetry</div>
+                      </Link>
+                      <Link
+                        href="/vouchers/credit-note"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs text-amber-400">Credit / Debit Note</div>
+                          <div className="text-[11px] text-muted-foreground">Sales & purchase returns</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/vouchers/new"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs">Payments & Receipts</div>
+                          <div className="text-[11px] text-muted-foreground">Record money in/out</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/vouchers/grid"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs">Journal Entry</div>
+                          <div className="text-[11px] text-muted-foreground">Manual entries</div>
+                        </div>
+                      </Link>
+                      
+                      <div className="border-t border-border/40 my-1.5"></div>
+                      <div className="px-2 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                        Reports & Statements
                       </div>
-                    </Link>
+                      
+                      <Link
+                        href="/reports/aging"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs text-purple-400">Aging Analysis (MSME)</div>
+                          <div className="text-[11px] text-muted-foreground">Overdue parties</div>
+                        </div>
+                      </Link>
+                      
+                      <Link
+                        href="/ledgers"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs">Accounts</div>
+                          <div className="text-[11px] text-muted-foreground">Account heads & ledgers</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/reports/trial-balance"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs">Trial Balance</div>
+                          <div className="text-[11px] text-muted-foreground">Balances summary</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/reports/profit-and-loss"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs">Profit & Loss</div>
+                          <div className="text-[11px] text-muted-foreground">P&L statement</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/reports/balance-sheet"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs">Balance Sheet</div>
+                          <div className="text-[11px] text-muted-foreground">Financial position</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/export/tally"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs">Export to Tally</div>
+                          <div className="text-[11px] text-muted-foreground">Export to TallyPrime</div>
+                        </div>
+                      </Link>
+                    </div>
+
+                    <div className="pl-3 space-y-1">
+                      <div className="px-2 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                        Tools & Operations
+                      </div>
+
+                      <Link
+                        href="/health"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs">Books Health</div>
+                          <div className="text-[11px] text-muted-foreground">Check your books</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/audit"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs">Activity Log</div>
+                          <div className="text-[11px] text-muted-foreground">View change history</div>
+                        </div>
+                      </Link>
+                      <button
+                        onClick={() => {
+                          setIsMoreDropdownOpen(false);
+                          setIsClosingModalOpen(true);
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors flex items-center justify-between cursor-pointer"
+                      >
+                        <div>
+                          <div className="font-medium text-xs">Close Financial Year</div>
+                          <div className="text-[11px] text-muted-foreground">Year-end closing</div>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsMoreDropdownOpen(false);
+                          setIsSplitModalOpen(true);
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors flex items-center justify-between cursor-pointer"
+                      >
+                        <div>
+                          <div className="font-medium text-xs">Archive Company Data</div>
+                          <div className="text-[11px] text-muted-foreground">Split or archive data</div>
+                        </div>
+                      </button>
+                      <Link
+                        href="/network/inbox"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs">B2B Network</div>
+                          <div className="text-[11px] text-muted-foreground">Supplier e-invoices</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/admin"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-medium text-xs flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-bold">
+                            <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
+                            <span>Superadmin Portal</span>
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">Fleet &amp; tenant telemetry</div>
+                        </div>
+                      </Link>
+                    </div>
                   </div>
                 )}
               </div>

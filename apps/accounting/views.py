@@ -831,9 +831,10 @@ class VoucherDetailAPIView(APIView):
                                 ledger_type='CUSTOMER' if voucher.voucher_type == 'SALES' else 'SUPPLIER'
                             )
 
-                # 2. In-place update: If voucher was posted, revert previous stock movements before modifying lines
+                # 2. In-place update: If voucher was posted and items are being replaced, revert stock movements
+                has_items = 'items' in data and isinstance(data['items'], list)
                 was_posted = voucher.status in ['POSTED', 'VALIDATING']
-                if was_posted:
+                if was_posted and has_items:
                     from apps.inventory.services.stock_service import StockService
                     StockService.revert_voucher_stock(voucher)
                     voucher.status = 'DRAFT'
@@ -861,8 +862,15 @@ class VoucherDetailAPIView(APIView):
                 if 'buyer_state_code' in data:
                     voucher.buyer_state_code = data.get('buyer_state_code')
 
-                if target_party != voucher.party_ledger:
+                old_party = voucher.party_ledger
+                if target_party != old_party:
                     voucher.party_ledger = target_party
+                    if not has_items and voucher.voucher_type in ['SALES', 'PURCHASE']:
+                        if old_party:
+                            voucher.ledger_entries.filter(ledger=old_party).update(ledger=target_party)
+                            VoucherService.recalculate_ledger_balance(old_party)
+                        if target_party:
+                            VoucherService.recalculate_ledger_balance(target_party)
 
                 voucher.save()
 
@@ -1029,8 +1037,8 @@ class VoucherDetailAPIView(APIView):
                         taxable_amount = gross - discount_amt
                         
                         taxes = GSTCalculator.calculate_taxes(
-                            company_state_code=company.state_code,
-                            party_state_code=party_ledger.state_code if party_ledger else company.state_code,
+                            company_state_code=company.state_code if company else None,
+                            party_state_code=(party_ledger.state_code if (party_ledger and party_ledger.state_code) else getattr(company, 'state_code', None)),
                             taxable_amount=taxable_amount,
                             gst_rate=gst_pct
                         )

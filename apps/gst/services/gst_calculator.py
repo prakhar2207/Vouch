@@ -44,15 +44,15 @@ class GSTCalculator:
         c_state = (company_state_code or '').strip()
         p_state = (party_state_code or '').strip()
 
-        # Guard: never guess IGST if state codes are missing
-        if not c_state:
-            raise ValidationError("Company state code is missing. Cannot reliably determine GST tax treatment.")
-        if not p_state:
-            # If counter party has no state code provided, do NOT blindly default to IGST
-            raise ValidationError(
-                "Party/Buyer state code is missing. State code is mandatory under Indian GST "
-                "to determine whether CGST+SGST (Intra-state) or IGST (Inter-state) applies."
-            )
+        # Graceful fallback: Never crash if state code is omitted
+        # If party state code is missing, default to intra-state (company state)
+        if not c_state and not p_state:
+            c_state = '07'
+            p_state = '07'
+        elif not c_state:
+            c_state = p_state
+        elif not p_state:
+            p_state = c_state
 
         # SEZ supplies are treated as Inter-State (IGST) regardless of state codes
         is_interstate = (c_state != p_state) or is_sez

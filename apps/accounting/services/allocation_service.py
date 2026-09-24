@@ -43,6 +43,9 @@ class PaymentAllocationService:
         )['total']
         return quantize_money(alloc or Decimal('0.00'))
 
+    # Backward compatible alias for voucher-level allocation queries
+    get_voucher_allocated_amount = get_invoice_allocated_amount
+
     @classmethod
     def get_unpaid_invoices_for_party(cls, company: Company, party_ledger: Ledger) -> list:
         """

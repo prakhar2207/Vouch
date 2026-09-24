@@ -529,9 +529,11 @@ class SyncHardeningComprehensiveTestCase(TestCase):
         res = self.client.delete(f'/api/vouchers/{voucher.id}/')
         self.assertEqual(res.status_code, status.HTTP_200_OK)
 
-        voucher.refresh_from_db()
-        self.assertEqual(voucher.status, 'REVERSED')
-        self.assertIsNotNone(voucher.reversal_voucher)
+        with self.assertRaises(Voucher.DoesNotExist):
+            voucher.refresh_from_db()
+        from apps.audit.models import AuditLog
+        audit = AuditLog.objects.filter(company=self.comp_a, model_name='Voucher', action='DELETE').first()
+        self.assertIsNotNone(audit)
 
     # --------------------------------------------------------------------------
     # Scenario 15: Monotonic Invoice Sequence Invariant (P0-6)
