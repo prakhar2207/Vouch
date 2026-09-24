@@ -3,7 +3,9 @@ import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { getAccessToken, isAuthenticated, removeTokens } from '@/utils/auth';
+import { useRole } from '@/hooks/useRole';
 import DashboardLayout from '@/components/DashboardLayout';
 import StateSelect from '@/components/StateSelect';
 import { getStateName } from '@/utils/gstStates';
@@ -24,12 +26,14 @@ import {
   Sliders,
   Database,
   Upload,
+  ArrowRight,
   X
 } from 'lucide-react';
 
 export default function SettingsPage() {
   const router = useRouter();
   const { toast } = useToast();
+  const { role: currentUserRole, isAdmin, canManageSettings, isReadOnly } = useRole();
   const { availableFYs, activeFY, setActiveFY, setIsClosingModalOpen } = useFinancialYear();
   const { setIsSplitModalOpen } = useAccountingPeriod();
   const [company, setCompany] = useState<any>(null);
@@ -368,15 +372,17 @@ export default function SettingsPage() {
 
   const getRoleBadge = (role: string) => {
     switch (role?.toUpperCase()) {
-      case 'OWNER':
+      case 'ADMIN':
         return 'bg-purple-500/15 text-purple-400 border-purple-500/30';
+      case 'OWNER':
+        return 'bg-amber-500/15 text-amber-400 border-amber-500/30';
       case 'CA':
-        return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
-      case 'EMPLOYEE':
         return 'bg-blue-500/15 text-blue-400 border-blue-500/30';
+      case 'EMPLOYEE':
+        return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
       case 'VIEWER':
       default:
-        return 'bg-muted text-muted-foreground border-border/40';
+        return 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30';
     }
   };
 
@@ -391,6 +397,41 @@ export default function SettingsPage() {
             Manage your business settings
           </p>
         </div>
+
+        {isAdmin && (
+          <div className="bg-gradient-to-r from-purple-500/10 via-purple-500/5 to-transparent border border-purple-500/30 rounded-xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-5 h-5 text-purple-400" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-bold text-foreground">System Administration &amp; Fleet Telemetry</h2>
+                  <span className="px-1.5 py-0.2 text-[10px] font-mono font-bold rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                    ADMIN
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Access platform metrics, multi-tenant company fleet, user management, and system logs.
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/admin"
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 shrink-0"
+            >
+              <span>Open Telemetry Hub</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+        )}
+
+        {isReadOnly && (
+          <div className="bg-amber-500/10 border border-amber-500/30 text-amber-400 p-4 rounded-xl text-xs flex items-center gap-2">
+            <Lock className="w-4 h-4 shrink-0" />
+            <span>You are currently viewing settings in read-only mode with the Viewer role. Changes cannot be saved.</span>
+          </div>
+        )}
 
         {company ? (
           <div className="space-y-8">
@@ -843,9 +884,9 @@ export default function SettingsPage() {
                           </td>
 
                           <td className="px-4 py-3">
-                            {m.role === 'OWNER' ? (
+                            {m.role === 'OWNER' || m.role === 'ADMIN' ? (
                               <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${getRoleBadge(m.role)}`}>
-                                OWNER
+                                {m.role}
                               </span>
                             ) : (
                               <select
@@ -853,6 +894,7 @@ export default function SettingsPage() {
                                 onChange={(e) => handleUpdateRole(m.id, e.target.value)}
                                 className="text-xs bg-muted/60 border border-input rounded px-2 py-1 text-foreground font-semibold outline-none cursor-pointer"
                               >
+                                <option value="ADMIN">ADMIN</option>
                                 <option value="CA">CA</option>
                                 <option value="EMPLOYEE">EMPLOYEE</option>
                                 <option value="VIEWER">VIEWER</option>
@@ -863,7 +905,7 @@ export default function SettingsPage() {
                           <td className="px-4 py-3 text-muted-foreground font-mono">{m.created_at || 'Active'}</td>
 
                           <td className="px-4 py-3 text-right">
-                            {m.role !== 'OWNER' && !m.is_current_user && (
+                            {m.role !== 'OWNER' && (m.role !== 'ADMIN' || isAdmin) && !m.is_current_user && (
                               <button
                                 onClick={() => handleRemoveMember(m.id, m.email)}
                                 className="p-1.5 text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
@@ -1086,6 +1128,7 @@ export default function SettingsPage() {
                     onChange={(e) => setInviteRole(e.target.value)}
                     className="w-full bg-muted/40 border border-input text-foreground text-sm p-2.5 rounded-lg outline-none cursor-pointer"
                   >
+                    <option value="ADMIN">ADMIN (Full administrative access, company settings, team management)</option>
                     <option value="CA">CA (Full Accounting: Ledgers, Daybook, Vouchers, Reports)</option>
                     <option value="EMPLOYEE">EMPLOYEE (Operational: Sales, Purchases, Stock, Parties)</option>
                     <option value="VIEWER">VIEWER (Read-only access)</option>

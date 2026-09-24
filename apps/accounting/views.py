@@ -455,11 +455,11 @@ def check_invoice_download_permission(user, voucher):
     if not user or not user.is_authenticated:
         return False, "Login required to download official PDF invoice.", None
 
-    if getattr(user, 'is_superuser', False):
-        return True, None, "SUPERUSER"
+    if getattr(user, 'is_superuser', False) or getattr(user, 'role', '') == 'ADMIN':
+        return True, None, "ADMIN"
 
     from apps.companies.models import Company, UserCompany
-    ALLOWED_ROLES = ['OWNER', 'CA', 'EMPLOYEE']
+    ALLOWED_ROLES = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']
 
     # 1. Check if user is an Owner, CA, or Employee of the billing company (seller)
     seller_company = voucher.company

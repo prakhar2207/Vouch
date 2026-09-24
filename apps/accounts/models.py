@@ -16,12 +16,13 @@ class UserManager(BaseUserManager):
     def create_superuser(self, email, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        extra_fields.setdefault('role', 'OWNER')
+        extra_fields.setdefault('role', 'ADMIN')
 
         return self.create_user(email, password, **extra_fields)
 
 class User(AbstractBaseUser, PermissionsMixin):
     ROLE_CHOICES = (
+        ('ADMIN', 'Admin'),
         ('OWNER', 'Owner'),
         ('CA', 'Chartered Accountant'),
         ('EMPLOYEE', 'Employee'),

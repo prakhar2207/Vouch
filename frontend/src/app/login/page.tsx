@@ -3,7 +3,7 @@
 import { API_BASE_URL } from '@/utils/api';
 import { useState } from 'react';
 import axios from 'axios';
-import { setTokens } from '@/utils/auth';
+import { setTokens, setUser } from '@/utils/auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Eye, EyeOff, LogIn, AlertCircle } from 'lucide-react';
@@ -23,6 +23,9 @@ export default function Login() {
     try {
       const res = await axios.post(`${API_BASE_URL}/api/v1/auth/login/`, { email: username, password });
       setTokens(res.data.access, res.data.refresh);
+      if (res.data.user) {
+        setUser(res.data.user);
+      }
       router.push('/dashboard');
     } catch (err) {
       setError('Invalid credentials. Please check your email and password.');

@@ -48,12 +48,12 @@ def get_authorized_company(request, company_id=None):
 def get_user_company_role(user, company):
     """
     Returns the user's role in the specified company.
-    Superusers automatically receive OWNER privileges.
+    Superusers and users with role ADMIN automatically receive ADMIN privileges.
     """
     if not user or not user.is_authenticated:
         return None
-    if getattr(user, 'is_superuser', False):
-        return 'OWNER'
+    if getattr(user, 'is_superuser', False) or getattr(user, 'role', '') == 'ADMIN':
+        return 'ADMIN'
     if not company:
         return None
     
@@ -61,11 +61,23 @@ def get_user_company_role(user, company):
     return uc.role if uc else None
 
 def user_has_company_roles(user, company, allowed_roles):
+    """
+    Checks if user has one of allowed_roles for the given company.
+    Superusers and users with ADMIN role possess universal administrative rights.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if getattr(user, 'is_superuser', False) or getattr(user, 'role', '') == 'ADMIN':
+        return True
     role = get_user_company_role(user, company)
+    if role == 'ADMIN':
+        return True
+    if 'OWNER' in allowed_roles and role in ['ADMIN', 'OWNER']:
+        return True
     return role in allowed_roles
 
 class BaseCompanyPermission(BasePermission):
-    allowed_roles = ['OWNER', 'CA', 'EMPLOYEE', 'VIEWER']
+    allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE', 'VIEWER']
 
     def resolve_company(self, request, view):
         from apps.companies.models import Company
@@ -155,34 +167,34 @@ class BaseCompanyPermission(BasePermission):
         return True
 
 class IsCompanyMember(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'CA', 'EMPLOYEE', 'VIEWER']
+    allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE', 'VIEWER']
 
 class IsCompanyAdmin(BaseCompanyPermission):
-    allowed_roles = ['OWNER']
+    allowed_roles = ['ADMIN', 'OWNER']
 
 class IsCompanyOwner(BaseCompanyPermission):
-    allowed_roles = ['OWNER']
+    allowed_roles = ['ADMIN', 'OWNER']
 
 class CanCreateSales(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'CA', 'EMPLOYEE']
+    allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']
 
 class CanCreatePurchases(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'CA', 'EMPLOYEE']
+    allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']
 
 class CanPostVoucher(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'CA', 'EMPLOYEE']
+    allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']
 
 class CanCancelVoucher(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'CA']
+    allowed_roles = ['ADMIN', 'OWNER', 'CA']
 
 class CanManageLedgers(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'CA']
+    allowed_roles = ['ADMIN', 'OWNER', 'CA']
 
 class CanManageInventory(BaseCompanyPermission):
-    allowed_roles = ['OWNER', 'CA', 'EMPLOYEE']
+    allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']
 
 class CanManageCompanySettings(BaseCompanyPermission):
-    allowed_roles = ['OWNER']
+    allowed_roles = ['ADMIN', 'OWNER']
 
 class CanDeleteCompany(BaseCompanyPermission):
-    allowed_roles = ['OWNER']
+    allowed_roles = ['ADMIN', 'OWNER']

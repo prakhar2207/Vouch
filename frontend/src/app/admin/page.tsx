@@ -114,7 +114,7 @@ export default function SuperadminPortalPage() {
         const user = meRes.data?.data;
         setCurrentUser(user);
 
-        if (user?.is_staff || user?.is_superuser) {
+        if (user?.is_staff || user?.is_superuser || user?.role?.toUpperCase() === 'ADMIN') {
           setIsAuthorized(true);
         } else {
           setIsAuthorized(false);

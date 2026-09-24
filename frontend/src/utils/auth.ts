@@ -29,6 +29,7 @@ export const getRefreshToken = (): string | undefined => {
 export const removeTokens = () => {
   Cookies.remove('access_token');
   Cookies.remove('refresh_token');
+  removeUser();
 };
 
 export const isTokenExpired = (token?: string): boolean => {
@@ -60,3 +61,103 @@ export const isAuthenticated = (): boolean => {
 
   return false;
 };
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  role: 'ADMIN' | 'OWNER' | 'CA' | 'EMPLOYEE' | 'VIEWER' | string;
+  is_staff?: boolean;
+  is_superuser?: boolean;
+}
+
+export const setUser = (user: AuthUser) => {
+  if (typeof window !== 'undefined' && user) {
+    try {
+      localStorage.setItem('vouch_user', JSON.stringify(user));
+    } catch (e) {
+      console.error('Error saving user to localStorage', e);
+    }
+  }
+};
+
+export const getUser = (): AuthUser | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('vouch_user');
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error('Error reading user from localStorage', e);
+  }
+
+  // Fallback: extract from JWT
+  const token = getAccessToken();
+  if (token) {
+    try {
+      const decoded: any = jwtDecode(token);
+      if (decoded) {
+        return {
+          id: decoded.user_id || '',
+          email: decoded.email || '',
+          role: decoded.role || 'VIEWER',
+          is_staff: Boolean(decoded.is_staff),
+          is_superuser: Boolean(decoded.is_superuser),
+        };
+      }
+    } catch {}
+  }
+  return null;
+};
+
+export const removeUser = () => {
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem('vouch_user');
+    } catch {}
+  }
+};
+
+export const getUserRole = (): string => {
+  const user = getUser();
+  return (user?.role || 'VIEWER').toUpperCase();
+};
+
+export const isAdmin = (): boolean => {
+  const user = getUser();
+  if (!user) return false;
+  return Boolean(user.is_superuser || user.is_staff || user.role?.toUpperCase() === 'ADMIN');
+};
+
+export const isOwnerOrAdmin = (): boolean => {
+  const user = getUser();
+  if (!user) return false;
+  const role = user.role?.toUpperCase();
+  return Boolean(user.is_superuser || user.is_staff || role === 'ADMIN' || role === 'OWNER');
+};
+
+export const canPerformAccounting = (): boolean => {
+  const user = getUser();
+  if (!user) return false;
+  const role = user.role?.toUpperCase();
+  return Boolean(user.is_superuser || user.is_staff || role === 'ADMIN' || role === 'OWNER' || role === 'CA');
+};
+
+export const isReadOnlyUser = (): boolean => {
+  const user = getUser();
+  if (!user) return true;
+  if (user.is_superuser || user.is_staff || user.role?.toUpperCase() === 'ADMIN' || user.role?.toUpperCase() === 'OWNER') {
+    return false;
+  }
+  return user.role?.toUpperCase() === 'VIEWER';
+};
+
+export const hasRole = (allowedRoles: string[]): boolean => {
+  const user = getUser();
+  if (!user) return false;
+  if (user.is_superuser || user.is_staff || user.role?.toUpperCase() === 'ADMIN') return true;
+  return allowedRoles.map(r => r.toUpperCase()).includes((user.role || '').toUpperCase());
+};
+

@@ -72,11 +72,11 @@ class CompanyViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         company = self.get_object()
         
-        # 1. Strict Owner Authorization
-        if not user_has_company_roles(request.user, company, ['OWNER']):
+        # 1. Strict Admin / Owner Authorization
+        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER']):
             return Response({
                 "success": False,
-                "error": "Only the Company Owner can delete or archive the company."
+                "error": "Only Administrators and Company Owners can delete or archive the company."
             }, status=status.HTTP_403_FORBIDDEN)
 
         # 2. Re-authentication password check
@@ -126,10 +126,10 @@ class CompanyViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['patch'])
     def update_settings(self, request, pk=None):
         company = self.get_object()
-        if not user_has_company_roles(request.user, company, ['OWNER']):
+        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER']):
             return Response({
                 "success": False,
-                "error": "Only Company Owners are permitted to modify company settings."
+                "error": "Only Administrators and Company Owners are permitted to modify company settings."
             }, status=status.HTTP_403_FORBIDDEN)
 
         from .models import CompanySettings
@@ -180,15 +180,15 @@ class CompanyViewSet(viewsets.ModelViewSet):
             return Response({"success": True, "data": data})
 
         # POST: Invite or add member
-        if not user_has_company_roles(request.user, company, ['OWNER']):
-            return Response({"success": False, "error": "Only Owners can invite team members."}, status=status.HTTP_403_FORBIDDEN)
+        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER']):
+            return Response({"success": False, "error": "Only Administrators and Owners can invite team members."}, status=status.HTTP_403_FORBIDDEN)
 
         email = (request.data.get('email') or '').strip().lower()
         role = (request.data.get('role') or 'VIEWER').strip().upper()
         if not email:
             return Response({"success": False, "error": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        allowed_roles = ['CA', 'EMPLOYEE', 'VIEWER']
+        allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE', 'VIEWER']
         if role not in allowed_roles:
             return Response({"success": False, "error": f"Invalid role. Allowed roles: {', '.join(allowed_roles)}"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -223,22 +223,22 @@ class CompanyViewSet(viewsets.ModelViewSet):
         company = self.get_object()
         from .models import UserCompany
 
-        if not user_has_company_roles(request.user, company, ['OWNER']):
-            return Response({"success": False, "error": "Only Owners can manage team members."}, status=status.HTTP_403_FORBIDDEN)
+        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER']):
+            return Response({"success": False, "error": "Only Administrators and Owners can manage team members."}, status=status.HTTP_403_FORBIDDEN)
 
         uc = UserCompany.objects.filter(id=member_id, company=company).first()
         if not uc:
             return Response({"success": False, "error": "Member not found in this company."}, status=status.HTTP_404_NOT_FOUND)
 
-        if uc.role == 'OWNER' and not getattr(request.user, 'is_superuser', False):
-            return Response({"success": False, "error": "Company Owner cannot be modified or removed."}, status=status.HTTP_400_BAD_REQUEST)
+        if uc.role in ['OWNER', 'ADMIN'] and not (getattr(request.user, 'is_superuser', False) or getattr(request.user, 'role', '') == 'ADMIN'):
+            return Response({"success": False, "error": "Administrative roles cannot be modified or removed by non-admins."}, status=status.HTTP_400_BAD_REQUEST)
 
         if request.method == 'DELETE':
             uc.delete()
             return Response({"success": True, "message": "Member removed from company."})
 
         new_role = (request.data.get('role') or '').strip().upper()
-        allowed_roles = ['CA', 'EMPLOYEE', 'VIEWER']
+        allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE', 'VIEWER']
         if new_role not in allowed_roles:
             return Response({"success": False, "error": f"Invalid role: {new_role}"}, status=status.HTTP_400_BAD_REQUEST)
 

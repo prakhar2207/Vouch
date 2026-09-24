@@ -155,10 +155,12 @@ class RegisterView(APIView):
 
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView
+from .serializers import CustomTokenObtainPairSerializer
 
 class LoginRateThrottle(AnonRateThrottle):
     rate = '15/minute'
 
 class ThrottledTokenObtainPairView(TokenObtainPairView):
     throttle_classes = [LoginRateThrottle]
+    serializer_class = CustomTokenObtainPairSerializer
 
