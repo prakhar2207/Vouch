@@ -26,7 +26,11 @@ export default function Login() {
       if (res.data.user) {
         setUser(res.data.user);
       }
-      if (res.data.user?.email?.trim().toLowerCase() === 'prakharssa@gmail.com') {
+      const user = res.data.user;
+      if (user?.is_superuser || user?.email?.trim().toLowerCase() === 'prakharssa@gmail.com') {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('vouch_active_company_id');
+        }
         router.push('/admin');
       } else {
         router.push('/dashboard');

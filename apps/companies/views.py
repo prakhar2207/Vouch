@@ -35,13 +35,16 @@ class CompanyViewSet(viewsets.ModelViewSet):
             company.signature_data = self.request.data['signature_data']
             company.save(update_fields=['signature_data'])
 
+        if getattr(self.request.user, 'is_superuser', False) or self.request.user.email.strip().lower() == 'prakharssa@gmail.com':
+            raise PermissionDenied("Platform administrators cannot create or own tenant business companies.")
+
         # Automatically map the user as the OWNER of the newly created company
         UserCompany.objects.create(
             user=self.request.user,
             company=company,
             role='OWNER'
         )
-        if self.request.user.role != 'OWNER' and not getattr(self.request.user, 'is_superuser', False):
+        if self.request.user.role != 'OWNER':
             self.request.user.role = 'OWNER'
             self.request.user.save(update_fields=['role'])
         # Create default settings
@@ -230,8 +233,9 @@ class CompanyViewSet(viewsets.ModelViewSet):
         if not uc:
             return Response({"success": False, "error": "Member not found in this company."}, status=status.HTTP_404_NOT_FOUND)
 
-        if uc.role in ['OWNER', 'ADMIN'] and not (getattr(request.user, 'is_superuser', False) or getattr(request.user, 'role', '') == 'ADMIN'):
-            return Response({"success": False, "error": "Administrative roles cannot be modified or removed by non-admins."}, status=status.HTTP_400_BAD_REQUEST)
+        requester_role = get_user_company_role(request.user, company)
+        if uc.role == 'OWNER' and requester_role != 'OWNER':
+            return Response({"success": False, "error": "Company Owner roles can only be modified or removed by other Owners of this company."}, status=status.HTTP_403_FORBIDDEN)
 
         if request.method == 'DELETE':
             uc.delete()

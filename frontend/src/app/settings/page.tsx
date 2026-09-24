@@ -877,7 +877,7 @@ export default function SettingsPage() {
                           <td className="px-4 py-3 text-muted-foreground font-mono">{m.created_at || 'Active'}</td>
 
                           <td className="px-4 py-3 text-right">
-                            {m.role !== 'OWNER' && (m.role !== 'ADMIN' || isAdmin) && !m.is_current_user && (
+                            {m.role !== 'OWNER' && (m.role !== 'ADMIN' || currentUserRole === 'OWNER') && !m.is_current_user && (
                               <button
                                 onClick={() => handleRemoveMember(m.id, m.email)}
                                 className="p-1.5 text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"

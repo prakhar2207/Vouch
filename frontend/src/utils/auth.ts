@@ -30,6 +30,13 @@ export const removeTokens = () => {
   Cookies.remove('access_token');
   Cookies.remove('refresh_token');
   removeUser();
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem('vouch_active_company_id');
+      localStorage.removeItem('vouch_user');
+      localStorage.removeItem('vouch_gemini_key');
+    } catch {}
+  }
 };
 
 export const isTokenExpired = (token?: string): boolean => {
@@ -130,7 +137,7 @@ export const isSuperAdmin = (authUser?: AuthUser | null): boolean => {
   if (!user) return false;
   return Boolean(
     user.email?.trim().toLowerCase() === 'prakharssa@gmail.com' &&
-    (user.is_superuser || user.is_staff || user.role?.toUpperCase() === 'ADMIN')
+    (user.is_superuser || user.is_staff)
   );
 };
 
@@ -141,31 +148,29 @@ export const isAdmin = (): boolean => {
 export const isOwnerOrAdmin = (): boolean => {
   const user = getUser();
   if (!user) return false;
-  if (isSuperAdmin(user)) return true;
   const role = user.role?.toUpperCase();
-  return role === 'OWNER';
+  return role === 'OWNER' || role === 'ADMIN';
 };
 
 export const canPerformAccounting = (): boolean => {
   const user = getUser();
   if (!user) return false;
   const role = user.role?.toUpperCase();
-  return Boolean(user.is_superuser || user.is_staff || role === 'ADMIN' || role === 'OWNER' || role === 'CA');
+  return role === 'ADMIN' || role === 'OWNER' || role === 'CA';
 };
 
 export const isReadOnlyUser = (): boolean => {
   const user = getUser();
   if (!user) return true;
-  if (user.is_superuser || user.is_staff || user.role?.toUpperCase() === 'ADMIN' || user.role?.toUpperCase() === 'OWNER') {
-    return false;
-  }
-  return user.role?.toUpperCase() === 'VIEWER';
+  const role = user.role?.toUpperCase();
+  return role === 'VIEWER';
 };
 
 export const hasRole = (allowedRoles: string[]): boolean => {
   const user = getUser();
   if (!user) return false;
-  if (user.is_superuser || user.is_staff || user.role?.toUpperCase() === 'ADMIN') return true;
-  return allowedRoles.map(r => r.toUpperCase()).includes((user.role || '').toUpperCase());
+  const role = (user.role || '').toUpperCase();
+  if (role === 'OWNER') return true;
+  return allowedRoles.map(r => r.toUpperCase()).includes(role);
 };
 

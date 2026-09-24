@@ -49,6 +49,15 @@ class UserCompany(models.Model):
     class Meta:
         unique_together = ('user', 'company')
 
+    def clean(self):
+        if self.user and (getattr(self.user, 'is_superuser', False) or self.user.email.strip().lower() == 'prakharssa@gmail.com'):
+            from django.core.exceptions import ValidationError
+            raise ValidationError("Platform superadmin (prakharssa@gmail.com) is strictly decoupled from tenant businesses and cannot hold company memberships.")
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.user.email} - {self.company.name} ({self.role})"
 

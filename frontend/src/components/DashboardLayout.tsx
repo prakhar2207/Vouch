@@ -66,9 +66,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { activeCompany, availableCompanies, setActiveCompany } = useCompany();
   const { user, role, isAdmin, isOwner, isCA, isEmployee, isViewer, canManageSettings } = useRole();
 
-  // Superadmin isolation: prakharssa@gmail.com only sees the Superadmin Command Center, never company dashboards
+  // Superadmin isolation: platform superadmin only sees the Superadmin Command Center, never company dashboards
   useEffect(() => {
-    if (user?.email?.trim().toLowerCase() === "prakharssa@gmail.com") {
+    if (user?.is_superuser || user?.email?.trim().toLowerCase() === "prakharssa@gmail.com") {
       router.replace("/admin");
     }
   }, [user, router]);

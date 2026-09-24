@@ -66,34 +66,30 @@ export function useRole(): RolePermissions {
     refreshUser();
   }, [refreshUser]);
 
-  const isSuperAdminUser = Boolean(
-    user?.email?.trim().toLowerCase() === "prakharssa@gmail.com" &&
-    (user?.is_superuser || user?.is_staff || user?.role?.toUpperCase() === "ADMIN")
-  );
-
   const rawRole = (user?.role || "VIEWER").toUpperCase();
 
-  const isAdmin = isSuperAdminUser;
-  const isOwner = rawRole === "OWNER" || isAdmin;
+  const isOwner = rawRole === "OWNER";
+  const isAdmin = rawRole === "ADMIN";
   const isCA = rawRole === "CA";
   const isEmployee = rawRole === "EMPLOYEE";
-  const isViewer = !isAdmin && rawRole === "VIEWER";
+  const isViewer = rawRole === "VIEWER";
 
-  const canManageSettings = isAdmin || rawRole === "OWNER";
-  const canManageUsers = isAdmin || rawRole === "OWNER";
-  const canManageAccounting = isAdmin || rawRole === "OWNER" || isCA;
-  const canCreateTransactions = isAdmin || rawRole === "OWNER" || isCA || isEmployee;
+  const canManageSettings = isOwner || isAdmin;
+  const canManageUsers = isOwner || isAdmin;
+  const canManageAccounting = isOwner || isAdmin || isCA;
+  const canCreateTransactions = isOwner || isAdmin || isCA || isEmployee;
   const isReadOnly = isViewer;
 
   const hasRole = (allowedRoles: string[]): boolean => {
-    if (isAdmin) return true;
+    if (isOwner) return true;
     const normalized = allowedRoles.map((r) => r.toUpperCase());
+    if (isAdmin && (normalized.includes("ADMIN") || normalized.includes("OWNER"))) return true;
     return normalized.includes(rawRole);
   };
 
   return {
     user,
-    role: isAdmin ? "ADMIN" : rawRole,
+    role: rawRole,
     loading,
     isAdmin,
     isOwner,
