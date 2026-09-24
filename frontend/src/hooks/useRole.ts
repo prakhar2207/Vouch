@@ -66,11 +66,14 @@ export function useRole(): RolePermissions {
     refreshUser();
   }, [refreshUser]);
 
-  const rawRole = (user?.role || "VIEWER").toUpperCase();
-  const isSuper = Boolean(user?.is_superuser);
-  const isStaff = Boolean(user?.is_staff);
+  const isSuperAdminUser = Boolean(
+    user?.email?.trim().toLowerCase() === "prakharssa@gmail.com" &&
+    (user?.is_superuser || user?.is_staff || user?.role?.toUpperCase() === "ADMIN")
+  );
 
-  const isAdmin = isSuper || isStaff || rawRole === "ADMIN";
+  const rawRole = (user?.role || "VIEWER").toUpperCase();
+
+  const isAdmin = isSuperAdminUser;
   const isOwner = rawRole === "OWNER" || isAdmin;
   const isCA = rawRole === "CA";
   const isEmployee = rawRole === "EMPLOYEE";

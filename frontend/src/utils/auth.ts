@@ -125,17 +125,25 @@ export const getUserRole = (): string => {
   return (user?.role || 'VIEWER').toUpperCase();
 };
 
-export const isAdmin = (): boolean => {
-  const user = getUser();
+export const isSuperAdmin = (authUser?: AuthUser | null): boolean => {
+  const user = authUser || getUser();
   if (!user) return false;
-  return Boolean(user.is_superuser || user.is_staff || user.role?.toUpperCase() === 'ADMIN');
+  return Boolean(
+    user.email?.trim().toLowerCase() === 'prakharssa@gmail.com' &&
+    (user.is_superuser || user.is_staff || user.role?.toUpperCase() === 'ADMIN')
+  );
+};
+
+export const isAdmin = (): boolean => {
+  return isSuperAdmin();
 };
 
 export const isOwnerOrAdmin = (): boolean => {
   const user = getUser();
   if (!user) return false;
+  if (isSuperAdmin(user)) return true;
   const role = user.role?.toUpperCase();
-  return Boolean(user.is_superuser || user.is_staff || role === 'ADMIN' || role === 'OWNER');
+  return role === 'OWNER';
 };
 
 export const canPerformAccounting = (): boolean => {

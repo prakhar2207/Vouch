@@ -66,6 +66,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { activeCompany, availableCompanies, setActiveCompany } = useCompany();
   const { user, role, isAdmin, isOwner, isCA, isEmployee, isViewer, canManageSettings } = useRole();
 
+  // Superadmin isolation: prakharssa@gmail.com only sees the Superadmin Command Center, never company dashboards
+  useEffect(() => {
+    if (user?.email?.trim().toLowerCase() === "prakharssa@gmail.com") {
+      router.replace("/admin");
+    }
+  }, [user, router]);
+
   // Close dropdowns on route change
   useEffect(() => {
     setIsMobileNavOpen(false);
@@ -545,21 +552,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                           <div className="text-[11px] text-muted-foreground">Supplier e-invoices</div>
                         </div>
                       </Link>
-                      {isAdmin && (
-                        <Link
-                          href="/admin"
-                          className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                          onClick={() => setIsMoreDropdownOpen(false)}
-                        >
-                          <div>
-                            <div className="font-medium text-xs flex items-center gap-1.5 text-purple-600 dark:text-purple-400 font-bold">
-                              <ShieldCheck className="w-3.5 h-3.5 text-purple-500" />
-                              <span>Administration &amp; Telemetry</span>
-                            </div>
-                            <div className="text-[11px] text-muted-foreground">Fleet &amp; tenant telemetry</div>
-                          </div>
-                        </Link>
-                      )}
                     </div>
                   </div>
                 )}
@@ -758,11 +750,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       }`}>
                         {role}
                       </span>
-                      {user?.is_superuser && role !== 'ADMIN' && (
-                        <span className="px-1.5 py-0.5 text-[9px] font-mono font-bold rounded bg-purple-500/10 text-purple-400 border border-purple-500/30 uppercase">
-                          SUPERADMIN
-                        </span>
-                      )}
                     </div>
                   </div>
                   {canManageSettings && (
@@ -786,16 +773,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <Sparkles className="w-3.5 h-3.5 text-blue-400" />
                     <span>Guided Tour</span>
                   </button>
-                  {isAdmin && (
-                    <Link
-                      href="/admin"
-                      onClick={() => setIsUserMenuOpen(false)}
-                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-purple-400 font-semibold hover:bg-purple-500/10 transition-colors"
-                    >
-                      <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
-                      <span>Administration &amp; Telemetry</span>
-                    </Link>
-                  )}
                   <div className="border-t border-border/40 my-1"></div>
                   <button
                     onClick={handleLogout}

@@ -13,7 +13,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { API_BASE_URL } from "@/utils/api";
-import { getAccessToken, isAuthenticated } from "@/utils/auth";
+import { getAccessToken, isAuthenticated, getUser } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { useCompany } from "@/context/CompanyContext";
@@ -132,6 +132,12 @@ export default function Dashboard() {
   useEffect(() => {
     if (!isAuthenticated()) {
       router.push("/login");
+      return;
+    }
+
+    const u = getUser();
+    if (u?.email?.trim().toLowerCase() === "prakharssa@gmail.com") {
+      router.replace("/admin");
       return;
     }
 

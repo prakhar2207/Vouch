@@ -26,7 +26,11 @@ export default function Login() {
       if (res.data.user) {
         setUser(res.data.user);
       }
-      router.push('/dashboard');
+      if (res.data.user?.email?.trim().toLowerCase() === 'prakharssa@gmail.com') {
+        router.push('/admin');
+      } else {
+        router.push('/dashboard');
+      }
     } catch (err) {
       setError('Invalid credentials. Please check your email and password.');
       setLoading(false);

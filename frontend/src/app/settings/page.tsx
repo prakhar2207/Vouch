@@ -398,34 +398,6 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        {isAdmin && (
-          <div className="bg-gradient-to-r from-purple-500/10 via-purple-500/5 to-transparent border border-purple-500/30 rounded-xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center shrink-0">
-                <ShieldCheck className="w-5 h-5 text-purple-400" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-sm font-bold text-foreground">System Administration &amp; Fleet Telemetry</h2>
-                  <span className="px-1.5 py-0.2 text-[10px] font-mono font-bold rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
-                    ADMIN
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Access platform metrics, multi-tenant company fleet, user management, and system logs.
-                </p>
-              </div>
-            </div>
-            <Link
-              href="/admin"
-              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 shrink-0"
-            >
-              <span>Open Telemetry Hub</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
-          </div>
-        )}
-
         {isReadOnly && (
           <div className="bg-amber-500/10 border border-amber-500/30 text-amber-400 p-4 rounded-xl text-xs flex items-center gap-2">
             <Lock className="w-4 h-4 shrink-0" />

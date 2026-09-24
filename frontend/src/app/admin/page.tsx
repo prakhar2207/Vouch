@@ -4,8 +4,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getAccessToken, isAuthenticated } from "@/utils/auth";
-import DashboardLayout from "@/components/DashboardLayout";
+import { getAccessToken, isAuthenticated, removeTokens } from "@/utils/auth";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/context/ToastContext";
 import {
   ShieldAlert,
@@ -31,7 +31,8 @@ import {
   Database,
   Server,
   Zap,
-  LogIn
+  LogIn,
+  LogOut
 } from "lucide-react";
 
 interface MetricsData {
@@ -114,13 +115,15 @@ export default function SuperadminPortalPage() {
         const user = meRes.data?.data;
         setCurrentUser(user);
 
-        if (user?.is_staff || user?.is_superuser || user?.role?.toUpperCase() === 'ADMIN') {
+        if (user?.email?.trim().toLowerCase() === 'prakharssa@gmail.com' && (user?.is_superuser || user?.is_staff || user?.role?.toUpperCase() === 'ADMIN')) {
           setIsAuthorized(true);
         } else {
           setIsAuthorized(false);
+          router.replace('/dashboard');
         }
       } catch (err) {
         setIsAuthorized(false);
+        router.replace('/dashboard');
       } finally {
         setLoading(false);
       }
@@ -297,27 +300,24 @@ export default function SuperadminPortalPage() {
 
   if (loading) {
     return (
-      <DashboardLayout>
-        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
-          <div className="w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-xs text-muted-foreground font-medium">Verifying superadmin credentials...</p>
-        </div>
-      </DashboardLayout>
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
+        <div className="w-8 h-8 border-3 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+        <p className="text-xs text-muted-foreground font-medium">Verifying superadmin credentials...</p>
+      </div>
     );
   }
 
   if (isAuthorized === false) {
     return (
-      <DashboardLayout>
-        <div className="max-w-md mx-auto my-16 p-8 bg-card border border-border rounded-2xl shadow-xl text-center space-y-4">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="max-w-md w-full p-8 bg-card border border-border rounded-2xl shadow-xl text-center space-y-4">
           <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center mx-auto border border-rose-500/20">
             <ShieldAlert className="w-6 h-6" />
           </div>
           <div>
             <h1 className="text-lg font-bold text-foreground">Access Restricted</h1>
             <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-              This area is reserved strictly for Vouch platform administrators and superusers.
-              Your account <span className="font-mono text-foreground">{currentUser?.email}</span> does not have staff privileges.
+              This area is reserved strictly for the platform superadmin (<span className="font-mono text-purple-400">prakharssa@gmail.com</span>).
             </p>
           </div>
           <Link
@@ -328,13 +328,57 @@ export default function SuperadminPortalPage() {
             <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
-      </DashboardLayout>
+      </div>
     );
   }
 
+  const handleLogout = () => {
+    removeTokens();
+    router.push('/login');
+  };
+
   return (
-    <DashboardLayout>
-      <div className="max-w-7xl mx-auto space-y-6 pb-20">
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      {/* Superadmin Header */}
+      <header className="sticky top-0 z-40 w-full border-b border-border/60 bg-background/95 backdrop-blur-md">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="inline-flex items-center gap-2">
+              <span className="text-xl font-black tracking-tight bg-gradient-to-r from-purple-600 via-indigo-600 to-violet-600 bg-clip-text text-transparent">
+                Vouch
+              </span>
+              <span className="px-2 py-0.5 text-[10px] font-mono font-bold text-purple-400 bg-purple-500/10 border border-purple-500/30 rounded-md">
+                SUPERADMIN
+              </span>
+            </div>
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground border-l border-border/60 pl-3 font-medium">
+              <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
+              <span>Platform Command Center</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-purple-500/30 bg-purple-500/10 text-xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="font-mono text-purple-300 font-semibold truncate max-w-[180px] sm:max-w-[240px]">
+                {currentUser?.email || "prakharssa@gmail.com"}
+              </span>
+            </div>
+            <ThemeToggle />
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition-colors cursor-pointer"
+              title="Sign Out"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Logout</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Command Center Body */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 flex-1 w-full">
         {/* Top Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-border pb-5">
           <div className="space-y-1">
@@ -977,7 +1021,7 @@ export default function SuperadminPortalPage() {
             </div>
           </div>
         )}
-      </div>
-    </DashboardLayout>
+      </main>
+    </div>
   );
 }
