@@ -537,6 +537,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         <div className="text-xs text-muted-foreground">Supplier e-invoices</div>
                       </div>
                     </Link>
+                    <Link
+                      href="/admin"
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                      onClick={() => setIsMoreDropdownOpen(false)}
+                    >
+                      <div>
+                        <div className="font-medium flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-bold">
+                          <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
+                          <span>Superadmin Portal</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground">Fleet &amp; tenant telemetry</div>
+                      </div>
+                    </Link>
                   </div>
                 )}
               </div>
@@ -736,6 +749,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <Sparkles className="w-3.5 h-3.5 text-blue-400" />
                     <span>Guided Tour</span>
                   </button>
+                  <Link
+                    href="/admin"
+                    onClick={() => setIsUserMenuOpen(false)}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-amber-600 dark:text-amber-400 font-semibold hover:bg-amber-500/10 transition-colors"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Superadmin Portal</span>
+                  </Link>
                   <div className="border-t border-border/40 my-1"></div>
                   <button
                     onClick={handleLogout}

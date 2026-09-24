@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     'apps.analytics',
     'apps.audit',
     'apps.documents',
+    'apps.superadmin',
 ]
 
 AUTH_USER_MODEL = 'accounts.User'
