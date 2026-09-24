@@ -536,10 +536,9 @@ class ParsePriceListPdfAPIView(APIView):
             if not company:
                 return Response({"success": False, "error": "Company not found."}, status=404)
 
-            if not request.user.is_superuser:
-                has_access = company.users.filter(user=request.user).exists()
-                if not has_access:
-                    return Response({"success": False, "error": "Unauthorized access to this company."}, status=403)
+            has_access = company.users.filter(user=request.user).exists()
+            if not has_access:
+                return Response({"success": False, "error": "Unauthorized access to this company."}, status=403)
 
             custom_api_key = request.headers.get('X-Gemini-Key') or request.data.get('gemini_api_key')
             filename = request.data.get('filename', '')

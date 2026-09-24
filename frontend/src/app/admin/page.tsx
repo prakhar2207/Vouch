@@ -241,25 +241,6 @@ export default function SuperadminPortalPage() {
     }
   };
 
-  // Actions: Impersonate / Switch Workspace
-  const handleImpersonateCompany = async (compId: string) => {
-    setActionLoading(`impersonate-${compId}`);
-    try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.post(`${API_BASE_URL}/api/v1/superadmin/companies/${compId}/impersonate/`, {}, { headers });
-      if (res.data?.success && res.data.company) {
-        localStorage.setItem("vouch_active_company_id", res.data.company.id);
-        toast.success("Workspace Switched", `Switched to ${res.data.company.name}`);
-        router.push("/dashboard");
-      }
-    } catch (err: any) {
-      toast.error("Switch Failed", err.response?.data?.error || err.message);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
   // Actions: Toggle User Staff
   const handleToggleUserStaff = async (userId: string) => {
     setActionLoading(`user-staff-${userId}`);
@@ -421,14 +402,6 @@ export default function SuperadminPortalPage() {
               <span>Django Admin (/admin/)</span>
               <ExternalLink className="w-3 h-3 text-muted-foreground ml-0.5" />
             </a>
-
-            <Link
-              href="/dashboard"
-              className="px-3.5 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-            >
-              <span>Back to ERP</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
           </div>
         </div>
 
@@ -662,18 +635,6 @@ export default function SuperadminPortalPage() {
                           </td>
                           <td className="p-3.5 text-right whitespace-nowrap">
                             <div className="flex items-center justify-end gap-1.5">
-                              {/* Impersonate Button */}
-                              <button
-                                type="button"
-                                onClick={() => handleImpersonateCompany(c.id)}
-                                disabled={actionLoading === `impersonate-${c.id}`}
-                                className="px-2.5 py-1 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                                title="Open this company's workspace directly"
-                              >
-                                <LogIn className="w-3 h-3" />
-                                <span>Switch In</span>
-                              </button>
-
                               {/* Toggle Active Button */}
                               <button
                                 type="button"

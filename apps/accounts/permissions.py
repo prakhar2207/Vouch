@@ -37,9 +37,6 @@ def get_authorized_company(request, company_id=None):
     if not company:
         raise NotFound(f"Company with ID '{target_id}' not found.")
 
-    if getattr(request.user, 'is_superuser', False):
-        return company
-
     if not UserCompany.objects.filter(user=request.user, company=company).exists():
         raise PermissionDenied("Access denied: You are not authorized to view or modify this company's books.")
 
@@ -48,13 +45,9 @@ def get_authorized_company(request, company_id=None):
 def get_user_company_role(user, company):
     """
     Returns the user's role in the specified company.
-    Superusers and users with role ADMIN automatically receive ADMIN privileges.
+    Requires explicit membership via UserCompany.
     """
-    if not user or not user.is_authenticated:
-        return None
-    if getattr(user, 'is_superuser', False) or getattr(user, 'role', '') == 'ADMIN':
-        return 'ADMIN'
-    if not company:
+    if not user or not user.is_authenticated or not company:
         return None
     
     uc = UserCompany.objects.filter(user=user, company=company).first()
@@ -63,13 +56,13 @@ def get_user_company_role(user, company):
 def user_has_company_roles(user, company, allowed_roles):
     """
     Checks if user has one of allowed_roles for the given company.
-    Superusers and users with ADMIN role possess universal administrative rights.
+    Requires explicit membership via UserCompany.
     """
-    if not user or not user.is_authenticated:
+    if not user or not user.is_authenticated or not company:
         return False
-    if getattr(user, 'is_superuser', False) or getattr(user, 'role', '') == 'ADMIN':
-        return True
     role = get_user_company_role(user, company)
+    if not role:
+        return False
     if role == 'ADMIN':
         return True
     if 'OWNER' in allowed_roles and role in ['ADMIN', 'OWNER']:
@@ -145,8 +138,6 @@ class BaseCompanyPermission(BasePermission):
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        if getattr(request.user, 'is_superuser', False):
-            return True
         company = self.resolve_company(request, view)
         if not company:
             # If company cannot be resolved at view-level, allow check to proceed to object level or view queryset filter
@@ -156,8 +147,6 @@ class BaseCompanyPermission(BasePermission):
     def has_object_permission(self, request, view, obj):
         if not request.user or not request.user.is_authenticated:
             return False
-        if getattr(request.user, 'is_superuser', False):
-            return True
         company = getattr(obj, 'company', None)
         if company is None and hasattr(obj, 'company_id'):
             from apps.companies.models import Company

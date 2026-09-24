@@ -368,29 +368,13 @@ class SuperadminAuditLogsView(APIView):
 
 class SuperadminImpersonateCompanyView(APIView):
     """
-    Authorizes a superadmin to seamlessly switch their active session into a tenant company.
+    Impersonation disabled to strictly protect tenant business privacy and data isolation.
     """
     permission_classes = [IsSuperAdminOrStaff]
 
     def post(self, request, pk):
-        company = Company.objects.filter(id=pk).first()
-        if not company:
-            return Response({"error": "Company not found"}, status=404)
-
-        # Ensure superuser has at least a membership record so tenant middleware allows queries
-        uc, _ = UserCompany.objects.get_or_create(
-            user=request.user,
-            company=company,
-            defaults={'role': 'OWNER'}
+        return Response(
+            {"error": "Access denied: Platform administrators are isolated from customer business data and cannot impersonate tenant companies."},
+            status=status.HTTP_403_FORBIDDEN
         )
 
-        return Response({
-            "success": True,
-            "message": f"Switched context to '{company.name}'.",
-            "company": {
-                "id": str(company.id),
-                "name": company.name,
-                "gstin": company.gstin or "",
-                "role": uc.role
-            }
-        })
