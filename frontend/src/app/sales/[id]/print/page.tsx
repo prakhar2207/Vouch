@@ -1279,20 +1279,20 @@ export default function PrintInvoicePage() {
                 </div>
 
                 {/* Party Grid */}
-                <div className="grid grid-cols-2 border-b-2 border-black text-sm min-h-32">
+                <div className="grid grid-cols-2 border-b-2 border-black text-sm">
                     <div className="p-2 border-r-2 border-black flex flex-col">
                         <span className="italic mb-1">Billed to :</span>
                         <strong className="text-base">{invoice.party.name}</strong>
-                        <span className="whitespace-pre-wrap">{invoice.party.address}</span>
-                        <div className="mt-auto pt-2">
+                        {invoice.party.address && <span className="whitespace-pre-wrap">{invoice.party.address}</span>}
+                        <div className="mt-2 pt-1">
                             GSTIN / UIN <span className="ml-4 font-bold">: {invoice.party.gstin || 'Unregistered'}</span>
                         </div>
                     </div>
                     <div className="p-2 flex flex-col">
                         <span className="italic mb-1">Shipped to :</span>
                         <strong className="text-base">{invoice.party.name}</strong>
-                        <span className="whitespace-pre-wrap">{invoice.party.address}</span>
-                        <div className="mt-auto pt-2">
+                        {invoice.party.address && <span className="whitespace-pre-wrap">{invoice.party.address}</span>}
+                        <div className="mt-2 pt-1">
                             GSTIN / UIN <span className="ml-4 font-bold">: {invoice.party.gstin || 'Unregistered'}</span>
                         </div>
                     </div>
@@ -1315,7 +1315,7 @@ export default function PrintInvoicePage() {
                         </thead>
                         <tbody>
                             {invoice.items.map((item: any, idx: number) => (
-                                <tr key={idx} className="align-top">
+                                <tr key={idx} className="align-top border-b border-black">
                                     <td className="border-r border-black text-center py-2 px-1">{idx + 1}</td>
                                     <td className="border-r border-black text-left py-2 pl-2 font-medium">{item.product_name}</td>
                                     <td className="border-r border-black text-center py-2 px-1 whitespace-nowrap">{item.hsn_code}</td>

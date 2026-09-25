@@ -223,54 +223,40 @@ class InvoicePDFRenderer:
         clean_addr = raw_addr.replace('\r\n', '\n').replace('\n', '<br/>').strip()
         buyer_gstin = buyer.get('gstin', 'Unregistered')
 
-        billed_to = [
+        billed_elements = [
             Paragraph("<i>Billed to :</i>", s_party_title),
             Paragraph(f"<b>{buyer_name}</b>", s_party_name),
-            Paragraph(clean_addr, s_party_addr),
         ]
-        billed_gstin = Paragraph(f"GSTIN / UIN &nbsp;&nbsp;: <b>{buyer_gstin}</b>", s_party_gstin)
+        if clean_addr:
+            billed_elements.append(Paragraph(clean_addr, s_party_addr))
 
-        shipped_to = [
+        shipped_elements = [
             Paragraph("<i>Shipped to :</i>", s_party_title),
             Paragraph(f"<b>{buyer_name}</b>", s_party_name),
-            Paragraph(clean_addr, s_party_addr),
         ]
+        if clean_addr:
+            shipped_elements.append(Paragraph(clean_addr, s_party_addr))
+
+        billed_gstin = Paragraph(f"GSTIN / UIN &nbsp;&nbsp;: <b>{buyer_gstin}</b>", s_party_gstin)
         shipped_gstin = Paragraph(f"GSTIN / UIN &nbsp;&nbsp;: <b>{buyer_gstin}</b>", s_party_gstin)
 
-        left_party_tbl = Table([
-            [billed_to],
-            [billed_gstin]
-        ], colWidths=[277.4], rowHeights=[135.0, 25.5])
-        left_party_tbl.setStyle(TableStyle([
-            ('PADDING', (0, 0), (-1, -1), 0),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (0, 0), 4),
-            ('BOTTOMPADDING', (0, 1), (0, 1), 4),
-            ('VALIGN', (0, 0), (0, 0), 'TOP'),
-            ('VALIGN', (0, 1), (0, 1), 'BOTTOM'),
-        ]))
-
-        right_party_tbl = Table([
-            [shipped_to],
-            [shipped_gstin]
-        ], colWidths=[280.6], rowHeights=[135.0, 25.5])
-        right_party_tbl.setStyle(TableStyle([
-            ('PADDING', (0, 0), (-1, -1), 0),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (0, 0), 4),
-            ('BOTTOMPADDING', (0, 1), (0, 1), 4),
-            ('VALIGN', (0, 0), (0, 0), 'TOP'),
-            ('VALIGN', (0, 1), (0, 1), 'BOTTOM'),
-        ]))
-
-        party_table = Table([[left_party_tbl, right_party_tbl]], colWidths=[277.4, 280.6])
+        # Dynamic 2-row party table: Row 0 has Billed/Shipped Details; Row 1 has GSTIN/UIN
+        party_table = Table([
+            [billed_elements, shipped_elements],
+            [billed_gstin, shipped_gstin]
+        ], colWidths=[277.4, 280.6])
         party_table.setStyle(TableStyle([
             ('LINEAFTER', (0, 0), (0, -1), 1.5, colors.black),
             ('LINEBELOW', (0, -1), (-1, -1), 1.5, colors.black),
             ('PADDING', (0, 0), (-1, -1), 0),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, 0), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 4),
+            ('TOPPADDING', (0, 1), (-1, 1), 2),
+            ('BOTTOMPADDING', (0, 1), (-1, 1), 4),
+            ('VALIGN', (0, 0), (-1, 0), 'TOP'),
+            ('VALIGN', (0, 1), (-1, 1), 'MIDDLE'),
         ]))
 
         # ================= 4. ITEMS TABLE =================
@@ -447,9 +433,11 @@ class InvoicePDFRenderer:
             ('BOTTOMPADDING', (0, 0), (-1, 0), 3),
         ]
 
+        # Item rows: vertical lines after each column AND horizontal line below each item!
         for r in range(1, num_item_rows + 1):
             it_style.extend([
                 ('LINEAFTER', (0, r), (-2, r), 0.8, colors.black),
+                ('LINEBELOW', (0, r), (-1, r), 0.8, colors.black),
                 ('TOPPADDING', (0, r), (-1, r), 4),
                 ('BOTTOMPADDING', (0, r), (-1, r), 4),
                 ('LEFTPADDING', (1, r), (1, r), 6),
@@ -458,7 +446,12 @@ class InvoicePDFRenderer:
                 ('RIGHTPADDING', (5, r), (5, r), 4),
             ])
 
-        it_style.append(('LINEBELOW', (0, num_item_rows if filler_idx < 0 else filler_idx), (-1, num_item_rows if filler_idx < 0 else filler_idx), 0.8, colors.black))
+        # If filler row exists: vertical lines continuing through filler space, plus bottom line!
+        if filler_idx > 0:
+            it_style.extend([
+                ('LINEAFTER', (0, filler_idx), (-2, filler_idx), 0.8, colors.black),
+                ('LINEBELOW', (0, filler_idx), (-1, filler_idx), 0.8, colors.black),
+            ])
 
         for r in range(subtotal_idx, grand_total_idx):
             it_style.extend([
