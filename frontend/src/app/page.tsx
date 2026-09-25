@@ -20,6 +20,7 @@ import {
 import { isAuthenticated } from "@/utils/auth";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useShortcuts } from "@/context/ShortcutContext";
+import { VouchLogo } from "@/components/VouchLogo";
 
 export default function LandingPage() {
   const [isAuth, setIsAuth] = useState(false);
@@ -35,10 +36,8 @@ export default function LandingPage() {
       <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-background/80 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-6">
-            <Link href="/" className="flex items-center gap-2">
-              <span className="text-2xl font-black tracking-tight text-blue-600 dark:text-blue-500">
-                Vouch
-              </span>
+            <Link href="/" className="flex items-center gap-2.5">
+              <VouchLogo size={28} showWordmark={true} />
               <span className="px-2 py-0.5 text-[10px] font-mono bg-blue-600/10 text-blue-500 rounded border border-blue-500/20 font-bold">
                 Cloud Core
               </span>
@@ -417,8 +416,8 @@ export default function LandingPage() {
       {/* Comprehensive Footer */}
       <footer className="border-t border-border bg-card dark:bg-zinc-950 py-12 text-xs text-gray-600 dark:text-gray-400">
         <div className="max-w-7xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
-          <div className="space-y-2">
-            <div className="text-sm font-bold text-foreground">Vouch</div>
+          <div className="space-y-3">
+            <VouchLogo size={24} showWordmark={true} />
             <p className="text-xs text-gray-600 dark:text-gray-500 leading-relaxed">
               Keyboard-first double-entry accounting and AI accounts payable platform for modern businesses.
             </p>

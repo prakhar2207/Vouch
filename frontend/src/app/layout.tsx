@@ -36,6 +36,11 @@ export const metadata: Metadata = {
   title: "Vouch - Double-Entry Accounting & AI ERP",
   description: "Keyboard-first cloud ERP and accounting platform with automated GST compliance and AI bill extraction.",
   manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+    apple: "/icons/apple-touch-icon.png",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",

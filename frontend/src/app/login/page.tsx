@@ -7,6 +7,7 @@ import { setTokens, setUser } from '@/utils/auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Eye, EyeOff, LogIn, AlertCircle } from 'lucide-react';
+import { VouchLogo } from '@/components/VouchLogo';
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -51,9 +52,7 @@ export default function Login() {
         {/* Branding */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 mb-4">
-            <span className="text-3xl font-black tracking-tight bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 bg-clip-text text-transparent">
-              Vouch
-            </span>
+            <VouchLogo size={36} showWordmark={true} />
             <span className="px-2 py-0.5 text-xs font-mono font-semibold text-muted-foreground bg-muted border border-border rounded-md">
               CORE
             </span>

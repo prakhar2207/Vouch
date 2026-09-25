@@ -6,6 +6,7 @@ import { useHotkeys } from "react-hotkeys-hook";
 import { ThemeToggle } from "./ThemeToggle";
 import { removeTokens } from "@/utils/auth";
 import CommandPalette from "./CommandPalette";
+import { VouchLogo } from "./VouchLogo";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { useFinancialYear } from "@/context/FinancialYearContext";
 import { useAccountingPeriod } from "@/context/PeriodContext";
@@ -166,11 +167,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div id="tour-header-brand" className="flex items-center gap-1.5 shrink-0">
               <Link
                 href="/dashboard"
-                className="text-xl font-black tracking-tight text-foreground hover:opacity-90 flex items-center gap-1.5 shrink-0"
+                className="hover:opacity-90 flex items-center gap-1.5 shrink-0"
               >
-                <span className="bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 bg-clip-text text-transparent">
-                  Vouch
-                </span>
+                <VouchLogo size={24} showWordmark={true} />
               </Link>
             </div>
 
@@ -810,9 +809,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <aside className="relative w-72 max-w-[80vw] bg-card/95 backdrop-blur-xl border-r border-border/40 h-full flex flex-col p-5 shadow-2xl z-10 animate-in slide-in-from-left duration-200">
             <div className="flex items-center justify-between pb-4 border-b border-border">
               <div className="flex items-center gap-2">
-                <span className="text-xl font-black bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                  Vouch
-                </span>
+                <VouchLogo size={24} showWordmark={true} />
               </div>
               <button
                 onClick={() => setIsMobileNavOpen(false)}
