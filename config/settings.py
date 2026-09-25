@@ -189,18 +189,21 @@ from corsheaders.defaults import default_headers, default_methods
 
 # Cross-Origin Resource Sharing (CORS) & CSRF
 CORS_ALLOW_ALL_ORIGINS = env.bool('CORS_ALLOW_ALL_ORIGINS', default=DEBUG)
+CORS_ALLOW_CREDENTIALS = True
+
+# Allow official production domain, local dev ports, and legitimate Vouch branch preview subdomains
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^https://.*\.vercel\.app$",
-    r"^https://.*\.onrender\.com$",
+    r"^https://vouch-[a-zA-Z0-9-]+\.vercel\.app$",
+    r"^https://vouch-pi-one-[a-zA-Z0-9-]+\.vercel\.app$",
     r"^http://localhost:[0-9]+$",
     r"^http://127\.0\.0\.1:[0-9]+$",
 ]
 
-CORS_ALLOW_CREDENTIALS = True
-
 # Parse and normalize CORS origins (strip whitespace and trailing slashes)
 _raw_cors_origins = env.list('CORS_ALLOWED_ORIGINS', default=[
     'https://vouch-pi-one.vercel.app',
+    'https://vouchapp.in',
+    'https://www.vouchapp.in',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
 ])
@@ -232,14 +235,39 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 CORS_EXPOSE_HEADERS = ['*']
 
 CSRF_TRUSTED_ORIGINS = [
-    'https://*.vercel.app',
-    'https://*.onrender.com',
     'https://vouch-pi-one.vercel.app',
+    'https://vouch-api-752s.onrender.com',
+    'https://vouchapp.in',
+    'https://www.vouchapp.in',
     'http://localhost:3000',
     'http://localhost:8000',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:8000',
 ]
+render_hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if render_hostname and f'https://{render_hostname}' not in CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS.append(f'https://{render_hostname}')
+
+# Security & Reverse Proxy Settings (Production Hardening)
+if not DEBUG:
+    # Render / reverse proxy HTTPS termination header
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    
+    # Secure Cookies over HTTPS
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    
+    # HTTP Security Headers
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
+    
+    # HTTP Strict Transport Security (HSTS)
+    SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=31536000)  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+else:
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
 
 # Upload limits (50 MB) to prevent RequestDataTooBig on manufacturer price lists and high-res bills
 DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800
