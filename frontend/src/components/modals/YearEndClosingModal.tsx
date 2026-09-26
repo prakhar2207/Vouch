@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
@@ -77,27 +77,27 @@ export default function YearEndClosingModal() {
   if (!isClosingModalOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-muted/50 border border-border rounded-2xl max-w-xl w-full p-6 shadow-2xl relative animate-in fade-in zoom-in-95">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-card border border-border/80 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative animate-in fade-in zoom-in-95">
         
         {/* Close Button */}
         <button
           onClick={() => setIsClosingModalOpen(false)}
-          className="absolute top-4 right-4 text-zinc-400 hover:text-foreground p-1 rounded-lg hover:bg-muted transition-colors"
+          className="absolute top-4 right-4 text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted/70 transition-colors cursor-pointer"
         >
           <X className="w-5 h-5" />
         </button>
 
         {/* Modal Header */}
         <div className="flex items-center gap-3 mb-5">
-          <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center">
             <Lock className="w-5 h-5" />
           </div>
           <div>
             <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
               Financial Year-End Close & Roll-Forward
             </h2>
-            <p className="text-xs text-zinc-400">
+            <p className="text-xs text-muted-foreground">
               Period Closing for <span className="font-semibold text-foreground">{activeFY?.name}</span> ({activeFY?.start_date} to {activeFY?.end_date})
             </p>
           </div>
@@ -106,29 +106,29 @@ export default function YearEndClosingModal() {
         {/* Result Screen after closing */}
         {closeResult ? (
           <div className="space-y-4">
-            <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-sm flex items-start gap-3">
+            <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-600 dark:text-emerald-400 text-sm flex items-start gap-3">
               <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
               <div>
                 <div className="font-bold">{closeResult.message}</div>
-                <div className="text-xs text-emerald-500/80 mt-1">
+                <div className="text-xs text-emerald-600/80 dark:text-emerald-400/80 mt-1">
                   Closed Period: {closeResult.closed_financial_year} · Active Target: {closeResult.next_financial_year}
                 </div>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 bg-zinc-950 rounded-xl border border-border">
-                <div className="text-xs text-zinc-400">Real & Personal Accounts Carried</div>
+              <div className="p-3 bg-muted/40 rounded-xl border border-border/60">
+                <div className="text-xs text-muted-foreground">Real & Personal Accounts Carried</div>
                 <div className="text-xl font-mono font-bold text-foreground mt-1">
                   {closeResult.carried_accounts_count} Accounts
                 </div>
               </div>
-              <div className="p-3 bg-zinc-950 rounded-xl border border-border">
-                <div className="text-xs text-zinc-400">
+              <div className="p-3 bg-muted/40 rounded-xl border border-border/60">
+                <div className="text-xs text-muted-foreground">
                   {closeResult.profit_loss_type === "PROFIT" ? "Net Profit Credited to Equity" : "Net Loss Debited to Equity"}
                 </div>
                 <div className={`text-xl font-mono font-bold mt-1 flex items-center gap-1 ${
-                  closeResult.profit_loss_type === "PROFIT" ? "text-emerald-400" : "text-rose-400"
+                  closeResult.profit_loss_type === "PROFIT" ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
                 }`}>
                   {closeResult.profit_loss_type === "PROFIT" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
                   ₹{Number(closeResult.net_profit_loss).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
@@ -138,7 +138,7 @@ export default function YearEndClosingModal() {
 
             <button
               onClick={() => setIsClosingModalOpen(false)}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-foreground rounded-xl font-bold text-sm transition-colors cursor-pointer"
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-sm shadow-md shadow-blue-600/20 transition-all cursor-pointer"
             >
               Done
             </button>
@@ -147,14 +147,14 @@ export default function YearEndClosingModal() {
           /* Pre-Closing Audit & Confirmation */
           <div className="space-y-4">
             {error && (
-              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-xs flex items-center gap-2">
+              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-500 dark:text-rose-400 text-xs flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
                 <span>{error}</span>
               </div>
             )}
 
             {loadingAudit ? (
-              <div className="py-8 text-center text-zinc-400 text-sm">
+              <div className="py-8 text-center text-muted-foreground text-sm">
                 <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
                 Running pre-closing audit verification...
               </div>
@@ -165,18 +165,18 @@ export default function YearEndClosingModal() {
                   {/* Item 1: Unposted Vouchers */}
                   <div className={`p-3 rounded-xl border flex items-center justify-between text-xs ${
                     auditData.unposted_vouchers_count === 0
-                      ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-300"
-                      : "bg-rose-500/10 border-rose-500/30 text-rose-300"
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                      : "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400"
                   }`}>
                     <div className="flex items-center gap-2.5">
                       {auditData.unposted_vouchers_count === 0 ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       ) : (
-                        <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                        <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
                       )}
                       <div>
                         <div className="font-bold">Draft / Unposted Vouchers Check</div>
-                        <div className="text-[11px] text-zinc-400">
+                        <div className="text-[11px] text-muted-foreground">
                           {auditData.unposted_vouchers_count === 0
                             ? "All vouchers are posted. Zero pending drafts."
                             : `${auditData.unposted_vouchers_count} unposted vouchers found. Must post or delete before closing.`}
@@ -191,18 +191,18 @@ export default function YearEndClosingModal() {
                   {/* Item 2: Trial Balance Equilibrium */}
                   <div className={`p-3 rounded-xl border flex items-center justify-between text-xs ${
                     auditData.is_trial_balance_balanced
-                      ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-300"
-                      : "bg-rose-500/10 border-rose-500/30 text-rose-300"
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                      : "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400"
                   }`}>
                     <div className="flex items-center gap-2.5">
                       {auditData.is_trial_balance_balanced ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       ) : (
-                        <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                        <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
                       )}
                       <div>
                         <div className="font-bold">Trial Balance Equilibrium Check</div>
-                        <div className="text-[11px] text-zinc-400">
+                        <div className="text-[11px] text-muted-foreground">
                           Total Dr: ₹{Number(auditData.total_debits).toLocaleString("en-IN", { minimumFractionDigits: 2 })} · Total Cr: ₹{Number(auditData.total_credits).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </div>
                       </div>
@@ -213,17 +213,17 @@ export default function YearEndClosingModal() {
                   </div>
 
                   {/* Item 3: Roll-Forward Target Preview */}
-                  <div className="p-3 bg-zinc-950 rounded-xl border border-border flex items-center justify-between text-xs">
+                  <div className="p-3 bg-muted/40 rounded-xl border border-border/60 flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2.5">
-                      <Sparkles className="w-4 h-4 text-blue-400 shrink-0" />
+                      <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
                       <div>
                         <div className="font-bold text-foreground">Target New Financial Year</div>
-                        <div className="text-[11px] text-zinc-400">
+                        <div className="text-[11px] text-muted-foreground">
                           Asset, Liability & Party closing balances will become new opening balances
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 font-mono text-blue-400 font-bold bg-blue-500/10 px-2.5 py-1 rounded-lg border border-blue-500/20">
+                    <div className="flex items-center gap-1.5 font-mono text-blue-600 dark:text-blue-400 font-bold bg-blue-500/10 px-2.5 py-1 rounded-lg border border-blue-500/20">
                       <span>{activeFY?.code}</span>
                       <ArrowRight className="w-3 h-3" />
                       <span>Next FY</span>
@@ -232,8 +232,8 @@ export default function YearEndClosingModal() {
                 </div>
 
                 {/* Information Callout */}
-                <div className="p-3 bg-zinc-950/80 rounded-xl border border-border/80 text-[11px] text-zinc-400 space-y-1">
-                  <div className="font-semibold text-zinc-300">Accounting Rules Applied:</div>
+                <div className="p-3 bg-muted/30 rounded-xl border border-border/60 text-[11px] text-muted-foreground space-y-1">
+                  <div className="font-semibold text-foreground">Accounting Rules Applied:</div>
                   <ul className="list-disc pl-4 space-y-0.5">
                     <li>Balance sheet accounts (Cash, Bank, Debtors, Creditors) roll forward intact.</li>
                     <li>Nominal P&L accounts (Sales, Purchases, Expenses) reset to ₹0.00.</li>
@@ -247,7 +247,7 @@ export default function YearEndClosingModal() {
                   <button
                     type="button"
                     onClick={() => setIsClosingModalOpen(false)}
-                    className="flex-1 py-2.5 bg-muted hover:bg-zinc-700 text-zinc-300 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                    className="flex-1 py-2.5 bg-muted hover:bg-muted/80 text-foreground border border-border/60 rounded-xl font-bold text-xs transition-colors cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -257,8 +257,8 @@ export default function YearEndClosingModal() {
                     disabled={!auditData.can_close || closing}
                     className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer ${
                       auditData.can_close && !closing
-                        ? "bg-amber-600 hover:bg-amber-500 text-foreground shadow-lg shadow-amber-600/20"
-                        : "bg-muted text-zinc-500 cursor-not-allowed opacity-60"
+                        ? "bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-600/20"
+                        : "bg-muted text-muted-foreground border border-border/60 cursor-not-allowed opacity-60"
                     }`}
                   >
                     {closing ? (

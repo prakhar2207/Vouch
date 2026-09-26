@@ -1569,7 +1569,7 @@ export default function CategoryDetailPage() {
           title="Delete Item"
           description={
             <>
-              Are you sure you want to delete <span className="text-white font-semibold">{deleteConfirmParams?.name}</span>? 
+              Are you sure you want to delete <span className="text-foreground font-semibold">{deleteConfirmParams?.name}</span>? 
               This action cannot be undone.
             </>
           }
@@ -1586,7 +1586,7 @@ export default function CategoryDetailPage() {
           title="Combine Duplicate Inventory Items?"
           description={
             <span>
-              This will scan your inventory, combine all duplicate sizes with hyphens or spaces (e.g. <strong className="text-white">A-31</strong> & <strong className="text-white">A 31</strong> into <strong className="text-emerald-400">A 31</strong>, <strong className="text-white">B92</strong> into <strong className="text-emerald-400">B 92</strong>), sum their stock quantities, re-link all purchase & sales vouchers, and ensure the green <strong className="text-emerald-400">Invoice</strong> tag is preserved on items uploaded from invoices.
+              This will scan your inventory, combine all duplicate sizes with hyphens or spaces (e.g. <strong className="text-foreground">A-31</strong> & <strong className="text-foreground">A 31</strong> into <strong className="text-emerald-600 dark:text-emerald-400">A 31</strong>, <strong className="text-foreground">B92</strong> into <strong className="text-emerald-600 dark:text-emerald-400">B 92</strong>), sum their stock quantities, re-link all purchase & sales vouchers, and ensure the green <strong className="text-emerald-600 dark:text-emerald-400">Invoice</strong> tag is preserved on items uploaded from invoices.
             </span>
           }
           confirmText={isMerging ? "Combining..." : "Combine & Clean Items"}

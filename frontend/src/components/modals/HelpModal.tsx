@@ -117,15 +117,15 @@ export default function HelpModal() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-in fade-in duration-200 p-4">
-      <div className="w-full max-w-3xl bg-muted/50 border border-input rounded-2xl shadow-2xl overflow-hidden flex flex-col text-foreground max-h-[85vh]">
+      <div className="w-full max-w-3xl bg-card border border-border/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-foreground max-h-[85vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-zinc-950">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border/60 bg-muted/20">
           <div className="flex items-center gap-3">
-            <span className="px-2.5 py-1 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-md text-xs font-mono font-bold">
+            <span className="px-2.5 py-1 bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/25 rounded-md text-xs font-mono font-bold">
               F1
             </span>
             <div>
-              <h3 className="text-xl font-bold text-foreground">User Guide & Shortcuts Hub</h3>
+              <h3 className="text-lg font-bold text-foreground">User Guide & Shortcuts Hub</h3>
               <p className="text-xs text-muted-foreground">Everything you need to master your accounting system</p>
             </div>
           </div>
@@ -135,13 +135,13 @@ export default function HelpModal() {
                 setIsHelpOpen(false);
                 startTour();
               }}
-              className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-foreground rounded-lg text-xs font-bold shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-500/20 transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <span>🚀 Start Interactive Tour</span>
             </button>
             <button
               onClick={() => setIsHelpOpen(false)}
-              className="text-muted-foreground hover:text-foreground text-sm font-bold px-2 py-1 cursor-pointer"
+              className="text-muted-foreground hover:text-foreground text-sm font-bold p-1.5 rounded-lg hover:bg-muted/70 transition-colors cursor-pointer"
             >
               ✕
             </button>
@@ -149,12 +149,12 @@ export default function HelpModal() {
         </div>
 
         {/* Tab Switcher */}
-        <div className="flex border-b border-border bg-zinc-950/60 px-6 pt-2">
+        <div className="flex border-b border-border/60 bg-muted/10 px-6 pt-2 gap-2">
           <button
             onClick={() => setTab("SHORTCUTS")}
             className={`px-4 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer ${
               tab === "SHORTCUTS"
-                ? "border-blue-500 text-blue-400"
+                ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -164,7 +164,7 @@ export default function HelpModal() {
             onClick={() => setTab("GUIDE")}
             className={`px-4 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer ${
               tab === "GUIDE"
-                ? "border-blue-500 text-blue-400"
+                ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -173,12 +173,12 @@ export default function HelpModal() {
         </div>
 
         {/* Content Body */}
-        <div className="p-6 overflow-y-auto space-y-6 flex-1">
+        <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-background/50">
           {tab === "SHORTCUTS" && (
             <div className="space-y-6">
               {categories.map((cat, idx) => (
                 <div key={idx} className="space-y-3">
-                  <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider border-b border-border pb-1">
+                  <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider border-b border-border/60 pb-1.5">
                     {cat.title}
                   </h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -187,22 +187,22 @@ export default function HelpModal() {
                         key={sIdx}
                         className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
                           sc.active
-                            ? "bg-blue-950/30 border-blue-500/40 shadow-sm"
-                            : "bg-zinc-950/60 border-border"
+                            ? "bg-primary/10 border-primary/30 shadow-xs"
+                            : "bg-card hover:bg-muted/40 border-border/70 shadow-2xs"
                         }`}
                       >
                         <div className="space-y-0.5">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-bold text-gray-100">{sc.label}</span>
+                            <span className="text-sm font-semibold text-foreground">{sc.label}</span>
                             {sc.active && (
-                              <span className="px-1.5 py-0.2 bg-blue-500/20 text-blue-300 text-[10px] rounded font-semibold">
+                              <span className="px-1.5 py-0.2 bg-blue-500/20 text-blue-600 dark:text-blue-400 text-[10px] rounded font-semibold">
                                 On This Page
                               </span>
                             )}
                           </div>
                           <div className="text-xs text-muted-foreground">{sc.desc}</div>
                         </div>
-                        <kbd className="px-2.5 py-1 bg-muted border border-input text-foreground font-mono text-xs rounded-md shadow-inner whitespace-nowrap">
+                        <kbd className="px-2.5 py-1 bg-muted border border-border/80 text-foreground font-mono text-xs font-bold rounded-lg shadow-2xs whitespace-nowrap">
                           {sc.key}
                         </kbd>
                       </div>
@@ -215,24 +215,24 @@ export default function HelpModal() {
 
           {tab === "GUIDE" && (
             <div className="space-y-4">
-              <div className="p-3 bg-blue-950/30 border border-blue-500/30 rounded-xl text-xs text-blue-300 flex items-center justify-between">
+              <div className="p-3.5 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs text-blue-600 dark:text-blue-400 font-medium flex items-center justify-between">
                 <span>💡 Click on any tutorial below to learn how to use that feature quickly.</span>
               </div>
 
               {tutorials.map((item) => (
                 <div
                   key={item.id}
-                  className="bg-zinc-950 border border-border rounded-xl overflow-hidden shadow-sm"
+                  className="bg-card border border-border/70 rounded-xl overflow-hidden shadow-2xs transition-colors"
                 >
                   <button
                     onClick={() => setExpandedTopic(expandedTopic === item.id ? "" : item.id)}
-                    className="w-full text-left p-4 font-bold text-sm text-foreground hover:text-foreground flex items-center justify-between transition-colors cursor-pointer"
+                    className="w-full text-left p-4 font-semibold text-sm text-foreground hover:bg-muted/40 flex items-center justify-between transition-colors cursor-pointer"
                   >
                     <span>{item.title}</span>
                     <span className="text-muted-foreground text-xs">{expandedTopic === item.id ? "▲ Collapse" : "▼ Read"}</span>
                   </button>
                   {expandedTopic === item.id && (
-                    <div className="p-4 pt-0 border-t border-border/80 mt-1">
+                    <div className="p-4 pt-1 border-t border-border/40 text-xs text-muted-foreground leading-relaxed">
                       {item.content}
                     </div>
                   )}
@@ -243,9 +243,9 @@ export default function HelpModal() {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 bg-zinc-950 border-t border-border text-xs text-muted-foreground flex items-center justify-between">
-          <span>Press <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-zinc-300">Esc</kbd> anytime to close</span>
-          <span className="font-mono text-zinc-500">Vouch Keyboard Platform</span>
+        <div className="px-6 py-3 bg-muted/30 border-t border-border/60 text-xs text-muted-foreground flex items-center justify-between">
+          <span>Press <kbd className="px-1.5 py-0.5 bg-muted border border-border/60 rounded font-mono text-foreground font-semibold">Esc</kbd> anytime to close</span>
+          <span className="font-mono text-[11px] text-muted-foreground/80">Vouch Keyboard Platform</span>
         </div>
       </div>
     </div>

@@ -605,7 +605,7 @@ export default function PriceListImportModal({
                       localStorage.setItem("vouch_gemini_key", e.target.value);
                     }
                   }}
-                  className="w-full bg-zinc-950 border border-purple-500/40 text-foreground px-3 py-1.5 rounded-lg text-xs font-mono outline-none focus:ring-1 focus:ring-purple-500"
+                  className="w-full bg-background border border-purple-500/40 text-foreground px-3 py-1.5 rounded-lg text-xs font-mono outline-none focus:ring-1 focus:ring-purple-500"
                 />
                 {geminiApiKey && (
                   <button
