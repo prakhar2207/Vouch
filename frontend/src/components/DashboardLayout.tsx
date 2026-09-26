@@ -308,6 +308,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 Banking
               </Link>
 
+              {/* Analytics */}
+              <Link
+                id="tour-analytics-link"
+                href="/analytics"
+                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${
+                  pathname.startsWith("/analytics")
+                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                <span>Analytics</span>
+                <span className="text-[9px] bg-purple-500/10 text-purple-500 font-bold px-1 rounded">AI</span>
+              </Link>
+
               {/* GST & Tax Dropdown */}
               <div ref={gstRef} className="relative">
                 <button
@@ -966,6 +980,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 }`}
               >
                 Banking
+              </Link>
+              <Link
+                href="/analytics"
+                onClick={() => setIsMobileNavOpen(false)}
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                  pathname.startsWith("/analytics") ? "bg-muted font-semibold text-foreground" : "text-muted-foreground hover:bg-muted/60"
+                }`}
+              >
+                <span>Analytics & Forecasting</span>
+                <span className="text-[9px] bg-purple-500/10 text-purple-400 font-bold px-1.5 py-0.5 rounded">AI</span>
               </Link>
               
               <div className="space-y-0.5 pt-1">

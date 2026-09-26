@@ -3,26 +3,14 @@ import React, { useEffect, useState, useRef } from "react";
 import axios from "axios";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  Legend,
-} from "recharts";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken, isAuthenticated, getUser } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useFinancialYear } from "@/context/FinancialYearContext";
-import { LocalAnalyticsEngine, LocalDashboardResult } from "@/lib/analytics/analytics-engine";
-import { pullIncrementalChanges, triggerOutboxSync, executeClientOutboxSync } from "@/lib/sync/sync-worker";
+import { LocalAnalyticsEngine } from "@/lib/analytics/analytics-engine";
+import { pullIncrementalChanges, executeClientOutboxSync } from "@/lib/sync/sync-worker";
 import { offlineDb } from "@/lib/db/offlineDb";
 import {
   Plus,
@@ -36,16 +24,21 @@ import {
   DollarSign,
   ArrowUpRight,
   ArrowDownRight,
+  ArrowRight,
   HelpCircle,
   FileText,
   Boxes,
   Activity,
-  Landmark,
-  ShieldCheck,
-  RefreshCw,
   CheckCircle2,
+  AlertTriangle,
+  RefreshCw,
   WifiOff,
   CloudUpload,
+  ChevronRight,
+  CreditCard,
+  Building2,
+  Calendar,
+  Wallet,
 } from "lucide-react";
 
 function getVoucherTypeBadgeClass(type: string): string {
@@ -95,32 +88,21 @@ function getCustomerTierBadgeClass(segment: string): string {
   return "bg-muted text-muted-foreground border-border/50";
 }
 
-function formatChartDate(dateStr: string): string {
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
-    return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-  } catch {
-    return dateStr;
-  }
-}
-
 function formatCurrencyShort(val: number): string {
+  if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)}Cr`;
   if (val >= 100000) return `₹${(val / 100000).toFixed(1)}L`;
   if (val >= 1000) return `₹${(val / 1000).toFixed(0)}k`;
-  return `₹${val}`;
+  return `₹${val.toFixed(0)}`;
 }
 
 export default function Dashboard() {
   const router = useRouter();
-  const { startTour, setIsHelpOpen } = useShortcuts();
+  const { setIsHelpOpen } = useShortcuts();
   const [insights, setInsights] = useState<any>(null);
   const [vouchers, setVouchers] = useState<any[]>([]);
   const [coverage, setCoverage] = useState<any>(null);
   const [forecast, setForecast] = useState<any>(null);
   const [healthReport, setHealthReport] = useState<any>(null);
-  const [chartMode, setChartMode] = useState<'VELOCITY' | 'FORECAST'>('VELOCITY');
-  const [forecastSubView, setForecastSubView] = useState<'MONTHLY' | 'DAILY'>('MONTHLY');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [syncStatus, setSyncStatus] = useState<"IDLE" | "SYNCING" | "ERROR">("IDLE");
@@ -207,7 +189,7 @@ export default function Dashboard() {
           }
         }
 
-        // 2. Read cached health check from sessionStorage (strictly avoiding repeated server audits)
+        // 2. Read cached health check from sessionStorage
         let hasValidHealthCache = false;
         if (typeof window !== "undefined") {
           try {
@@ -222,7 +204,6 @@ export default function Dashboard() {
           } catch (e) {}
         }
 
-        // Avoid repeated network dispatch if this exact company + FY was already loaded on this component instance
         const loadKey = `${validCid}_${activeFY?.id || ''}`;
         const isInitialCompanyLoad = loadedCompanyRef.current !== loadKey;
         loadedCompanyRef.current = loadKey;
@@ -261,7 +242,7 @@ export default function Dashboard() {
               }
             });
 
-            // Also trigger outbox sync for any pending offline commands
+            // Trigger outbox sync
             executeClientOutboxSync().then(async () => {
               if (isMounted) {
                 const cnt = await offlineDb.vouchers
@@ -274,7 +255,7 @@ export default function Dashboard() {
             });
           }
 
-          // Fetch health check ONLY IF no valid cache exists
+          // Fetch health check if no valid cache exists
           if (!hasValidHealthCache) {
             const token = getAccessToken();
             const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": validCid };
@@ -291,14 +272,13 @@ export default function Dashboard() {
               .catch(() => {});
           }
         } else {
-          // Offline mode
           if (isMounted) {
             setIsOnline(false);
             setLoading(false);
           }
         }
       } catch (err: any) {
-        console.error("Dashboard local-first load error:", err);
+        console.error("Dashboard load error:", err);
         if (isMounted) {
           setError(err.message || "Failed to load dashboard data.");
           setLoading(false);
@@ -308,8 +288,7 @@ export default function Dashboard() {
 
     loadDashboard();
 
-    // Listen for custom sync completion broadcasts
-    const handleSyncComplete = async (e: any) => {
+    const handleSyncComplete = async () => {
       const cid = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") : null);
       if (cid) {
         const fyOptions = {
@@ -357,29 +336,6 @@ export default function Dashboard() {
     };
   }, [router, activeCompanyId, activeFY?.id]);
 
-  // Lazy-load forecast when user toggles to AI Forecast mode or company changes
-  useEffect(() => {
-    const cid = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") : null);
-    if (!cid) return;
-
-    if (chartMode === 'FORECAST' && (!forecast || !forecast.daily_forecast?.length) && typeof navigator !== "undefined" && navigator.onLine) {
-      const token = getAccessToken();
-      const headers: Record<string, string> = {
-        "X-Company-ID": cid,
-      };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-      axios.get(`${API_BASE_URL}/api/v1/analytics/forecast/${cid}/?days=30&company_id=${cid}`, {
-        headers,
-      }).then((res) => {
-        if (res.data?.success && res.data?.data) {
-          setForecast(res.data.data);
-        }
-      }).catch(() => {});
-    }
-  }, [chartMode, forecast, activeCompanyId]);
-
   const handleManualSync = async () => {
     const cid = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") : null);
     if (!cid || typeof navigator === "undefined" || !navigator.onLine) return;
@@ -395,7 +351,6 @@ export default function Dashboard() {
       setForecast(refreshed.forecast);
     }
 
-    // On explicit user sync, also refresh server health audit
     const token = getAccessToken();
     const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": cid };
     axios.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${cid}`, { headers })
@@ -417,9 +372,9 @@ export default function Dashboard() {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex flex-col items-center justify-center h-96 space-y-3">
-          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-          <div className="text-xs text-muted-foreground font-medium">Loading dashboard overview...</div>
+        <div className="flex flex-col items-center justify-center min-h-[400px] space-y-3">
+          <div className="w-9 h-9 border-3 border-primary border-t-transparent rounded-full animate-spin"></div>
+          <div className="text-sm text-muted-foreground font-medium">Opening your books...</div>
         </div>
       </DashboardLayout>
     );
@@ -428,7 +383,8 @@ export default function Dashboard() {
   if (error) {
     return (
       <DashboardLayout>
-        <div className="p-6 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-sm">
+        <div className="p-6 bg-destructive/10 border border-destructive/20 rounded-2xl text-destructive text-sm max-w-lg mx-auto my-12">
+          <div className="font-semibold mb-1">Notice</div>
           {error}
         </div>
       </DashboardLayout>
@@ -450,910 +406,718 @@ export default function Dashboard() {
     total_stock_qty: 0,
   };
 
-  const trend = insights?.trend_details || {
-    status: "Constant",
-    slope: 0,
-    growth_rate_pct: 0,
-    daily_trend: [],
-    summary: "Sales volume is steady and consistent.",
-  };
-
   const alerts = insights?.actionable_alerts || [];
   const rfmList = insights?.rfm_clusters || [];
-
-  const hasSales = kpis.total_sales > 0;
-  const hasPurchases = kpis.total_purchases > 0;
   const hasTransactions = vouchers.length > 0;
+  const momComparison = forecast?.monthly_comparison?.mom_comparison;
+  const currentMonthData = forecast?.monthly_comparison?.current_month;
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 pb-12">
+      <div className="space-y-6 pb-16 max-w-[1600px] mx-auto">
         
-        {/* Header & Quick Actions Cluster */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border/40 pb-5">
-          <div>
+        {/* ========================================================= */}
+        {/* Top Header & Actions Bar (Fully Responsive)             */}
+        {/* ========================================================= */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/40 pb-5">
+          <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                {activeCompany?.name ? `${activeCompany.name}` : "Your Business"}
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-black tracking-tight text-foreground">
+                {activeCompany?.name ? activeCompany.name : "Your Business"}
               </h1>
-              
-              {/* Minimal sync indicator — dot only */}
+
+              {/* Live sync & connectivity status */}
               {syncStatus === "SYNCING" ? (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-500 border border-blue-500/20" title="Updating your books...">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
                   <RefreshCw className="w-3 h-3 animate-spin" />
-                  <span>Updating...</span>
+                  <span>Syncing...</span>
                 </span>
               ) : !isOnline ? (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border/60" title="You're offline. Changes will sync when you're back online.">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
                   <WifiOff className="w-3 h-3" />
-                  <span>Offline</span>
+                  <span>Offline Mode</span>
                 </span>
               ) : pendingMutations > 0 ? (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20" title="Changes will sync automatically">
-                  <CloudUpload className="w-3.5 h-3.5" />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                  <CloudUpload className="w-3 h-3" />
                   <span>{pendingMutations} pending</span>
                 </span>
               ) : coverage?.lastSyncAt ? (
-                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" title={`Up to date · Last checked ${new Date(coverage.lastSyncAt).toLocaleTimeString()}`}></span>
+                <span
+                  className="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-500/20 shrink-0"
+                  title={`Books synced · ${new Date(coverage.lastSyncAt).toLocaleTimeString()}`}
+                />
               ) : null}
 
-              {/* Sync Refresh Button */}
               {isOnline && (
                 <button
                   type="button"
                   onClick={handleManualSync}
                   disabled={syncStatus === "SYNCING"}
-                  className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer"
-                  title="Refresh"
+                  className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors cursor-pointer"
+                  title="Refresh Books Data"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${syncStatus === "SYNCING" ? "animate-spin text-primary" : ""}`} />
                 </button>
               )}
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap mt-1">
-              <p className="text-sm text-muted-foreground">
-                Here&apos;s how your business is doing today
-              </p>
+            <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-muted-foreground">
+              <span>Operational Overview</span>
               {activeFY && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
-                  <span>FY {activeFY.code}</span>
-                  <span className="text-muted-foreground font-normal text-[11px]">({activeFY.start_date} to {activeFY.end_date})</span>
-                </span>
+                <>
+                  <span>•</span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold bg-muted text-foreground border border-border/60 text-xs">
+                    <Calendar className="w-3 h-3 text-muted-foreground" />
+                    <span>FY {activeFY.code}</span>
+                  </span>
+                </>
               )}
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-            <button
-              onClick={() => setIsHelpOpen(true)}
-              className="p-2 text-muted-foreground hover:text-foreground rounded-lg border border-border/50 hover:bg-muted/60 transition-colors cursor-pointer"
-              title="Help & Shortcuts (F1)"
-            >
-              <HelpCircle className="w-4 h-4" />
-            </button>
-
+          {/* Action Button Cluster with keyboard shortcuts */}
+          <div className="flex flex-wrap items-center gap-2">
             <Link
               id="tour-sales-btn"
               href="/sales/new"
-              className="px-4 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-sm font-semibold shadow-sm transition-all flex items-center gap-2 cursor-pointer min-h-[40px]"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>New Sale</span>
+              <span>Sale</span>
+              <kbd className="hidden sm:inline-block ml-0.5 px-1 py-0.2 text-[10px] font-mono bg-emerald-700/70 text-emerald-100 rounded">
+                F8
+              </kbd>
             </Link>
 
             <Link
               id="tour-purchase-btn"
               href="/purchases/new"
-              className="px-4 py-2.5 bg-secondary text-foreground hover:bg-secondary/80 border border-border/60 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer min-h-[40px]"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-all cursor-pointer"
             >
-              <ShoppingCart className="w-4 h-4 text-muted-foreground" />
-              <span>New Purchase</span>
+              <Plus className="w-4 h-4" />
+              <span>Purchase</span>
+              <kbd className="hidden sm:inline-block ml-0.5 px-1 py-0.2 text-[10px] font-mono bg-blue-700/70 text-blue-100 rounded">
+                F9
+              </kbd>
             </Link>
 
             <Link
               href="/parties"
-              className="px-3.5 py-2.5 bg-card hover:bg-muted text-foreground border border-border/60 rounded-xl text-sm font-semibold transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px]"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-card hover:bg-muted text-foreground border border-border/70 transition-all cursor-pointer"
             >
               <ArrowDownRight className="w-4 h-4 text-emerald-500" />
-              <span>Receive Money</span>
+              <span>Receive</span>
+              <kbd className="hidden sm:inline-block ml-0.5 px-1 py-0.2 text-[10px] font-mono bg-muted text-muted-foreground rounded">
+                F6
+              </kbd>
             </Link>
 
             <Link
               href="/parties"
-              className="px-3.5 py-2.5 bg-card hover:bg-muted text-foreground border border-border/60 rounded-xl text-sm font-semibold transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px]"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-card hover:bg-muted text-foreground border border-border/70 transition-all cursor-pointer"
             >
               <ArrowUpRight className="w-4 h-4 text-rose-500" />
-              <span>Pay Supplier</span>
+              <span>Pay</span>
+              <kbd className="hidden sm:inline-block ml-0.5 px-1 py-0.2 text-[10px] font-mono bg-muted text-muted-foreground rounded">
+                F5
+              </kbd>
+            </Link>
+
+            <Link
+              href="/analytics"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 border border-purple-500/30 transition-all cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+              <span>Analytics Hub</span>
+            </Link>
+
+            <button
+              onClick={() => setIsHelpOpen(true)}
+              className="p-2 text-muted-foreground hover:text-foreground rounded-xl border border-border/60 hover:bg-muted transition-colors cursor-pointer"
+              title="Help & Shortcuts (F1)"
+            >
+              <HelpCircle className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* ========================================================= */}
+        {/* Core Business Vitals (5 Responsive Cards)                 */}
+        {/* ========================================================= */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5 sm:gap-4">
+          
+          {/* Card 1: Total Sales & Today */}
+          <Link
+            href="/sales"
+            className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-emerald-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
+          >
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 to-teal-500" />
+            <div className="flex items-center justify-between text-muted-foreground mb-2">
+              <span className="text-xs font-semibold uppercase tracking-wider">Total Sales</span>
+              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 group-hover:scale-105 transition-transform">
+                <Receipt className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-foreground">
+              ₹{(kpis.total_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </div>
+            <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+              <span>Today: <strong className="text-foreground font-mono">₹{(kpis.today_sales || 0).toLocaleString("en-IN")}</strong></span>
+              <span className="group-hover:translate-x-0.5 transition-transform text-emerald-600 dark:text-emerald-400 font-medium">
+                {kpis.sales_vouchers_count || 0} bills →
+              </span>
+            </div>
+          </Link>
+
+          {/* Card 2: Sundry Debtors (Money to Collect) */}
+          <Link
+            href="/parties"
+            className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-teal-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
+          >
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-teal-500 to-cyan-500" />
+            <div className="flex items-center justify-between text-muted-foreground mb-2">
+              <span className="text-xs font-semibold uppercase tracking-wider">To Collect</span>
+              <div className="p-2 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 group-hover:scale-105 transition-transform">
+                <Users className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-teal-600 dark:text-teal-400">
+              ₹{(kpis.money_to_collect || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </div>
+            <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+              <span>Customers owe</span>
+              <span className="group-hover:translate-x-0.5 transition-transform text-teal-600 dark:text-teal-400 font-medium">
+                Ledger →
+              </span>
+            </div>
+          </Link>
+
+          {/* Card 3: Sundry Creditors (Bills to Pay) */}
+          <Link
+            href="/parties"
+            className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-rose-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
+          >
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-rose-500 to-orange-500" />
+            <div className="flex items-center justify-between text-muted-foreground mb-2">
+              <span className="text-xs font-semibold uppercase tracking-wider">Bills to Pay</span>
+              <div className="p-2 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 group-hover:scale-105 transition-transform">
+                <FileText className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-rose-600 dark:text-rose-400">
+              ₹{(kpis.bills_to_pay || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </div>
+            <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+              <span>Due to suppliers</span>
+              <span className="group-hover:translate-x-0.5 transition-transform text-rose-600 dark:text-rose-400 font-medium">
+                Pay →
+              </span>
+            </div>
+          </Link>
+
+          {/* Card 4: Liquid Funds (Cash & Bank) */}
+          <Link
+            href="/ledgers"
+            className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-blue-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
+          >
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-500" />
+            <div className="flex items-center justify-between text-muted-foreground mb-2">
+              <span className="text-xs font-semibold uppercase tracking-wider">Cash & Bank</span>
+              <div className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 group-hover:scale-105 transition-transform">
+                <Wallet className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-foreground">
+              ₹{(kpis.cash_and_bank || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </div>
+            <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+              <span>Liquid funds</span>
+              <span className="group-hover:translate-x-0.5 transition-transform text-blue-600 dark:text-blue-400 font-medium">
+                Accounts →
+              </span>
+            </div>
+          </Link>
+
+          {/* Card 5: Inventory Valuation */}
+          <Link
+            href="/inventory"
+            className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-purple-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block sm:col-span-2 lg:col-span-1"
+          >
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-purple-500 to-violet-500" />
+            <div className="flex items-center justify-between text-muted-foreground mb-2">
+              <span className="text-xs font-semibold uppercase tracking-wider">Stock Value</span>
+              <div className="p-2 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 group-hover:scale-105 transition-transform">
+                <Boxes className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-purple-600 dark:text-purple-400">
+              ₹{(kpis.total_stock_value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </div>
+            <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+              <span>{kpis.total_in_stock_items || 0} active items</span>
+              <span className="group-hover:translate-x-0.5 transition-transform text-purple-600 dark:text-purple-400 font-medium">
+                Stock →
+              </span>
+            </div>
+          </Link>
+        </div>
+
+        {/* ========================================================= */}
+        {/* Executive AI Pace & Forecast Teaser Banner                */}
+        {/* ========================================================= */}
+        <div className="relative overflow-hidden rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-500/5 via-card to-blue-500/5 p-4 sm:p-5">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/25">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+                  <span>AI Business Intelligence</span>
+                </span>
+                {momComparison && (
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${
+                    momComparison.pace_status === "BEATING_LAST_MONTH"
+                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                  }`}>
+                    {momComparison.pace_status === "BEATING_LAST_MONTH" ? (
+                      <TrendingUp className="w-3 h-3" />
+                    ) : (
+                      <TrendingDown className="w-3 h-3" />
+                    )}
+                    <span>{momComparison.percentage_change >= 0 ? "+" : ""}{momComparison.percentage_change}% vs Last Month</span>
+                  </span>
+                )}
+              </div>
+
+              <div className="text-sm sm:text-base font-semibold text-foreground">
+                {currentMonthData ? (
+                  <span>
+                    Projected Month Total: <strong className="font-mono text-purple-600 dark:text-purple-400">₹{currentMonthData.projected_month_total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                    <span className="text-muted-foreground font-normal text-xs sm:text-sm ml-2">
+                      (MTD: ₹{formatCurrencyShort(currentMonthData.mtd_actual_sales)} + Projected: ₹{formatCurrencyShort(currentMonthData.remaining_projected_sales)})
+                    </span>
+                  </span>
+                ) : (
+                  <span>Multi-factor sales forecasting, stock valuation, and customer RFM analytics</span>
+                )}
+              </div>
+
+              <p className="text-xs text-muted-foreground max-w-3xl">
+                {momComparison?.summary || "Comprehensive multi-factor predictive modeling with day-of-week profiles, seasonality, and customer repeat purchase analysis."}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0">
+              <Link
+                href="/analytics"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white shadow-sm transition-all cursor-pointer group"
+              >
+                <span>Open Dedicated Analytics Hub</span>
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        {/* ========================================================= */}
+        {/* Actionable Health & Needs Attention Grid                  */}
+        {/* ========================================================= */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          
+          {/* Books Health Status Card */}
+          <div className="bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col justify-between">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                  healthReport ? (
+                    (healthReport?.health_score ?? 100) >= 90
+                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                      : (healthReport?.health_score ?? 100) >= 70
+                      ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                      : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                  ) : "bg-muted text-muted-foreground"
+                }`}>
+                  {healthReport && (healthReport?.health_score ?? 100) >= 90 ? (
+                    <CheckCircle2 className="w-5 h-5" />
+                  ) : healthReport ? (
+                    <AlertTriangle className="w-5 h-5" />
+                  ) : (
+                    <Activity className="w-5 h-5" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">
+                    {healthReport ? (
+                      (healthReport?.health_score ?? 100) >= 90
+                        ? "Your books are in great shape"
+                        : `${healthReport.metrics?.critical_findings_count || 1} issues require review`
+                    ) : (
+                      "Accounting Integrity"
+                    )}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {healthReport ? (
+                      `Integrity Score: ${healthReport.health_score || 100}% · ${healthReport.health_status || "HEALTHY"}`
+                    ) : (
+                      "Automated background audit for debit-credit parity and reconciliation"
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <Link
+                href="/health"
+                className="px-3 py-1.5 rounded-lg border border-border/60 bg-muted/50 hover:bg-muted text-foreground text-xs font-semibold flex items-center gap-1 transition-colors shrink-0"
+              >
+                <span>Audit</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </Link>
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+              <span>Debit = Credit Balance Parity</span>
+              <span className="font-semibold text-emerald-600 dark:text-emerald-400">Verified</span>
+            </div>
+          </div>
+
+          {/* Attention Center / Alerts */}
+          <div className="bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-2.5">
+                <h3 className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                  <span>Operational Alerts</span>
+                  {alerts.length > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                      {alerts.length}
+                    </span>
+                  )}
+                </h3>
+                <Link href="/health" className="text-xs text-muted-foreground hover:text-foreground font-medium transition-colors">
+                  All alerts →
+                </Link>
+              </div>
+
+              <div className="space-y-2">
+                {alerts.length > 0 ? (
+                  alerts.slice(0, 3).map((alert: any, idx: number) => (
+                    <div
+                      key={idx}
+                      className="flex items-center gap-2.5 text-xs text-foreground bg-muted/30 px-3 py-2 rounded-xl border border-border/40"
+                    >
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${
+                        alert.message?.toLowerCase().includes("overdue")
+                          ? "bg-rose-500"
+                          : alert.message?.toLowerCase().includes("low stock")
+                          ? "bg-amber-500"
+                          : "bg-blue-500"
+                      }`} />
+                      <span className="truncate">{alert.message}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-xs text-muted-foreground bg-muted/20 px-3 py-3 rounded-xl border border-dashed border-border/50 text-center">
+                    ✓ All clear. No overdue invoices or urgent stock shortages.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-3 pt-2 text-[11px] text-muted-foreground flex items-center justify-between">
+              <span>System Watchdog</span>
+              <span>Active</span>
+            </div>
+          </div>
+        </div>
+
+        {/* ========================================================= */}
+        {/* Quick Launchpad Shortcuts                                 */}
+        {/* ========================================================= */}
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+            Quick Launchpad
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Link
+              href="/sales/new"
+              className="bg-card hover:bg-muted/50 border border-border/60 hover:border-emerald-500/40 rounded-xl p-3 sm:p-4 transition-all flex items-center gap-3 group"
+            >
+              <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 group-hover:scale-105 transition-transform">
+                <Receipt className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs sm:text-sm font-bold text-foreground truncate">Sales Bill</div>
+                <div className="text-[11px] text-muted-foreground font-mono">Press F8</div>
+              </div>
+            </Link>
+
+            <Link
+              href="/purchases/new"
+              className="bg-card hover:bg-muted/50 border border-border/60 hover:border-blue-500/40 rounded-xl p-3 sm:p-4 transition-all flex items-center gap-3 group"
+            >
+              <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 group-hover:scale-105 transition-transform">
+                <ShoppingCart className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs sm:text-sm font-bold text-foreground truncate">Purchase Bill</div>
+                <div className="text-[11px] text-muted-foreground font-mono">Press F9</div>
+              </div>
+            </Link>
+
+            <Link
+              href="/parties"
+              className="bg-card hover:bg-muted/50 border border-border/60 hover:border-teal-500/40 rounded-xl p-3 sm:p-4 transition-all flex items-center gap-3 group"
+            >
+              <div className="p-2.5 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 group-hover:scale-105 transition-transform">
+                <Users className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs sm:text-sm font-bold text-foreground truncate">Parties & Ledgers</div>
+                <div className="text-[11px] text-muted-foreground">Customers & Suppliers</div>
+              </div>
+            </Link>
+
+            <Link
+              href="/inventory"
+              className="bg-card hover:bg-muted/50 border border-border/60 hover:border-purple-500/40 rounded-xl p-3 sm:p-4 transition-all flex items-center gap-3 group"
+            >
+              <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 group-hover:scale-105 transition-transform">
+                <Boxes className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs sm:text-sm font-bold text-foreground truncate">Stock Items</div>
+                <div className="text-[11px] text-muted-foreground">Catalog & Pricing</div>
+              </div>
             </Link>
           </div>
         </div>
 
-        {/* Attention Center — compact grouped alerts */}
-        {alerts.length > 0 && (
-          <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-foreground">Needs your attention</h2>
-              <Link href="/health" className="text-xs text-muted-foreground hover:text-foreground font-medium transition-colors">
-                View all →
-              </Link>
-            </div>
-            <div className="space-y-2">
-              {alerts.slice(0, 5).map((alert: any, idx: number) => (
-                <div
-                  key={idx}
-                  className="flex items-center gap-2.5 py-1.5 text-xs text-foreground"
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                    alert.message?.toLowerCase().includes('overdue') ? 'bg-rose-400' :
-                    alert.message?.toLowerCase().includes('low stock') ? 'bg-amber-400' :
-                    'bg-blue-400'
-                  }`}></span>
-                  <span>{alert.message}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Books Status — simple health indicator */}
-        <div className="bg-card border border-border/40 rounded-xl p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-              healthReport ? (
-                (healthReport?.health_score ?? 100) >= 90
-                  ? "bg-emerald-500/10 text-emerald-400"
-                  : (healthReport?.health_score ?? 100) >= 70
-                  ? "bg-amber-500/10 text-amber-400"
-                  : "bg-rose-500/10 text-rose-400"
-              ) : "bg-muted text-muted-foreground"
-            }`}>
-              {healthReport && (healthReport?.health_score ?? 100) >= 90 ? (
-                <CheckCircle2 className="w-4 h-4" />
-              ) : healthReport ? (
-                <Info className="w-4 h-4" />
-              ) : (
-                <Activity className="w-4 h-4" />
-              )}
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">
-                {healthReport ? (
-                  (healthReport?.health_score ?? 100) >= 90
-                    ? "Your books look good"
-                    : healthReport.health_status === "CRITICAL"
-                    ? `${healthReport.metrics?.critical_findings_count || 1} things need review`
-                    : "Some things need attention"
-                ) : (
-                  "Books status"
-                )}
-              </h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {healthReport ? (
-                  (healthReport?.health_score ?? 100) >= 90
-                    ? `Last checked ${healthReport._cachedAt ? new Date(healthReport._cachedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'recently'}`
-                    : "Review recommended"
-                ) : (
-                  "Run a check to see how your books are doing"
-                )}
-              </p>
-            </div>
-          </div>
-          <Link
-            href="/health"
-            className="px-3.5 py-2 rounded-xl border border-border/60 bg-muted/40 hover:bg-muted text-foreground text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-          >
-            <span>{healthReport && (healthReport?.health_score ?? 100) < 90 ? "Review now" : "View details"}</span>
-            <ArrowUpRight className="w-3 h-3" />
-          </Link>
-        </div>
-
-        {/* 6-Column Owner-First Metric Grid (P1-12 & P1-13) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          {/* Card 1: Total Sales */}
-          <Link
-            href="/sales"
-            className="bg-card border border-border/40 hover:border-blue-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
-          >
-            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-blue-500 to-indigo-500" />
-            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
-              <span className="text-xs font-medium">Total Sales</span>
-              <Receipt className="w-4 h-4 text-blue-500/80 group-hover:scale-110 transition-transform" />
-            </div>
-            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-foreground pl-2">
-              ₹{(kpis.total_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="text-[11px] text-muted-foreground pl-2 truncate">
-              Today: ₹{(kpis.today_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 0 })} &bull; {kpis.sales_vouchers_count || 0} bills &rarr;
-            </div>
-          </Link>
-
-          {/* Card 2: Total Purchases */}
-          <Link
-            href="/purchases"
-            className="bg-card border border-border/40 hover:border-purple-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
-          >
-            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-purple-500 to-violet-500" />
-            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
-              <span className="text-xs font-medium">Total Purchases</span>
-              <ShoppingCart className="w-4 h-4 text-purple-400 group-hover:scale-110 transition-transform" />
-            </div>
-            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-purple-400 pl-2">
-              ₹{(kpis.total_purchases || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="text-[11px] text-muted-foreground pl-2 truncate">
-              {kpis.purchase_vouchers_count || 0} purchase bills &rarr;
-            </div>
-          </Link>
-
-          {/* Card 3: Money to Collect (Sundry Debtors) */}
-          <Link
-            href="/parties"
-            className="bg-card border border-border/40 hover:border-emerald-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
-          >
-            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-teal-500 to-emerald-500" />
-            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
-              <span className="text-xs font-medium">Money to Collect</span>
-              <Users className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
-            </div>
-            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-emerald-400 pl-2">
-              ₹{(kpis.money_to_collect || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="text-[11px] text-muted-foreground pl-2 truncate">
-              Customers owe &bull; Today: ₹{(kpis.today_collections || 0).toLocaleString("en-IN", { minimumFractionDigits: 0 })} &rarr;
-            </div>
-          </Link>
-
-          {/* Card 4: Bills to Pay (Sundry Creditors) */}
-          <Link
-            href="/parties"
-            className="bg-card border border-border/40 hover:border-rose-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
-          >
-            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-orange-500 to-rose-500" />
-            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
-              <span className="text-xs font-medium">Bills to Pay</span>
-              <FileText className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
-            </div>
-            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-rose-400 pl-2">
-              ₹{(kpis.bills_to_pay || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="text-[11px] text-muted-foreground pl-2 truncate">
-              You owe suppliers &rarr;
-            </div>
-          </Link>
-
-          {/* Card 5: Cash & Bank */}
-          <Link
-            href="/ledgers"
-            className="bg-card border border-border/40 hover:border-blue-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
-          >
-            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-indigo-500 to-blue-500" />
-            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
-              <span className="text-xs font-medium">Cash & Bank</span>
-              <DollarSign className="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform" />
-            </div>
-            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-foreground pl-2">
-              ₹{(kpis.cash_and_bank || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="text-[11px] text-muted-foreground pl-2">
-              Cash &amp; bank balance &rarr;
-            </div>
-          </Link>
-
-          {/* Card 6: Total Stock Value */}
-          <Link 
-            href="/inventory"
-            className="bg-card border border-border/40 hover:border-cyan-500/40 rounded-xl p-4 shadow-sm space-y-1 transition-all group cursor-pointer block relative overflow-hidden"
-          >
-            <div className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b from-cyan-500 to-sky-500" />
-            <div className="flex items-center justify-between text-muted-foreground group-hover:text-foreground pl-2">
-              <span className="text-xs font-medium">Stock Value</span>
-              <Boxes className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform" />
-            </div>
-            <div className="text-xl font-bold font-mono tabular-nums tracking-tight text-cyan-400 pl-2">
-              ₹{(kpis.total_stock_value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="text-[11px] text-muted-foreground pl-2">
-              {kpis.total_in_stock_items || 0} items in stock &rarr;
-            </div>
-          </Link>
-        </div>
-
-        {/* Task 4: Clean 2-Column Section (60% Sales Velocity / 40% Top Customers) */}
+        {/* ========================================================= */}
+        {/* Balanced Operational Hub: Recent Activity & Top Customers */}
+        {/* ========================================================= */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          {/* Left: Sales Velocity & Predictive AI Forecast Area Chart (60% width) */}
-          <div className="lg:col-span-7 bg-card border border-border/50 rounded-xl p-5 shadow-2xs flex flex-col space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                  <span>{chartMode === 'VELOCITY' ? 'Sales over time' : 'Sales forecast'}</span>
-                  <span title={chartMode === 'VELOCITY' ? 'Daily sales over time' : 'Projected sales based on past performance'} className="cursor-help text-muted-foreground hover:text-foreground">
-                    <Info className="w-3.5 h-3.5" />
-                  </span>
-                </h2>
-                <p className="text-xs text-muted-foreground">
-                  {chartMode === 'VELOCITY' ? 'See how your sales are changing' : 'Expected sales based on your recent trends'}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <div className="flex items-center bg-muted/60 p-1 rounded-lg border border-border/40">
-                  <button
-                    type="button"
-                    onClick={() => setChartMode('VELOCITY')}
-                    className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors cursor-pointer ${
-                      chartMode === 'VELOCITY'
-                        ? 'bg-card text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    Historical
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setChartMode('FORECAST')}
-                    className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors flex items-center gap-1 cursor-pointer ${
-                      chartMode === 'FORECAST'
-                        ? 'bg-purple-600 text-white shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    <span>Forecast</span>
-                  </button>
-                </div>
-
-                {chartMode === 'VELOCITY' && trend.growth_rate_pct !== 0 && (
-                  <span className={`px-2 py-0.5 text-[11px] font-mono font-medium rounded border ${
-                    trend.growth_rate_pct > 0
-                      ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                      : "bg-rose-500/10 text-rose-500 border-rose-500/20"
-                  }`}>
-                    {trend.growth_rate_pct > 0 ? `+${trend.growth_rate_pct}%` : `${trend.growth_rate_pct}%`}
-                  </span>
-                )}
-                {chartMode === 'FORECAST' && forecast && (
-                  <span className={`px-2 py-0.5 text-[11px] font-mono font-medium rounded border ${
-                    forecast.trend_status === 'Booming'
-                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                      : forecast.trend_status === 'Declining'
-                      ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                      : "bg-blue-500/10 text-blue-400 border-blue-500/20"
-                  }`}>
-                    {forecast.trend_status}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {chartMode === 'FORECAST' ? (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between text-xs px-1 text-muted-foreground font-sans">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span>Projected: <span className="font-bold text-foreground font-mono">₹{(forecast?.projected_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></span>
-                    {forecast?.p10_total && forecast?.p90_total && (
-                      <span className="text-[10px] text-muted-foreground/80 font-mono">
-                        (₹{formatCurrencyShort(forecast.p10_total)} - ₹{formatCurrencyShort(forecast.p90_total)})
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {/* Sub-view toggle */}
-                    <div className="flex items-center bg-muted/60 p-0.5 rounded-md border border-border/40 text-[11px]">
-                      <button
-                        type="button"
-                        onClick={() => setForecastSubView('MONTHLY')}
-                        className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
-                          forecastSubView === 'MONTHLY'
-                            ? 'bg-card text-foreground shadow-2xs font-semibold'
-                            : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        Monthly Benchmark
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setForecastSubView('DAILY')}
-                        className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
-                          forecastSubView === 'DAILY'
-                            ? 'bg-card text-foreground shadow-2xs font-semibold'
-                            : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        30-Day Curve
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {forecastSubView === 'MONTHLY' && forecast?.monthly_comparison && (
-                  <div className="space-y-2.5">
-                    {/* Monthly Benchmark KPI Cards */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-muted/30 border border-border/40 p-2.5 rounded-xl">
-                      {/* Present Month */}
-                      <div className="space-y-1">
-                        <div className="text-[11px] text-muted-foreground font-medium flex items-center justify-between">
-                          <span>{forecast.monthly_comparison.current_month.month_name}</span>
-                          <span className="text-[10px] font-mono text-purple-400 font-semibold">
-                            {forecast.monthly_comparison.current_month.completion_pct}% Achieved
-                          </span>
-                        </div>
-                        <div className="text-base font-bold font-mono text-foreground">
-                          ₹{forecast.monthly_comparison.current_month.projected_month_total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground flex items-center justify-between">
-                          <span>MTD: <strong className="text-foreground">₹{formatCurrencyShort(forecast.monthly_comparison.current_month.mtd_actual_sales)}</strong></span>
-                          <span>+ Forecast: <strong className="text-purple-400">₹{formatCurrencyShort(forecast.monthly_comparison.current_month.remaining_projected_sales)}</strong></span>
-                        </div>
-                        {/* Progress Bar */}
-                        <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden flex">
-                          <div 
-                            className="bg-blue-500 h-full transition-all duration-300"
-                            style={{ width: `${Math.min(100, forecast.monthly_comparison.current_month.completion_pct)}%` }}
-                          />
-                          <div 
-                            className="bg-purple-500/60 h-full transition-all duration-300"
-                            style={{ width: `${Math.max(0, 100 - forecast.monthly_comparison.current_month.completion_pct)}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      {/* vs Last Month (MoM) */}
-                      <div className="space-y-1 border-t sm:border-t-0 sm:border-l border-border/40 pt-2 sm:pt-0 sm:pl-3">
-                        <div className="text-[11px] text-muted-foreground font-medium flex items-center justify-between">
-                          <span>vs Last Month ({forecast.monthly_comparison.previous_month.short_name || 'M-1'})</span>
-                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
-                            forecast.monthly_comparison.mom_comparison.pace_status === 'BEATING_LAST_MONTH'
-                              ? 'bg-emerald-500/10 text-emerald-500'
-                              : forecast.monthly_comparison.mom_comparison.pace_status === 'PACING_BEHIND'
-                              ? 'bg-amber-500/10 text-amber-500'
-                              : 'bg-muted text-muted-foreground'
-                          }`}>
-                            {forecast.monthly_comparison.mom_comparison.percentage_change >= 0 ? '+' : ''}
-                            {forecast.monthly_comparison.mom_comparison.percentage_change}%
-                          </span>
-                        </div>
-                        <div className="text-sm font-semibold font-mono text-foreground">
-                          Last: ₹{(forecast.monthly_comparison.previous_month.total_sales || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground truncate" title={forecast.monthly_comparison.mom_comparison.summary}>
-                          {forecast.monthly_comparison.mom_comparison.summary}
-                        </div>
-                        {forecast.monthly_comparison.mom_comparison.required_daily_to_match_last_month > 0 && (
-                          <div className="text-[10px] text-muted-foreground">
-                            Target: <strong className="text-foreground">₹{formatCurrencyShort(forecast.monthly_comparison.mom_comparison.required_daily_to_match_last_month)}/day</strong> needed ({forecast.monthly_comparison.current_month.days_remaining}d left)
-                          </div>
-                        )}
-                      </div>
-
-                      {/* YoY Benchmark */}
-                      <div className="space-y-1 border-t sm:border-t-0 sm:border-l border-border/40 pt-2 sm:pt-0 sm:pl-3">
-                        <div className="text-[11px] text-muted-foreground font-medium">
-                          Annual YoY Benchmark
-                        </div>
-                        {forecast.monthly_comparison.yoy_comparison?.available ? (
-                          <>
-                            <div className="text-sm font-semibold font-mono text-foreground flex items-center justify-between">
-                              <span>{forecast.monthly_comparison.yoy_comparison.prior_year_month_name}</span>
-                              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
-                                forecast.monthly_comparison.yoy_comparison.percentage_change >= 0
-                                  ? 'bg-emerald-500/10 text-emerald-500'
-                                  : 'bg-rose-500/10 text-rose-500'
-                              }`}>
-                                {forecast.monthly_comparison.yoy_comparison.percentage_change >= 0 ? '+' : ''}
-                                {forecast.monthly_comparison.yoy_comparison.percentage_change}%
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-muted-foreground">
-                              Prior Year: ₹{(forecast.monthly_comparison.yoy_comparison.prior_year_sales || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                            </div>
-                            <div className="text-[10px] text-emerald-500 dark:text-emerald-400 truncate">
-                              {forecast.monthly_comparison.yoy_comparison.summary}
-                            </div>
-                          </>
-                        ) : (
-                          <div className="text-[11px] text-muted-foreground/80 pt-1">
-                            <span className="inline-block px-2 py-0.5 bg-muted rounded border border-border/40 text-[10px]">
-                              YoY Excluded (&lt; 1 yr history)
-                            </span>
-                            <p className="text-[10px] text-muted-foreground mt-1">
-                              Annual seasonality requires &ge;1 yr past records.
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Comparative Multi-Month Bar Chart */}
-                    <div className="h-44 w-full pt-1">
-                      {forecast.monthly_comparison.historical_months_series && forecast.monthly_comparison.historical_months_series.length > 0 ? (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart
-                            data={forecast.monthly_comparison.historical_months_series}
-                            margin={{ top: 10, right: 15, left: -10, bottom: 0 }}
-                          >
-                            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
-                            <XAxis
-                              dataKey="short_name"
-                              stroke="currentColor"
-                              className="text-muted-foreground"
-                              fontSize={11}
-                              tickLine={false}
-                              axisLine={false}
-                            />
-                            <YAxis
-                              stroke="currentColor"
-                              className="text-muted-foreground"
-                              fontSize={11}
-                              tickLine={false}
-                              axisLine={false}
-                              tickFormatter={formatCurrencyShort}
-                            />
-                            <Tooltip
-                              contentStyle={{
-                                backgroundColor: "var(--card)",
-                                borderColor: "var(--border)",
-                                borderRadius: "12px",
-                                boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
-                                fontSize: "12px",
-                              }}
-                              formatter={(val: any, name?: any) => [
-                                `₹${Number(val).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
-                                name === "actual_sales" ? "Actual Sales" : "Forecasted Sales"
-                              ]}
-                              labelFormatter={(label: any, items?: any) => {
-                                const item = (items as any)?.[0]?.payload;
-                                return item ? item.month_label : label;
-                              }}
-                            />
-                            <Legend
-                              wrapperStyle={{ fontSize: "11px", paddingTop: "4px" }}
-                              formatter={(value) => value === "actual_sales" ? "Actual Sales" : "Forecasted Sales"}
-                            />
-                            <Bar dataKey="actual_sales" stackId="monthStack" fill="#3b82f6" radius={[0, 0, 0, 0]} />
-                            <Bar dataKey="projected_sales" stackId="monthStack" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      ) : (
-                        <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                          No monthly comparison data available.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* 30-Day Curve Area Chart */}
-                {forecastSubView === 'DAILY' && (
-                  <div className="h-48 w-full pt-1">
-                    {forecast?.daily_forecast && forecast.daily_forecast.length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={forecast.daily_forecast} margin={{ top: 10, right: 15, left: -10, bottom: 0 }}>
-                          <defs>
-                            <linearGradient id="forecastGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.35} />
-                              <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
-                          <XAxis 
-                            dataKey="date" 
-                            stroke="currentColor" 
-                            className="text-muted-foreground" 
-                            fontSize={11}
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            minTickGap={16}
-                            tickFormatter={formatChartDate}
-                          />
-                          <YAxis 
-                            stroke="currentColor" 
-                            className="text-muted-foreground" 
-                            fontSize={11}
-                            tickLine={false}
-                            axisLine={false}
-                            tickFormatter={formatCurrencyShort}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: "var(--card)",
-                              borderColor: "var(--border)",
-                              borderRadius: "12px",
-                              boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
-                              fontSize: "12px",
-                            }}
-                            labelFormatter={(label: any) => {
-                              try {
-                                const d = new Date(label);
-                                if (!isNaN(d.getTime())) {
-                                  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-                                }
-                              } catch {}
-                              return label;
-                            }}
-                            formatter={(val: any) => [`₹${Number(val).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`, "Projected Sales"]}
-                          />
-                          <Area
-                            type="monotone"
-                            dataKey="projected_sales"
-                            stroke="#8b5cf6"
-                            strokeWidth={2}
-                            fillOpacity={1}
-                            fill="url(#forecastGrad)"
-                          />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                        No sales data available for projection.
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {forecast?.trend_summary && (
-                  <div className="text-[11px] text-muted-foreground bg-muted/40 px-3 py-1.5 rounded-lg border border-border/40 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                    <span className="truncate">{forecast.trend_summary}</span>
-                  </div>
-                )}
-
-                {forecast?.factors_analyzed && (
-                  <div className="flex flex-wrap gap-1.5 pt-0.5">
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${forecast.factors_analyzed.yoy_seasonality_applied ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' : 'bg-muted text-muted-foreground border-border/40'}`}>
-                      {forecast.factors_analyzed.yoy_seasonality_applied ? '✓ YoY Seasonality Active' : 'YoY Seasonality Excluded (<1yr)'}
-                    </span>
-                    {forecast.factors_analyzed.day_of_week_active && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20">
-                        Day-of-Week Profile
-                      </span>
-                    )}
-                    {(forecast.factors_analyzed.month_end_surge_multiplier || 1.0) > 1.0 && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
-                        Month-End Surge ({forecast.factors_analyzed.month_end_surge_multiplier}x)
-                      </span>
-                    )}
-                    {(forecast.factors_analyzed.repeat_buyers_modeled || 0) > 0 && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20">
-                        {forecast.factors_analyzed.repeat_buyers_modeled} Repeat Cycles
-                      </span>
-                    )}
-                    {(forecast.factors_analyzed.open_proforma_pipeline || 0) > 0 && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20">
-                        Pipeline: ₹{formatCurrencyShort(forecast.factors_analyzed.open_proforma_pipeline)}
-                      </span>
-                    )}
-                    {forecast.factors_analyzed.stock_constraint_applied && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20">
-                        Stock Guard Active
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="h-60 w-full pt-1">
-                {trend.daily_trend && trend.daily_trend.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trend.daily_trend} margin={{ top: 10, right: 15, left: -10, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="salesVelocityGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25} />
-                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
-                      <XAxis 
-                        dataKey="date" 
-                        stroke="currentColor" 
-                        className="text-muted-foreground" 
-                        fontSize={11}
-                        tickLine={false}
-                        axisLine={false}
-                        tickMargin={8}
-                        minTickGap={16}
-                        tickFormatter={formatChartDate}
-                      />
-                      <YAxis 
-                        stroke="currentColor" 
-                        className="text-muted-foreground" 
-                        fontSize={11}
-                        tickLine={false}
-                        axisLine={false}
-                        tickFormatter={formatCurrencyShort}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "var(--card)",
-                          borderColor: "var(--border)",
-                          borderRadius: "12px",
-                          boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
-                          fontSize: "12px",
-                        }}
-                        labelFormatter={(label: any) => {
-                          try {
-                            const d = new Date(label);
-                            if (!isNaN(d.getTime())) {
-                              return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-                            }
-                          } catch {}
-                          return label;
-                        }}
-                        formatter={(val: any) => [`₹${Number(val).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`, "Sales"]}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="sales"
-                        stroke="#3b82f6"
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#salesVelocityGrad)"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-full flex flex-col items-center justify-center border border-dashed border-border/60 rounded-lg text-center p-6 space-y-1.5">
-                    <TrendingUp className="w-6 h-6 text-muted-foreground/40" />
-                    <div className="text-xs font-medium text-muted-foreground">No transaction data yet</div>
-                    <div className="text-xs text-muted-foreground/80">
-                      Create a sales invoice (<kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F8</kbd>) to start tracking velocity.
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Right: Top Customers & Outstandings (40% width) */}
-          <div className="lg:col-span-5 bg-card border border-border/50 rounded-xl p-5 shadow-2xs flex flex-col space-y-4">
+          
+          {/* Left Column (7 cols): Recent Transactions Table (Mobile Cards + Desktop Table) */}
+          <div className="lg:col-span-8 bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                  <span>Your best customers</span>
-                </h2>
-                <p className="text-xs text-muted-foreground">Customers by sales volume</p>
+                <h2 className="text-sm sm:text-base font-bold text-foreground">Recent Transactions</h2>
+                <p className="text-xs text-muted-foreground">Latest vouchers posted in your books</p>
+              </div>
+              <Link
+                href="/vouchers"
+                className="text-xs text-primary hover:underline font-semibold flex items-center gap-1"
+              >
+                <span>View All Vouchers</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </Link>
+            </div>
+
+            {/* Mobile View (<640px): Responsive Cards (No sideways scroll required) */}
+            <div className="block sm:hidden space-y-2.5">
+              {vouchers.slice(0, 6).map((v) => {
+                const voucherNo = v.voucherNumber || v.voucher_number || "—";
+                const rawDate = v.voucherDate || v.voucher_date || v.date;
+                const formattedDate = rawDate
+                  ? (() => {
+                      try {
+                        const d = new Date(rawDate);
+                        return isNaN(d.getTime())
+                          ? rawDate
+                          : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+                      } catch {
+                        return rawDate;
+                      }
+                    })()
+                  : "—";
+                const vType = (v.voucherType || v.voucher_type || v.type || "GENERAL").toUpperCase();
+                const partyName = v.partyName || v.party_name || v.narration || "General Entry";
+                const rawAmount = v.totalAmount !== undefined && v.totalAmount !== null
+                  ? v.totalAmount
+                  : (v.total_amount !== undefined && v.total_amount !== null ? v.total_amount : 0);
+                const amount = Number(rawAmount) || 0;
+
+                return (
+                  <div
+                    key={v.id || voucherNo}
+                    onClick={() => router.push(`/vouchers?search=${encodeURIComponent(voucherNo !== "—" ? voucherNo : "")}`)}
+                    className="p-3 rounded-xl bg-muted/30 border border-border/50 hover:bg-muted/60 transition-colors cursor-pointer space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase border ${getVoucherTypeBadgeClass(vType)}`}>
+                          {vType}
+                        </span>
+                        <span className="font-mono text-xs font-semibold text-foreground">
+                          {voucherNo}
+                        </span>
+                      </div>
+                      <span className="font-mono text-sm font-bold text-foreground">
+                        ₹{amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
+                      <span className="truncate max-w-[180px] font-medium text-foreground">
+                        {partyName}
+                      </span>
+                      <span className="font-mono text-[11px] shrink-0">
+                        {formattedDate}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {!hasTransactions && (
+                <div className="py-8 text-center text-muted-foreground text-xs border border-dashed border-border/60 rounded-xl">
+                  No vouchers recorded yet.
+                </div>
+              )}
+            </div>
+
+            {/* Tablet & Desktop View (>=640px): Clean Table */}
+            <div className="hidden sm:block overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-border/60 text-muted-foreground">
+                    <th className="py-2.5 font-semibold">Voucher #</th>
+                    <th className="py-2.5 font-semibold">Date</th>
+                    <th className="py-2.5 font-semibold">Type</th>
+                    <th className="py-2.5 font-semibold">Party / Details</th>
+                    <th className="py-2.5 font-semibold">Status</th>
+                    <th className="py-2.5 font-semibold text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/30">
+                  {vouchers.slice(0, 7).map((v) => {
+                    const voucherNo = v.voucherNumber || v.voucher_number || "—";
+                    const rawDate = v.voucherDate || v.voucher_date || v.date;
+                    const formattedDate = rawDate
+                      ? (() => {
+                          try {
+                            const d = new Date(rawDate);
+                            return isNaN(d.getTime())
+                              ? rawDate
+                              : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+                          } catch {
+                            return rawDate;
+                          }
+                        })()
+                      : "—";
+                    const vType = (v.voucherType || v.voucher_type || v.type || "GENERAL").toUpperCase();
+                    const partyName = v.partyName || v.party_name || v.narration || "General Entry";
+                    const status = v.status || "POSTED";
+                    const rawAmount = v.totalAmount !== undefined && v.totalAmount !== null
+                      ? v.totalAmount
+                      : (v.total_amount !== undefined && v.total_amount !== null ? v.total_amount : 0);
+                    const amount = Number(rawAmount) || 0;
+
+                    return (
+                      <tr
+                        key={v.id || voucherNo}
+                        onClick={() => router.push(`/vouchers?search=${encodeURIComponent(voucherNo !== "—" ? voucherNo : "")}`)}
+                        className="hover:bg-muted/40 transition-colors cursor-pointer group"
+                      >
+                        <td className="py-3 font-mono tabular-nums font-semibold text-foreground group-hover:text-primary transition-colors">
+                          {voucherNo}
+                        </td>
+                        <td className="py-3 text-muted-foreground font-mono tabular-nums">
+                          {formattedDate}
+                        </td>
+                        <td className="py-3">
+                          <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold uppercase border ${getVoucherTypeBadgeClass(vType)}`}>
+                            {vType}
+                          </span>
+                        </td>
+                        <td className="py-3 text-foreground font-medium max-w-[200px] truncate" title={partyName}>
+                          {partyName}
+                        </td>
+                        <td className="py-3">
+                          <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${getVoucherStatusBadgeClass(status)}`}>
+                            {status}
+                          </span>
+                        </td>
+                        <td className="py-3 text-right font-mono tabular-nums font-bold text-foreground">
+                          ₹{amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!hasTransactions && (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-muted-foreground text-xs">
+                        No vouchers posted yet. Press <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F8</kbd> for Sales or <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F9</kbd> for Purchases.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Right Column (4 cols): Best Customers & Relationships */}
+          <div className="lg:col-span-4 bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4 flex flex-col">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-foreground">Best Customers</h2>
+                <p className="text-xs text-muted-foreground">By sales revenue & volume</p>
               </div>
               <Link href="/parties" className="text-xs text-muted-foreground hover:text-foreground font-medium transition-colors">
                 View all →
               </Link>
             </div>
 
-            <div className="overflow-y-auto flex-1 max-h-60 space-y-2">
+            <div className="space-y-2 flex-1">
               {rfmList.length > 0 ? (
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-border/60 text-muted-foreground">
-                      <th className="pb-2 font-medium">Customer</th>
-                      <th className="pb-2 font-medium">Status</th>
-                      <th className="pb-2 font-medium text-right">Orders</th>
-                      <th className="pb-2 font-medium text-right">Sales</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/30">
-                    {rfmList.slice(0, 5).map((customer: any, idx: number) => {
-                      const segName = customer.segment || "Standard";
-                      return (
-                        <tr key={idx} className="hover:bg-muted/40 transition-colors">
-                          <td className="py-3 font-medium text-foreground truncate max-w-[120px]">
-                            {customer.party_ledger__name || "Customer"}
-                          </td>
-                          <td className="py-3">
-                            <span className={`px-2 py-0.5 rounded text-xs font-semibold border ${getCustomerTierBadgeClass(segName)}`}>
-                              {segName}
-                            </span>
-                          </td>
-                          <td className="py-3 text-right font-mono tabular-nums text-muted-foreground">
-                            {customer.frequency}
-                          </td>
-                          <td className="py-3 text-right font-mono tabular-nums font-semibold text-foreground">
-                            ₹{Number(customer.monetary).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                rfmList.slice(0, 5).map((customer: any, idx: number) => {
+                  const segName = customer.segment || "Standard";
+                  return (
+                    <div
+                      key={idx}
+                      className="p-3 rounded-xl bg-muted/20 hover:bg-muted/50 border border-border/40 transition-colors flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-foreground truncate">
+                          {customer.party_ledger__name || "Customer"}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`px-1.5 py-0.2 rounded text-[10px] font-semibold border ${getCustomerTierBadgeClass(segName)}`}>
+                            {segName}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground font-mono">
+                            {customer.frequency} orders
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-xs font-black font-mono text-foreground">
+                          ₹{Number(customer.monetary).toLocaleString("en-IN", { minimumFractionDigits: 0 })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
               ) : (
-                <div className="h-44 flex flex-col items-center justify-center border border-dashed border-border/60 rounded-lg text-center p-6 space-y-1.5">
+                <div className="h-40 flex flex-col items-center justify-center border border-dashed border-border/60 rounded-xl text-center p-4 space-y-1">
                   <Users className="w-6 h-6 text-muted-foreground/40" />
-                  <div className="text-xs font-medium text-muted-foreground">No customer records yet</div>
-                  <div className="text-xs text-muted-foreground/80">
-                    Customer loyalty and order statistics will populate here automatically.
+                  <div className="text-xs font-medium text-muted-foreground">No customer transactions yet</div>
+                  <div className="text-[11px] text-muted-foreground/80">
+                    Customers will be categorized here as invoices are posted.
                   </div>
                 </div>
               )}
             </div>
-          </div>
-        </div>
 
-        {/* Recent Ledger Transactions Table */}
-        <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-3.5">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">Recent Transactions</h2>
-              <p className="text-xs text-muted-foreground">Your latest transactions</p>
+            <div className="pt-2 border-t border-border/40">
+              <Link
+                href="/analytics?tab=customers"
+                className="w-full py-2 px-3 rounded-xl bg-muted/40 hover:bg-muted text-foreground text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <span>Full RFM Segmentation & Cohorts</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
             </div>
-            <Link href="/vouchers" className="text-xs text-primary hover:underline font-medium transition-colors">
-              View all →
-            </Link>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-border/60 text-muted-foreground">
-                  <th className="py-2.5 font-medium">Number</th>
-                  <th className="py-2.5 font-medium">Date</th>
-                  <th className="py-2.5 font-medium">Type</th>
-                  <th className="py-2.5 font-medium">Details / Party</th>
-                  <th className="py-2.5 font-medium">Status</th>
-                  <th className="py-2.5 font-medium text-right">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/30">
-                {vouchers.slice(0, 8).map((v) => {
-                  const voucherNo = v.voucherNumber || v.voucher_number || "—";
-                  const rawDate = v.voucherDate || v.voucher_date || v.date;
-                  const formattedDate = rawDate
-                    ? (() => {
-                        try {
-                          const d = new Date(rawDate);
-                          return isNaN(d.getTime())
-                            ? rawDate
-                            : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-                        } catch {
-                          return rawDate;
-                        }
-                      })()
-                    : "—";
-                  const vType = (v.voucherType || v.voucher_type || v.type || "GENERAL").toUpperCase();
-                  const partyName = v.partyName || v.party_name || v.narration || "General Entry";
-                  const status = v.status || "POSTED";
-                  const rawAmount = v.totalAmount !== undefined && v.totalAmount !== null
-                    ? v.totalAmount
-                    : (v.total_amount !== undefined && v.total_amount !== null ? v.total_amount : 0);
-                  const amount = Number(rawAmount) || 0;
-
-                  return (
-                    <tr
-                      key={v.id || voucherNo}
-                      onClick={() => router.push(`/vouchers?search=${encodeURIComponent(voucherNo !== "—" ? voucherNo : "")}`)}
-                      className="hover:bg-muted/40 transition-colors cursor-pointer group"
-                    >
-                      <td className="py-3 font-mono tabular-nums font-semibold text-foreground group-hover:text-primary transition-colors">
-                        {voucherNo}
-                      </td>
-                      <td className="py-3 text-muted-foreground font-mono tabular-nums">
-                        {formattedDate}
-                      </td>
-                      <td className="py-3">
-                        <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold uppercase border ${getVoucherTypeBadgeClass(vType)}`}>
-                          {vType}
-                        </span>
-                      </td>
-                      <td className="py-3 text-foreground font-medium max-w-[220px] truncate" title={partyName}>
-                        {partyName}
-                      </td>
-                      <td className="py-3">
-                        <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${getVoucherStatusBadgeClass(status)}`}>
-                          {status}
-                        </span>
-                      </td>
-                      <td className="py-3 text-right font-mono tabular-nums font-semibold text-foreground">
-                        ₹{amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
-                    </tr>
-                  );
-                })}
-                {!hasTransactions && (
-                  <tr>
-                    <td colSpan={6} className="py-8 text-center text-muted-foreground text-xs">
-                      No vouchers posted yet. Press <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F8</kbd> for Sales or <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F9</kbd> for Purchases.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
           </div>
         </div>
       </div>

@@ -271,7 +271,7 @@ export default function InventoryPage() {
           </Link>
         </div>
 
-        {/* Stock Valuation Summary Banner */}
+        {/* Operational Inventory Summary Banner */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="p-4 rounded-2xl border border-border/60 bg-card shadow-sm flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20 flex items-center justify-center shrink-0">
@@ -288,98 +288,27 @@ export default function InventoryPage() {
             </div>
           </div>
 
-          {(() => {
-            const listPriceValue = summary?.total_retail_value || 0;
-            const stockCostValue = summary?.total_stock_value || 0;
-            const effectiveRetailValue = retailDiscount > 0 
-              ? listPriceValue * (1 - retailDiscount / 100) 
-              : listPriceValue;
-            const effectiveMargin = Math.max(0, effectiveRetailValue - stockCostValue);
-            const marginMarkupPct = stockCostValue > 0 ? ((effectiveMargin / stockCostValue) * 100).toFixed(1) : '0';
-
-            return (
-              <>
-                <div className="p-4 rounded-2xl border border-border/60 bg-card shadow-sm flex flex-col justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 border border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-500/20 flex items-center justify-center shrink-0">
-                      <Tag className="w-6 h-6" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total MRP (List Price)</p>
-                      <h3 className="text-xl font-bold font-mono tabular-nums text-foreground truncate">
-                        ₹{listPriceValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </h3>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {retailDiscount > 0 ? (
-                          <span className="text-purple-600 dark:text-purple-400 font-semibold">
-                            At {retailDiscount}% disc: ₹{effectiveRetailValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </span>
-                        ) : (
-                          'Valuation at catalog list price'
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-2.5 pt-2 border-t border-border/40 flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Est. Retail Discount:</span>
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="number"
-                        min="0"
-                        max="99"
-                        placeholder="0"
-                        value={retailDiscount || ''}
-                        onChange={e => setRetailDiscount(Math.max(0, Math.min(99, parseFloat(e.target.value) || 0)))}
-                        className="w-14 bg-muted border border-border/60 rounded-lg px-2 py-1 text-sm text-foreground font-mono font-bold text-right outline-none focus:border-purple-500 min-h-[30px]"
-                      />
-                      <span className="text-muted-foreground font-semibold">%</span>
-                      {retailDiscount > 0 && (
-                        <button
-                          onClick={() => setRetailDiscount(0)}
-                          className="text-xs text-muted-foreground hover:text-foreground ml-1 px-1.5 py-0.5 rounded bg-muted cursor-pointer"
-                          title="Reset to 0%"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-2xl border border-border/60 bg-card shadow-sm flex flex-col justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20 flex items-center justify-center shrink-0">
-                      <TrendingUp className="w-6 h-6" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
-                        {retailDiscount > 0 ? 'Profit Margin' : 'Profit Margin (At MRP)'}
-                      </p>
-                      <h3 className="text-xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400 truncate">
-                        ₹{effectiveMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </h3>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {marginMarkupPct}% {retailDiscount > 0 ? `markup after ${retailDiscount}% retail discount` : 'markup over cost at list price'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-2.5 pt-2 border-t border-border/40 text-xs text-muted-foreground flex items-center justify-between">
-                    <span>Retail vs Purchase Cost</span>
-                    <span className="font-semibold text-foreground font-mono tabular-nums">
-                      ₹{stockCostValue > 0 ? ((effectiveRetailValue / stockCostValue)).toFixed(2) : '1.00'}x cost
-                    </span>
-                  </div>
-                </div>
-              </>
-            );
-          })()}
+          <div className="p-4 rounded-2xl border border-border/60 bg-card shadow-sm flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20 flex items-center justify-center shrink-0">
+              <Tag className="w-6 h-6" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Catalog MRP</p>
+              <h3 className="text-xl font-bold font-mono tabular-nums text-foreground truncate">
+                ₹{(summary?.total_retail_value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Valuation at catalog list price
+              </p>
+            </div>
+          </div>
 
           <div className="p-4 rounded-2xl border border-border/60 bg-card shadow-sm flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20 flex items-center justify-center shrink-0">
               <Layers className="w-6 h-6" />
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Products</p>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Products & Categories</p>
               <h3 className="text-xl font-bold text-foreground truncate">
                 {summary?.total_items ?? categories.reduce((acc: number, c: any) => acc + (c.item_count || 0), 0)} Items
               </h3>
@@ -388,6 +317,25 @@ export default function InventoryPage() {
               </p>
             </div>
           </div>
+
+          <Link
+            href="/analytics?tab=inventory"
+            className="p-4 rounded-2xl border border-purple-500/30 bg-purple-500/5 hover:bg-purple-500/10 transition-all shadow-sm flex flex-col justify-between group cursor-pointer"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
+                <span>Inventory Analytics</span>
+                <span className="text-[9px] bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded font-bold">AI</span>
+              </span>
+              <span className="text-xs text-purple-500 group-hover:translate-x-0.5 transition-transform">&rarr;</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Analyze stock health, replenishment cycles, turnover velocity & simulated margin discounts.
+            </p>
+            <div className="text-[11px] font-medium text-purple-600 dark:text-purple-400 mt-2">
+              Open Inventory Intelligence Hub &rarr;
+            </div>
+          </Link>
         </div>
 
         {loading ? (
