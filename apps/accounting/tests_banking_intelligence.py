@@ -525,7 +525,7 @@ class BankIntelligenceAndAccountingHealthTests(APITestCase):
         self.assertIn("-5", findings[0].description)
 
     def test_19_unusual_transaction_warning(self):
-        """Scenario 19: Warns about loss-making sales where product is sold below cost price."""
+        """Scenario 19: Verifies that loss-making sales check is retired (due to monthly GST return filing locks and deliberate clearance sales)."""
         from apps.inventory.models import Product
         from apps.accounting.models import VoucherItem
 
@@ -551,9 +551,7 @@ class BankIntelligenceAndAccountingHealthTests(APITestCase):
         )
 
         findings = AccountingIntegrityEngine.check_negative_margins(self.company)
-        self.assertEqual(len(findings), 1)
-        self.assertIn(findings[0].severity, ['WARNING', 'CRITICAL'])
-        self.assertIn("Loss-making sale", findings[0].title)
+        self.assertEqual(len(findings), 0)
 
     def test_20_diagnose_balance_mismatch_flagship(self):
         """Scenario 20: 'Why is my balance not matching?' isolates Trial Balance discrepancy."""
@@ -683,7 +681,7 @@ class BankIntelligenceAndAccountingHealthTests(APITestCase):
         self.assertIn("score_breakdown", report)
         self.assertIn("checks", report)
         self.assertIn("findings", report)
-        self.assertEqual(report["metrics"]["total_checks"], 11)
+        self.assertEqual(report["metrics"]["total_checks"], 10)
 
         # Test health API view
         from apps.companies.models import UserCompany

@@ -213,7 +213,7 @@ class StatementAccountingRegressionTests(TestCase):
         self.assertIn('health_score', report)
         self.assertIn('health_status', report)
         self.assertIn('checks', report)
-        self.assertEqual(len(report['checks']), 11)
+        self.assertEqual(len(report['checks']), 10)
 
         for check in report['checks']:
             self.assertIn('name', check)

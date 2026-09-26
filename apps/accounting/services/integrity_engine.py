@@ -94,10 +94,19 @@ class AccountingIntegrityEngine:
         findings.extend(cls.check_duplicate_entries(company, existing_findings_map=existing_findings_map))
         findings.extend(cls.check_gst(company, existing_findings_map=existing_findings_map))
         findings.extend(cls.check_inventory(company, existing_findings_map=existing_findings_map))
-        findings.extend(cls.check_negative_margins(company, existing_findings_map=existing_findings_map))
         findings.extend(cls.check_bank_reconciliation(company, existing_findings_map=existing_findings_map, bank_status_counts=bank_status_counts))
         findings.extend(cls.check_cash_and_liquidity(company, existing_findings_map=existing_findings_map))
         findings.extend(cls.check_document_numbering(company, existing_findings_map=existing_findings_map))
+
+        # Retire/resolve any historical MARGIN_RISK / UNUSUAL_ACTIVITY findings
+        AccountingFinding.objects.filter(
+            company=company,
+            category__in=['MARGIN_RISK', 'UNUSUAL_ACTIVITY'],
+            is_resolved=False
+        ).update(
+            is_resolved=True,
+            resolved_at=timezone.now()
+        )
 
         # Single batch auto-resolve: resolve any previously open findings that are no longer detected
         detected_ids = {f.id for f in findings if f.id}
@@ -634,101 +643,22 @@ class AccountingIntegrityEngine:
     @classmethod
     def check_negative_margins(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """
-        8. Check: Detects loss-making sales where products are sold below purchase cost.
-        In B2B wholesale and manufacturing, selling below cost price erodes operating profits
-        and indicates unauthorized discounting or billing clerical errors.
+        Check retired: In B2B accounting and wholesale trade, past sales invoices cannot be
+        arbitrarily amended after monthly GST returns (GSTR-1 / GSTR-3B) are filed.
+        Additionally, selling below cost is common during promotional clearance, bulk lot sales,
+        or authorized inventory write-downs. Hence, this check is retired to eliminate false alarms.
         """
-        findings = []
-        active_titles = set()
-
-        if existing_findings_map is None:
-            legacy = AccountingFinding.objects.filter(
-                company=company,
-                category='UNUSUAL_ACTIVITY',
-                is_resolved=False
-            )
-            if legacy.exists():
-                legacy.update(is_resolved=True, resolved_at=timezone.now())
-
-        # Inspect recent posted sales vouchers (last 100 sales)
-        recent_sales = Voucher.objects.filter(
+        # Auto-resolve any legacy margin findings if called directly
+        AccountingFinding.objects.filter(
             company=company,
-            voucher_type='SALES',
-            status='POSTED'
-        ).only('id', 'voucher_number', 'voucher_date', 'party_ledger_id').prefetch_related('items__product').defer('attachment_data', 'attachment_mime')[:100]
-
-        for v in recent_sales:
-            for item in v.items.all():
-                prod = item.product
-                if not prod or not prod.purchase_price or prod.purchase_price <= Decimal('0.00'):
-                    continue
-
-                qty = Decimal(str(item.quantity or '0.00'))
-                if qty <= Decimal('0.00'):
-                    continue
-
-                # Effective selling rate after item discount
-                rate = Decimal(str(item.rate or '0.00'))
-                disc_pct = Decimal(str(item.discount_percent or '0.00'))
-                effective_rate = rate * (Decimal('1.00') - (disc_pct / Decimal('100.00')))
-                cost_price = Decimal(str(prod.purchase_price or '0.00'))
-
-                # If sold at a loss (more than ₹1 under cost to ignore tiny rounding)
-                if effective_rate < (cost_price - Decimal('1.00')):
-                    unit_loss = cost_price - effective_rate
-                    total_loss = round(unit_loss * qty, 2)
-                    title = f"Loss-making sale: {prod.name} sold below cost on #{v.voucher_number}"
-                    active_titles.add(title)
-
-                    finding = cls._get_or_create_finding(
-                        company=company,
-                        category='MARGIN_RISK',
-                        title=title,
-                        defaults={
-                            "severity": "CRITICAL" if total_loss > Decimal('500.00') else "WARNING",
-                            "description": (
-                                f"Product '{prod.name}' was sold on invoice #{v.voucher_number} at ₹{effective_rate:.2f}/unit, "
-                                f"which is below its recorded purchase cost of ₹{cost_price:.2f}/unit. "
-                                f"Total loss on this line item: ₹{total_loss:.2f} (Qty: {qty} {prod.unit or 'units'})."
-                            ),
-                            "evidence": {
-                                "voucher_id": str(v.id),
-                                "voucher_number": v.voucher_number,
-                                "voucher_date": str(v.voucher_date),
-                                "product_id": str(prod.id),
-                                "product_name": prod.name,
-                                "selling_rate": str(round(effective_rate, 2)),
-                                "purchase_cost": str(cost_price),
-                                "unit_loss": str(round(unit_loss, 2)),
-                                "quantity": str(qty),
-                                "total_loss": str(total_loss)
-                            },
-                            "expected_state": f"Selling price should be at or above purchase cost (₹{cost_price:.2f}).",
-                            "actual_state": f"Sold at ₹{effective_rate:.2f} (Loss of ₹{unit_loss:.2f}/unit).",
-                            "probable_cause": "Clerical pricing typo during invoice entry or excessive party discount.",
-                            "suggested_action": "Verify invoice item rate and apply corrected rate or verify special authorized markdown.",
-                            "confidence": 0.98,
-                            "fix_action": "REVIEW_PRICING"
-                        },
-                        existing_findings_map=existing_findings_map
-                    )
-                    findings.append(finding)
-
-        # Batch auto-resolve only if standalone and stale findings exist
-        if existing_findings_map is None:
-            stale = AccountingFinding.objects.filter(
-                company=company,
-                category='MARGIN_RISK',
-                is_resolved=False
-            ).exclude(title__in=active_titles)
-            if stale.exists():
-                stale.update(is_resolved=True, resolved_at=timezone.now())
-
-        return findings
+            category__in=['MARGIN_RISK', 'UNUSUAL_ACTIVITY'],
+            is_resolved=False
+        ).update(is_resolved=True, resolved_at=timezone.now())
+        return []
 
     @classmethod
     def check_unusual_transactions(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
-        """Backward-compatibility alias pointing to check_negative_margins."""
+        """Backward-compatibility alias pointing to check_negative_margins (retired)."""
         return cls.check_negative_margins(company, existing_findings_map=existing_findings_map)
 
     @classmethod
@@ -995,12 +925,6 @@ class AccountingIntegrityEngine:
                 "category": "INVENTORY",
                 "description": "Monitors stock quantities to prevent negative inventory and valuation drift.",
                 "match": lambda f: f.category == 'INVENTORY',
-            },
-            {
-                "name": "Profit Margin & Pricing Alerts",
-                "category": "MARGIN_RISK",
-                "description": "Flags loss-making sales where items were sold below recorded purchase cost.",
-                "match": lambda f: f.category in ['MARGIN_RISK', 'UNUSUAL_ACTIVITY'],
             },
             {
                 "name": "Bank Reconciliation",
