@@ -151,7 +151,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="w-full px-3 sm:px-4 lg:px-4 xl:px-6 h-14 flex items-center justify-between gap-2 xl:gap-3">
           
           {/* Left Section: Brand & Primary Nav */}
-          <div className="flex items-center gap-2 xl:gap-3 2xl:gap-4 min-w-0">
+          <div className="flex items-center gap-1.5 xl:gap-2.5 2xl:gap-4 shrink-0">
             {/* Mobile / Tablet Hamburger Button */}
             <button
               onClick={() => setIsMobileNavOpen(true)}
@@ -174,12 +174,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
 
             {/* Desktop Navigation Links */}
-            <nav className="hidden lg:flex items-center gap-0.5 xl:gap-1 2xl:gap-1.5 min-w-0">
+            <nav className="hidden lg:flex items-center gap-0.5 xl:gap-1 2xl:gap-1.5 shrink-0">
               {/* Dashboard */}
               <Link
                 id="tour-dashboard-link"
                 href="/dashboard"
-                className={`px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
+                className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname === "/dashboard"
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -197,7 +197,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     setIsGstDropdownOpen(false);
                     setIsMoreDropdownOpen(false);
                   }}
-                  className={`px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                     isSalesActive
                       ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -264,7 +264,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-purchase-btn"
                 href="/purchases"
-                className={`px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
+                className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   isPurchasesActive
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -277,7 +277,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-parties-link"
                 href="/parties"
-                className={`px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
+                className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname.startsWith("/parties")
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -290,7 +290,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-inventory-link"
                 href="/inventory"
-                className={`px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
+                className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname.startsWith("/inventory")
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -303,7 +303,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-banking-link"
                 href="/banking"
-                className={`px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
+                className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname.startsWith("/banking")
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -316,20 +316,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-analytics-link"
                 href="/analytics"
-                className={`px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap flex items-center gap-1 xl:gap-1.5 ${
                   pathname.startsWith("/analytics")
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                 }`}
               >
                 <span>Analytics</span>
-                <span className="text-[9px] bg-purple-500/15 text-purple-600 dark:text-purple-400 font-bold px-1.5 py-0.2 rounded-full">
+                <span className="hidden xl:inline-flex text-[9px] bg-purple-500/15 text-purple-600 dark:text-purple-400 font-bold px-1.5 py-0.2 rounded-full">
                   AI
                 </span>
               </Link>
 
-              {/* GST & Tax Dropdown (visible on wide screens >= 1536px, otherwise tucked in More) */}
-              <div ref={gstRef} className="relative shrink-0 hidden 2xl:block">
+              {/* GST & Tax Dropdown (visible only on ultra-wide screens >= 1800px, otherwise comfortably accessed in More) */}
+              <div ref={gstRef} className="relative shrink-0 hidden min-[1800px]:block">
                 <button
                   id="tour-gst-btn"
                   onClick={() => {
@@ -337,7 +337,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     setIsSalesDropdownOpen(false);
                     setIsMoreDropdownOpen(false);
                   }}
-                  className={`px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                  className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                     pathname.startsWith("/gst")
                       ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -392,7 +392,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     setIsSalesDropdownOpen(false);
                     setIsGstDropdownOpen(false);
                   }}
-                  className={`px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                     isMoreActive
                       ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -599,23 +599,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
 
           {/* Right Section: Workspace Context, Quick Search & Utilities */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-1.5 xl:gap-2 shrink-0 ml-auto">
             
             {/* Company Switcher Pill */}
-            <div ref={companyRef} className="relative hidden md:block">
+            <div ref={companyRef} className="relative hidden md:block shrink-0">
               <button
                 onClick={() => {
                   setIsCompanyDropdownOpen(!isCompanyDropdownOpen);
                   setIsFYDropdownOpen(false);
                   setIsUserMenuOpen(false);
                 }}
-                className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
+                className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-2.5 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
                 title={`Active Company: ${activeCompany?.name || 'Company'}`}
               >
                 <div className="w-5 h-5 rounded-md bg-gradient-to-br from-primary/20 to-primary/10 border border-primary/25 flex items-center justify-center text-[10px] font-bold text-primary shrink-0 uppercase">
                   {(activeCompany?.name || "C")[0]}
                 </div>
-                <span className="font-semibold text-xs text-foreground truncate max-w-[80px] sm:max-w-[100px] lg:max-w-[110px] xl:max-w-[130px] 2xl:max-w-[170px]">
+                <span className="font-semibold text-xs text-foreground truncate max-w-[70px] lg:max-w-[85px] xl:max-w-[120px] 2xl:max-w-[160px]">
                   {activeCompany?.name || "Company"}
                 </span>
                 <ChevronDown className={`w-3 h-3 text-muted-foreground/70 shrink-0 transition-transform duration-150 ${isCompanyDropdownOpen ? "rotate-180" : ""}`} />
@@ -751,7 +751,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             >
               <Search className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="hidden 2xl:inline text-xs font-medium">Search</span>
-              <kbd className="hidden sm:inline-block text-[10px] font-mono bg-muted/80 px-1.5 py-0.2 rounded border border-border/60 text-muted-foreground">
+              <kbd className="hidden xl:inline-block text-[10px] font-mono bg-muted/80 px-1.5 py-0.2 rounded border border-border/60 text-muted-foreground">
                 Ctrl+K
               </kbd>
             </button>

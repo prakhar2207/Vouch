@@ -108,7 +108,7 @@ export default function HealthPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"ALL" | "ERRORS" | "REVIEWS" | "TASKS" | "CRITICAL" | "WARNING" | "ACTIONABLE">("ALL");
+  const [activeTab, setActiveTab] = useState<"ALL" | "DUPLICATES" | "ERRORS" | "REVIEWS" | "TASKS" | "CRITICAL" | "WARNING" | "ACTIONABLE">("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
   // Diagnostic tool state
@@ -259,11 +259,17 @@ export default function HealthPage() {
     }
   };
 
+  const duplicateFindingsCount = useMemo(() => {
+    return report?.findings?.filter((f) => f.category?.startsWith("DUPLICATE") || f.fix_type === "VOID_DUPLICATE_VOUCHER")?.length || 0;
+  }, [report]);
+
   const filteredFindings = useMemo(() => {
     if (!report?.findings) return [];
     let list = report.findings;
 
-    if (activeTab === "ERRORS" || activeTab === "CRITICAL") {
+    if (activeTab === "DUPLICATES") {
+      list = list.filter((f) => f.category?.startsWith("DUPLICATE") || f.fix_type === "VOID_DUPLICATE_VOUCHER");
+    } else if (activeTab === "ERRORS" || activeTab === "CRITICAL") {
       list = list.filter((f) => f.severity === "CRITICAL");
     } else if (activeTab === "REVIEWS" || activeTab === "WARNING") {
       list = list.filter((f) => f.severity === "WARNING" || f.severity === "INFO");
@@ -613,10 +619,18 @@ export default function HealthPage() {
             {report?.checks?.map((check) => (
               <div
                 key={check.name}
-                className="p-3.5 rounded-xl border border-border/40 bg-muted/20 hover:bg-muted/40 transition-colors space-y-1.5"
+                onClick={() => {
+                  if (check.name.toLowerCase().includes("duplicate")) {
+                    setActiveTab("DUPLICATES");
+                  } else if (check.status !== "PASSED") {
+                    setActiveTab("ALL");
+                    setSearchQuery(check.category);
+                  }
+                }}
+                className="p-3.5 rounded-xl border border-border/40 bg-muted/20 hover:bg-muted/40 transition-colors space-y-1.5 cursor-pointer group"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-foreground">{check.name}</span>
+                  <span className="text-xs font-bold text-foreground group-hover:text-primary transition-colors">{check.name}</span>
                   <span
                     className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
                       check.status === "PASSED"
@@ -631,8 +645,11 @@ export default function HealthPage() {
                 </div>
                 <p className="text-[11px] text-muted-foreground line-clamp-2">{check.description}</p>
                 {check.findings_count > 0 && (
-                  <div className="text-[10px] font-mono font-bold text-rose-400 pt-1">
-                    {check.findings_count} {check.findings_count === 1 ? "issue" : "issues"} detected
+                  <div className="text-[10px] font-mono font-bold text-rose-400 pt-1 flex items-center justify-between">
+                    <span>{check.findings_count} {check.findings_count === 1 ? "issue" : "issues"} detected</span>
+                    <span className="text-primary text-[10px] underline group-hover:no-underline flex items-center gap-0.5">
+                      Fix &rarr;
+                    </span>
                   </div>
                 )}
               </div>
@@ -653,6 +670,23 @@ export default function HealthPage() {
                 }`}
               >
                 All Items ({report?.findings?.length || 0})
+              </button>
+
+              <button
+                onClick={() => setActiveTab("DUPLICATES")}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                  activeTab === "DUPLICATES"
+                    ? "bg-card text-foreground shadow-sm border border-border/60"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 text-purple-400" />
+                <span>Duplicates</span>
+                {duplicateFindingsCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-purple-500/20 text-purple-400">
+                    {duplicateFindingsCount}
+                  </span>
+                )}
               </button>
 
               <button
@@ -733,6 +767,8 @@ export default function HealthPage() {
               <h3 className="text-base font-bold text-foreground">
                 {activeTab === "ALL"
                   ? "All Checks In Balance!"
+                  : activeTab === "DUPLICATES"
+                  ? "Zero Duplicate Entries"
                   : activeTab === "ERRORS" || activeTab === "CRITICAL"
                   ? "Zero Accounting Errors"
                   : activeTab === "REVIEWS" || activeTab === "WARNING"
@@ -742,6 +778,8 @@ export default function HealthPage() {
               <p className="text-xs text-muted-foreground max-w-sm mx-auto">
                 {activeTab === "ALL"
                   ? "All automated checks passed. Your books are balanced and in order."
+                  : activeTab === "DUPLICATES"
+                  ? "All receipts, payments, bank reconciliations, inventory items, and ledgers are deduplicated and clean."
                   : activeTab === "ERRORS" || activeTab === "CRITICAL"
                   ? "Trial balance, sequence numbering, and party ledgers are mathematically consistent."
                   : activeTab === "REVIEWS" || activeTab === "WARNING"
@@ -801,13 +839,82 @@ export default function HealthPage() {
                     {finding.is_actionable && (
                       <button
                         onClick={() => openFixPreview(finding)}
-                        className="px-4 py-2 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 shrink-0 cursor-pointer w-full sm:w-auto justify-center"
+                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 shrink-0 cursor-pointer w-full sm:w-auto justify-center ${
+                          finding.fix_type === "VOID_DUPLICATE_VOUCHER"
+                            ? "bg-purple-600 hover:bg-purple-700 text-white"
+                            : "bg-primary text-primary-foreground hover:bg-primary/90"
+                        }`}
                       >
                         <Wrench className="w-3.5 h-3.5" />
-                        <span>Review & Fix</span>
+                        <span>
+                          {finding.fix_type === "VOID_DUPLICATE_VOUCHER"
+                            ? "Fix Duplicate"
+                            : finding.fix_type === "MERGE_INVENTORY_ITEMS"
+                            ? "Merge Products"
+                            : "Review & Fix"}
+                        </span>
                       </button>
                     )}
                   </div>
+
+                  {/* Smart Duplicate Comparison Card */}
+                  {finding.fix_type === "VOID_DUPLICATE_VOUCHER" && finding.evidence?.primary_voucher_number && (
+                    <div className="p-3.5 rounded-xl bg-purple-500/5 border border-purple-500/20 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div className="space-y-1 p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Primary Record (Retained)
+                        </div>
+                        <div className="font-mono font-bold text-foreground">
+                          #{finding.evidence.primary_voucher_number}
+                        </div>
+                        <div className="text-muted-foreground text-[11px]">
+                          {finding.evidence.voucher_date} • ₹{finding.evidence.amount} • {finding.evidence.party_name}
+                        </div>
+                      </div>
+                      <div className="space-y-1 p-2.5 rounded-lg bg-rose-500/5 border border-rose-500/20">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-rose-400 flex items-center gap-1">
+                          <AlertOctagon className="w-3 h-3" />
+                          Duplicate Entry (To Void & Cancel)
+                        </div>
+                        <div className="font-mono font-bold text-foreground line-through decoration-rose-500/60">
+                          #{finding.evidence.duplicate_voucher_number}
+                        </div>
+                        <div className="text-muted-foreground text-[11px]">
+                          {finding.evidence.source_description || "Duplicate entry"}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {finding.fix_type === "MERGE_INVENTORY_ITEMS" && finding.evidence?.primary_sku && (
+                    <div className="p-3.5 rounded-xl bg-blue-500/5 border border-blue-500/20 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div className="space-y-1 p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Primary Product (Retained)
+                        </div>
+                        <div className="font-mono font-bold text-foreground">
+                          SKU: {finding.evidence.primary_sku} ({finding.evidence.primary_stock} units)
+                        </div>
+                        <div className="text-muted-foreground text-[11px]">
+                          Consolidated Target: {finding.evidence.combined_stock} units
+                        </div>
+                      </div>
+                      <div className="space-y-1 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1">
+                          <Layers className="w-3 h-3" />
+                          Duplicate SKU (To Consolidate)
+                        </div>
+                        <div className="font-mono font-bold text-foreground">
+                          SKU: {finding.evidence.duplicate_sku} ({finding.evidence.duplicate_stock} units)
+                        </div>
+                        <div className="text-muted-foreground text-[11px]">
+                          Stock movements will be migrated and duplicate SKU archived
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Evidence & Suggested Fix */}
                   <div className="bg-muted/30 border border-border/40 rounded-xl p-3 text-xs space-y-2">

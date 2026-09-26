@@ -28,7 +28,7 @@ class AccountingIntegrityEngine:
         findings.extend(cls.check_party_balances(company))
         findings.extend(cls.check_payment_allocations(company))
         findings.extend(cls.check_wrong_party(company))
-        findings.extend(cls.check_duplicate_invoices(company))
+        findings.extend(cls.check_duplicate_entries(company))
         findings.extend(cls.check_gst(company))
         findings.extend(cls.check_inventory(company))
         findings.extend(cls.check_unusual_transactions(company))
@@ -402,54 +402,52 @@ class AccountingIntegrityEngine:
         return findings
 
     @classmethod
-    def check_duplicate_invoices(cls, company: Company) -> List[AccountingFinding]:
-        """5. Check: Detects duplicate customer invoices or supplier bills."""
-        findings = []
-        # Find duplicates by (party_ledger, total_amount, voucher_date)
-        vouchers = Voucher.objects.filter(
-            company=company,
-            voucher_type__in=['SALES', 'PURCHASE'],
-            status='POSTED'
-        ).values('party_ledger', 'total_amount', 'voucher_date').annotate(count=Count('id')).filter(count__gt=1)
+    def check_duplicate_entries(cls, company: Company) -> List[AccountingFinding]:
+        """
+        5. Check: Intelligent Deduplication Engine across Receipts, Payments/Transactions,
+        Banking, Inventory, and Ledgers.
+        Flags duplicates with structured evidence and actionable preview/fix mechanisms.
+        """
+        from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+        findings: List[AccountingFinding] = []
 
-        for item in vouchers[:5]:
-            party = Ledger.objects.filter(id=item['party_ledger']).first()
-            if not party:
-                continue
+        scanned_items = TransactionDeduplicationEngine.scan_all_duplicates(company)
+        active_titles = set()
 
-            dups = list(Voucher.objects.filter(
-                company=company,
-                party_ledger=party,
-                total_amount=item['total_amount'],
-                voucher_date=item['voucher_date'],
-                status='POSTED'
-            ).defer('attachment_data', 'attachment_mime'))
-
-            numbers = [d.voucher_number for d in dups]
+        for item in scanned_items:
+            active_titles.add(item['title'])
             finding, _ = AccountingFinding.objects.update_or_create(
                 company=company,
-                category='DUPLICATE',
-                title=f"Possible duplicate invoice for {party.name}",
+                category=item['category'],
+                title=item['title'],
                 is_resolved=False,
                 defaults={
-                    "severity": "WARNING",
-                    "description": f"Found {len(dups)} invoices for {party.name} with identical amount ₹{item['total_amount']} on {item['voucher_date']} ({', '.join(numbers)}).",
-                    "evidence": {
-                        "party_name": party.name,
-                        "amount": str(item['total_amount']),
-                        "date": str(item['voucher_date']),
-                        "voucher_numbers": numbers
-                    },
-                    "expected_state": "Only one unique invoice should exist for the same transaction.",
-                    "actual_state": f"{len(dups)} identical invoices recorded.",
-                    "probable_cause": "Invoice was entered or synced twice.",
-                    "suggested_action": "Review invoices and cancel or reverse any true duplicate.",
-                    "confidence": 0.88
+                    "severity": item['severity'],
+                    "description": item['description'],
+                    "evidence": item.get('evidence', {}),
+                    "expected_state": item.get('expected_state', ''),
+                    "actual_state": item.get('actual_state', ''),
+                    "probable_cause": item.get('probable_cause', ''),
+                    "suggested_action": item.get('suggested_action', ''),
+                    "confidence": item.get('confidence', 0.95),
+                    "fix_action": item.get('fix_action')
                 }
             )
             findings.append(finding)
 
+        # Auto-resolve previously open duplicate findings that are no longer detected
+        AccountingFinding.objects.filter(
+            company=company,
+            category__in=['DUPLICATE', 'DUPLICATE_BANK', 'DUPLICATE_INVENTORY', 'DUPLICATE_LEDGER'],
+            is_resolved=False
+        ).exclude(title__in=active_titles).update(is_resolved=True, resolved_at=timezone.now())
+
         return findings
+
+    @classmethod
+    def check_duplicate_invoices(cls, company: Company) -> List[AccountingFinding]:
+        """Backward-compatibility alias pointing to check_duplicate_entries."""
+        return cls.check_duplicate_entries(company)
 
     @classmethod
     def check_gst(cls, company: Company) -> List[AccountingFinding]:
@@ -725,10 +723,10 @@ class AccountingIntegrityEngine:
                 "match": lambda f: f.category == 'WRONG_PARTY' and 'invoice' in f.title.lower(),
             },
             {
-                "name": "Duplicate Invoices & Bills",
+                "name": "Duplicate Transactions & Entries",
                 "category": "DUPLICATE",
-                "description": "Scans for duplicate invoice numbers and identical party billing amounts.",
-                "match": lambda f: f.category == 'DUPLICATE',
+                "description": "Scans for duplicate receipts, payments, bank reconciliations, inventory items, and ledgers.",
+                "match": lambda f: f.category in ['DUPLICATE', 'DUPLICATE_BANK', 'DUPLICATE_INVENTORY', 'DUPLICATE_LEDGER'],
             },
             {
                 "name": "GST Rates & Place of Supply",

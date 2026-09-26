@@ -6,7 +6,7 @@ from .views import (
     CreatePaymentReceiptAPIView, ListPaymentReceiptAPIView, UniversalVoucherAPIView,
     SyncTaxLedgersAPIView, PartyRatesAPIView, RebuildBalancesAPIView,
     AgingReportAPIView, AutoFIFOReconciliationAPIView, VoucherAuditHistoryAPIView,
-    PurchasePeriodSummaryAPIView
+    PurchasePeriodSummaryAPIView, CheckDuplicateVoucherAPIView
 )
 from .ocr_views import OCRExtractAPIView
 from .proforma_views import (
@@ -34,6 +34,7 @@ urlpatterns = [
     path('proforma/<uuid:pk>/convert/', ConvertProformaToInvoiceAPIView.as_view(), name='convert_proforma_to_invoice'),
 
     path('vouchers/', UniversalVoucherAPIView.as_view(), name='universal_vouchers'),
+    path('vouchers/check-duplicate/', CheckDuplicateVoucherAPIView.as_view(), name='check_duplicate_voucher'),
     path('vouchers/<uuid:company_id>/', UniversalVoucherAPIView.as_view(), name='universal_vouchers_company'),
     path('ocr/extract/', OCRExtractAPIView.as_view(), name='ocr_extract'),
     path('sales-invoice/', CreateSalesInvoiceAPIView.as_view(), name='create_sales_invoice'),

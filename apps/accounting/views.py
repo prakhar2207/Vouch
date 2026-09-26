@@ -1834,6 +1834,28 @@ class CreatePaymentReceiptAPIView(APIView):
             voucher_date_str = data.get('voucher_date')
             voucher_date = date.fromisoformat(voucher_date_str) if voucher_date_str else date.today()
 
+            # Smart Deduplication Gatekeeper
+            force_create = bool(data.get('force_create') or data.get('allow_duplicate'))
+            if not force_create:
+                from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+                invoice_id = data.get('invoice_id') or data.get('allocated_invoice_id')
+                dup_result = TransactionDeduplicationEngine.check_duplicate_candidate(
+                    company=company,
+                    voucher_type=voucher_type,
+                    party_ledger=party_ledger,
+                    total_amount=amount,
+                    voucher_date=voucher_date,
+                    preferred_invoice_id=invoice_id
+                )
+                if dup_result.get('is_duplicate'):
+                    return Response({
+                        "success": False,
+                        "is_duplicate": True,
+                        "error": dup_result.get('reason'),
+                        "rule": dup_result.get('rule'),
+                        "matching_voucher": dup_result.get('matching_voucher')
+                    }, status=status.HTTP_409_CONFLICT)
+
             with transaction.atomic():
                 # Sequential number generator with select_for_update
                 voucher_number, fy = InvoiceSequenceService.get_next_number(company, voucher_type, voucher_date)
@@ -2913,6 +2935,55 @@ class PurchasePeriodSummaryAPIView(APIView):
                 "end_date": str(end_date) if end_date else None,
             }
         })
+
+
+class CheckDuplicateVoucherAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        """
+        Real-time check to prevent duplicate vouchers before creation/submission.
+        Query parameters:
+        - voucher_type: str (e.g. 'RECEIPT', 'PAYMENT', 'SALES', 'PURCHASE')
+        - party_id: UUID
+        - amount: Decimal
+        - voucher_date: YYYY-MM-DD
+        - invoice_id: optional UUID
+        - exclude_id: optional UUID
+        """
+        from apps.accounts.permissions import get_authorized_company
+        from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+        company = get_authorized_company(request)
+
+        voucher_type = request.query_params.get('voucher_type')
+        party_id = request.query_params.get('party_id')
+        amount_str = request.query_params.get('amount')
+        date_str = request.query_params.get('voucher_date') or request.query_params.get('date')
+        invoice_id = request.query_params.get('invoice_id')
+        exclude_id = request.query_params.get('exclude_id')
+
+        if not (voucher_type and amount_str and date_str):
+            return Response({"is_duplicate": False, "confidence": 0.0, "reason": "Missing required fields"}, status=status.HTTP_200_OK)
+
+        try:
+            total_amount = Decimal(str(amount_str))
+            voucher_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except Exception:
+            return Response({"is_duplicate": False, "confidence": 0.0, "reason": "Invalid amount or date format"}, status=status.HTTP_200_OK)
+
+        party = Ledger.objects.filter(id=party_id, company=company).first() if party_id else None
+
+        result = TransactionDeduplicationEngine.check_duplicate_candidate(
+            company=company,
+            voucher_type=voucher_type,
+            party_ledger=party,
+            total_amount=total_amount,
+            voucher_date=voucher_date,
+            preferred_invoice_id=invoice_id,
+            exclude_voucher_id=exclude_id
+        )
+
+        return Response(result, status=status.HTTP_200_OK)
 
 
 

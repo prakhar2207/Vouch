@@ -100,6 +100,47 @@ class BankReconciliationService:
 
             # Canonical voucher type based on direction
             v_type = 'RECEIPT' if is_money_in else 'PAYMENT'
+
+            # Stop Duplication Gatekeeper: Check if an existing manual voucher matches this transaction
+            if not payload.get('force_new_voucher', False):
+                from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+                existing_match = TransactionDeduplicationEngine.detect_existing_voucher_for_bank_tx(
+                    bank_tx=bank_tx,
+                    party=party,
+                    amount=amount,
+                    is_money_in=is_money_in
+                )
+                if existing_match:
+                    matched_vch = existing_match['voucher']
+                    bank_tx.matched_voucher = matched_vch
+                    bank_tx.matched_party = party
+                    bank_tx.status = 'RECONCILED'
+                    bank_tx.match_confidence = existing_match.get('confidence', 1.0)
+                    bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'match_confidence', 'updated_at'])
+
+                    AuditService.log_action(
+                        company=company,
+                        user=user,
+                        action='UPDATE',
+                        model_name='BankReconciliation',
+                        record_id=bank_tx.id,
+                        changes={
+                            "action": "AUTO_MATCH_EXISTING_DEDUPLICATED",
+                            "voucher_number": matched_vch.voucher_number,
+                            "party": party.name,
+                            "amount": str(amount),
+                            "reason": "Existing manual voucher matched to prevent duplicate voucher creation."
+                        }
+                    )
+
+                    return {
+                        "status": "SUCCESS",
+                        "voucher_id": str(matched_vch.id),
+                        "voucher_number": matched_vch.voucher_number,
+                        "message": f"Automatically linked to existing voucher #{matched_vch.voucher_number} to prevent duplicate transaction.",
+                        "allocations": []
+                    }
+
             v_num, _ = InvoiceSequenceService.get_next_number(company, v_type, bank_tx.transaction_date)
 
             if is_money_in:

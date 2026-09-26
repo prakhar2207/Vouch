@@ -23,7 +23,8 @@ import {
   Hash,
   ArrowDownLeft,
   ArrowUpRight,
-  Receipt
+  Receipt,
+  AlertTriangle
 } from 'lucide-react';
 
 type PaymentMode = 'CASH' | 'CHEQUE' | 'NEFT' | 'RTGS' | 'IMPS' | 'UPI' | 'BANK_TRANSFER';
@@ -57,10 +58,45 @@ export default function NewVoucherPage() {
   const [isAddBankModalOpen, setIsAddBankModalOpen] = useState(false);
   const [isAddExpenseModalOpen, setIsAddExpenseModalOpen] = useState(false);
 
+  // Duplicate entry detection state
+  const [duplicateWarning, setDuplicateWarning] = useState<any>(null);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
     fetchLedgers();
   }, [router]);
+
+  // Real-time pre-check to prevent duplicate voucher creation
+  useEffect(() => {
+    if (!companyId || !partyLedgerId || !amount || parseFloat(amount) <= 0 || !voucherDate) {
+      setDuplicateWarning(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const token = getAccessToken();
+        const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/check-duplicate/`, {
+          params: {
+            voucher_type: voucherType,
+            party_id: partyLedgerId,
+            amount: parseFloat(amount),
+            voucher_date: voucherDate
+          },
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.data?.is_duplicate) {
+          setDuplicateWarning(res.data);
+        } else {
+          setDuplicateWarning(null);
+        }
+      } catch {
+        // Silently ignore pre-check network hiccups
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [companyId, voucherType, partyLedgerId, amount, voucherDate]);
 
   const fetchLedgers = async () => {
     try {
@@ -196,8 +232,8 @@ export default function NewVoucherPage() {
     setPaymentLedgerId(newBank.id);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent, force: boolean = false) => {
+    if (e) e.preventDefault();
     if (!partyLedgerId) {
       toast.warning(`Please select a ${voucherType === 'RECEIPT' ? 'customer' : 'supplier'}.`);
       return;
@@ -218,6 +254,11 @@ export default function NewVoucherPage() {
     }
     if ((paymentMode === 'NEFT' || paymentMode === 'RTGS' || paymentMode === 'IMPS' || paymentMode === 'UPI') && !transactionNo.trim()) {
       toast.warning(`Please enter the ${paymentMode} transaction / reference number.`);
+      return;
+    }
+
+    if (!force && duplicateWarning?.is_duplicate) {
+      setShowDuplicateModal(true);
       return;
     }
 
@@ -270,6 +311,7 @@ export default function NewVoucherPage() {
         reference_number: referenceNumber,
         narration: finalNarration,
         voucher_date: voucherDate,
+        force_create: force,
       };
 
       const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/payment-receipt/`, payload, { headers });
@@ -285,6 +327,11 @@ export default function NewVoucherPage() {
         toast.error('Failed to post voucher', res.data.error);
       }
     } catch (err: any) {
+      if (err.response?.status === 409 && err.response?.data?.is_duplicate) {
+        setDuplicateWarning(err.response.data);
+        setShowDuplicateModal(true);
+        return;
+      }
       toast.error('Error posting voucher', err.response?.data?.error || err.message);
     } finally {
       setSaving(false);
@@ -729,6 +776,41 @@ export default function NewVoucherPage() {
             </div>
           )}
 
+          {/* Smart Deduplication Warning Banner */}
+          {duplicateWarning?.is_duplicate && (
+            <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-start gap-3.5 text-xs text-amber-800 dark:text-amber-200 animate-in fade-in">
+              <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <div className="font-semibold text-amber-700 dark:text-amber-300 flex items-center justify-between">
+                  <span>Potential Duplicate Entry Detected</span>
+                  <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 font-bold">
+                    {duplicateWarning.rule || 'DUPLICATE'}
+                  </span>
+                </div>
+                <p className="text-muted-foreground text-xs leading-relaxed">
+                  {duplicateWarning.reason || 'An identical voucher exists with the same date, party, and amount.'}
+                </p>
+                {duplicateWarning.matching_voucher && (
+                  <div className="flex flex-wrap items-center gap-3 pt-1 font-mono text-[11px] text-foreground">
+                    <span>Voucher #{duplicateWarning.matching_voucher.voucher_number}</span>
+                    <span>•</span>
+                    <span>Date: {duplicateWarning.matching_voucher.voucher_date}</span>
+                    <span>•</span>
+                    <span>₹{Number(duplicateWarning.matching_voucher.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                    <span>•</span>
+                    <Link
+                      href={`/vouchers/detail/${duplicateWarning.matching_voucher.id}`}
+                      target="_blank"
+                      className="text-primary hover:underline font-semibold"
+                    >
+                      View Existing Voucher ↗
+                    </Link>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-end pt-2">
             <button
               type="submit"
@@ -759,6 +841,61 @@ export default function NewVoucherPage() {
           companyId={companyId}
           onSuccess={handleExpenseCreated}
         />
+
+        {/* Duplicate Entry Confirmation Modal */}
+        {showDuplicateModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+            <div className="bg-card border border-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in zoom-in-95">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">Possible Duplicate Transaction</h3>
+                  <p className="text-xs text-muted-foreground">Smart Accounting Deduplication Engine</p>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-muted/40 border border-border/50 rounded-xl space-y-2 text-xs">
+                <p className="text-foreground leading-relaxed">
+                  {duplicateWarning?.reason || 'A matching voucher has already been recorded for this party, date, and amount.'}
+                </p>
+                {duplicateWarning?.matching_voucher && (
+                  <div className="font-mono text-[11px] text-muted-foreground bg-card/60 p-2.5 rounded-lg border border-border/40 space-y-1">
+                    <div><strong>Voucher:</strong> #{duplicateWarning.matching_voucher.voucher_number}</div>
+                    <div><strong>Date:</strong> {duplicateWarning.matching_voucher.voucher_date}</div>
+                    <div><strong>Amount:</strong> ₹{Number(duplicateWarning.matching_voucher.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                  </div>
+                )}
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                Double entries cause books imbalance and duplicate party ledger balances. Are you sure this is a legitimate distinct transaction?
+              </p>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDuplicateModal(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                >
+                  Cancel / Review
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setShowDuplicateModal(false);
+                    handleSubmit(undefined, true);
+                  }}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white shadow-md transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {saving ? 'Posting...' : 'Confirm & Post Anyway'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

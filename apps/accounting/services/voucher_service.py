@@ -46,12 +46,27 @@ class VoucherService:
 
     @staticmethod
     @transaction.atomic
-    def post_voucher(voucher: Voucher, process_stock=True):
+    def post_voucher(voucher: Voucher, process_stock=True, force_duplicate=False):
         if voucher.status == 'POSTED':
             raise ValidationError("Voucher is already posted.")
         if voucher.status == 'CANCELLED':
             raise ValidationError("Cannot post a cancelled voucher.")
-            
+
+        # Real-time Deduplication Gatekeeper
+        if not force_duplicate and voucher.voucher_type in ('RECEIPT', 'PAYMENT', 'SALES', 'PURCHASE'):
+            from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+            dup_check = TransactionDeduplicationEngine.check_duplicate_candidate(
+                company=voucher.company,
+                voucher_type=voucher.voucher_type,
+                party_ledger=voucher.party_ledger,
+                total_amount=voucher.total_amount,
+                voucher_date=voucher.voucher_date,
+                exclude_voucher_id=voucher.id,
+                lookback_minutes=15
+            )
+            if dup_check.get('is_duplicate') and dup_check.get('rule') == 'RAPID_DOUBLE_SUBMISSION':
+                raise ValidationError(dup_check.get('reason'))
+
         voucher.status = 'VALIDATING'
         voucher.save(update_fields=['status'])
         
