@@ -162,7 +162,8 @@ class FindingFixService:
                 })
 
             history_note = (
-                f"Duplicate voucher #{dup_v.voucher_number} will be cancelled. "
+                f"Duplicate voucher #{dup_v.voucher_number} will be permanently deleted from the system (matching Tally Alt+D). "
+                f"A complete snapshot is permanently preserved in the Audit Trail. "
                 f"Primary voucher #{prim_v.voucher_number} remains permanently active. "
                 f"If any bank reconciliation was matched to #{dup_v.voucher_number}, it will be safely transferred to #{prim_v.voucher_number}."
             )
@@ -170,7 +171,7 @@ class FindingFixService:
             return {
                 "supported": True,
                 "action": "VOID_DUPLICATE_VOUCHER",
-                "summary": f"Cancel duplicate {dup_v.voucher_type} #{dup_v.voucher_number} (₹{amt}) and keep #{prim_v.voucher_number}",
+                "summary": f"Permanently delete duplicate {dup_v.voucher_type} #{dup_v.voucher_number} (₹{amt}) from system and keep #{prim_v.voucher_number}",
                 "history_preservation_note": history_note,
                 "preview_comparison": preview_comparison,
                 "before": {
@@ -179,7 +180,7 @@ class FindingFixService:
                     "party_balance": str(current_party_bal)
                 },
                 "after": {
-                    "duplicate_voucher": "CANCELLED",
+                    "duplicate_voucher": "DELETED (Logged in Audit Trail)",
                     "primary_voucher": f"ACTIVE ({prim_v.voucher_number})",
                     "party_balance": str(after_party_bal)
                 }
@@ -481,8 +482,34 @@ class FindingFixService:
             if not (dup_id and prim_id):
                 raise ValidationError("Missing duplicate or primary voucher ID in finding evidence.")
 
-            dup_v = Voucher.objects.get(id=dup_id, company=finding.company)
-            prim_v = Voucher.objects.get(id=prim_id, company=finding.company)
+            dup_v = Voucher.objects.filter(id=dup_id, company=finding.company).first()
+            prim_v = Voucher.objects.filter(id=prim_id, company=finding.company).first()
+
+            if not dup_v:
+                # Duplicate voucher is already deleted from system
+                finding.is_resolved = True
+                finding.resolved_at = timezone.now()
+                finding.resolved_by = user
+                finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
+                return {
+                    "status": "SUCCESS",
+                    "message": "Duplicate voucher was already deleted from the system. Finding marked as resolved.",
+                }
+
+            if not prim_v:
+                # Primary was already deleted, so duplicate remains the sole valid entry
+                finding.is_resolved = True
+                finding.resolved_at = timezone.now()
+                finding.resolved_by = user
+                finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
+                return {
+                    "status": "SUCCESS",
+                    "message": f"Primary voucher was already removed; keeping #{dup_v.voucher_number} as the sole record.",
+                    "primary_voucher": dup_v.voucher_number
+                }
+
+            dup_num = dup_v.voucher_number
+            prim_num = prim_v.voucher_number
 
             # 1. If duplicate voucher was matched to any bank transaction, transfer link to primary voucher
             from apps.accounting.models import BankTransaction
@@ -493,42 +520,27 @@ class FindingFixService:
                 btx.status = 'RECONCILED'
                 btx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'updated_at'])
 
-            # 2. Cancel the duplicate voucher cleanly
-            VoucherService.cancel_voucher(dup_v, user=user)
+            # 2. Permanently delete the duplicate voucher (matching Tally Alt+D) with full AuditLog snapshot
+            VoucherService.delete_voucher(
+                voucher=dup_v,
+                user=user,
+                reason=f"Duplicate voucher deleted during Books Health deduplication. Retained primary voucher #{prim_num}."
+            )
 
-            # 3. Recalculate balances for party and all involved ledgers
-            if dup_v.party_ledger:
-                VoucherService.recalculate_ledger_balance(dup_v.party_ledger)
-            if prim_v.party_ledger and prim_v.party_ledger_id != dup_v.party_ledger_id:
+            # 3. Recalculate balances for primary party if different
+            if prim_v.party_ledger:
                 VoucherService.recalculate_ledger_balance(prim_v.party_ledger)
-            for ent in dup_v.ledger_entries.all():
-                if ent.ledger and ent.ledger_id != dup_v.party_ledger_id:
-                    VoucherService.recalculate_ledger_balance(ent.ledger)
 
             finding.is_resolved = True
             finding.resolved_at = timezone.now()
             finding.resolved_by = user
             finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
 
-            AuditService.log_action(
-                company=finding.company,
-                user=user,
-                action='CANCEL',
-                model_name='Voucher',
-                record_id=dup_v.id,
-                changes={
-                    "finding_id": str(finding.id),
-                    "action": "VOID_DUPLICATE_VOUCHER",
-                    "cancelled_voucher": dup_v.voucher_number,
-                    "retained_primary_voucher": prim_v.voucher_number
-                }
-            )
-
             return {
                 "status": "SUCCESS",
-                "message": f"Successfully cancelled duplicate voucher #{dup_v.voucher_number}. Retained primary voucher #{prim_v.voucher_number}.",
-                "cancelled_voucher": dup_v.voucher_number,
-                "primary_voucher": prim_v.voucher_number
+                "message": f"Successfully deleted duplicate voucher #{dup_num} from system. Retained primary voucher #{prim_num}. Full record preserved in Audit Trail.",
+                "deleted_voucher": dup_num,
+                "primary_voucher": prim_num
             }
 
         elif fix_action == 'MERGE_INVENTORY_ITEMS':

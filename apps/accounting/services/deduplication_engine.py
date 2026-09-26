@@ -324,7 +324,7 @@ class TransactionDeduplicationEngine:
                     "expected_state": f"Single {group['voucher_type']} voucher #{primary_v.voucher_number} for ₹{group['total_amount']}.",
                     "actual_state": f"{len(vouchers)} duplicate vouchers posted ({', '.join(v.voucher_number for v in vouchers)}).",
                     "probable_cause": source_desc,
-                    "suggested_action": f"Void duplicate voucher #{dup_v.voucher_number} and restore {party.name}'s true balance.",
+                    "suggested_action": f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}.",
                     "confidence": 0.98,
                     "fix_action": "VOID_DUPLICATE_VOUCHER"
                 })

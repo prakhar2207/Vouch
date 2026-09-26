@@ -907,7 +907,7 @@ export default function HealthPage() {
                           <Wrench className="w-3 h-3" />
                           <span>
                             {isDuplicateVoucher
-                              ? "Fix Duplicate"
+                              ? "Delete Duplicate"
                               : isDuplicateInventory
                               ? "Merge Products"
                               : "Review & Fix"}
@@ -944,17 +944,17 @@ export default function HealthPage() {
                           </div>
                         </div>
 
-                        {/* Duplicate Record to Void */}
+                        {/* Duplicate Record to Delete */}
                         <div className="p-2.5 rounded-lg bg-rose-500/5 border border-rose-500/20 space-y-1">
                           <div className="text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-1">
                             <AlertOctagon className="w-3 h-3" />
-                            Duplicate Entry (To Void & Cancel)
+                            Duplicate Entry (To Delete)
                           </div>
                           <div className="font-mono font-bold text-foreground line-through decoration-rose-500/60">
                             #{finding.evidence.duplicate_voucher_number}
                           </div>
                           <div className="text-muted-foreground text-[11px]">
-                            Safe cancellation preserves audit log and restores ledger balance
+                            Permanent deletion removes record from daybook and registers full snapshot in Audit Trail (Tally style)
                           </div>
                         </div>
                       </div>
@@ -1177,6 +1177,8 @@ export default function HealthPage() {
                           <span>
                             {previewData.action === "MERGE_INVENTORY_ITEMS"
                               ? "Merging Products..."
+                              : previewData.action === "VOID_DUPLICATE_VOUCHER"
+                              ? "Deleting Duplicate..."
                               : "Applying Safe Fix..."}
                           </span>
                         </>
@@ -1184,6 +1186,8 @@ export default function HealthPage() {
                         <span>
                           {previewData.action === "MERGE_INVENTORY_ITEMS"
                             ? "Confirm & Merge Products"
+                            : previewData.action === "VOID_DUPLICATE_VOUCHER"
+                            ? "Confirm & Delete from System"
                             : "Confirm & Apply Fix"}
                         </span>
                       )}
