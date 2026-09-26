@@ -6,12 +6,13 @@ import { getAccessToken } from "@/utils/auth";
 export interface ProductQueryOptions {
   search?: string;
   lowStockOnly?: boolean;
+  forceRefresh?: boolean;
 }
 
 export class ProductsRepository {
   /**
    * Reads products locally from IndexedDB.
-   * Falls back to server only when local catalog is empty.
+   * Falls back to server only when local catalog is empty or forceRefresh is requested.
    */
   async getProducts(companyId: string, options: ProductQueryOptions = {}): Promise<{ data: SyncedProduct[]; isLocal: boolean }> {
     if (!companyId) return { data: [], isLocal: true };
@@ -21,8 +22,8 @@ export class ProductsRepository {
       .equals(companyId)
       .toArray();
 
-    // Fallback if local product catalog is unpopulated
-    if (products.length === 0) {
+    // Fallback if local product catalog is unpopulated or refresh is requested
+    if (products.length === 0 || options.forceRefresh) {
       try {
         const token = getAccessToken();
         if (token) {

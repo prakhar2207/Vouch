@@ -1,5 +1,6 @@
 import { offlineDb, SyncedVoucher, SyncedLedger, SyncedProduct, SyncedPaymentAllocation } from "../db/offlineDb";
 import { ledgersRepository } from "../data/ledgers-repository";
+import { productsRepository } from "../data/products-repository";
 
 /**
  * Returns YYYY-MM-DD string in Indian Standard Time (Asia/Kolkata).
@@ -340,10 +341,21 @@ export class LocalAnalyticsEngine {
     }
 
     // 3. Fetch products for active company
-    const products = await offlineDb.syncedProducts
+    let products = await offlineDb.syncedProducts
       .where("companyId")
       .equals(companyId)
       .toArray();
+
+    if (products.length === 0) {
+      try {
+        const { data: fetched } = await productsRepository.getProducts(companyId);
+        if (fetched && fetched.length > 0) {
+          products = fetched;
+        }
+      } catch (err) {
+        console.warn("[AnalyticsEngine] Fallback product fetch failed:", err);
+      }
+    }
 
     // 4. Fetch sync metadata
     const syncMeta = await offlineDb.syncMeta.get(companyId);
@@ -514,7 +526,8 @@ export class LocalAnalyticsEngine {
         totalRetailValue += qty * sPrice;
       }
 
-      if (qty <= (p.reorderLevel || 0)) {
+      const threshold = (p.reorderLevel && p.reorderLevel > 0) ? p.reorderLevel : 5;
+      if (qty > 0 && qty <= threshold) {
         lowStockProducts.push(p);
       }
     }
