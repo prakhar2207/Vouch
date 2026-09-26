@@ -125,6 +125,69 @@ export interface SalesForecastResult {
     lower_bound: number;
     upper_bound: number;
   }>;
+  historical_daily_series?: Array<{
+    date: string;
+    actual_sales: number;
+    moving_avg_7d: number;
+    cumulative_sales: number;
+    invoice_count: number;
+    is_historical: boolean;
+  }>;
+  combined_series?: Array<{
+    date: string;
+    actual_sales: number | null;
+    moving_avg_7d: number | null;
+    cumulative_sales: number | null;
+    projected_sales: number | null;
+    lower_bound?: number | null;
+    upper_bound?: number | null;
+    is_historical: boolean;
+    is_today?: boolean;
+  }>;
+  historical_summary?: {
+    total_historical_sales: number;
+    historical_invoices_count: number;
+    distinct_selling_days: number;
+    historical_daily_average: number;
+    peak_day?: {
+      date: string;
+      amount: number;
+    };
+    current_7d_run_rate?: number;
+    anchor_date?: string;
+  };
+  customer_pareto?: Array<{
+    party_id: string;
+    name: string;
+    total_revenue: number;
+    invoice_count: number;
+    percentage_of_total: number;
+    cumulative_percentage: number;
+    pareto_tier: "TOP_80_PERCENT" | "LONG_TAIL_20_PERCENT";
+    days_since_last_order: number;
+    is_at_risk: boolean;
+    last_order_date: string | null;
+  }>;
+  brand_contribution?: Array<{
+    brand: string;
+    total_revenue: number;
+    units_sold: number;
+    bills_count: number;
+    percentage_of_total: number;
+  }>;
+  working_capital_cycle?: {
+    dso_days: number;
+    dio_days: number;
+    dpo_days: number;
+    cash_conversion_cycle_days: number;
+    accounts_receivable: number;
+    accounts_payable: number;
+    inventory_valuation: number;
+    daily_sales_avg: number;
+    daily_cogs_avg: number;
+    working_capital_health: "HEALTHY" | "MODERATE" | "ELEVATED_CYCLE";
+    recommendation: string;
+  };
   historical_daily_average: number;
   factors_analyzed?: {
     yoy_seasonality_applied: boolean;
@@ -876,6 +939,106 @@ export class LocalAnalyticsEngine {
       historical_months_series: historicalMonths
     };
 
+    // Construct local historical daily series & combined timeline
+    const historicalDailySeries: Array<{
+      date: string;
+      actual_sales: number;
+      moving_avg_7d: number;
+      cumulative_sales: number;
+      invoice_count: number;
+      is_historical: boolean;
+    }> = [];
+
+    let runningCumulative = 0;
+    let peakDay = { date: positiveDates[0] || "", amount: 0 };
+    const tempSalesHistory: number[] = [];
+
+    const startHistTime = new Date(positiveDates[0]).getTime();
+    const anchorTime = anchorDate.getTime();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const totalHistDays = Math.max(1, Math.round((anchorTime - startHistTime) / dayMs) + 1);
+
+    for (let dIdx = 0; dIdx < totalHistDays; dIdx++) {
+      const curDate = new Date(startHistTime + dIdx * dayMs);
+      const curDateStr = curDate.toISOString().slice(0, 10);
+      const val = Math.round((salesByDate[curDateStr] || 0) * 100) / 100;
+      runningCumulative += val;
+      tempSalesHistory.push(val);
+
+      if (val > peakDay.amount) {
+        peakDay = { date: curDateStr, amount: val };
+      }
+
+      const windowStart = Math.max(0, tempSalesHistory.length - 7);
+      const recentWindow = tempSalesHistory.slice(windowStart);
+      const sumWin = recentWindow.reduce((a, b) => a + b, 0);
+      const sma7 = Math.round((sumWin / recentWindow.length) * 100) / 100;
+
+      historicalDailySeries.push({
+        date: curDateStr,
+        actual_sales: val,
+        moving_avg_7d: sma7,
+        cumulative_sales: Math.round(runningCumulative * 100) / 100,
+        invoice_count: val > 0 ? 1 : 0,
+        is_historical: true,
+      });
+    }
+
+    const anchorDateStr = anchorDate.toISOString().slice(0, 10);
+    const combinedSeries: Array<{
+      date: string;
+      actual_sales: number | null;
+      moving_avg_7d: number | null;
+      cumulative_sales: number | null;
+      projected_sales: number | null;
+      lower_bound?: number | null;
+      upper_bound?: number | null;
+      is_historical: boolean;
+      is_today?: boolean;
+    }> = [];
+
+    historicalDailySeries.forEach((h) => {
+      combinedSeries.push({
+        date: h.date,
+        actual_sales: h.actual_sales,
+        moving_avg_7d: h.moving_avg_7d,
+        cumulative_sales: h.cumulative_sales,
+        projected_sales: null,
+        lower_bound: null,
+        upper_bound: null,
+        is_historical: true,
+        is_today: h.date === anchorDateStr,
+      });
+    });
+
+    forecastList.forEach((f) => {
+      combinedSeries.push({
+        date: f.date,
+        actual_sales: null,
+        moving_avg_7d: null,
+        cumulative_sales: null,
+        projected_sales: f.projected_sales,
+        lower_bound: f.lower_bound,
+        upper_bound: f.upper_bound,
+        is_historical: false,
+        is_today: false,
+      });
+    });
+
+    const recent7Days = historicalDailySeries.slice(-7);
+    const recent7Sum = recent7Days.reduce((acc, it) => acc + it.actual_sales, 0);
+    const current7dRunRate = recent7Days.length > 0 ? Math.round((recent7Sum / recent7Days.length) * 100) / 100 : avgSales;
+
+    const historicalSummary = {
+      total_historical_sales: Math.round(runningCumulative * 100) / 100,
+      historical_invoices_count: sampleSize,
+      distinct_selling_days: sampleSize,
+      historical_daily_average: avgSales,
+      peak_day: peakDay,
+      current_7d_run_rate: current7dRunRate,
+      anchor_date: anchorDateStr,
+    };
+
     return {
       forecast_days: days,
       projected_total: Math.round(projectedTotal * 100) / 100,
@@ -888,6 +1051,9 @@ export class LocalAnalyticsEngine {
       sample_size_days: sampleSize,
       trend_summary: summary,
       daily_forecast: forecastList,
+      historical_daily_series: historicalDailySeries,
+      combined_series: combinedSeries,
+      historical_summary: historicalSummary,
       historical_daily_average: avgSales,
       factors_analyzed: {
         yoy_seasonality_applied: hasYoyHistory,

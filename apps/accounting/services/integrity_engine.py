@@ -303,48 +303,57 @@ class AccountingIntegrityEngine:
         )
         alloc_map = {row['invoice_voucher_id']: Decimal(str(row['total'] or '0.00')) for row in alloc_totals if row['invoice_voucher_id']}
 
-        invoices = Voucher.objects.filter(
-            company=company,
-            voucher_type__in=['SALES', 'PURCHASE', 'OPENING_INVOICE', 'OPENING_BILL'],
-            status='POSTED'
-        ).only('id', 'voucher_number', 'total_amount', 'party_ledger_id').defer('attachment_data', 'attachment_mime')
+        active_overalloc_titles = set()
+        if alloc_map:
+            invoices = Voucher.objects.filter(
+                company=company,
+                id__in=list(alloc_map.keys()),
+                voucher_type__in=['SALES', 'PURCHASE', 'OPENING_INVOICE', 'OPENING_BILL'],
+                status='POSTED'
+            ).only('id', 'voucher_number', 'total_amount', 'party_ledger_id').defer('attachment_data', 'attachment_mime')
 
-        for inv in invoices:
-            total_alloc = alloc_map.get(inv.id, Decimal('0.00'))
-            inv_total = Decimal(str(inv.total_amount or '0.00'))
-            if total_alloc > inv_total + Decimal('0.05'):
-                finding, _ = AccountingFinding.objects.update_or_create(
-                    company=company,
-                    category='PAYMENT',
-                    title=f"Invoice #{inv.voucher_number} is over-allocated",
-                    is_resolved=False,
-                    defaults={
-                        "severity": "CRITICAL",
-                        "description": f"Invoice #{inv.voucher_number} total is ₹{inv.total_amount}, but total payments allocated equal ₹{total_alloc}.",
-                        "evidence": {
-                            "voucher_id": str(inv.id),
-                            "voucher_number": inv.voucher_number,
-                            "party_id": str(inv.party_ledger_id) if inv.party_ledger_id else None,
-                            "total_amount": str(inv.total_amount),
-                            "allocated_amount": str(total_alloc),
-                            "excess": str(total_alloc - inv.total_amount)
-                        },
-                        "expected_state": f"Allocations cannot exceed invoice total (₹{inv.total_amount}).",
-                        "actual_state": f"Allocated: ₹{total_alloc}.",
-                        "probable_cause": "Payment was allocated twice or unallocated advance was miscalculated.",
-                        "suggested_action": "Re-run automated FIFO allocation for this party.",
-                        "confidence": 0.98,
-                        "fix_action": "RECONCILE_FIFO"
-                    }
-                )
-                findings.append(finding)
-            else:
-                AccountingFinding.objects.filter(
-                    company=company,
-                    category='PAYMENT',
-                    title=f"Invoice #{inv.voucher_number} is over-allocated",
-                    is_resolved=False
-                ).update(is_resolved=True, resolved_at=timezone.now())
+            for inv in invoices:
+                total_alloc = alloc_map.get(inv.id, Decimal('0.00'))
+                inv_total = Decimal(str(inv.total_amount or '0.00'))
+                if total_alloc > inv_total + Decimal('0.05'):
+                    title = f"Invoice #{inv.voucher_number} is over-allocated"
+                    active_overalloc_titles.add(title)
+                    finding, _ = AccountingFinding.objects.update_or_create(
+                        company=company,
+                        category='PAYMENT',
+                        title=title,
+                        is_resolved=False,
+                        defaults={
+                            "severity": "CRITICAL",
+                            "description": f"Invoice #{inv.voucher_number} total is ₹{inv.total_amount}, but total payments allocated equal ₹{total_alloc}.",
+                            "evidence": {
+                                "voucher_id": str(inv.id),
+                                "voucher_number": inv.voucher_number,
+                                "party_id": str(inv.party_ledger_id) if inv.party_ledger_id else None,
+                                "total_amount": str(inv.total_amount),
+                                "allocated_amount": str(total_alloc),
+                                "excess": str(total_alloc - inv.total_amount)
+                            },
+                            "expected_state": f"Allocations cannot exceed invoice total (₹{inv.total_amount}).",
+                            "actual_state": f"Allocated: ₹{total_alloc}.",
+                            "probable_cause": "Payment was allocated twice or unallocated advance was miscalculated.",
+                            "suggested_action": "Re-run automated FIFO allocation for this party.",
+                            "confidence": 0.98,
+                            "fix_action": "RECONCILE_FIFO"
+                        }
+                    )
+                    findings.append(finding)
+
+        # Batch resolve all previously open over-allocation findings that are no longer over-allocated (1 single query instead of N+1 loops)
+        AccountingFinding.objects.filter(
+            company=company,
+            category='PAYMENT',
+            title__endswith='is over-allocated',
+            is_resolved=False
+        ).exclude(title__in=active_overalloc_titles).update(
+            is_resolved=True,
+            resolved_at=timezone.now()
+        )
 
         return findings
 
@@ -414,25 +423,46 @@ class AccountingIntegrityEngine:
         scanned_items = TransactionDeduplicationEngine.scan_all_duplicates(company)
         active_titles = set()
 
+        # Pre-fetch existing duplicate findings to eliminate SELECT ... FOR UPDATE (N+1 queries)
+        existing_findings = {
+            f.title: f for f in AccountingFinding.objects.filter(
+                company=company,
+                category__in=['DUPLICATE', 'DUPLICATE_BANK', 'DUPLICATE_INVENTORY', 'DUPLICATE_LEDGER'],
+                is_resolved=False
+            )
+        }
+
         for item in scanned_items:
             active_titles.add(item['title'])
-            finding, _ = AccountingFinding.objects.update_or_create(
-                company=company,
-                category=item['category'],
-                title=item['title'],
-                is_resolved=False,
-                defaults={
-                    "severity": item['severity'],
-                    "description": item['description'],
-                    "evidence": item.get('evidence', {}),
-                    "expected_state": item.get('expected_state', ''),
-                    "actual_state": item.get('actual_state', ''),
-                    "probable_cause": item.get('probable_cause', ''),
-                    "suggested_action": item.get('suggested_action', ''),
-                    "confidence": item.get('confidence', 0.95),
-                    "fix_action": item.get('fix_action')
-                }
-            )
+            defaults = {
+                "severity": item['severity'],
+                "description": item['description'],
+                "evidence": item.get('evidence', {}),
+                "expected_state": item.get('expected_state', ''),
+                "actual_state": item.get('actual_state', ''),
+                "probable_cause": item.get('probable_cause', ''),
+                "suggested_action": item.get('suggested_action', ''),
+                "confidence": item.get('confidence', 0.95),
+                "fix_action": item.get('fix_action')
+            }
+            finding = existing_findings.get(item['title'])
+            if finding:
+                changed = False
+                for k, v in defaults.items():
+                    if getattr(finding, k) != v:
+                        setattr(finding, k, v)
+                        changed = True
+                if changed:
+                    finding.save()
+            else:
+                finding = AccountingFinding.objects.create(
+                    company=company,
+                    category=item['category'],
+                    title=item['title'],
+                    is_resolved=False,
+                    **defaults
+                )
+                existing_findings[item['title']] = finding
             findings.append(finding)
 
         # Auto-resolve previously open duplicate findings that are no longer detected

@@ -202,6 +202,20 @@ class AnalyticsEngine:
                 "sample_size_days": 0,
                 "trend_summary": "No sales history recorded for projection.",
                 "daily_forecast": [],
+                "historical_daily_series": [],
+                "combined_series": [],
+                "historical_summary": {
+                    "total_sales": 0.0,
+                    "daily_average": 0.0,
+                    "peak_day": None,
+                    "selling_days_count": 0,
+                    "first_date": None,
+                    "last_date": None,
+                    "anchor_date": None
+                },
+                "customer_pareto": [],
+                "brand_contribution": [],
+                "working_capital_cycle": None,
                 "historical_daily_average": 0.0,
                 "factors_analyzed": {
                     "yoy_seasonality_applied": False,
@@ -509,6 +523,189 @@ class AnalyticsEngine:
             history_span_days=history_span_days
         )
 
+        # 8. Historical Daily Series & Combined Seamless Timeline
+        df['moving_avg_7d'] = df['daily_sales'].rolling(window=7, min_periods=1).mean().round(2)
+        df['cumulative_sales'] = df['daily_sales'].cumsum().round(2)
+
+        historical_daily_series = [
+            {
+                "date": idx.strftime('%Y-%m-%d'),
+                "actual_sales": round(float(row['daily_sales']), 2),
+                "moving_avg_7d": round(float(row['moving_avg_7d']), 2),
+                "cumulative_sales": round(float(row['cumulative_sales']), 2),
+            }
+            for idx, row in df.iterrows()
+        ]
+
+        # Combined continuous timeline: historical up to anchor_date, then forecast after anchor_date
+        combined_series = []
+        anchor_date_str = anchor_date.strftime('%Y-%m-%d')
+        for h in historical_daily_series:
+            is_anchor = (h["date"] == anchor_date_str)
+            combined_series.append({
+                "date": h["date"],
+                "actual_sales": h["actual_sales"],
+                "moving_avg_7d": h["moving_avg_7d"],
+                "cumulative_sales": h["cumulative_sales"],
+                "projected_sales": h["actual_sales"] if is_anchor else None,
+                "is_historical": True,
+            })
+        for f in forecast_list:
+            combined_series.append({
+                "date": f["date"],
+                "actual_sales": None,
+                "moving_avg_7d": None,
+                "cumulative_sales": None,
+                "projected_sales": f["projected_sales"],
+                "lower_bound": f["lower_bound"],
+                "upper_bound": f["upper_bound"],
+                "is_historical": False,
+            })
+
+        # Peak day and historical summary
+        peak_idx = df['daily_sales'].idxmax() if len(df) > 0 and df['daily_sales'].max() > 0 else None
+        peak_day_info = {
+            "date": peak_idx.strftime('%Y-%m-%d') if peak_idx is not None else None,
+            "amount": round(float(df.loc[peak_idx, 'daily_sales']), 2) if peak_idx is not None else 0.0
+        }
+
+        historical_summary = {
+            "total_sales": round(float(df['daily_sales'].sum()), 2),
+            "daily_average": round(float(df['daily_sales'].mean()), 2) if len(df) > 0 else 0.0,
+            "peak_day": peak_day_info,
+            "selling_days_count": distinct_days,
+            "first_date": min_date.strftime('%Y-%m-%d') if min_date else None,
+            "last_date": max_date.strftime('%Y-%m-%d') if max_date else None,
+            "anchor_date": anchor_date_str
+        }
+
+        # 9. Customer Pareto 80/20 & Churn Risk Radar
+        total_sales_val = float(df['daily_sales'].sum()) or 1.0
+        cust_agg = (
+            Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
+            .values('party_ledger__name', 'party_ledger_id')
+            .annotate(
+                total_billed=Sum('total_amount'),
+                inv_count=Count('id'),
+                last_sale=Max('voucher_date')
+            )
+            .order_by('-total_billed')
+        )
+        customer_pareto = []
+        running_pareto_pct = 0.0
+        for ca in cust_agg[:12]:
+            billed = float(ca['total_billed'] or 0.0)
+            share_pct = round((billed / total_sales_val) * 100, 1)
+            running_pareto_pct += share_pct
+            last_date = ca['last_sale']
+            days_since = (anchor_date - last_date).days if last_date else 999
+            
+            if days_since >= 60 and ca['inv_count'] >= 2:
+                risk_status = "AT_RISK"
+                risk_label = "Inactive (60d+)"
+            elif days_since >= 30 and ca['inv_count'] >= 3:
+                risk_status = "COOLING"
+                risk_label = "Slowing Down"
+            else:
+                risk_status = "HEALTHY"
+                risk_label = "Active Buyer"
+
+            customer_pareto.append({
+                "party_name": ca['party_ledger__name'] or "Cash / Counter Sale",
+                "party_id": str(ca['party_ledger_id']) if ca['party_ledger_id'] else None,
+                "total_billed": billed,
+                "share_pct": share_pct,
+                "cumulative_pct": round(running_pareto_pct, 1),
+                "invoice_count": ca['inv_count'],
+                "last_sale_date": last_date.strftime('%Y-%m-%d') if last_date else None,
+                "days_since_last_sale": days_since,
+                "risk_status": risk_status,
+                "risk_label": risk_label
+            })
+
+        # 10. Brand Contribution & Revenue Share
+        from apps.accounting.models import VoucherItem
+        brand_raw = (
+            VoucherItem.objects.filter(
+                voucher__company=company,
+                voucher__voucher_type='SALES',
+                voucher__status='POSTED'
+            )
+            .values('product__brand')
+            .annotate(
+                total_revenue=Sum('total_amount'),
+                total_qty=Sum('quantity'),
+                items_count=Count('id')
+            )
+            .order_by('-total_revenue')
+        )
+        brand_contribution = []
+        for br in brand_raw[:8]:
+            rev = float(br['total_revenue'] or 0.0)
+            brand_name = (br['product__brand'] or '').strip() or 'Unbranded / Generic'
+            brand_contribution.append({
+                "brand": brand_name,
+                "revenue": rev,
+                "share_pct": round((rev / total_sales_val) * 100, 1),
+                "quantity": float(br['total_qty'] or 0.0),
+                "items_count": br['items_count']
+            })
+
+        # 11. Working Capital & Operating Cash Conversion Cycle (DSO, DIO, DPO)
+        from apps.accounting.models import Ledger
+        from apps.inventory.models import Product
+        from django.db.models import Q, F, Sum, Count, Max
+        from decimal import Decimal
+
+        ar_balance = float(
+            Ledger.objects.filter(company=company, is_archived=False)
+            .filter(Q(ledger_type='CUSTOMER') | Q(group__nature='ASSET', group__name__icontains='Debtor'))
+            .filter(current_balance__gt=0)
+            .aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
+        )
+        ap_balance = float(
+            Ledger.objects.filter(company=company, is_archived=False)
+            .filter(Q(ledger_type='SUPPLIER') | Q(group__nature='LIABILITY', group__name__icontains='Creditor'))
+            .filter(current_balance__gt=0)
+            .aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
+        )
+        inv_value = float(
+            Product.objects.filter(company=company, is_active=True, stock_quantity__gt=0)
+            .annotate(val=F('stock_quantity') * F('purchase_price'))
+            .aggregate(s=Sum('val'))['s'] or Decimal('0.00')
+        )
+        total_purch_val = float(
+            Voucher.objects.filter(company=company, voucher_type='PURCHASE', status='POSTED')
+            .aggregate(s=Sum('total_amount'))['s'] or Decimal('0.00')
+        ) or 1.0
+
+        dso_days = int(round((ar_balance / total_sales_val) * 180, 0)) if total_sales_val > 0 else 0
+        dio_days = int(round((inv_value / total_purch_val) * 180, 0)) if total_purch_val > 0 else 0
+        dpo_days = int(round((ap_balance / total_purch_val) * 180, 0)) if total_purch_val > 0 else 0
+        ccc_days = int(dio_days + dso_days - dpo_days)
+
+        if ccc_days <= 90:
+            wcc_health = "HEALTHY"
+            wcc_rec = f"Working capital conversion cycle is healthy at {ccc_days} days. Collections (DSO {dso_days}d) are well-aligned with supplier terms."
+        elif ccc_days <= 140:
+            wcc_health = "MODERATE"
+            wcc_rec = f"Moderate working capital cycle of {ccc_days} days. Inventory turnover (DIO {dio_days}d) represents the largest portion of locked cash."
+        else:
+            wcc_health = "ELEVATED_CYCLE"
+            wcc_rec = f"Elevated cash conversion cycle of {ccc_days} days. Inventory ({dio_days} days) is locking capital. Prioritize clearing slow-moving stock on benches to free up liquidity."
+
+        working_capital_cycle = {
+            "dso_days": max(0, dso_days),
+            "dio_days": max(0, dio_days),
+            "dpo_days": max(0, dpo_days),
+            "cash_conversion_cycle_days": ccc_days,
+            "ar_balance": round(ar_balance, 2),
+            "ap_balance": round(ap_balance, 2),
+            "inventory_value": round(inv_value, 2),
+            "working_capital_health": wcc_health,
+            "recommendation": wcc_rec
+        }
+
         return {
             "forecast_days": days,
             "projected_total": round(p50_total, 2),
@@ -521,6 +718,12 @@ class AnalyticsEngine:
             "sample_size_days": distinct_days,
             "trend_summary": full_summary,
             "daily_forecast": forecast_list,
+            "historical_daily_series": historical_daily_series,
+            "combined_series": combined_series,
+            "historical_summary": historical_summary,
+            "customer_pareto": customer_pareto,
+            "brand_contribution": brand_contribution,
+            "working_capital_cycle": working_capital_cycle,
             "historical_daily_average": round(overall_avg_daily_sales, 2),
             "factors_analyzed": {
                 "yoy_seasonality_applied": has_yoy_history,

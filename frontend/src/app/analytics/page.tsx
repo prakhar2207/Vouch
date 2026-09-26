@@ -8,6 +8,10 @@ import {
   Area,
   BarChart,
   Bar,
+  LineChart,
+  Line,
+  ComposedChart,
+  ReferenceLine,
   XAxis,
   YAxis,
   Tooltip,
@@ -55,6 +59,13 @@ import {
   Download,
   Archive,
   Activity,
+  BarChart2,
+  PieChart,
+  ShieldAlert,
+  Award,
+  ArrowUpRight,
+  ArrowDownRight,
+  Target,
 } from "lucide-react";
 
 function formatCurrencyShort(val: number): string {
@@ -114,6 +125,10 @@ function AnalyticsHubContent() {
   const [isMassMinStockModalOpen, setIsMassMinStockModalOpen] = useState<boolean>(false);
   const [massMinStockScope, setMassMinStockScope] = useState<"selected" | "category" | "all">("selected");
   const [updatingMinStock, setUpdatingMinStock] = useState<boolean>(false);
+
+  // Sales Chart Timeline & Historical Range Controls
+  const [chartViewMode, setChartViewMode] = useState<"combined" | "historical" | "forecast" | "trend">("combined");
+  const [historicalRangeDays, setHistoricalRangeDays] = useState<number>(60);
 
   const fetchInventoryAnalytics = async (cid?: string, catId?: string) => {
     const targetCid = cid || effectiveCompanyId || activeCompanyId;
@@ -262,6 +277,48 @@ function AnalyticsHubContent() {
       }
     }
   }, [searchParams, effectiveCompanyId, inventoryCategoryFilter]);
+
+  // Chart Timeline Data for Historical & Predictive Projection
+  const chartTimelineData = useMemo(() => {
+    if (!forecast) return [];
+
+    if (chartViewMode === "forecast") {
+      return (forecast.daily_forecast || []).map((it: any) => ({
+        ...it,
+        actual_sales: null,
+        moving_avg_7d: null,
+        is_historical: false,
+      }));
+    }
+
+    const histList: any[] = forecast.historical_daily_series || [];
+    const combinedList: any[] = forecast.combined_series || [];
+
+    if (chartViewMode === "historical" || chartViewMode === "trend") {
+      if (histList.length === 0) return [];
+      const sliced = historicalRangeDays >= 999 ? histList : histList.slice(-historicalRangeDays);
+      return sliced;
+    }
+
+    // "combined" mode
+    if (combinedList.length > 0) {
+      const histItems = combinedList.filter((it: any) => it.is_historical);
+      const futureItems = combinedList.filter((it: any) => !it.is_historical);
+      const slicedHist = historicalRangeDays >= 999 ? histItems : histItems.slice(-historicalRangeDays);
+      return [...slicedHist, ...futureItems];
+    }
+
+    // Fallback: if only daily_forecast is available
+    return forecast.daily_forecast || [];
+  }, [forecast, chartViewMode, historicalRangeDays]);
+
+  const chartAnchorDate = useMemo(() => {
+    return (
+      forecast?.historical_summary?.anchor_date ||
+      forecast?.combined_series?.find((it: any) => it.is_today)?.date ||
+      ""
+    );
+  }, [forecast]);
 
   // Category & Reorder Hub Filters
   const handleCategoryFilterChange = (newCatId: string) => {
@@ -680,44 +737,68 @@ function AnalyticsHubContent() {
           </button>
         </div>
 
-        {/* Tab 1: Sales & Predictive Forecast */}
+        {/* Tab 1: Sales Forecast, Historical Actuals & Business Intelligence */}
         {activeTab === "sales" && (
-          <div className="space-y-5 animate-in fade-in duration-200">
+          <div className="space-y-6 animate-in fade-in duration-200">
             {/* KPI Summary Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1">
-                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                  Projected {forecastDays}-Day Revenue
-                </span>
-                <div className="text-xl sm:text-2xl font-bold font-mono text-foreground">
-                  ₹{(forecast?.projected_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              {/* Confirmed Sales To Date */}
+              <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1 relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                    Confirmed Sales To Date
+                  </span>
+                  <span className="p-1 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <CheckSquare className="w-3.5 h-3.5" />
+                  </span>
                 </div>
-                {forecast?.p10_total && forecast?.p90_total && (
-                  <div className="text-[11px] text-muted-foreground font-mono">
-                    Range: ₹{formatCurrencyShort(forecast.p10_total)} - ₹{formatCurrencyShort(forecast.p90_total)} (P10-P90)
-                  </div>
-                )}
+                <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                  ₹{(forecast?.historical_summary?.total_historical_sales ?? forecast?.historical_summary?.total_sales ?? Number(kpis.total_sales || 0)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                  <span>{forecast?.historical_summary?.historical_invoices_count || forecast?.historical_summary?.selling_days_count || 0} invoices</span>
+                  <span>•</span>
+                  <span>{forecast?.historical_summary?.distinct_selling_days || forecast?.historical_summary?.selling_days_count || 0} active selling days</span>
+                </div>
               </div>
 
-              <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1">
-                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                  Projected Daily Average
-                </span>
+              {/* Peak Single-Day Record */}
+              <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1 relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                    Peak Single-Day Record
+                  </span>
+                  <span className="p-1 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    <Award className="w-3.5 h-3.5" />
+                  </span>
+                </div>
                 <div className="text-xl sm:text-2xl font-bold font-mono text-foreground">
-                  ₹{(forecast?.projected_daily_average || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹{(forecast?.historical_summary?.peak_day?.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
                 <div className="text-[11px] text-muted-foreground">
-                  Historical Mean: ₹{(forecast?.historical_daily_average || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}/day
+                  {forecast?.historical_summary?.peak_day?.date
+                    ? `Set on ${formatChartDate(forecast.historical_summary.peak_day.date)}`
+                    : "Based on historical invoice records"}
                 </div>
               </div>
 
-              <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1">
-                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                  Growth Trajectory
-                </span>
+              {/* Current 7-Day Run Rate */}
+              <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1 relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                    7-Day Rolling Run-Rate
+                  </span>
+                  <span className="p-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                    <Activity className="w-3.5 h-3.5" />
+                  </span>
+                </div>
+                <div className="text-xl sm:text-2xl font-bold font-mono text-foreground">
+                  ₹{(forecast?.historical_summary?.current_7d_run_rate || forecast?.projected_daily_average || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  <span className="text-xs font-normal text-muted-foreground">/day</span>
+                </div>
                 <div className="flex items-center gap-2">
                   <span
-                    className={`px-2.5 py-0.5 rounded-full text-xs font-mono font-bold border ${
+                    className={`px-2 py-0.2 rounded-full text-[10px] font-mono font-bold border ${
                       forecast?.trend_status === "Booming"
                         ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
                         : forecast?.trend_status === "Declining"
@@ -727,48 +808,178 @@ function AnalyticsHubContent() {
                   >
                     {forecast?.trend_status || "Stable"}
                   </span>
-                  <span className="text-xs text-muted-foreground font-medium">Confidence: {forecast?.confidence || "HIGH"}</span>
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  Based on {forecast?.sample_size_days || 0} active selling days
+                  <span className="text-[11px] text-muted-foreground font-mono">
+                    Mean: ₹{(forecast?.historical_daily_average || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/d
+                  </span>
                 </div>
               </div>
 
-              <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1">
-                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                  Realization Pipeline
-                </span>
+              {/* Projected Revenue */}
+              <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1 relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                    Projected {forecastDays}-Day Revenue
+                  </span>
+                  <span className="p-1 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                    <Sparkles className="w-3.5 h-3.5" />
+                  </span>
+                </div>
                 <div className="text-xl sm:text-2xl font-bold font-mono text-purple-600 dark:text-purple-400">
-                  ₹{(forecast?.factors_analyzed?.open_proforma_pipeline || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹{(forecast?.projected_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
-                <div className="text-[11px] text-muted-foreground">
-                  Open proforma quotes converting in next 14 days
-                </div>
+                {forecast?.p10_total && forecast?.p90_total ? (
+                  <div className="text-[11px] text-muted-foreground font-mono">
+                    Range: ₹{formatCurrencyShort(forecast.p10_total)} - ₹{formatCurrencyShort(forecast.p90_total)} (P10-P90)
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-muted-foreground">Confidence: {forecast?.confidence || "HIGH"}</div>
+                )}
               </div>
             </div>
 
-            {/* Main Area Chart */}
-            <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            {/* Historical Daily Sales & Predictive Forecast Dual-Timeline Chart */}
+            <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
+              {/* Chart Header with View Mode and Range Filters */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-border/40 pb-4">
                 <div>
-                  <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                    <span>Multi-Factor Sales Trajectory & Confidence Band</span>
-                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                  </h3>
-                  <p className="text-xs text-muted-foreground">
-                    Synthesizes day-of-week dispatch patterns, month-end GST rush, customer replenishment cadence, and physical stock guards.
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
+                      <span>Historical Daily Sales & Predictive Trajectory</span>
+                      <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                    </h3>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-muted text-muted-foreground border border-border/40 uppercase tracking-wider">
+                      {chartViewMode.toUpperCase()}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Seamless dual-timeline connecting confirmed daily invoice actuals with forward-looking multi-factor projections.
                   </p>
+                </div>
+
+                {/* View Switchers & Range Controls */}
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  {/* View Mode Toggle */}
+                  <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setChartViewMode("combined")}
+                      className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
+                        chartViewMode === "combined"
+                          ? "bg-card text-foreground font-bold shadow-2xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      title="Show both historical confirmed sales and future projections"
+                    >
+                      Combined
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChartViewMode("historical")}
+                      className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
+                        chartViewMode === "historical"
+                          ? "bg-card text-foreground font-bold shadow-2xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      title="Focus purely on confirmed historical sales actuals"
+                    >
+                      Historical Actuals
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChartViewMode("trend")}
+                      className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
+                        chartViewMode === "trend"
+                          ? "bg-card text-foreground font-bold shadow-2xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      title="View 7-day rolling moving average trendline"
+                    >
+                      7-Day SMA
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChartViewMode("forecast")}
+                      className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
+                        chartViewMode === "forecast"
+                          ? "bg-card text-foreground font-bold shadow-2xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      title="Focus purely on predictive future days"
+                    >
+                      Predictive Forecast
+                    </button>
+                  </div>
+
+                  {/* Historical Range Filter (Only applicable for combined, historical, trend) */}
+                  {chartViewMode !== "forecast" && (
+                    <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-xs">
+                      {[
+                        { label: "30d", val: 30 },
+                        { label: "60d", val: 60 },
+                        { label: "90d", val: 90 },
+                        { label: "All FY", val: 999 },
+                      ].map((r) => (
+                        <button
+                          key={r.val}
+                          type="button"
+                          onClick={() => setHistoricalRangeDays(r.val)}
+                          className={`px-2 py-1 rounded font-medium transition-colors cursor-pointer ${
+                            historicalRangeDays === r.val
+                              ? "bg-card text-foreground font-bold shadow-2xs"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="h-64 sm:h-72 w-full pt-2">
-                {forecast?.daily_forecast && forecast.daily_forecast.length > 0 ? (
+              {/* Chart Legend Indicators */}
+              <div className="flex items-center gap-4 text-xs flex-wrap px-1 text-muted-foreground">
+                {(chartViewMode === "combined" || chartViewMode === "historical") && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                    <span className="font-medium text-foreground">Actual Sales (Billed)</span>
+                  </div>
+                )}
+                {(chartViewMode === "combined" || chartViewMode === "historical" || chartViewMode === "trend") && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-0.5 border-t-2 border-dashed border-blue-500"></span>
+                    <span>7-Day Rolling Average</span>
+                  </div>
+                )}
+                {(chartViewMode === "combined" || chartViewMode === "forecast") && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
+                    <span className="font-medium text-purple-600 dark:text-purple-400">
+                      Projected Trajectory ({forecastDays}d)
+                    </span>
+                  </div>
+                )}
+                {chartViewMode === "combined" && chartAnchorDate && (
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <span className="w-3 h-0.5 border-t-2 border-dashed border-rose-500"></span>
+                    <span className="font-mono text-rose-500 font-semibold text-[11px]">Today Milestone ({formatChartDate(chartAnchorDate)})</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Main Chart Canvas */}
+              <div className="h-72 sm:h-80 w-full pt-1">
+                {chartTimelineData && chartTimelineData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={forecast.daily_forecast} margin={{ top: 10, right: 15, left: -10, bottom: 0 }}>
+                    <ComposedChart data={chartTimelineData} margin={{ top: 15, right: 15, left: -10, bottom: 0 }}>
                       <defs>
                         <linearGradient id="forecastHubGrad" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.35} />
                           <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="actualSalesGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
@@ -806,21 +1017,136 @@ function AnalyticsHubContent() {
                           } catch {}
                           return label;
                         }}
-                        formatter={(val: any) => [`₹${Number(val).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`, "Projected Sales"]}
+                        formatter={(val: any, name?: any) => {
+                          const num = Number(val);
+                          if (isNaN(num)) return ["-", name];
+                          const formatted = `₹${num.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+                          if (name === "actual_sales") return [formatted, "Actual Invoiced Sales"];
+                          if (name === "moving_avg_7d") return [formatted, "7-Day Moving Avg"];
+                          if (name === "projected_sales") return [formatted, "Projected Sales"];
+                          return [formatted, name];
+                        }}
                       />
-                      <Area
-                        type="monotone"
-                        dataKey="projected_sales"
-                        stroke="#8b5cf6"
-                        strokeWidth={2.5}
-                        fillOpacity={1}
-                        fill="url(#forecastHubGrad)"
-                      />
-                    </AreaChart>
+
+                      {/* Today Milestone Divider Line */}
+                      {chartAnchorDate && (
+                        <ReferenceLine
+                          x={chartAnchorDate}
+                          stroke="#ef4444"
+                          strokeDasharray="4 4"
+                          strokeWidth={1.5}
+                          label={{
+                            value: "TODAY",
+                            position: "top",
+                            fill: "#ef4444",
+                            fontSize: 10,
+                            fontWeight: 700,
+                          }}
+                        />
+                      )}
+
+                      {/* Combined View */}
+                      {chartViewMode === "combined" && (
+                        <>
+                          <Line
+                            type="monotone"
+                            dataKey="actual_sales"
+                            stroke="#10b981"
+                            strokeWidth={2.2}
+                            dot={{ r: 2, fill: "#10b981" }}
+                            activeDot={{ r: 5 }}
+                            name="actual_sales"
+                            connectNulls={false}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="moving_avg_7d"
+                            stroke="#3b82f6"
+                            strokeWidth={1.8}
+                            strokeDasharray="4 4"
+                            dot={false}
+                            name="moving_avg_7d"
+                            connectNulls={false}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="projected_sales"
+                            stroke="#8b5cf6"
+                            strokeWidth={2.2}
+                            fillOpacity={1}
+                            fill="url(#forecastHubGrad)"
+                            name="projected_sales"
+                            connectNulls={false}
+                          />
+                        </>
+                      )}
+
+                      {/* Historical Actuals View */}
+                      {chartViewMode === "historical" && (
+                        <>
+                          <Area
+                            type="monotone"
+                            dataKey="actual_sales"
+                            stroke="#10b981"
+                            strokeWidth={2.5}
+                            fillOpacity={1}
+                            fill="url(#actualSalesGrad)"
+                            dot={{ r: 2.5, fill: "#10b981" }}
+                            activeDot={{ r: 5 }}
+                            name="actual_sales"
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="moving_avg_7d"
+                            stroke="#3b82f6"
+                            strokeWidth={2}
+                            strokeDasharray="4 4"
+                            dot={false}
+                            name="moving_avg_7d"
+                          />
+                        </>
+                      )}
+
+                      {/* 7-Day SMA Trend View */}
+                      {chartViewMode === "trend" && (
+                        <>
+                          <Line
+                            type="monotone"
+                            dataKey="moving_avg_7d"
+                            stroke="#3b82f6"
+                            strokeWidth={3}
+                            dot={false}
+                            name="moving_avg_7d"
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="actual_sales"
+                            stroke="#10b981"
+                            strokeWidth={1}
+                            strokeOpacity={0.4}
+                            dot={{ r: 1.5, fill: "#10b981" }}
+                            name="actual_sales"
+                          />
+                        </>
+                      )}
+
+                      {/* Pure Forecast View */}
+                      {chartViewMode === "forecast" && (
+                        <Area
+                          type="monotone"
+                          dataKey="projected_sales"
+                          stroke="#8b5cf6"
+                          strokeWidth={2.5}
+                          fillOpacity={1}
+                          fill="url(#forecastHubGrad)"
+                          name="projected_sales"
+                        />
+                      )}
+                    </ComposedChart>
                   </ResponsiveContainer>
                 ) : (
                   <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                    No sales history available to project forecast.
+                    No sales history available to render timeline chart.
                   </div>
                 )}
               </div>
@@ -861,6 +1187,217 @@ function AnalyticsHubContent() {
                 </div>
               </div>
             </div>
+
+            {/* Customer Pareto 80/20 Distribution & Churn Radar Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+              {/* Pareto Table (2 cols) */}
+              <div className="lg:col-span-2 bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/40 pb-3">
+                  <div>
+                    <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
+                      <Users className="w-4 h-4 text-primary" />
+                      <span>Customer Pareto Concentration (80/20 Rule)</span>
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      Identifies key accounts generating the core 80% of revenue to protect cash flows and retention.
+                    </p>
+                  </div>
+                  <span className="text-xs font-mono text-muted-foreground">
+                    Top {forecast?.customer_pareto?.length || 0} Accounts
+                  </span>
+                </div>
+
+                {forecast?.customer_pareto && forecast.customer_pareto.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
+                          <th className="py-2.5 px-3">Rank & Party</th>
+                          <th className="py-2.5 px-3 text-right">Revenue</th>
+                          <th className="py-2.5 px-3 text-right">Share (%)</th>
+                          <th className="py-2.5 px-3 text-right">Cumulative</th>
+                          <th className="py-2.5 px-3 text-center">Last Order</th>
+                          <th className="py-2.5 px-3 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/30">
+                        {forecast.customer_pareto.slice(0, 10).map((c: any, idx: number) => {
+                          const partyName = c.party_name || c.name || "Customer";
+                          const billedAmount = c.total_billed ?? c.total_revenue ?? 0;
+                          const sharePct = c.share_pct ?? c.percentage_of_total ?? 0;
+                          const cumPct = c.cumulative_pct ?? c.cumulative_percentage ?? 0;
+                          const idleDays = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
+                          const isRisk = c.risk_status === "AT_RISK" || c.is_at_risk;
+                          const statusLabel = c.risk_label || (isRisk ? `At Risk (${idleDays}d)` : "Active Buyer");
+
+                          return (
+                            <tr key={idx} className="hover:bg-muted/40 transition-colors">
+                              <td className="py-2.5 px-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-[10px] text-muted-foreground w-4">#{idx + 1}</span>
+                                  <span className="font-semibold text-foreground truncate max-w-[160px] sm:max-w-[220px]">
+                                    {partyName}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
+                                ₹{billedAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono text-primary font-semibold">
+                                {sharePct}%
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono text-muted-foreground text-[11px]">
+                                {cumPct}%
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-mono text-muted-foreground">
+                                {idleDays}d ago
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    isRisk
+                                      ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                                      : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                                  }`}
+                                >
+                                  {statusLabel}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="py-8 text-center text-xs text-muted-foreground">
+                    No customer revenue data available for Pareto analysis.
+                  </div>
+                )}
+              </div>
+
+              {/* Churn Radar & At-Risk Accounts (1 col) */}
+              <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between border-b border-border/40 pb-3">
+                    <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                      <ShieldAlert className="w-4 h-4 text-amber-500" />
+                      <span>Customer Churn Radar</span>
+                    </h3>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                      Attention
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Key revenue-contributing accounts that have not placed an order in over 45 days.
+                  </p>
+
+                  <div className="space-y-2 mt-3">
+                    {forecast?.customer_pareto?.filter((c: any) => c.risk_status === "AT_RISK" || c.is_at_risk).length ? (
+                      forecast.customer_pareto
+                        .filter((c: any) => c.risk_status === "AT_RISK" || c.is_at_risk)
+                        .slice(0, 5)
+                        .map((c: any, idx: number) => {
+                          const partyName = c.party_name || c.name || "Customer";
+                          const billedAmount = c.total_billed ?? c.total_revenue ?? 0;
+                          const idleDays = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
+                          return (
+                            <div
+                              key={idx}
+                              className="p-2.5 rounded-lg border border-amber-500/20 bg-amber-500/5 space-y-1 text-xs"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold text-foreground truncate max-w-[170px]">
+                                  {partyName}
+                                </span>
+                                <span className="font-mono text-amber-600 dark:text-amber-400 font-bold text-[11px]">
+                                  {idleDays}d idle
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                                <span>Revenue: ₹{formatCurrencyShort(billedAmount)}</span>
+                                <span>{c.invoice_count} past orders</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                    ) : (
+                      <div className="py-6 text-center text-xs text-muted-foreground">
+                        ✓ All top customer accounts have ordered within the last 45 days.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-lg bg-muted/40 border border-border/40 text-xs space-y-1 mt-3">
+                  <div className="font-semibold text-foreground flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Retention Recommendation</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Assign a sales executive to follow up on overdue quotation requests or replenishment cycles for accounts idle over 45 days.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Brand & Category Revenue Contribution Mix */}
+            {forecast?.brand_contribution && forecast.brand_contribution.length > 0 && (
+              <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/40 pb-3">
+                  <div>
+                    <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
+                      <Tag className="w-4 h-4 text-purple-500" />
+                      <span>Brand Revenue Contribution & Volume Mix</span>
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      Breakdown of turnover by manufacturing brand to negotiate supplier rebates and optimize inventory shelf space.
+                    </p>
+                  </div>
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {forecast.brand_contribution.length} Active Brands
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {forecast.brand_contribution.slice(0, 8).map((b: any, idx: number) => {
+                    const brandName = b.brand || "Unbranded";
+                    const rev = b.revenue ?? b.total_revenue ?? 0;
+                    const sharePct = b.share_pct ?? b.percentage_of_total ?? 0;
+                    const units = b.quantity ?? b.units_sold ?? 0;
+                    const bills = b.items_count ?? b.bills_count ?? 0;
+
+                    return (
+                      <div
+                        key={idx}
+                        className="p-3.5 rounded-xl border border-border/40 bg-muted/20 space-y-2 hover:border-primary/40 transition-colors"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-foreground text-xs">{brandName}</span>
+                          <span className="font-mono text-xs font-bold text-purple-600 dark:text-purple-400">
+                            {sharePct}%
+                          </span>
+                        </div>
+                        <div className="text-lg font-mono font-bold text-foreground">
+                          ₹{rev.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                        </div>
+                        {/* Share progress bar */}
+                        <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden">
+                          <div
+                            className="bg-purple-500 h-full rounded-full"
+                            style={{ width: `${Math.min(100, sharePct)}%` }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+                          <span>{units} units sold</span>
+                          <span>{bills} bills</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -2104,14 +2641,15 @@ function AnalyticsHubContent() {
 
         {/* Tab 5: Cash Flow & Working Capital */}
         {activeTab === "cashflow" && (
-          <div className="space-y-5 animate-in fade-in duration-200">
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Liquid Balances Row */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1">
                 <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                   Money to Collect (Debtors)
                 </span>
                 <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                  ₹{Number(kpis.money_to_collect || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹{Number(kpis.money_to_collect || forecast?.working_capital_cycle?.accounts_receivable || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   Pending customer receivables
@@ -2123,7 +2661,7 @@ function AnalyticsHubContent() {
                   Bills to Pay (Creditors)
                 </span>
                 <div className="text-xl sm:text-2xl font-bold font-mono text-rose-600 dark:text-rose-400">
-                  ₹{Number(kpis.bills_to_pay || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹{Number(kpis.bills_to_pay || forecast?.working_capital_cycle?.accounts_payable || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   Vendor payables due
@@ -2142,6 +2680,133 @@ function AnalyticsHubContent() {
                 </div>
               </div>
             </div>
+
+            {/* Cash Conversion Cycle (CCC) & Working Capital Health */}
+            {forecast?.working_capital_cycle && (
+              <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-3">
+                  <div>
+                    <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
+                      <Landmark className="w-4 h-4 text-primary" />
+                      <span>Cash Conversion Cycle (CCC) & Capital Efficiency</span>
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      Measures the speed (in days) at which capital invested in operations turns back into collected liquid cash.
+                    </p>
+                  </div>
+                  <span
+                    className={`px-3 py-1 rounded-full text-xs font-mono font-bold border ${
+                      forecast.working_capital_cycle.working_capital_health === "HEALTHY"
+                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                        : forecast.working_capital_cycle.working_capital_health === "MODERATE"
+                        ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                        : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                    }`}
+                  >
+                    {forecast.working_capital_cycle.working_capital_health === "HEALTHY"
+                      ? "Healthy Working Capital"
+                      : forecast.working_capital_cycle.working_capital_health === "MODERATE"
+                      ? "Moderate Capital Turnover"
+                      : "Elevated Cash Cycle (Action Needed)"}
+                  </span>
+                </div>
+
+                {/* 4 Pillars Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Net CCC */}
+                  <div className="p-4 rounded-xl border border-primary/30 bg-primary/5 space-y-1">
+                    <span className="text-[10px] font-semibold text-primary uppercase tracking-wider">
+                      Net Cash Cycle (CCC)
+                    </span>
+                    <div className="text-2xl font-bold font-mono text-foreground">
+                      {forecast.working_capital_cycle.cash_conversion_cycle_days}
+                      <span className="text-xs font-normal text-muted-foreground ml-1">Days</span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Total days capital is trapped in operations
+                    </div>
+                  </div>
+
+                  {/* DIO */}
+                  <div className="p-4 rounded-xl border border-border/40 bg-muted/20 space-y-1">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      Days Inventory Outstanding (DIO)
+                    </span>
+                    <div className="text-2xl font-bold font-mono text-foreground">
+                      {forecast.working_capital_cycle.dio_days}
+                      <span className="text-xs font-normal text-muted-foreground ml-1">Days</span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Average stock holding duration before sale
+                    </div>
+                  </div>
+
+                  {/* DSO */}
+                  <div className="p-4 rounded-xl border border-border/40 bg-muted/20 space-y-1">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      Days Sales Outstanding (DSO)
+                    </span>
+                    <div className="text-2xl font-bold font-mono text-foreground">
+                      {forecast.working_capital_cycle.dso_days}
+                      <span className="text-xs font-normal text-muted-foreground ml-1">Days</span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Average days to collect customer payments
+                    </div>
+                  </div>
+
+                  {/* DPO */}
+                  <div className="p-4 rounded-xl border border-border/40 bg-muted/20 space-y-1">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      Days Payable Outstanding (DPO)
+                    </span>
+                    <div className="text-2xl font-bold font-mono text-foreground">
+                      {forecast.working_capital_cycle.dpo_days}
+                      <span className="text-xs font-normal text-muted-foreground ml-1">Days</span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Average credit period taken to pay vendors
+                    </div>
+                  </div>
+                </div>
+
+                {/* Formula Visual Banner */}
+                <div className="p-3.5 rounded-xl bg-muted/30 border border-border/40 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 flex-wrap font-mono">
+                    <span className="px-2 py-1 rounded bg-card border border-border/40 font-semibold text-foreground">
+                      DIO: {forecast.working_capital_cycle.dio_days}d
+                    </span>
+                    <span className="text-muted-foreground font-bold">+</span>
+                    <span className="px-2 py-1 rounded bg-card border border-border/40 font-semibold text-foreground">
+                      DSO: {forecast.working_capital_cycle.dso_days}d
+                    </span>
+                    <span className="text-muted-foreground font-bold">-</span>
+                    <span className="px-2 py-1 rounded bg-card border border-border/40 font-semibold text-foreground">
+                      DPO: {forecast.working_capital_cycle.dpo_days}d
+                    </span>
+                    <span className="text-muted-foreground font-bold">=</span>
+                    <span className="px-2 py-1 rounded bg-primary text-primary-foreground font-bold">
+                      Net CCC: {forecast.working_capital_cycle.cash_conversion_cycle_days} Days
+                    </span>
+                  </div>
+
+                  <div className="text-xs text-muted-foreground">
+                    Target benchmark for wholesale distribution: &lt; 90 Days
+                  </div>
+                </div>
+
+                {/* AI Executive Recommendation */}
+                <div className="p-4 rounded-xl bg-purple-500/5 border border-purple-500/20 space-y-1.5 text-xs">
+                  <div className="font-semibold text-foreground flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Working Capital Optimization Insight</span>
+                  </div>
+                  <p className="text-muted-foreground leading-relaxed">
+                    {forecast.working_capital_cycle.recommendation || `With a cash cycle of ${forecast.working_capital_cycle.cash_conversion_cycle_days} days, inventory accounts for ${forecast.working_capital_cycle.dio_days} days of working capital. Liquidating slow-moving stock and incentivizing 15-day settlement from top debtors will accelerate cash flow.`}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

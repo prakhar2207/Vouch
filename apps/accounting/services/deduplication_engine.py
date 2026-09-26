@@ -179,16 +179,22 @@ class TransactionDeduplicationEngine:
         if party:
             candidates = candidates.filter(party_ledger=party)
 
-        # Exclude vouchers that are already matched to an active reconciled bank transaction
+        cand_list = list(candidates)
+        if not cand_list:
+            return None
+
+        # Exclude vouchers that are already matched to an active reconciled bank transaction.
+        # Query only against cand_ids and strip default ordering to eliminate full-table scan and 93ms in-memory sort.
+        cand_ids = [c.id for c in cand_list]
         reconciled_voucher_ids = set(
             BankTransaction.objects.filter(
                 company=company,
                 status='RECONCILED',
-                matched_voucher__isnull=False
-            ).exclude(id=bank_tx.id).values_list('matched_voucher_id', flat=True)
+                matched_voucher_id__in=cand_ids
+            ).exclude(id=bank_tx.id).order_by().values_list('matched_voucher_id', flat=True)
         )
 
-        unlinked_candidates = [c for c in candidates if c.id not in reconciled_voucher_ids]
+        unlinked_candidates = [c for c in cand_list if c.id not in reconciled_voucher_ids]
 
         if not unlinked_candidates:
             return None

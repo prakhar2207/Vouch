@@ -182,8 +182,7 @@ class TransactionDeduplicationEngineTestCase(TestCase):
         result = FindingFixService.execute_fix(finding_obj, user=self.user)
         self.assertEqual(result["status"], "SUCCESS")
 
-        v2.refresh_from_db()
-        self.assertEqual(v2.status, "CANCELLED")
+        self.assertFalse(Voucher.objects.filter(id=v2.id).exists())
         finding_obj.refresh_from_db()
         self.assertTrue(finding_obj.is_resolved)
 

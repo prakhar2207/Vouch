@@ -33,12 +33,31 @@ def get_authorized_company(request, company_id=None):
     except (ValueError, TypeError, AttributeError):
         raise NotFound(f"Company ID '{target_id}' is not a valid UUID.")
 
+    # Request-scoped memoization to eliminate duplicate Company & UserCompany queries within the same request lifecycle
+    cache_key = (getattr(request.user, 'id', None), target_id)
+    cached_map = getattr(request, '_cached_authorized_companies', None)
+    if cached_map is None and hasattr(request, '_request'):
+        cached_map = getattr(request._request, '_cached_authorized_companies', None)
+    if cached_map is not None and cache_key in cached_map:
+        return cached_map[cache_key]
+
     company = Company.objects.filter(id=target_id).defer('signature_data').first()
     if not company:
         raise NotFound(f"Company with ID '{target_id}' not found.")
 
-    if not UserCompany.objects.filter(user=request.user, company=company).exists():
+    if not getattr(request.user, 'is_superuser', False) and not UserCompany.objects.filter(user=request.user, company=company).exists():
         raise PermissionDenied("Access denied: You are not authorized to view or modify this company's books.")
+
+    # Store in request cache
+    if cached_map is None:
+        cached_map = {}
+        try:
+            setattr(request, '_cached_authorized_companies', cached_map)
+            if hasattr(request, '_request'):
+                setattr(request._request, '_cached_authorized_companies', cached_map)
+        except Exception:
+            pass
+    cached_map[cache_key] = company
 
     return company
 
