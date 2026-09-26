@@ -132,11 +132,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     pathname.startsWith("/vouchers") ||
     pathname.startsWith("/network") ||
     pathname.startsWith("/export") ||
-    pathname.startsWith("/analytics") ||
     pathname.startsWith("/reports") ||
     pathname.startsWith("/audit") ||
     pathname.startsWith("/health") ||
-    pathname.startsWith("/ledgers");
+    pathname.startsWith("/ledgers") ||
+    pathname.startsWith("/gst");
 
   return (
     <div className="min-h-screen bg-background font-sans text-foreground flex flex-col">
@@ -147,15 +147,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       />
 
       {/* TOP NAVIGATION BAR */}
-      <header className="sticky top-0 z-40 w-full border-b border-border/20 bg-card/80 backdrop-blur-xl shadow-sm">
-        <div className="w-full px-3 sm:px-6 h-14 flex items-center justify-between gap-2 sm:gap-4">
+      <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-card/90 backdrop-blur-xl shadow-2xs">
+        <div className="w-full px-3 sm:px-4 lg:px-6 h-14 flex items-center justify-between gap-2 lg:gap-3">
           
-          {/* Left Section: Brand & Core Nav */}
-          <div className="flex items-center gap-2 lg:gap-4 min-w-0">
+          {/* Left Section: Brand & Primary Nav */}
+          <div className="flex items-center gap-2 lg:gap-3 xl:gap-4 min-w-0 flex-1 overflow-hidden">
             {/* Mobile / Tablet Hamburger Button */}
             <button
               onClick={() => setIsMobileNavOpen(true)}
-              className="lg:hidden p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer shrink-0 min-h-[36px] min-w-[36px] flex items-center justify-center"
+              className="lg:hidden p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer shrink-0 min-h-[36px] min-w-[36px] flex items-center justify-center"
               aria-label="Open Navigation Menu"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -167,40 +167,40 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div id="tour-header-brand" className="flex items-center gap-1.5 shrink-0">
               <Link
                 href="/dashboard"
-                className="hover:opacity-90 flex items-center gap-1.5 shrink-0"
+                className="hover:opacity-90 flex items-center gap-1.5 shrink-0 transition-opacity"
               >
                 <VouchLogo size={24} showWordmark={true} />
               </Link>
             </div>
 
             {/* Desktop Navigation Links */}
-            <nav className="hidden lg:flex items-center gap-0.5 xl:gap-1 min-w-0">
+            <nav className="hidden lg:flex items-center gap-1 min-w-0 overflow-hidden">
               {/* Dashboard */}
               <Link
                 id="tour-dashboard-link"
                 href="/dashboard"
-                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname === "/dashboard"
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                 }`}
               >
                 Dashboard
               </Link>
 
               {/* Sales Dropdown */}
-              <div ref={salesRef} className="relative">
+              <div ref={salesRef} className="relative shrink-0">
                 <button
                   id="tour-sales-btn"
                   onClick={() => setIsSalesDropdownOpen(!isSalesDropdownOpen)}
-                  className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                     isSalesActive
-                      ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                      ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                   }`}
                 >
                   <span>Sales</span>
-                  <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-150 ${isSalesDropdownOpen ? "rotate-180" : ""}`} />
+                  <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform duration-150 ${isSalesDropdownOpen ? "rotate-180" : ""}`} />
                 </button>
 
                 {isSalesDropdownOpen && (
@@ -211,11 +211,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       onClick={() => setIsSalesDropdownOpen(false)}
                     >
                       <div>
-                        <div className="font-medium flex items-center gap-1.5">
+                        <div className="font-medium flex items-center gap-1.5 text-xs sm:text-sm">
                           <span>Sales Invoices (GST)</span>
-                          <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-mono font-semibold">F8</span>
+                          <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.2 rounded font-mono font-semibold">F8</span>
                         </div>
-                        <div className="text-xs text-muted-foreground">Official GST tax invoices</div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">Official GST tax invoices</div>
                       </div>
                     </Link>
                     <Link
@@ -224,20 +224,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       onClick={() => setIsSalesDropdownOpen(false)}
                     >
                       <div>
-                        <div className="font-medium text-blue-500 dark:text-blue-400 flex items-center gap-1.5">
+                        <div className="font-medium text-blue-500 dark:text-blue-400 flex items-center gap-1.5 text-xs sm:text-sm">
                           <span>Proforma & Quotations</span>
-                          <span className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded font-semibold">1-Click GST</span>
+                          <span className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 px-1.5 py-0.2 rounded font-semibold">1-Click GST</span>
                         </div>
-                        <div className="text-xs text-muted-foreground">Estimates, quotes & proforma bills</div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">Estimates, quotes & proforma bills</div>
                       </div>
                     </Link>
 
-                    <div className="border-t border-border/40 my-1"></div>
+                    <div className="border-t border-border/40 my-1.5"></div>
 
-                    <div className="grid grid-cols-2 gap-1.5 pt-1">
+                    <div className="grid grid-cols-2 gap-1.5 pt-0.5">
                       <Link
                         href="/sales/new"
-                        className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                        className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
                         onClick={() => setIsSalesDropdownOpen(false)}
                       >
                         <Plus className="w-3.5 h-3.5" />
@@ -245,7 +245,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       </Link>
                       <Link
                         href="/sales/proforma/new"
-                        className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-colors"
+                        className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-colors"
                         onClick={() => setIsSalesDropdownOpen(false)}
                       >
                         <Plus className="w-3.5 h-3.5" />
@@ -260,10 +260,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-purchase-btn"
                 href="/purchases"
-                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   isPurchasesActive
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                 }`}
               >
                 Purchases
@@ -273,10 +273,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-parties-link"
                 href="/parties"
-                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname.startsWith("/parties")
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                 }`}
               >
                 Parties
@@ -286,10 +286,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-inventory-link"
                 href="/inventory"
-                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname.startsWith("/inventory")
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                 }`}
               >
                 Inventory
@@ -299,43 +299,47 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-banking-link"
                 href="/banking"
-                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname.startsWith("/banking")
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                 }`}
               >
                 Banking
               </Link>
 
-              {/* Analytics */}
+              {/* Analytics Hub */}
               <Link
                 id="tour-analytics-link"
                 href="/analytics"
-                className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap flex items-center gap-1.5 ${
                   pathname.startsWith("/analytics")
-                    ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                 }`}
               >
                 <span>Analytics</span>
-                <span className="text-[9px] bg-purple-500/10 text-purple-500 font-bold px-1 rounded">AI</span>
+                <span className="text-[9px] bg-purple-500/15 text-purple-600 dark:text-purple-400 font-bold px-1.5 py-0.2 rounded-full">
+                  AI
+                </span>
               </Link>
 
-              {/* GST & Tax Dropdown */}
-              <div ref={gstRef} className="relative">
+              {/* GST & Tax Dropdown (visible on wide screens >= 1280px, otherwise gracefully tucked in More) */}
+              <div ref={gstRef} className="relative shrink-0 hidden xl:block">
                 <button
                   id="tour-gst-btn"
                   onClick={() => setIsGstDropdownOpen(!isGstDropdownOpen)}
-                  className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                     pathname.startsWith("/gst")
-                      ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                      ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                   }`}
                 >
                   <span>GST & Tax</span>
-                  <span className="text-[9px] bg-rose-500/10 text-rose-500 font-bold px-1 rounded">Shield</span>
-                  <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-150 ${isGstDropdownOpen ? "rotate-180" : ""}`} />
+                  <span className="text-[9px] bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.2 rounded-full">
+                    Shield
+                  </span>
+                  <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform duration-150 ${isGstDropdownOpen ? "rotate-180" : ""}`} />
                 </button>
 
                 {isGstDropdownOpen && (
@@ -346,12 +350,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       onClick={() => setIsGstDropdownOpen(false)}
                     >
                       <div>
-                        <div className="font-semibold text-rose-500 flex items-center gap-1.5">
+                        <div className="font-semibold text-rose-500 flex items-center gap-1.5 text-xs sm:text-sm">
                           <ShieldAlert className="w-3.5 h-3.5" />
                           <span>Vendor ITC Risk Shield</span>
                           <span className="text-[9px] bg-rose-500/20 text-rose-400 px-1 py-0.2 rounded font-bold">New</span>
                         </div>
-                        <div className="text-xs text-muted-foreground">GSTR-2B match, payment hold & WhatsApp chaser</div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">GSTR-2B match, payment hold & WhatsApp chaser</div>
                       </div>
                     </Link>
 
@@ -361,210 +365,220 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       onClick={() => setIsGstDropdownOpen(false)}
                     >
                       <div>
-                        <div className="font-medium flex items-center gap-1.5">
+                        <div className="font-medium flex items-center gap-1.5 text-xs sm:text-sm">
                           <FileText className="w-3.5 h-3.5 text-primary" />
                           <span>GST Returns Center</span>
                         </div>
-                        <div className="text-xs text-muted-foreground">GSTR-1, GSTR-3B tax summary & GSTR-9</div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">GSTR-1, GSTR-3B tax summary & GSTR-9</div>
                       </div>
                     </Link>
                   </div>
                 )}
               </div>
 
-
               {/* More Dropdown */}
-              <div ref={moreRef} className="relative">
+              <div ref={moreRef} className="relative shrink-0">
                 <button
                   onClick={() => setIsMoreDropdownOpen(!isMoreDropdownOpen)}
-                  className={`px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                     isMoreActive
-                      ? "text-foreground bg-primary/10 font-semibold border-b-2 border-primary"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                      ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                   }`}
                 >
                   <span>More</span>
-                  <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-150 ${isMoreDropdownOpen ? "rotate-180" : ""}`} />
+                  <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform duration-150 ${isMoreDropdownOpen ? "rotate-180" : ""}`} />
                 </button>
 
                 {isMoreDropdownOpen && (
-                  <div className="absolute left-0 mt-1.5 w-[540px] max-h-[85vh] overflow-y-auto bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-2xl shadow-black/20 p-3 z-50 animate-in fade-in zoom-in-95 grid grid-cols-2 gap-3 divide-x divide-border/30">
+                  <div className="absolute left-0 mt-1.5 w-[620px] max-h-[85vh] overflow-y-auto bg-card/95 backdrop-blur-xl border border-border/40 rounded-2xl shadow-2xl shadow-black/20 p-4 z-50 animate-in fade-in zoom-in-95 grid grid-cols-3 gap-3 divide-x divide-border/30">
+                    
+                    {/* Col 1: Accounting & Entries */}
                     <div className="space-y-1">
-                      <div className="px-2 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                      <div className="px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
                         Accounting & Entries
                       </div>
                       <Link
                         href="/vouchers"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
                         onClick={() => setIsMoreDropdownOpen(false)}
                       >
                         <div>
-                          <div className="font-medium text-xs">Transactions</div>
-                          <div className="text-[11px] text-muted-foreground">View all transactions</div>
+                          <div className="font-semibold text-xs">Transactions</div>
+                          <div className="text-[10px] text-muted-foreground">All posted vouchers</div>
                         </div>
                       </Link>
                       <Link
                         href="/vouchers/credit-note"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
                         onClick={() => setIsMoreDropdownOpen(false)}
                       >
                         <div>
-                          <div className="font-medium text-xs text-amber-400">Credit / Debit Note</div>
-                          <div className="text-[11px] text-muted-foreground">Sales & purchase returns</div>
+                          <div className="font-semibold text-xs text-amber-500">Credit / Debit Note</div>
+                          <div className="text-[10px] text-muted-foreground">Sales & purchase returns</div>
                         </div>
                       </Link>
                       <Link
                         href="/vouchers/new"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
                         onClick={() => setIsMoreDropdownOpen(false)}
                       >
                         <div>
-                          <div className="font-medium text-xs">Payments & Receipts</div>
-                          <div className="text-[11px] text-muted-foreground">Record money in/out</div>
+                          <div className="font-semibold text-xs">Payments & Receipts</div>
+                          <div className="text-[10px] text-muted-foreground">Record money in/out</div>
                         </div>
                       </Link>
                       <Link
                         href="/vouchers/grid"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
                         onClick={() => setIsMoreDropdownOpen(false)}
                       >
                         <div>
-                          <div className="font-medium text-xs">Journal Entry</div>
-                          <div className="text-[11px] text-muted-foreground">Manual entries</div>
+                          <div className="font-semibold text-xs">Journal Entry</div>
+                          <div className="text-[10px] text-muted-foreground">Manual double-entry</div>
                         </div>
                       </Link>
-                      
-                      <div className="border-t border-border/40 my-1.5"></div>
-                      <div className="px-2 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
-                        Reports & Statements
-                      </div>
-                      
-                      <Link
-                        href="/reports/aging"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-medium text-xs text-purple-400">Aging Analysis (MSME)</div>
-                          <div className="text-[11px] text-muted-foreground">Overdue parties</div>
-                        </div>
-                      </Link>
-                      
                       <Link
                         href="/ledgers"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
                         onClick={() => setIsMoreDropdownOpen(false)}
                       >
                         <div>
-                          <div className="font-medium text-xs">Accounts</div>
-                          <div className="text-[11px] text-muted-foreground">Account heads & ledgers</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/reports/trial-balance"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-medium text-xs">Trial Balance</div>
-                          <div className="text-[11px] text-muted-foreground">Balances summary</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/reports/profit-and-loss"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-medium text-xs">Profit & Loss</div>
-                          <div className="text-[11px] text-muted-foreground">P&L statement</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/reports/balance-sheet"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-medium text-xs">Balance Sheet</div>
-                          <div className="text-[11px] text-muted-foreground">Financial position</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/export/tally"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-medium text-xs">Export to Tally</div>
-                          <div className="text-[11px] text-muted-foreground">Export to TallyPrime</div>
+                          <div className="font-semibold text-xs">Chart of Accounts</div>
+                          <div className="text-[10px] text-muted-foreground">Account heads & ledgers</div>
                         </div>
                       </Link>
                     </div>
 
+                    {/* Col 2: Reports & Statements */}
                     <div className="pl-3 space-y-1">
-                      <div className="px-2 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
-                        Tools & Operations
+                      <div className="px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                        Reports & Statements
                       </div>
-
                       <Link
-                        href="/health"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        href="/reports/trial-balance"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
                         onClick={() => setIsMoreDropdownOpen(false)}
                       >
                         <div>
-                          <div className="font-medium text-xs">Books Health</div>
-                          <div className="text-[11px] text-muted-foreground">Check your books</div>
+                          <div className="font-semibold text-xs">Trial Balance</div>
+                          <div className="text-[10px] text-muted-foreground">Debit-Credit parity</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/reports/profit-and-loss"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs">Profit & Loss</div>
+                          <div className="text-[10px] text-muted-foreground">Trading & net margin</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/reports/balance-sheet"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs">Balance Sheet</div>
+                          <div className="text-[10px] text-muted-foreground">Assets & liabilities</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/reports/aging"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs text-purple-500">Aging MSME</div>
+                          <div className="text-[10px] text-muted-foreground">45-day overdue tracker</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/export/tally"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs">Export to Tally</div>
+                          <div className="text-[10px] text-muted-foreground">TallyPrime XML sync</div>
+                        </div>
+                      </Link>
+                    </div>
+
+                    {/* Col 3: GST, Tools & Compliance */}
+                    <div className="pl-3 space-y-1">
+                      <div className="px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                        GST & Operations
+                      </div>
+                      <Link
+                        href="/gst/itc-shield"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs text-rose-500 flex items-center gap-1">
+                            <span>ITC Risk Shield</span>
+                            <span className="text-[8px] bg-rose-500/20 text-rose-400 px-1 py-0.2 rounded font-bold">New</span>
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">2B reconcile & WhatsApp</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/gst/returns"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs">GST Returns</div>
+                          <div className="text-[10px] text-muted-foreground">GSTR-1, 3B, 9 filing</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/health"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs">Books Health</div>
+                          <div className="text-[10px] text-muted-foreground">Automated ledger audit</div>
                         </div>
                       </Link>
                       <Link
                         href="/audit"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
                         onClick={() => setIsMoreDropdownOpen(false)}
                       >
                         <div>
-                          <div className="font-medium text-xs">Activity Log</div>
-                          <div className="text-[11px] text-muted-foreground">View change history</div>
+                          <div className="font-semibold text-xs">Activity Audit</div>
+                          <div className="text-[10px] text-muted-foreground">Tamper-evident logs</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/network/inbox"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs">B2B Network</div>
+                          <div className="text-[10px] text-muted-foreground">Supplier e-invoices</div>
                         </div>
                       </Link>
                       {(isAdmin || isOwner || isCA) && (
-                        <>
-                          <button
-                            onClick={() => {
-                              setIsMoreDropdownOpen(false);
-                              setIsClosingModalOpen(true);
-                            }}
-                            className="w-full text-left px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors flex items-center justify-between cursor-pointer"
-                          >
-                            <div>
-                              <div className="font-medium text-xs">Close Financial Year</div>
-                              <div className="text-[11px] text-muted-foreground">Year-end closing</div>
-                            </div>
-                          </button>
-                          <button
-                            onClick={() => {
-                              setIsMoreDropdownOpen(false);
-                              setIsSplitModalOpen(true);
-                            }}
-                            className="w-full text-left px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors flex items-center justify-between cursor-pointer"
-                          >
-                            <div>
-                              <div className="font-medium text-xs">Archive Company Data</div>
-                              <div className="text-[11px] text-muted-foreground">Split or archive data</div>
-                            </div>
-                          </button>
-                        </>
+                        <button
+                          onClick={() => {
+                            setIsMoreDropdownOpen(false);
+                            setIsClosingModalOpen(true);
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors flex items-center justify-between cursor-pointer"
+                        >
+                          <div>
+                            <div className="font-semibold text-xs">Close FY</div>
+                            <div className="text-[10px] text-muted-foreground">Year-end balance transfer</div>
+                          </div>
+                        </button>
                       )}
-                      <Link
-                        href="/network/inbox"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-medium text-xs">B2B Network</div>
-                          <div className="text-[11px] text-muted-foreground">Supplier e-invoices</div>
-                        </div>
-                      </Link>
                     </div>
                   </div>
                 )}
@@ -572,10 +586,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </nav>
           </div>
 
-          {/* Right Section: Unified Context Pill, Search, Utilities & Profile */}
+          {/* Right Section: Workspace Context, Quick Search & Utilities */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Sync Status Badge Removed */}
-
+            
             {/* Company Switcher Pill */}
             <div ref={companyRef} className="relative hidden md:block">
               <button
@@ -584,50 +597,59 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   setIsFYDropdownOpen(false);
                   setIsUserMenuOpen(false);
                 }}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px] max-w-[120px] xl:max-w-[170px]"
-                title="Active Company"
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
+                title={`Active Company: ${activeCompany?.name || 'Company'}`}
               >
-                <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <span className="font-medium text-foreground truncate">
+                <div className="w-5 h-5 rounded-md bg-gradient-to-br from-primary/20 to-primary/10 border border-primary/25 flex items-center justify-center text-[10px] font-bold text-primary shrink-0 uppercase">
+                  {(activeCompany?.name || "C")[0]}
+                </div>
+                <span className="font-semibold text-xs text-foreground truncate max-w-[90px] lg:max-w-[110px] xl:max-w-[150px]">
                   {activeCompany?.name || "Company"}
                 </span>
-                <ChevronDown className={`w-3 h-3 text-muted-foreground shrink-0 transition-transform duration-150 ${isCompanyDropdownOpen ? "rotate-180" : ""}`} />
+                <ChevronDown className={`w-3 h-3 text-muted-foreground/70 shrink-0 transition-transform duration-150 ${isCompanyDropdownOpen ? "rotate-180" : ""}`} />
               </button>
 
               {isCompanyDropdownOpen && (
-                <div className="absolute left-0 mt-1.5 w-60 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-1.5 z-50 animate-in fade-in zoom-in-95">
-                  <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Active Company
+                <div className="absolute right-0 mt-1.5 w-64 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-1.5 z-50 animate-in fade-in zoom-in-95">
+                  <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Switch Company Workspace
                   </div>
                   {availableCompanies.length === 0 ? (
                     <div className="px-2 py-1.5 text-xs text-muted-foreground">No companies found</div>
                   ) : (
-                    availableCompanies.map((comp) => (
-                      <button
-                        key={comp.id}
-                        onClick={() => {
-                          setActiveCompany(comp);
-                          setIsCompanyDropdownOpen(false);
-                          window.location.reload();
-                        }}
-                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between ${
-                          activeCompany?.id === comp.id
-                            ? "bg-primary/10 text-primary font-semibold"
-                            : "text-foreground hover:bg-muted"
-                        }`}
-                      >
-                        <span className="truncate">{comp.name}</span>
-                        {activeCompany?.id === comp.id && (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-primary shrink-0 ml-1" />
-                        )}
-                      </button>
-                    ))
+                    <div className="space-y-0.5 max-h-56 overflow-y-auto">
+                      {availableCompanies.map((comp) => (
+                        <button
+                          key={comp.id}
+                          onClick={() => {
+                            setActiveCompany(comp);
+                            setIsCompanyDropdownOpen(false);
+                            window.location.reload();
+                          }}
+                          className={`w-full text-left px-2.5 py-2 rounded-lg text-xs transition-colors flex items-center justify-between cursor-pointer ${
+                            activeCompany?.id === comp.id
+                              ? "bg-primary/10 text-primary font-semibold"
+                              : "text-foreground hover:bg-muted"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <div className="w-5 h-5 rounded-md bg-muted flex items-center justify-center text-[10px] font-bold shrink-0 uppercase">
+                              {comp.name[0]}
+                            </div>
+                            <span className="truncate">{comp.name}</span>
+                          </div>
+                          {activeCompany?.id === comp.id && (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-primary shrink-0 ml-1" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
                   )}
                   <div className="border-t border-border/40 my-1"></div>
                   <Link
                     href="/settings"
                     onClick={() => setIsCompanyDropdownOpen(false)}
-                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    className="flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                   >
                     <Settings className="w-3.5 h-3.5" />
                     <span>Company Settings</span>
@@ -636,19 +658,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               )}
             </div>
 
-            {/* Unified Compact Context Pill: FY · Date · Alt+F2 */}
+            {/* Financial Year & Period Switcher */}
             <div ref={fyRef} className="relative hidden md:block">
               <button
                 onClick={() => setIsFYDropdownOpen(!isFYDropdownOpen)}
-                className="flex items-center gap-1.5 xl:gap-2 px-2.5 xl:px-3 py-1.5 rounded-lg border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px]"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
                 title="Change Financial Year or Period (Alt + F2)"
               >
-                <Calendar className="w-3.5 xl:w-4 h-3.5 xl:h-4 text-muted-foreground shrink-0" />
-                <span className="font-mono tabular-nums text-xs font-medium text-foreground whitespace-nowrap">
-                  {activeFY ? (activeFY.code || activeFY.name) : "FY 26-27"}<span className="hidden xl:inline"> · {workingDate ? workingDate.slice(5) : "Today"}</span>
+                <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <span className="font-mono tabular-nums text-xs font-semibold text-foreground whitespace-nowrap">
+                  {activeFY ? (activeFY.code || activeFY.name) : "FY 26-27"}
                 </span>
-                <span className={`w-2 h-2 rounded-full shrink-0 ${activeFY?.is_closed ? "bg-amber-400" : "bg-emerald-400"}`}></span>
-                <ChevronDown className="w-3 h-3 text-muted-foreground ml-0.5 opacity-60 shrink-0" />
+                <span className={`w-2 h-2 rounded-full shrink-0 ${activeFY?.is_closed ? "bg-amber-400" : "bg-emerald-500"}`} />
+                <ChevronDown className="w-3 h-3 text-muted-foreground/70 shrink-0" />
               </button>
 
               {isFYDropdownOpen && (
@@ -708,22 +730,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               )}
             </div>
 
-            {/* Search Trigger: Compact Ctrl+K */}
+            {/* Quick Command Palette Search (Ctrl+K) */}
             <button
               id="tour-command-palette-btn"
               onClick={() => setIsCommandPaletteOpen(true)}
-              className="flex items-center gap-1.5 sm:gap-2 px-2.5 py-1.5 rounded-lg border border-border/50 bg-muted/20 hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px]"
-              title="Command Search (Ctrl+K)"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px]"
+              title="Quick Search & Navigation (Ctrl+K)"
             >
-              <Search className="w-4 h-4 text-muted-foreground" />
-              <span className="hidden 2xl:inline text-xs font-normal">Search...</span>
+              <Search className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="hidden xl:inline text-xs font-medium">Search</span>
+              <kbd className="hidden sm:inline-block text-[10px] font-mono bg-muted/80 px-1.5 py-0.2 rounded border border-border/60 text-muted-foreground">
+                Ctrl+K
+              </kbd>
             </button>
 
             {/* Help Icon Button (F1) */}
             <button
               id="tour-help-btn"
               onClick={() => setIsHelpOpen(true)}
-              className="hidden xl:inline-flex p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted/60 transition-colors cursor-pointer min-h-[36px] min-w-[36px] items-center justify-center"
+              className="hidden xl:inline-flex p-2 text-muted-foreground hover:text-foreground rounded-xl hover:bg-muted/60 transition-colors cursor-pointer min-h-[36px] min-w-[36px] items-center justify-center"
               title="Keyboard Shortcuts & Help (F1)"
             >
               <HelpCircle className="w-4 h-4" />
@@ -736,10 +761,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div ref={userMenuRef} className="relative">
               <button
                 onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className="w-9 h-9 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 border border-border/40 flex items-center justify-center text-xs font-bold text-foreground hover:ring-2 hover:ring-ring transition-all cursor-pointer"
+                className="w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 via-primary/10 to-accent/20 border border-border/60 flex items-center justify-center text-xs font-bold text-foreground hover:ring-2 hover:ring-primary/30 transition-all cursor-pointer"
                 title="Account Menu"
               >
-                <User className="w-4 h-4 text-muted-foreground" />
+                {user?.first_name ? user.first_name[0].toUpperCase() : <User className="w-4 h-4 text-muted-foreground" />}
               </button>
 
               {isUserMenuOpen && (
