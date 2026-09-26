@@ -98,32 +98,8 @@ export default function CategoryDetailPage() {
   const [categoryEditData, setCategoryEditData] = useState({ name: '', hsn_code: '', gst_rate: 18 });
   const [savingCategory, setSavingCategory] = useState(false);
 
-  // Item Bill History & Category Analytics State
+  // Item Bill History State
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<any>(null);
-  const [analyticsOpen, setAnalyticsOpen] = useState(false);
-  const [topAnalytics, setTopAnalytics] = useState<any>(null);
-  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
-
-  const fetchAnalytics = async (cid?: string) => {
-    const targetCompanyId = cid || companyId;
-    if (!targetCompanyId) return;
-    setLoadingAnalytics(true);
-    try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.get(
-        `${API_BASE_URL}/api/v1/inventory/analytics/${targetCompanyId}/?category_id=${categoryId}&limit=6`,
-        { headers }
-      );
-      if (res.data.success) {
-        setTopAnalytics(res.data.data);
-      }
-    } catch (err) {
-      console.error("Failed to fetch inventory analytics:", err);
-    } finally {
-      setLoadingAnalytics(false);
-    }
-  };
 
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
@@ -677,23 +653,15 @@ export default function CategoryDetailPage() {
                     <span>{isMerging ? 'Combining...' : 'Combine'}</span>
                   </button>
 
-                  {/* Top Items & Analytics Trigger */}
-                  <button
-                    onClick={() => {
-                      const next = !analyticsOpen;
-                      setAnalyticsOpen(next);
-                      if (next && !topAnalytics) fetchAnalytics();
-                    }}
-                    className={`justify-center px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer border ${
-                      analyticsOpen
-                        ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/20 dark:text-blue-400 dark:border-blue-500/40 shadow-xs"
-                        : "bg-card hover:bg-muted text-foreground border-border/80"
-                    }`}
-                    title="View top sold and purchased items & movement analytics"
+                  {/* Lead to Inventory Analytics Hub */}
+                  <Link
+                    href={`/analytics?tab=inventory&category_id=${categoryId}`}
+                    className="justify-center px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer border bg-card hover:bg-muted text-foreground border-border/80"
+                    title="Open Full Inventory Velocity & Reorder Analytics"
                   >
                     <BarChart2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                     <span>Analytics</span>
-                  </button>
+                  </Link>
                 </div>
 
                 {/* Add Item Trigger */}
@@ -781,135 +749,7 @@ export default function CategoryDetailPage() {
               </div>
             </div>
 
-            {/* Collapsible Top Items & Movement Analytics Panel */}
-            {analyticsOpen && (
-              <div className="p-4 sm:p-5 border-b border-border/60 bg-muted/10 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <BarChart2 className="w-4 h-4 text-blue-400" />
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">
-                      Item Velocity & Most Frequent Items ({category?.name || "Category"})
-                    </h4>
-                  </div>
-                  <button
-                    onClick={() => fetchAnalytics()}
-                    disabled={loadingAnalytics}
-                    className="p-1 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                    title="Refresh Analytics"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${loadingAnalytics ? 'animate-spin text-blue-400' : ''}`} />
-                  </button>
-                </div>
 
-                {loadingAnalytics ? (
-                  <div className="py-8 text-center text-xs text-muted-foreground">
-                    Analyzing sales and purchase transactions...
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Top Sold Items */}
-                    <div className="bg-muted/20 border border-border/60 rounded-xl p-3.5 space-y-2.5">
-                      <div className="flex items-center justify-between border-b border-border/40 pb-2">
-                        <span className="text-[11px] font-bold text-foreground flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-blue-400"></span>
-                          Most Frequent Items Sold
-                        </span>
-                        <span className="text-[10px] text-muted-foreground font-mono">By Invoice Count</span>
-                      </div>
-
-                      {(!topAnalytics?.top_sold || topAnalytics.top_sold.length === 0) ? (
-                        <div className="py-4 text-center text-xs text-muted-foreground">
-                          No sales recorded for this category yet.
-                        </div>
-                      ) : (
-                        <div className="space-y-1.5">
-                          {topAnalytics.top_sold.map((it: any, idx: number) => (
-                            <div
-                              key={idx}
-                              onClick={() => {
-                                const prod = products.find(p => p.id === it.product_id) || it;
-                                setSelectedHistoryItem(prod);
-                              }}
-                              className="flex items-center justify-between p-2 rounded-lg bg-card/60 hover:bg-muted/40 border border-border/30 text-xs transition-colors cursor-pointer group"
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className="font-mono text-[10px] text-muted-foreground w-4">#{idx + 1}</span>
-                                <div className="truncate">
-                                  <div className="font-semibold text-foreground group-hover:text-blue-400 transition-colors truncate">
-                                    {it.name}
-                                  </div>
-                                  <div className="text-[10px] text-muted-foreground font-mono">
-                                    {it.brand || "Unbranded"} • Stock: {it.current_stock} {it.unit}
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="text-right font-mono shrink-0 ml-2">
-                                <div className="font-bold text-blue-400">
-                                  {it.invoices_count} inv ({it.total_qty} {it.unit})
-                                </div>
-                                <div className="text-[10px] text-muted-foreground">
-                                  ₹{it.total_revenue?.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Top Purchased Items */}
-                    <div className="bg-muted/20 border border-border/60 rounded-xl p-3.5 space-y-2.5">
-                      <div className="flex items-center justify-between border-b border-border/40 pb-2">
-                        <span className="text-[11px] font-bold text-foreground flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                          Most Frequent Items Purchased
-                        </span>
-                        <span className="text-[10px] text-muted-foreground font-mono">By Bill Count</span>
-                      </div>
-
-                      {(!topAnalytics?.top_purchased || topAnalytics.top_purchased.length === 0) ? (
-                        <div className="py-4 text-center text-xs text-muted-foreground">
-                          No purchases recorded for this category yet.
-                        </div>
-                      ) : (
-                        <div className="space-y-1.5">
-                          {topAnalytics.top_purchased.map((it: any, idx: number) => (
-                            <div
-                              key={idx}
-                              onClick={() => {
-                                const prod = products.find(p => p.id === it.product_id) || it;
-                                setSelectedHistoryItem(prod);
-                              }}
-                              className="flex items-center justify-between p-2 rounded-lg bg-card/60 hover:bg-muted/40 border border-border/30 text-xs transition-colors cursor-pointer group"
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className="font-mono text-[10px] text-muted-foreground w-4">#{idx + 1}</span>
-                                <div className="truncate">
-                                  <div className="font-semibold text-foreground group-hover:text-emerald-400 transition-colors truncate">
-                                    {it.name}
-                                  </div>
-                                  <div className="text-[10px] text-muted-foreground font-mono">
-                                    {it.brand || "Unbranded"} • Stock: {it.current_stock} {it.unit}
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="text-right font-mono shrink-0 ml-2">
-                                <div className="font-bold text-emerald-400">
-                                  {it.bills_count} bills ({it.total_qty} {it.unit})
-                                </div>
-                                <div className="text-[10px] text-muted-foreground">
-                                  ₹{it.total_spend?.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Brand Filter Pill Bar */}
             {existingBrandList.length > 0 && (

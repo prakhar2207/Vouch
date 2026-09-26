@@ -89,8 +89,9 @@ function AnalyticsHubContent() {
   // Inventory Analytics & Smart Reorder Hub State
   const [effectiveCompanyId, setEffectiveCompanyId] = useState<string>("");
   const [inventoryAnalytics, setInventoryAnalytics] = useState<any>(null);
+  const initialCategory = searchParams.get("category_id") || "ALL";
+  const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState<string>(initialCategory);
   const [loadingInventoryAnalytics, setLoadingInventoryAnalytics] = useState<boolean>(false);
-  const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState<string>("ALL");
   const [inventorySearch, setInventorySearch] = useState<string>("");
   const [selectedReorderIds, setSelectedReorderIds] = useState<Set<string>>(new Set());
   const [orderQuantities, setOrderQuantities] = useState<Record<string, number>>({});
@@ -231,13 +232,20 @@ function AnalyticsHubContent() {
     };
   }, [activeCompanyId, activeFY?.id, forecastDays, router]);
 
-  // Sync tab with URL search parameter if changed
+  // Sync tab and category with URL search parameters if changed
   useEffect(() => {
     const tab = searchParams.get("tab");
     if (tab && ["sales", "monthly", "rfm", "inventory", "cashflow"].includes(tab)) {
       setActiveTab(tab as any);
     }
-  }, [searchParams]);
+    const cat = searchParams.get("category_id");
+    if (cat && cat !== inventoryCategoryFilter) {
+      setInventoryCategoryFilter(cat);
+      if (effectiveCompanyId) {
+        fetchInventoryAnalytics(effectiveCompanyId, cat);
+      }
+    }
+  }, [searchParams, effectiveCompanyId, inventoryCategoryFilter]);
 
   // Category & Reorder Hub Filters
   const handleCategoryFilterChange = (newCatId: string) => {

@@ -28,7 +28,9 @@ import {
   Package,
   ArrowRight,
   TrendingDown,
+  ExternalLink,
 } from "lucide-react";
+import { offlineDb } from "@/lib/db/offlineDb";
 
 interface HealthCheckSummary {
   name: string;
@@ -71,7 +73,8 @@ interface HealthReport {
 interface FixPreviewData {
   finding_id: string;
   finding_title: string;
-  fix_type: string;
+  fix_type?: string;
+  action?: string;
   summary: string;
   requires_user_confirmation: boolean;
   history_preservation_note: string;
@@ -237,6 +240,21 @@ export default function HealthPage() {
           ? `Created Reversal ${res.data.reversal_voucher_number} & Correction ${res.data.correction_voucher_number}. Accounting history preserved.`
           : res.data.message || "Ledger balances updated."
       );
+
+      // Invalidate offlineDb cache to ensure immediate two-way synchronization in UI
+      try {
+        if (previewFinding.evidence?.primary_category_id) {
+          await offlineDb.masters.delete(`category_products_${previewFinding.evidence.primary_category_id}`);
+        }
+        if (previewFinding.evidence?.duplicate_category_id) {
+          await offlineDb.masters.delete(`category_products_${previewFinding.evidence.duplicate_category_id}`);
+        }
+        await offlineDb.masters.delete('categories');
+        await offlineDb.masters.delete('inventory_summary');
+        await offlineDb.syncedProducts.clear();
+      } catch (cacheErr) {
+        console.warn("Could not invalidate offlineDb cache after fix:", cacheErr);
+      }
 
       setPreviewFinding(null);
       setPreviewData(null);
@@ -944,30 +962,77 @@ export default function HealthPage() {
 
                     {/* Case 2: Duplicate Inventory Item Comparison */}
                     {isDuplicateInventory && finding.evidence?.primary_sku && (
-                      <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-                        <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 space-y-1">
-                          <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                            <Package className="w-3 h-3" />
-                            Primary Product (Retained)
+                      <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 space-y-2.5 text-xs">
+                        {finding.evidence.is_cross_category && (
+                          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-700 dark:text-amber-300 font-semibold text-[11px]">
+                            <Layers className="w-3.5 h-3.5 shrink-0" />
+                            <span>
+                              Cross-Category Duplicate: Item exists in multiple categories (
+                              <strong className="underline">{finding.evidence.primary_category_name || "Primary"}</strong> vs{" "}
+                              <strong className="underline">{finding.evidence.duplicate_category_name || "Duplicate"}</strong>)
+                            </span>
                           </div>
-                          <div className="font-mono font-bold text-foreground">
-                            SKU: {finding.evidence.primary_sku} ({finding.evidence.primary_stock} units)
-                          </div>
-                          <div className="text-muted-foreground text-[11px]">
-                            Target Combined: {finding.evidence.combined_stock} units
-                          </div>
-                        </div>
+                        )}
 
-                        <div className="p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20 space-y-1">
-                          <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                            <Layers className="w-3 h-3" />
-                            Duplicate Item (To Consolidate)
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 space-y-1.5">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center justify-between">
+                              <span className="flex items-center gap-1">
+                                <Package className="w-3 h-3" />
+                                Primary Product (Retained)
+                              </span>
+                              {finding.evidence.primary_category_id && (
+                                <Link
+                                  href={`/inventory/categories/${finding.evidence.primary_category_id}`}
+                                  target="_blank"
+                                  className="text-primary hover:underline normal-case font-medium flex items-center gap-0.5 text-[10px]"
+                                >
+                                  Open category <ExternalLink className="w-2.5 h-2.5" />
+                                </Link>
+                              )}
+                            </div>
+                            <div className="font-mono font-bold text-foreground">
+                              SKU: {finding.evidence.primary_sku} ({finding.evidence.primary_stock} units)
+                            </div>
+                            <div className="text-muted-foreground text-[11px] flex items-center gap-1">
+                              <span>Category:</span>
+                              <span className="font-semibold text-foreground">
+                                {finding.evidence.primary_category_name || "Uncategorized"}
+                              </span>
+                            </div>
+                            <div className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">
+                              Consolidated Total: {finding.evidence.combined_stock} units
+                            </div>
                           </div>
-                          <div className="font-mono font-bold text-foreground">
-                            SKU: {finding.evidence.duplicate_sku} ({finding.evidence.duplicate_stock} units)
-                          </div>
-                          <div className="text-muted-foreground text-[11px]">
-                            Stock movements will be repointed to primary product
+
+                          <div className="p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20 space-y-1.5">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center justify-between">
+                              <span className="flex items-center gap-1">
+                                <Layers className="w-3 h-3" />
+                                Duplicate Item (To Consolidate)
+                              </span>
+                              {finding.evidence.duplicate_category_id && (
+                                <Link
+                                  href={`/inventory/categories/${finding.evidence.duplicate_category_id}`}
+                                  target="_blank"
+                                  className="text-primary hover:underline normal-case font-medium flex items-center gap-0.5 text-[10px]"
+                                >
+                                  Open category <ExternalLink className="w-2.5 h-2.5" />
+                                </Link>
+                              )}
+                            </div>
+                            <div className="font-mono font-bold text-foreground">
+                              SKU: {finding.evidence.duplicate_sku} ({finding.evidence.duplicate_stock} units)
+                            </div>
+                            <div className="text-muted-foreground text-[11px] flex items-center gap-1">
+                              <span>Category:</span>
+                              <span className="font-semibold text-foreground">
+                                {finding.evidence.duplicate_category_name || "Uncategorized"}
+                              </span>
+                            </div>
+                            <div className="text-muted-foreground text-[11px]">
+                              Stock movements & historical bills will be repointed
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1053,13 +1118,19 @@ export default function HealthPage() {
                   {previewData.preview_comparison?.length > 0 && (
                     <div>
                       <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">
-                        Financial Balance Impact (Before vs After)
+                        {previewData.action === "MERGE_INVENTORY_ITEMS"
+                          ? "Stock & Catalog Impact (Before vs After)"
+                          : "Financial Balance Impact (Before vs After)"}
                       </div>
                       <div className="border border-border/60 rounded-xl overflow-hidden text-xs">
                         <table className="w-full">
                           <thead className="bg-muted/40 border-b border-border/40 text-muted-foreground text-left">
                             <tr>
-                              <th className="p-2.5">Account / Party</th>
+                              <th className="p-2.5">
+                                {previewData.action === "MERGE_INVENTORY_ITEMS"
+                                  ? "Product / Category"
+                                  : "Account / Party"}
+                              </th>
                               <th className="p-2.5 text-right font-mono">Before Balance</th>
                               <th className="p-2.5 text-right font-mono">After Balance</th>
                               <th className="p-2.5 text-right font-mono">Net Change</th>
@@ -1103,10 +1174,18 @@ export default function HealthPage() {
                       {executingFix ? (
                         <>
                           <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin"></div>
-                          <span>Applying Safe Fix...</span>
+                          <span>
+                            {previewData.action === "MERGE_INVENTORY_ITEMS"
+                              ? "Merging Products..."
+                              : "Applying Safe Fix..."}
+                          </span>
                         </>
                       ) : (
-                        <span>Confirm & Apply Fix</span>
+                        <span>
+                          {previewData.action === "MERGE_INVENTORY_ITEMS"
+                            ? "Confirm & Merge Products"
+                            : "Confirm & Apply Fix"}
+                        </span>
                       )}
                     </button>
                   </div>

@@ -493,7 +493,7 @@ class TransactionDeduplicationEngine:
                     name=item['name'],
                     brand=item['brand'],
                     is_active=True
-                ).order_by('created_at')
+                ).select_related('category').order_by('created_at')
             )
             if len(prods) < 2:
                 continue
@@ -507,32 +507,62 @@ class TransactionDeduplicationEngine:
             primary_prod = sorted_prods[0]
             duplicate_prods = sorted_prods[1:]
 
+            primary_cat_name = primary_prod.category.name if primary_prod.category else "Uncategorized"
+            primary_cat_id = str(primary_prod.category.id) if primary_prod.category else None
+
             for dup_prod in duplicate_prods:
                 combined_stock = primary_prod.stock_quantity + dup_prod.stock_quantity
+                dup_cat_name = dup_prod.category.name if dup_prod.category else "Uncategorized"
+                dup_cat_id = str(dup_prod.category.id) if dup_prod.category else None
+                is_cross_category = (primary_cat_id != dup_cat_id)
+
+                if is_cross_category:
+                    title = f"Cross-Category Duplicate: {item['name']} ({primary_cat_name} vs {dup_cat_name})"
+                    desc = (
+                        f"Found duplicate product '{item['name']}' ({item['brand'] or 'No Brand'}) across categories: "
+                        f"'{primary_cat_name}' (SKU: {primary_prod.sku}, Qty: {primary_prod.stock_quantity}) and "
+                        f"'{dup_cat_name}' (SKU: {dup_prod.sku}, Qty: {dup_prod.stock_quantity}). "
+                        f"Merge will consolidate all stock ({combined_stock} units) into '{primary_cat_name}'."
+                    )
+                    action = f"Merge SKU {dup_prod.sku} ({dup_cat_name}) into {primary_prod.sku} ({primary_cat_name}) and consolidate stock."
+                    probable_cause = f"Item created in '{dup_cat_name}' and separately in '{primary_cat_name}'."
+                else:
+                    title = f"Duplicate Product: {item['name']} ({item['brand'] or 'No Brand'})"
+                    desc = (
+                        f"Found duplicate product '{item['name']}' in category '{primary_cat_name}' with SKUs "
+                        f"{primary_prod.sku} (Qty: {primary_prod.stock_quantity}) and "
+                        f"{dup_prod.sku} (Qty: {dup_prod.stock_quantity}). "
+                        f"Merge to consolidate stock of {combined_stock}."
+                    )
+                    action = f"Merge SKU {dup_prod.sku} into {primary_prod.sku} and consolidate stock."
+                    probable_cause = "Item added twice during catalog import or billing."
+
                 findings_data.append({
                     "type": "DUPLICATE_INVENTORY_ITEM",
                     "category": "DUPLICATE_INVENTORY",
                     "severity": "WARNING",
-                    "title": f"Duplicate Product: {item['name']} ({item['brand'] or 'No Brand'})",
-                    "description": (
-                        f"Found duplicate product '{item['name']}' with SKUs {primary_prod.sku} (Qty: {primary_prod.stock_quantity}) "
-                        f"and {dup_prod.sku} (Qty: {dup_prod.stock_quantity}). Merge to consolidate stock of {combined_stock}."
-                    ),
+                    "title": title,
+                    "description": desc,
                     "evidence": {
                         "primary_product_id": str(primary_prod.id),
                         "primary_sku": primary_prod.sku,
                         "primary_stock": str(primary_prod.stock_quantity),
+                        "primary_category_id": primary_cat_id,
+                        "primary_category_name": primary_cat_name,
                         "duplicate_product_id": str(dup_prod.id),
                         "duplicate_sku": dup_prod.sku,
                         "duplicate_stock": str(dup_prod.stock_quantity),
+                        "duplicate_category_id": dup_cat_id,
+                        "duplicate_category_name": dup_cat_name,
+                        "is_cross_category": is_cross_category,
                         "combined_stock": str(combined_stock),
                         "product_name": item['name'],
                         "brand": item['brand'] or ""
                     },
                     "expected_state": f"Single product record for '{item['name']}'.",
                     "actual_state": f"{len(prods)} separate product records in catalog.",
-                    "probable_cause": "Item added twice during catalog import or billing.",
-                    "suggested_action": f"Merge SKU {dup_prod.sku} into {primary_prod.sku} and consolidate stock.",
+                    "probable_cause": probable_cause,
+                    "suggested_action": action,
                     "confidence": 0.95,
                     "fix_action": "MERGE_INVENTORY_ITEMS"
                 })

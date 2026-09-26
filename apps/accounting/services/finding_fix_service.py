@@ -189,40 +189,46 @@ class FindingFixService:
             from apps.inventory.models import Product
             prim_id = evidence.get('primary_product_id')
             dup_id = evidence.get('duplicate_product_id')
-            prim_p = Product.objects.filter(id=prim_id, company=finding.company).first()
-            dup_p = Product.objects.filter(id=dup_id, company=finding.company).first()
+            prim_p = Product.objects.select_related('category').filter(id=prim_id, company=finding.company).first()
+            dup_p = Product.objects.select_related('category').filter(id=dup_id, company=finding.company).first()
             if not prim_p or not dup_p:
                 return {"supported": False, "reason": "Referenced inventory products no longer exist."}
 
             combined_stock = prim_p.stock_quantity + dup_p.stock_quantity
+            prim_cat = prim_p.category.name if prim_p.category else "Uncategorized"
+            dup_cat = dup_p.category.name if dup_p.category else "Uncategorized"
+
             preview_comparison = [
                 {
-                    "account": f"Primary: {prim_p.name} ({prim_p.sku})",
+                    "account": f"Primary: {prim_p.name} ({prim_p.sku}) [Category: {prim_cat}]",
                     "before_balance": f"{prim_p.stock_quantity} units",
                     "after_balance": f"{combined_stock} units",
                     "impact": f"+{dup_p.stock_quantity} units"
                 },
                 {
-                    "account": f"Duplicate: {dup_p.name} ({dup_p.sku})",
+                    "account": f"Duplicate: {dup_p.name} ({dup_p.sku}) [Category: {dup_cat}]",
                     "before_balance": f"{dup_p.stock_quantity} units",
-                    "after_balance": "0 units (Merged)",
+                    "after_balance": "0 units (Merged & Archived)",
                     "impact": f"-{dup_p.stock_quantity} units"
                 }
             ]
             return {
                 "supported": True,
                 "action": "MERGE_INVENTORY_ITEMS",
-                "summary": f"Consolidate duplicate product {dup_p.sku} into {prim_p.sku} (Combined Stock: {combined_stock})",
-                "history_preservation_note": "All historical invoices, bills, and stock movements referencing the duplicate product will be reassigned to the primary product. The duplicate product will be archived.",
+                "summary": f"Consolidate duplicate SKU {dup_p.sku} ({dup_cat}) into {prim_p.sku} ({prim_cat}) (Combined Stock: {combined_stock})",
+                "history_preservation_note": f"All historical invoices, bills, and stock movements referencing {dup_p.sku} will be safely reassigned to {prim_p.sku}. SKU {dup_p.sku} will be archived.",
                 "preview_comparison": preview_comparison,
                 "before": {
                     "primary_sku": prim_p.sku,
+                    "primary_category": prim_cat,
                     "duplicate_sku": dup_p.sku,
+                    "duplicate_category": dup_cat,
                     "primary_stock": str(prim_p.stock_quantity),
                     "duplicate_stock": str(dup_p.stock_quantity)
                 },
                 "after": {
                     "primary_sku": prim_p.sku,
+                    "primary_category": prim_cat,
                     "primary_stock": str(combined_stock),
                     "duplicate_status": "ARCHIVED"
                 }
@@ -528,18 +534,21 @@ class FindingFixService:
         elif fix_action == 'MERGE_INVENTORY_ITEMS':
             from apps.inventory.models import Product, InventoryEntry
             from apps.accounting.models import VoucherItem
+            from apps.accounting.models_proforma import ProformaItem
             prim_id = evidence.get('primary_product_id')
             dup_id = evidence.get('duplicate_product_id')
             if not (prim_id and dup_id):
                 raise ValidationError("Missing product IDs for inventory merge.")
 
-            prim_p = Product.objects.get(id=prim_id, company=finding.company)
-            dup_p = Product.objects.get(id=dup_id, company=finding.company)
+            prim_p = Product.objects.select_related('category').get(id=prim_id, company=finding.company)
+            dup_p = Product.objects.select_related('category').get(id=dup_id, company=finding.company)
 
             # Re-link VoucherItem records
             VoucherItem.objects.filter(product=dup_p).update(product=prim_p)
             # Re-link InventoryEntry records
             InventoryEntry.objects.filter(product=dup_p).update(product=prim_p)
+            # Re-link ProformaItem records
+            ProformaItem.objects.filter(product=dup_p).update(product=prim_p)
 
             # Consolidate stock
             prim_p.stock_quantity = prim_p.stock_quantity + dup_p.stock_quantity
@@ -554,6 +563,19 @@ class FindingFixService:
             finding.resolved_at = timezone.now()
             finding.resolved_by = user
             finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
+
+            # Also resolve any duplicate findings referencing this duplicate product
+            AccountingFinding.objects.filter(
+                company=finding.company,
+                category='DUPLICATE_INVENTORY',
+                is_resolved=False
+            ).filter(
+                evidence__duplicate_product_id=str(dup_p.id)
+            ).exclude(id=finding.id).update(
+                is_resolved=True,
+                resolved_at=timezone.now(),
+                resolved_by=user
+            )
 
             AuditService.log_action(
                 company=finding.company,
@@ -570,10 +592,15 @@ class FindingFixService:
                 }
             )
 
+            p_cat = prim_p.category.name if prim_p.category else "Uncategorized"
+            d_cat = dup_p.category.name if dup_p.category else "Uncategorized"
+
             return {
                 "status": "SUCCESS",
-                "message": f"Successfully merged product {dup_p.sku} into {prim_p.sku}. Consolidated stock: {prim_p.stock_quantity}.",
+                "message": f"Successfully merged product {dup_p.sku} ({d_cat}) into {prim_p.sku} ({p_cat}). Consolidated stock: {prim_p.stock_quantity}.",
                 "primary_sku": prim_p.sku,
+                "primary_category_id": str(prim_p.category_id) if prim_p.category_id else None,
+                "duplicate_category_id": str(dup_p.category_id) if dup_p.category_id else None,
                 "consolidated_stock": str(prim_p.stock_quantity)
             }
 
