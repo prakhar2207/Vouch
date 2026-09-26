@@ -332,14 +332,18 @@ function AnalyticsHubContent() {
   const monthlyChartData = useMemo(() => {
     const series = forecast?.monthly_comparison?.historical_months_series;
     if (series && Array.isArray(series) && series.length > 0) {
-      return series.map((m: any) => ({
-        ...m,
-        month: m.short_name || m.month_label,
-        confirmed: Number(m.actual_sales || 0),
-        projected_remainder: m.is_current ? Number(m.projected_sales || 0) : 0,
-        next_month_projection: m.is_projected ? Number(m.projected_sales || 0) : 0,
-        displayTotal: Number(m.total_sales || (Number(m.actual_sales || 0) + Number(m.projected_sales || 0))),
-      }));
+      return series.map((m: any) => {
+        const tot = Number(m.total_sales ?? (Number(m.actual_sales || 0) + Number(m.projected_sales || 0)));
+        return {
+          ...m,
+          month: m.short_name || m.month_label,
+          confirmed: Number(m.actual_sales || 0),
+          projected_remainder: m.is_current ? Number(m.projected_sales || 0) : 0,
+          next_month_projection: m.is_projected ? Number(m.projected_sales || 0) : 0,
+          total: tot,
+          displayTotal: tot,
+        };
+      });
     }
     return [];
   }, [forecast]);
@@ -1101,7 +1105,11 @@ function AnalyticsHubContent() {
                           <Tooltip
                             content={({ active, payload }: any) => {
                               if (!active || !payload || !payload.length) return null;
-                              const data = payload[0].payload;
+                              const data = payload[0]?.payload || {};
+                              const confirmed = Number(data.confirmed || 0);
+                              const projectedRemainder = Number(data.projected_remainder || 0);
+                              const nextMonthProjection = Number(data.next_month_projection || 0);
+                              const totalVal = Number(data.total ?? data.displayTotal ?? (confirmed + projectedRemainder + nextMonthProjection));
                               return (
                                 <div className="bg-card border border-border rounded-xl p-3 shadow-xl text-xs space-y-1.5 min-w-[210px]">
                                   <div className="font-bold text-foreground text-sm border-b border-border/50 pb-1 flex items-center justify-between">
@@ -1113,37 +1121,37 @@ function AnalyticsHubContent() {
                                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-600 font-bold uppercase">Forecast</span>
                                     )}
                                   </div>
-                                  {data.confirmed > 0 && (
+                                  {confirmed > 0 && (
                                     <div className="flex justify-between items-center text-muted-foreground">
                                       <span>Confirmed Billed:</span>
                                       <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                                        ₹{data.confirmed.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                        ₹{confirmed.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                                       </span>
                                     </div>
                                   )}
-                                  {data.projected_remainder > 0 && (
+                                  {projectedRemainder > 0 && (
                                     <div className="flex justify-between items-center text-muted-foreground">
                                       <span>Remaining ({data.days_remaining || 4}d):</span>
                                       <span className="font-mono font-bold text-purple-600 dark:text-purple-400">
-                                        +₹{data.projected_remainder.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                        +₹{projectedRemainder.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                                       </span>
                                     </div>
                                   )}
-                                  {data.next_month_projection > 0 && (
+                                  {nextMonthProjection > 0 && (
                                     <div className="flex justify-between items-center text-muted-foreground">
                                       <span>Projected Revenue:</span>
                                       <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
-                                        ₹{data.next_month_projection.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                        ₹{nextMonthProjection.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                                       </span>
                                     </div>
                                   )}
                                   <div className="flex justify-between items-center pt-1 border-t border-border/40 font-bold text-foreground">
                                     <span>Total:</span>
                                     <span className="font-mono text-sm">
-                                      ₹{data.total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                      ₹{totalVal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                                     </span>
                                   </div>
-                                  {data.order_count > 0 && (
+                                  {Number(data.order_count || 0) > 0 && (
                                     <div className="text-[10px] text-muted-foreground pt-0.5">
                                       Based on {data.order_count} confirmed invoices
                                     </div>
@@ -1356,7 +1364,7 @@ function AnalyticsHubContent() {
                 </div>
 
                 {/* Cash & Counter Sales Summary Notice */}
-                {forecast?.cash_sales_summary && forecast.cash_sales_summary.total_billed > 0 && (
+                {forecast?.cash_sales_summary && Number(forecast.cash_sales_summary.total_billed || 0) > 0 && (
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/30 border border-border/40 text-xs">
                     <div className="flex items-center gap-2">
                       <span className="text-muted-foreground font-medium flex items-center gap-1.5">
@@ -1364,10 +1372,10 @@ function AnalyticsHubContent() {
                         <span>Walk-in / Cash Counter Bills:</span>
                       </span>
                       <span className="font-semibold text-foreground font-mono">
-                        ₹{forecast.cash_sales_summary.total_billed.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        ₹{Number(forecast.cash_sales_summary.total_billed || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </span>
                       <span className="text-muted-foreground text-[11px]">
-                        ({forecast.cash_sales_summary.invoice_count} bills · {forecast.cash_sales_summary.share_pct}% turnover)
+                        ({forecast.cash_sales_summary.invoice_count || 0} bills · {forecast.cash_sales_summary.share_pct || 0}% turnover)
                       </span>
                     </div>
                     <span className="text-[10px] text-muted-foreground italic">
@@ -1431,7 +1439,7 @@ function AnalyticsHubContent() {
                                 </div>
                               </td>
                               <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
-                                ₹{billedAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                ₹{Number(billedAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                               </td>
                               <td className="py-2.5 px-3 text-right font-mono text-primary font-semibold">
                                 {sharePct}%
@@ -1609,7 +1617,7 @@ function AnalyticsHubContent() {
 
                             <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                               <span>
-                                Revenue: <strong className="text-foreground font-mono">₹{billedAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                                Revenue: <strong className="text-foreground font-mono">₹{Number(billedAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
                               </span>
                               <div className="flex items-center gap-1.5">
                                 <span>{ordersCount} {ordersCount === 1 ? "order" : "orders"}</span>
@@ -1688,7 +1696,7 @@ function AnalyticsHubContent() {
                           </span>
                         </div>
                         <div className="text-lg font-mono font-bold text-foreground">
-                          ₹{rev.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                          ₹{Number(rev || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
                         </div>
                         {/* Share progress bar */}
                         <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden">
@@ -1725,7 +1733,7 @@ function AnalyticsHubContent() {
                     </span>
                   </div>
                   <div className="text-2xl font-bold font-mono text-foreground">
-                    ₹{forecast.monthly_comparison.current_month.projected_month_total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    ₹{Number(forecast.monthly_comparison.current_month.projected_month_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </div>
                   <div className="text-xs text-muted-foreground flex items-center justify-between">
                     <span>MTD Achieved: <strong className="text-foreground">₹{formatCurrencyShort(forecast.monthly_comparison.current_month.mtd_actual_sales)}</strong></span>
@@ -1765,7 +1773,7 @@ function AnalyticsHubContent() {
                     </span>
                   </div>
                   <div className="text-2xl font-bold font-mono text-foreground">
-                    Last: ₹{(forecast.monthly_comparison.previous_month.total_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    Last: ₹{Number(forecast.monthly_comparison.previous_month.total_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {forecast.monthly_comparison.mom_comparison.summary}
@@ -1800,7 +1808,7 @@ function AnalyticsHubContent() {
                         </span>
                       </div>
                       <div className="text-xl font-bold font-mono text-foreground">
-                        Prior: ₹{(forecast.monthly_comparison.yoy_comparison.prior_year_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        Prior: ₹{Number(forecast.monthly_comparison.yoy_comparison.prior_year_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </div>
                       <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
                         {forecast.monthly_comparison.yoy_comparison.summary}
@@ -1974,7 +1982,7 @@ function AnalyticsHubContent() {
                   Total Stock Value (At Cost)
                 </span>
                 <div className="text-xl sm:text-2xl font-bold font-mono text-foreground">
-                  ₹{stockValuation.stockCost.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹{Number(stockValuation?.stockCost || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
                 <div className="text-xs text-blue-600 dark:text-blue-400 font-medium">
                   {Number(kpis.total_stock_qty || 0).toLocaleString("en-IN")} physical units on hand
@@ -1986,7 +1994,7 @@ function AnalyticsHubContent() {
                   Catalog List Price (MRP)
                 </span>
                 <div className="text-xl sm:text-2xl font-bold font-mono text-foreground">
-                  ₹{stockValuation.retailCost.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹{Number(stockValuation?.retailCost || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   Maximum potential revenue at full MRP
@@ -1998,7 +2006,7 @@ function AnalyticsHubContent() {
                   Gross Profit Margin
                 </span>
                 <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                  ₹{stockValuation.margin.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹{Number(stockValuation?.margin || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {stockValuation.markupPct}% markup over cost
@@ -2057,7 +2065,7 @@ function AnalyticsHubContent() {
                 <div className="p-3.5 bg-muted/40 rounded-xl border border-border/40 space-y-1">
                   <span className="text-[11px] text-muted-foreground font-semibold uppercase">Effective Realizable Value</span>
                   <div className="text-lg font-bold font-mono text-foreground">
-                    ₹{stockValuation.effectiveRetail.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    ₹{Number(stockValuation?.effectiveRetail || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </div>
                   <div className="text-[11px] text-muted-foreground">
                     After {retailDiscount}% simulated discount
@@ -2067,7 +2075,7 @@ function AnalyticsHubContent() {
                 <div className="p-3.5 bg-muted/40 rounded-xl border border-border/40 space-y-1">
                   <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold uppercase">Simulated Profit Margin</span>
                   <div className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                    ₹{stockValuation.margin.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    ₹{Number(stockValuation?.margin || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </div>
                   <div className="text-[11px] text-muted-foreground">
                     {stockValuation.markupPct}% markup over cost
@@ -2267,7 +2275,7 @@ function AnalyticsHubContent() {
                           <span className="text-blue-600 dark:text-blue-400 font-bold">{selectedItemsData.count}</span> items ({selectedItemsData.units} units)
                         </div>
                         <div className="text-[11px] text-muted-foreground font-mono">
-                          Est. ₹{selectedItemsData.cost.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                          Est. ₹{Number(selectedItemsData?.cost || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                         </div>
                       </div>
 
@@ -2478,7 +2486,7 @@ function AnalyticsHubContent() {
 
                                   {/* Line Total */}
                                   <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
-                                    ₹{lineTotal.toLocaleString("en-IN", {
+                                    ₹{Number(lineTotal || 0).toLocaleString("en-IN", {
                                       minimumFractionDigits: 2,
                                       maximumFractionDigits: 2,
                                     })}
@@ -2888,7 +2896,7 @@ function AnalyticsHubContent() {
                               {it.invoices_count} inv ({it.total_qty} {it.unit})
                             </div>
                             <div className="text-[10px] text-muted-foreground">
-                              ₹{it.total_revenue?.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                              ₹{Number(it.total_revenue || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
                             </div>
                           </div>
                         </div>
@@ -2935,7 +2943,7 @@ function AnalyticsHubContent() {
                               {it.bills_count} bills ({it.total_qty} {it.unit})
                             </div>
                             <div className="text-[10px] text-muted-foreground">
-                              ₹{it.total_spend?.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                              ₹{Number(it.total_spend || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
                             </div>
                           </div>
                         </div>
