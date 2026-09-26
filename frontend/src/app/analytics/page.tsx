@@ -101,33 +101,55 @@ function AnalyticsHubContent() {
           return;
         }
 
-        // Try remote API first with local fallback
-        const token = getAccessToken();
-        const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": cid };
+        const validCid = cid;
+        const fyOptions = {
+          startDate: activeFY?.start_date,
+          endDate: activeFY?.end_date,
+          financialYearId: activeFY?.id,
+        };
 
-        const [forecastRes, rfmRes, insightsRes] = await Promise.allSettled([
-          axios.get(`${API_BASE_URL}/api/v1/analytics/forecast/${cid}/?days=${forecastDays}&company_id=${cid}`, { headers }),
-          axios.get(`${API_BASE_URL}/api/v1/analytics/rfm/${cid}/`, { headers }),
-          axios.get(`${API_BASE_URL}/api/v1/analytics/insights/${cid}/`, { headers }),
-        ]);
+        // 1. Instant local read from IndexedDB (<15ms)
+        const local = await LocalAnalyticsEngine.getDashboardAnalytics(validCid, fyOptions);
+        if (isMounted && local) {
+          setInsights(local);
+          if (local.forecast) {
+            setForecast(local.forecast);
+          }
+          if (local.rfm_clusters && local.rfm_clusters.length > 0) {
+            setRfmData(local.rfm_clusters);
+          }
+          setLoading(false);
+        }
 
-        if (isMounted) {
-          if (forecastRes.status === "fulfilled" && forecastRes.value.data?.success) {
-            setForecast(forecastRes.value.data.data);
-          } else {
-            // Local fallback
-            const localData = await LocalAnalyticsEngine.getDashboardAnalytics(cid);
-            if (localData.forecast) {
-              setForecast(localData.forecast);
+        // 2. Refresh from remote API if online
+        if (typeof navigator !== "undefined" && navigator.onLine) {
+          const token = getAccessToken();
+          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": validCid };
+
+          const [forecastRes, rfmRes, insightsRes] = await Promise.allSettled([
+            axios.get(`${API_BASE_URL}/api/v1/analytics/forecast/${validCid}/?days=${forecastDays}&company_id=${validCid}`, { headers }),
+            axios.get(`${API_BASE_URL}/api/v1/analytics/rfm/${validCid}/`, { headers }),
+            axios.get(`${API_BASE_URL}/api/v1/analytics/insights/${validCid}/`, { headers }),
+          ]);
+
+          if (isMounted) {
+            if (forecastRes.status === "fulfilled" && forecastRes.value.data?.success) {
+              setForecast(forecastRes.value.data.data);
             }
-          }
-
-          if (rfmRes.status === "fulfilled" && rfmRes.value.data?.success) {
-            setRfmData(rfmRes.value.data.data || []);
-          }
-
-          if (insightsRes.status === "fulfilled" && insightsRes.value.data?.success) {
-            setInsights(insightsRes.value.data.data);
+            if (rfmRes.status === "fulfilled" && rfmRes.value.data?.success) {
+              setRfmData(rfmRes.value.data.data || []);
+            }
+            if (insightsRes.status === "fulfilled" && insightsRes.value.data?.success) {
+              const remote = insightsRes.value.data.data;
+              setInsights((prev: any) => ({
+                ...prev,
+                ...remote,
+                kpis: {
+                  ...(prev?.kpis || {}),
+                  ...(remote?.kpis || {}),
+                }
+              }));
+            }
           }
         }
       } catch (err) {
@@ -141,7 +163,7 @@ function AnalyticsHubContent() {
     return () => {
       isMounted = false;
     };
-  }, [activeCompanyId, forecastDays, router]);
+  }, [activeCompanyId, activeFY?.id, forecastDays, router]);
 
   // Sync tab with URL search parameter if changed
   useEffect(() => {
@@ -153,13 +175,17 @@ function AnalyticsHubContent() {
 
   // Inventory discount calculation
   const stockValuation = useMemo(() => {
-    const stockCost = Number(insights?.stock_valuation || 0);
-    const retailCost = Number(insights?.retail_valuation || stockCost * 1.3);
+    const k = insights?.kpis || insights || {};
+    const stockCost = Number(k.total_stock_value ?? k.stock_valuation ?? 0);
+    const retailCost = Number(k.total_retail_value ?? k.retail_valuation ?? (stockCost > 0 ? stockCost * 1.3 : 0));
     const effectiveRetail = retailDiscount > 0 ? retailCost * (1 - retailDiscount / 100) : retailCost;
     const margin = Math.max(0, effectiveRetail - stockCost);
     const markupPct = stockCost > 0 ? ((margin / stockCost) * 100).toFixed(1) : "0";
-    return { stockCost, retailCost, effectiveRetail, margin, markupPct };
+    const costMultiple = stockCost > 0 ? (effectiveRetail / stockCost).toFixed(2) : "1.00";
+    return { stockCost, retailCost, effectiveRetail, margin, markupPct, costMultiple };
   }, [insights, retailDiscount]);
+
+  const kpis = insights?.kpis || insights || {};
 
   return (
     <DashboardLayout>
@@ -719,7 +745,7 @@ function AnalyticsHubContent() {
                   ₹{stockValuation.stockCost.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
                 <div className="text-xs text-blue-600 dark:text-blue-400 font-medium">
-                  {insights?.total_stock_qty || 0} physical units on hand
+                  {Number(kpis.total_stock_qty || 0).toLocaleString("en-IN")} physical units on hand
                 </div>
               </div>
 
@@ -752,7 +778,7 @@ function AnalyticsHubContent() {
                   Stock Health & Fulfillment
                 </span>
                 <div className="text-xl sm:text-2xl font-bold font-mono text-purple-600 dark:text-purple-400">
-                  {insights?.in_stock_items || 0} / {insights?.catalog_items || 0} Active
+                  {Number(kpis.total_in_stock_items || 0)} / {Number(kpis.total_catalog_items || kpis.total_in_stock_items || 0)} Active
                 </div>
                 <div className="text-xs text-muted-foreground">
                   Items ready for immediate dispatch
@@ -819,7 +845,7 @@ function AnalyticsHubContent() {
                 <div className="p-3.5 bg-muted/40 rounded-xl border border-border/40 space-y-1">
                   <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold uppercase">Cost Recovery Multiple</span>
                   <div className="text-lg font-bold font-mono text-purple-600 dark:text-purple-400">
-                    {stockValuation.stockCost > 0 ? (stockValuation.effectiveRetail / stockValuation.stockCost).toFixed(2) : "1.00"}x
+                    {stockValuation.costMultiple}x
                   </div>
                   <div className="text-[11px] text-muted-foreground">
                     Returns per ₹1 invested in stock
@@ -839,7 +865,7 @@ function AnalyticsHubContent() {
                   Money to Collect (Debtors)
                 </span>
                 <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                  ₹{(insights?.money_to_collect || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹{Number(kpis.money_to_collect || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   Pending customer receivables
@@ -851,7 +877,7 @@ function AnalyticsHubContent() {
                   Bills to Pay (Creditors)
                 </span>
                 <div className="text-xl sm:text-2xl font-bold font-mono text-rose-600 dark:text-rose-400">
-                  ₹{(insights?.bills_to_pay || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹{Number(kpis.bills_to_pay || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   Vendor payables due
@@ -863,7 +889,7 @@ function AnalyticsHubContent() {
                   Available Liquid Cash & Bank
                 </span>
                 <div className="text-xl sm:text-2xl font-bold font-mono text-blue-600 dark:text-blue-400">
-                  ₹{(insights?.cash_and_bank || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹{Number(kpis.cash_and_bank || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   Current bank balances + physical cash in hand

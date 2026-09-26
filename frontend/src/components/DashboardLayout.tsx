@@ -151,7 +151,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="w-full px-3 sm:px-4 lg:px-6 h-14 flex items-center justify-between gap-2 lg:gap-3">
           
           {/* Left Section: Brand & Primary Nav */}
-          <div className="flex items-center gap-2 lg:gap-3 xl:gap-4 min-w-0 flex-1 overflow-hidden">
+          <div className="flex items-center gap-2 lg:gap-3 xl:gap-4 min-w-0">
             {/* Mobile / Tablet Hamburger Button */}
             <button
               onClick={() => setIsMobileNavOpen(true)}
@@ -174,12 +174,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
 
             {/* Desktop Navigation Links */}
-            <nav className="hidden lg:flex items-center gap-1 min-w-0 overflow-hidden">
+            <nav className="hidden lg:flex items-center gap-0.5 xl:gap-1 min-w-0">
               {/* Dashboard */}
               <Link
                 id="tour-dashboard-link"
                 href="/dashboard"
-                className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
+                className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname === "/dashboard"
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -192,8 +192,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <div ref={salesRef} className="relative shrink-0">
                 <button
                   id="tour-sales-btn"
-                  onClick={() => setIsSalesDropdownOpen(!isSalesDropdownOpen)}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  onClick={() => {
+                    setIsSalesDropdownOpen(!isSalesDropdownOpen);
+                    setIsGstDropdownOpen(false);
+                    setIsMoreDropdownOpen(false);
+                  }}
+                  className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                     isSalesActive
                       ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -204,7 +208,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
 
                 {isSalesDropdownOpen && (
-                  <div className="absolute left-0 mt-1.5 w-64 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95">
+                  <div className="absolute left-0 top-full mt-1.5 w-64 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95">
                     <Link
                       href="/sales"
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
@@ -260,7 +264,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-purchase-btn"
                 href="/purchases"
-                className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
+                className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   isPurchasesActive
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -273,7 +277,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-parties-link"
                 href="/parties"
-                className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
+                className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname.startsWith("/parties")
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -286,7 +290,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-inventory-link"
                 href="/inventory"
-                className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
+                className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname.startsWith("/inventory")
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -299,7 +303,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-banking-link"
                 href="/banking"
-                className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
+                className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname.startsWith("/banking")
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -312,7 +316,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 id="tour-analytics-link"
                 href="/analytics"
-                className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all whitespace-nowrap flex items-center gap-1.5 ${
                   pathname.startsWith("/analytics")
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -328,8 +332,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <div ref={gstRef} className="relative shrink-0 hidden xl:block">
                 <button
                   id="tour-gst-btn"
-                  onClick={() => setIsGstDropdownOpen(!isGstDropdownOpen)}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                  onClick={() => {
+                    setIsGstDropdownOpen(!isGstDropdownOpen);
+                    setIsSalesDropdownOpen(false);
+                    setIsMoreDropdownOpen(false);
+                  }}
+                  className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                     pathname.startsWith("/gst")
                       ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -343,7 +351,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
 
                 {isGstDropdownOpen && (
-                  <div className="absolute left-0 mt-1.5 w-72 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95">
+                  <div className="absolute left-0 top-full mt-1.5 w-72 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95">
                     <Link
                       href="/gst/itc-shield"
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
@@ -379,8 +387,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               {/* More Dropdown */}
               <div ref={moreRef} className="relative shrink-0">
                 <button
-                  onClick={() => setIsMoreDropdownOpen(!isMoreDropdownOpen)}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  onClick={() => {
+                    setIsMoreDropdownOpen(!isMoreDropdownOpen);
+                    setIsSalesDropdownOpen(false);
+                    setIsGstDropdownOpen(false);
+                  }}
+                  className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs xl:text-[13px] font-medium transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                     isMoreActive
                       ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -391,7 +403,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
 
                 {isMoreDropdownOpen && (
-                  <div className="absolute left-0 mt-1.5 w-[620px] max-h-[85vh] overflow-y-auto bg-card/95 backdrop-blur-xl border border-border/40 rounded-2xl shadow-2xl shadow-black/20 p-4 z-50 animate-in fade-in zoom-in-95 grid grid-cols-3 gap-3 divide-x divide-border/30">
+                  <div className="absolute right-0 top-full mt-1.5 w-[580px] max-h-[85vh] overflow-y-auto bg-card/95 backdrop-blur-xl border border-border/40 rounded-2xl shadow-2xl shadow-black/20 p-4 z-50 animate-in fade-in zoom-in-95 grid grid-cols-3 gap-3 divide-x divide-border/30">
                     
                     {/* Col 1: Accounting & Entries */}
                     <div className="space-y-1">
