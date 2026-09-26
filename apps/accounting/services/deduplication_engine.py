@@ -386,6 +386,8 @@ class TransactionDeduplicationEngine:
         # 1. Statement lines imported multiple times
         dup_bank = (
             BankTransaction.objects.filter(company=company)
+            .exclude(status='EXCLUDED')
+            .exclude(is_excluded=True)
             .values('bank_ledger_id', 'transaction_date', 'debit_amount', 'credit_amount', 'reference_number')
             .annotate(count=Count('id'))
             .filter(count__gt=1)
@@ -400,7 +402,10 @@ class TransactionDeduplicationEngine:
                     debit_amount=db['debit_amount'],
                     credit_amount=db['credit_amount'],
                     reference_number=db['reference_number']
-                ).order_by('created_at')
+                )
+                .exclude(status='EXCLUDED')
+                .exclude(is_excluded=True)
+                .order_by('created_at')
             )
             if len(txs) < 2:
                 continue
@@ -417,7 +422,7 @@ class TransactionDeduplicationEngine:
                     "title": f"Duplicate Bank Statement Entry: ₹{amt} on {db['transaction_date']}",
                     "description": (
                         f"Bank statement entry for ₹{amt} on {db['transaction_date']} ({primary_tx.bank_ledger.name}) "
-                        f"was imported {len(txs)} times. Keep statement record {primary_tx.id} and exclude duplicate."
+                        f"was imported {len(txs)} times. Keep statement record {primary_tx.id} and delete duplicate from banking."
                     ),
                     "evidence": {
                         "duplicate_bank_tx_id": str(dup_tx.id),
@@ -431,7 +436,7 @@ class TransactionDeduplicationEngine:
                     "expected_state": f"Single statement transaction line for ₹{amt}.",
                     "actual_state": f"{len(txs)} identical statement entries found.",
                     "probable_cause": "Statement CSV/Excel file was uploaded more than once.",
-                    "suggested_action": "Exclude the redundant bank transaction entry.",
+                    "suggested_action": "Permanently delete the duplicate bank transaction entry and remove from banking.",
                     "confidence": 0.96,
                     "fix_action": "EXCLUDE_DUPLICATE_BANK"
                 })

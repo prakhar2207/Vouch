@@ -266,23 +266,23 @@ class FindingFixService:
             dup_id = evidence.get('duplicate_bank_tx_id')
             tx = BankTransaction.objects.filter(id=dup_id, company=finding.company).first()
             if not tx:
-                return {"supported": False, "reason": "Bank transaction no longer exists."}
+                return {"supported": False, "reason": "Bank transaction no longer exists (already deleted from banking)."}
             amt = evidence.get('amount', '0.00')
             return {
                 "supported": True,
                 "action": "EXCLUDE_DUPLICATE_BANK",
-                "summary": f"Exclude duplicate imported statement line of ₹{amt} on {tx.transaction_date}",
-                "history_preservation_note": "Marks duplicate statement transaction as EXCLUDED with reason, leaving genuine statement transactions intact.",
+                "summary": f"Permanently delete duplicate imported statement line of ₹{amt} on {tx.transaction_date} and remove from banking feed",
+                "history_preservation_note": "Permanently deletes the duplicate bank statement transaction from banking feeds and registers a full snapshot in the Audit Trail.",
                 "preview_comparison": [
                     {
                         "account": f"Statement Feed: {tx.bank_ledger.name}",
                         "before_balance": tx.status,
-                        "after_balance": "EXCLUDED",
-                        "impact": "Removed"
+                        "after_balance": "DELETED",
+                        "impact": "Removed from Banking"
                     }
                 ],
                 "before": {"status": tx.status},
-                "after": {"status": "EXCLUDED"}
+                "after": {"status": "DELETED (Removed from Banking)"}
             }
 
         elif fix_action == 'MERGE_DUPLICATE_LEDGERS':
@@ -662,32 +662,48 @@ class FindingFixService:
             dup_id = evidence.get('duplicate_bank_tx_id')
             if not dup_id:
                 raise ValidationError("Missing bank transaction ID.")
-            bank_tx = BankTransaction.objects.get(id=dup_id, company=finding.company)
-            bank_tx.status = 'EXCLUDED'
-            bank_tx.save(update_fields=['status', 'updated_at'])
+            
+            bank_tx = BankTransaction.objects.filter(id=dup_id, company=finding.company).first()
+            if bank_tx:
+                AuditService.log_action(
+                    company=finding.company,
+                    user=user,
+                    action='DELETE',
+                    model_name='BankTransaction',
+                    record_id=bank_tx.id,
+                    changes={
+                        "finding_id": str(finding.id),
+                        "action": "DELETE_DUPLICATE_BANK",
+                        "amount": str(bank_tx.debit_amount or bank_tx.credit_amount),
+                        "date": str(bank_tx.transaction_date),
+                        "description": bank_tx.description,
+                        "reference_number": bank_tx.reference_number
+                    }
+                )
+                bank_tx.delete()
 
             finding.is_resolved = True
             finding.resolved_at = timezone.now()
             finding.resolved_by = user
             finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
 
-            AuditService.log_action(
+            # Also resolve any duplicate findings referencing this duplicate bank tx
+            AccountingFinding.objects.filter(
                 company=finding.company,
-                user=user,
-                action='UPDATE',
-                model_name='BankTransaction',
-                record_id=bank_tx.id,
-                changes={
-                    "finding_id": str(finding.id),
-                    "action": "EXCLUDE_DUPLICATE_BANK",
-                    "status": "EXCLUDED"
-                }
+                category='DUPLICATE_BANK',
+                is_resolved=False
+            ).filter(
+                evidence__duplicate_bank_tx_id=str(dup_id)
+            ).exclude(id=finding.id).update(
+                is_resolved=True,
+                resolved_at=timezone.now(),
+                resolved_by=user
             )
 
             return {
                 "status": "SUCCESS",
-                "message": f"Successfully excluded duplicate bank statement line.",
-                "bank_tx_id": str(bank_tx.id)
+                "message": "Successfully deleted duplicate bank statement line from system and removed from banking.",
+                "bank_tx_id": str(dup_id)
             }
 
         elif fix_action == 'MERGE_DUPLICATE_LEDGERS':

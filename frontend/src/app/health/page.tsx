@@ -859,6 +859,7 @@ export default function HealthPage() {
                 const categoryBadge = getCategoryBadge(finding.category, finding.fix_type);
                 const isDuplicateVoucher = finding.fix_type === "VOID_DUPLICATE_VOUCHER" || finding.category?.startsWith("DUPLICATE_VOUCHER");
                 const isDuplicateInventory = finding.fix_type === "MERGE_INVENTORY_ITEMS" || finding.category?.startsWith("DUPLICATE_INVENTORY");
+                const isDuplicateBank = finding.fix_type === "EXCLUDE_DUPLICATE_BANK" || finding.category?.startsWith("DUPLICATE_BANK");
                 const isPartyDrift = finding.category?.includes("PARTY_BALANCE") || finding.evidence?.stored_balance !== undefined;
 
                 return (
@@ -899,6 +900,8 @@ export default function HealthPage() {
                           className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 shrink-0 cursor-pointer w-full sm:w-auto justify-center min-h-[34px] ${
                             isDuplicateVoucher
                               ? "bg-purple-600 hover:bg-purple-700 text-white"
+                              : isDuplicateBank
+                              ? "bg-indigo-600 hover:bg-indigo-700 text-white"
                               : isDuplicateInventory
                               ? "bg-blue-600 hover:bg-blue-700 text-white"
                               : "bg-primary text-primary-foreground hover:bg-primary/90"
@@ -907,6 +910,8 @@ export default function HealthPage() {
                           <Wrench className="w-3 h-3" />
                           <span>
                             {isDuplicateVoucher
+                              ? "Delete Duplicate"
+                              : isDuplicateBank
                               ? "Delete Duplicate"
                               : isDuplicateInventory
                               ? "Merge Products"
@@ -1179,6 +1184,8 @@ export default function HealthPage() {
                               ? "Merging Products..."
                               : previewData.action === "VOID_DUPLICATE_VOUCHER"
                               ? "Deleting Duplicate..."
+                              : previewData.action === "EXCLUDE_DUPLICATE_BANK"
+                              ? "Deleting Bank Entry..."
                               : "Applying Safe Fix..."}
                           </span>
                         </>
@@ -1188,6 +1195,8 @@ export default function HealthPage() {
                             ? "Confirm & Merge Products"
                             : previewData.action === "VOID_DUPLICATE_VOUCHER"
                             ? "Confirm & Delete from System"
+                            : previewData.action === "EXCLUDE_DUPLICATE_BANK"
+                            ? "Confirm & Delete from Banking"
                             : "Confirm & Apply Fix"}
                         </span>
                       )}
