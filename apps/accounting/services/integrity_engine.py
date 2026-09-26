@@ -823,12 +823,39 @@ class AccountingIntegrityEngine:
         total_cr = Decimal(str(totals['cr'] or '0.00'))
         diff = abs(total_dr - total_cr)
 
+        # Check Opening Balance Suspense
+        suspense_ledger = Ledger.objects.filter(company=company, name__icontains="Opening Balance Suspense").first()
+        suspense_bal = Decimal(str(suspense_ledger.current_balance or '0.00')) if suspense_ledger else Decimal('0.00')
+
+        # Check Bank Reconciliation gap
+        unresolved_bank_count = BankTransaction.objects.filter(company=company, status='UNRESOLVED').count()
+
         if diff <= Decimal('0.01'):
             return {
                 "is_balanced": True,
-                "message": "Your books are mathematically balanced! Total Debits equal Total Credits (₹" + str(total_dr) + ").",
                 "discrepancy": "0.00",
-                "findings": []
+                "total_debit": str(total_dr),
+                "total_credit": str(total_cr),
+                "trial_balance": {
+                    "is_balanced": True,
+                    "total_debit": str(total_dr),
+                    "total_credit": str(total_cr),
+                    "net_imbalance": "0.00"
+                },
+                "bank_reconciliation": {
+                    "unresolved_count": unresolved_bank_count,
+                    "reconciliation_gap": "0.00"
+                },
+                "opening_balance_suspense": {
+                    "is_balanced": abs(suspense_bal) <= Decimal('0.01'),
+                    "suspense_amount": str(abs(suspense_bal))
+                },
+                "diagnostic_summary": f"Trial balance is mathematically balanced (Total Debits = Total Credits = ₹{total_dr:,.2f}).",
+                "message": f"Your books are mathematically balanced! Total Debits equal Total Credits (₹{total_dr:,.2f}).",
+                "causes": [],
+                "recommended_actions": [
+                    "Trial balance is in perfect balance. No journal adjustment required."
+                ]
             }
 
         # 2. Identify candidate causes
@@ -916,6 +943,24 @@ class AccountingIntegrityEngine:
         return {
             "is_balanced": False,
             "discrepancy": str(diff),
-            "message": f"Your Trial Balance is off by ₹{diff}. Total Debits: ₹{total_dr}, Total Credits: ₹{total_cr}.",
-            "causes": causes[:3]
+            "total_debit": str(total_dr),
+            "total_credit": str(total_cr),
+            "trial_balance": {
+                "is_balanced": False,
+                "total_debit": str(total_dr),
+                "total_credit": str(total_cr),
+                "net_imbalance": str(diff)
+            },
+            "bank_reconciliation": {
+                "unresolved_count": unresolved_bank_count,
+                "reconciliation_gap": str(diff)
+            },
+            "opening_balance_suspense": {
+                "is_balanced": abs(suspense_bal) <= Decimal('0.01'),
+                "suspense_amount": str(abs(suspense_bal))
+            },
+            "diagnostic_summary": f"Trial balance difference of ₹{diff:,.2f} detected.",
+            "message": f"Your Trial Balance is off by ₹{diff:,.2f}. Total Debits: ₹{total_dr:,.2f}, Total Credits: ₹{total_cr:,.2f}.",
+            "causes": causes[:5],
+            "recommended_actions": [c.get("suggested_fix") for c in causes if c.get("suggested_fix")]
         }

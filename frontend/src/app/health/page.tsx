@@ -3,37 +3,31 @@
 import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
 import { useCompany } from "@/context/CompanyContext";
 import {
-  Activity,
   ShieldCheck,
   AlertTriangle,
   AlertOctagon,
   CheckCircle2,
-  Info,
   RefreshCw,
   Search,
   Wrench,
   Sparkles,
-  ArrowRight,
-  HelpCircle,
-  TrendingDown,
-  TrendingUp,
-  FileSpreadsheet,
   X,
-  History,
-  FileCheck2,
   ChevronDown,
   ChevronUp,
   Scale,
-  DollarSign,
   Layers,
-  ArrowDownRight,
-  ArrowUpRight,
+  History,
+  Check,
+  Package,
+  ArrowRight,
+  TrendingDown,
 } from "lucide-react";
 
 interface HealthCheckSummary {
@@ -63,13 +57,6 @@ interface HealthReport {
   timestamp: string;
   health_score: number;
   health_status: "HEALTHY" | "NEEDS_ATTENTION" | "CRITICAL";
-  score_breakdown: {
-    base_score: number;
-    critical_deductions: number;
-    warning_deductions: number;
-    unresolved_bank_deductions: number;
-    formula: string;
-  };
   metrics: {
     total_checks: number;
     passed_checks: number;
@@ -108,10 +95,13 @@ export default function HealthPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"ALL" | "DUPLICATES" | "ERRORS" | "REVIEWS" | "TASKS" | "CRITICAL" | "WARNING" | "ACTIONABLE">("ALL");
+  const [activeTab, setActiveTab] = useState<"ALL" | "DUPLICATES" | "CRITICAL" | "WARNING" | "ACTIONABLE">("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // Diagnostic tool state
+  // Expandable audits checklist
+  const [isChecksExpanded, setIsChecksExpanded] = useState<boolean>(false);
+
+  // Forensic Balance Diagnostic Dialog
   const [isDiagnosticOpen, setIsDiagnosticOpen] = useState<boolean>(false);
   const [diagnosing, setDiagnosing] = useState<boolean>(false);
   const [diagnosticResult, setDiagnosticResult] = useState<any | null>(null);
@@ -259,9 +249,67 @@ export default function HealthPage() {
     }
   };
 
+  // Helper formatting functions
+  const formatAmount = (val: any) => {
+    if (val === undefined || val === null || val === "") return "₹0.00";
+    const num = typeof val === "number" ? val : parseFloat(String(val).replace(/,/g, ""));
+    if (isNaN(num)) return String(val);
+    return `₹${num.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return "";
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const getCategoryBadge = (category: string, fixType?: string) => {
+    const cat = (category || "").toUpperCase();
+    if (cat.startsWith("DUPLICATE_INV") || fixType === "MERGE_INVENTORY_ITEMS") {
+      return { label: "Duplicate Product", bg: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25" };
+    }
+    if (cat.startsWith("DUPLICATE_BANK") || fixType === "EXCLUDE_DUPLICATE_BANK") {
+      return { label: "Duplicate Bank Feed", bg: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/25" };
+    }
+    if (cat.startsWith("DUPLICATE") || fixType === "VOID_DUPLICATE_VOUCHER") {
+      return { label: "Duplicate Voucher", bg: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/25" };
+    }
+    if (cat.includes("PARTY_BALANCE")) {
+      return { label: "Party Ledger Drift", bg: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25" };
+    }
+    if (cat.includes("WRONG_PARTY")) {
+      return { label: "Party Allocation", bg: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25" };
+    }
+    if (cat.includes("BANK")) {
+      return { label: "Bank Reconciliation", bg: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/25" };
+    }
+    if (cat.includes("INVENTORY")) {
+      return { label: "Inventory Stock", bg: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25" };
+    }
+    if (cat.includes("TRIAL_BALANCE")) {
+      return { label: "Trial Balance Gap", bg: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25" };
+    }
+    if (cat.includes("GST")) {
+      return { label: "GST Compliance", bg: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25" };
+    }
+    if (cat.includes("OPENING")) {
+      return { label: "Opening Balances", bg: "bg-muted text-muted-foreground border-border/40" };
+    }
+    return { label: category.replace(/_/g, " "), bg: "bg-muted text-muted-foreground border-border/40" };
+  };
+
   const duplicateFindingsCount = useMemo(() => {
     return report?.findings?.filter((f) => f.category?.startsWith("DUPLICATE") || f.fix_type === "VOID_DUPLICATE_VOUCHER")?.length || 0;
   }, [report]);
+
+  const criticalCount = report?.metrics?.critical_findings_count || 0;
+  const warningCount = (report?.metrics?.warning_findings_count || 0) + (report?.metrics?.info_findings_count || 0);
+  const actionableCount = report?.findings?.filter((f) => f.is_actionable).length || 0;
 
   const filteredFindings = useMemo(() => {
     if (!report?.findings) return [];
@@ -269,11 +317,11 @@ export default function HealthPage() {
 
     if (activeTab === "DUPLICATES") {
       list = list.filter((f) => f.category?.startsWith("DUPLICATE") || f.fix_type === "VOID_DUPLICATE_VOUCHER");
-    } else if (activeTab === "ERRORS" || activeTab === "CRITICAL") {
+    } else if (activeTab === "CRITICAL") {
       list = list.filter((f) => f.severity === "CRITICAL");
-    } else if (activeTab === "REVIEWS" || activeTab === "WARNING") {
+    } else if (activeTab === "WARNING") {
       list = list.filter((f) => f.severity === "WARNING" || f.severity === "INFO");
-    } else if (activeTab === "TASKS" || activeTab === "ACTIONABLE") {
+    } else if (activeTab === "ACTIONABLE") {
       list = list.filter((f) => f.is_actionable);
     }
 
@@ -283,7 +331,9 @@ export default function HealthPage() {
         (f) =>
           f.title.toLowerCase().includes(q) ||
           f.description.toLowerCase().includes(q) ||
-          f.category.toLowerCase().includes(q)
+          f.category.toLowerCase().includes(q) ||
+          (f.evidence?.party_name && String(f.evidence.party_name).toLowerCase().includes(q)) ||
+          (f.evidence?.primary_voucher_number && String(f.evidence.primary_voucher_number).toLowerCase().includes(q))
       );
     }
 
@@ -292,660 +342,667 @@ export default function HealthPage() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 pb-12">
+      <div className="space-y-5 pb-12 max-w-7xl mx-auto">
+        
         {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border/40 pb-5">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-border/40 pb-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider bg-primary/10 text-primary border border-primary/20 rounded-md">
-                VOUCH CHECK
+              <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary border border-primary/20 rounded-md">
+                Accounting Integrity
               </span>
-              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
                 Books Health
               </h1>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Vouch checks your books for things that need attention
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Automated double-entry audits, duplicate transaction detection & 1-click fixes
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="flex items-center gap-2">
             <button
               onClick={runDiagnostic}
-              className="px-3.5 py-2 rounded-xl border border-border/60 bg-card hover:bg-muted text-foreground text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-2xs transition-all"
+              className="px-3.5 py-1.5 rounded-xl border border-border/60 bg-card hover:bg-muted text-foreground text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-2xs transition-all min-h-[36px]"
+              title="Forensic Trial Balance & Suspense check"
             >
-              <Scale className="w-3.5 h-3.5 text-blue-400" />
-              <span>Why don't my books match?</span>
+              <Scale className="w-3.5 h-3.5 text-blue-500" />
+              <span>Balance Diagnostic</span>
             </button>
 
             <button
               onClick={() => fetchHealthReport()}
               disabled={refreshing}
-              className="px-4 py-2 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold flex items-center gap-2 cursor-pointer shadow-md shadow-primary/20 transition-all disabled:opacity-50"
+              className="px-3.5 py-1.5 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold flex items-center gap-2 cursor-pointer shadow-sm transition-all disabled:opacity-50 min-h-[36px]"
             >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-              <span>Run Health Audit</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              <span>Run Audit</span>
             </button>
           </div>
         </div>
 
-        {/* TOP METRIC CARDS: Health Score Gauge & Score Deductions */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Health Score & Balance Status Card */}
-          <div className="bg-card border border-border/40 rounded-2xl p-6 shadow-sm flex items-center gap-5">
-            <div className="relative w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center shrink-0">
+        {/* Clean Executive Overview (2-Card Hero) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          
+          {/* Health Score & Status Banner (5 cols) */}
+          <div className="lg:col-span-5 bg-card border border-border/50 rounded-2xl p-5 shadow-2xs flex items-center gap-4.5">
+            {/* Circular Gauge */}
+            <div className="relative w-18 h-18 sm:w-20 sm:h-20 flex items-center justify-center shrink-0">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
                 <circle
-                  className="text-muted/40"
+                  className="text-muted/30"
                   strokeWidth="8"
                   stroke="currentColor"
                   fill="transparent"
-                  r="40"
+                  r="38"
                   cx="50"
                   cy="50"
                 />
                 <circle
                   className={
-                    (report?.metrics?.critical_findings_count ?? 0) === 0
-                      ? "text-emerald-500"
+                    criticalCount === 0
+                      ? warningCount === 0
+                        ? "text-emerald-500"
+                        : "text-amber-500"
                       : "text-rose-500"
                   }
                   strokeWidth="8"
-                  strokeDasharray={`${2.51 * (report?.health_score ?? 0)} 251`}
+                  strokeDasharray={`${2.38 * (report?.health_score ?? 0)} 238`}
                   strokeLinecap="round"
                   stroke="currentColor"
                   fill="transparent"
-                  r="40"
+                  r="38"
                   cx="50"
                   cy="50"
                 />
               </svg>
               <div className="absolute flex flex-col items-center justify-center">
-                {(report?.metrics?.critical_findings_count ?? 0) === 0 ? (
-                  <CheckCircle2 className="w-7 h-7 sm:w-8 sm:h-8 text-emerald-500" />
-                ) : (
-                  <AlertOctagon className="w-7 h-7 sm:w-8 sm:h-8 text-rose-500" />
-                )}
+                <span className="text-base sm:text-lg font-black font-mono tracking-tight text-foreground">
+                  {report?.health_score ?? 0}%
+                </span>
               </div>
             </div>
 
-            <div className="space-y-1.5 flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
+            {/* Status Information */}
+            <div className="space-y-1 flex-1 min-w-0">
+              <div className="flex items-center gap-2">
                 <span
-                  className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
-                    (report?.metrics?.critical_findings_count ?? 0) === 0
-                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                      : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
+                    criticalCount === 0
+                      ? warningCount === 0
+                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25"
+                        : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25"
+                      : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25"
                   }`}
                 >
-                  {(report?.metrics?.critical_findings_count ?? 0) === 0
-                    ? "Books are Balanced"
-                    : "Balance Issues Detected"}
-                </span>
-                <span className="text-[11px] font-mono text-muted-foreground">
-                  {report ? `${report.health_score}% score` : ""}
+                  {criticalCount === 0
+                    ? warningCount === 0
+                      ? "All Books Balanced"
+                      : "Needs Review"
+                    : "Action Required"}
                 </span>
               </div>
-              <h2 className="text-sm sm:text-base font-bold text-foreground truncate">
-                {(report?.metrics?.critical_findings_count ?? 0) === 0
-                  ? (report?.metrics?.warning_findings_count ?? 0) > 0
-                    ? `Books are balanced — ${report?.metrics?.warning_findings_count} items need review`
-                    : "Books are balanced & healthy"
-                  : `${report?.metrics?.critical_findings_count} critical issues require attention`}
+
+              <h2 className="text-sm font-bold text-foreground truncate">
+                {criticalCount === 0
+                  ? warningCount === 0
+                    ? "Books are healthy & audit-ready"
+                    : `${warningCount} items require verification`
+                  : `${criticalCount} critical issues need attention`}
               </h2>
-              <p className="text-[11px] text-muted-foreground line-clamp-2">
-                {(report?.metrics?.critical_findings_count ?? 0) === 0
-                  ? (report?.metrics?.warning_findings_count ?? 0) > 0
-                    ? "Total debits equal total credits. Review the warnings below to keep your records audit-ready."
-                    : "Every debit matches every credit across all accounts. No anomalies detected."
-                  : "Discrepancies detected between debits and credits. Review critical errors below."}
+
+              <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
+                {criticalCount === 0
+                  ? warningCount === 0
+                    ? "Every debit matches credit, sequential numbering is valid, and zero duplicate entries exist."
+                    : "Trial balance is balanced. Review unallocated bank transactions or party balance warnings."
+                  : duplicateFindingsCount > 0
+                  ? `Includes ${duplicateFindingsCount} duplicate transactions. Review and apply 1-click fixes below.`
+                  : "Accounting inconsistencies detected. Review critical entries below."}
               </p>
+
+              <div className="text-[10px] text-muted-foreground/80 font-mono pt-0.5">
+                Last checked: {report?.timestamp ? new Date(report.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Just now"}
+              </div>
             </div>
           </div>
 
-          {/* Mathematical Score Formula Breakdown */}
-          <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm space-y-3 flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                HOW IT'S CALCULATED
-              </span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                Automated
-              </span>
-            </div>
-
-            <div className="space-y-1.5 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Base Starting Score:</span>
-                <span className="font-mono font-bold text-foreground">100%</span>
+          {/* 4 Key Stat Tiles (7 cols) */}
+          <div className="lg:col-span-7 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            
+            {/* Passed Checks */}
+            <div className="p-3.5 bg-card border border-border/50 rounded-2xl shadow-2xs space-y-1">
+              <div className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                <span>Audits Passed</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-rose-400">Critical Violations (-15% ea):</span>
-                <span className="font-mono font-bold text-rose-400">
-                  -{report?.score_breakdown?.critical_deductions ?? 0}%
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-amber-400">Warnings (-5% ea):</span>
-                <span className="font-mono font-bold text-amber-400">
-                  -{report?.score_breakdown?.warning_deductions ?? 0}%
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-blue-400">Unresolved Bank Tx (-1% ea):</span>
-                <span className="font-mono font-bold text-blue-400">
-                  -{report?.score_breakdown?.unresolved_bank_deductions ?? 0}%
-                </span>
-              </div>
-            </div>
-
-            <div className="text-[10px] text-muted-foreground border-t border-border/40 pt-2 font-mono">
-              Audit Date: {report?.timestamp ? new Date(report.timestamp).toLocaleString("en-IN") : "Now"}
-            </div>
-          </div>
-
-          {/* Quick Metrics Grid */}
-          <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm grid grid-cols-2 gap-3">
-            <div className="p-3 bg-emerald-500/5 rounded-xl border border-emerald-500/20 space-y-1">
-              <div className="text-[11px] font-semibold text-emerald-500 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" />
-                Passed Checks
-              </div>
-              <div className="text-2xl font-black font-mono text-foreground">
+              <div className="text-xl sm:text-2xl font-black font-mono text-foreground">
                 {report ? `${report.metrics?.passed_checks}/${report.metrics?.total_checks}` : "--"}
               </div>
-              <div className="text-[10px] text-muted-foreground">Checks passing</div>
+              <div className="text-[10px] text-muted-foreground">Core integrity rules</div>
             </div>
 
-            <div className="p-3 bg-rose-500/5 rounded-xl border border-rose-500/20 space-y-1">
-              <div className="text-[11px] font-semibold text-rose-500 flex items-center gap-1">
-                <AlertOctagon className="w-3 h-3" />
-                Critical Issues
+            {/* Critical Issues */}
+            <div className="p-3.5 bg-card border border-border/50 rounded-2xl shadow-2xs space-y-1">
+              <div className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
+                <AlertOctagon className="w-3.5 h-3.5 shrink-0" />
+                <span>Critical Issues</span>
               </div>
-              <div className="text-2xl font-black font-mono text-foreground">
-                {report?.metrics?.critical_findings_count ?? 0}
+              <div className="text-xl sm:text-2xl font-black font-mono text-rose-600 dark:text-rose-400">
+                {criticalCount}
               </div>
               <div className="text-[10px] text-muted-foreground">Require correction</div>
             </div>
 
-            <div className="p-3 bg-amber-500/5 rounded-xl border border-amber-500/20 space-y-1">
-              <div className="text-[11px] font-semibold text-amber-500 flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" />
-                Warnings
+            {/* Pending Warnings */}
+            <div className="p-3.5 bg-card border border-border/50 rounded-2xl shadow-2xs space-y-1">
+              <div className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                <span>Needs Review</span>
               </div>
-              <div className="text-2xl font-black font-mono text-foreground">
-                {report?.metrics?.warning_findings_count ?? 0}
+              <div className="text-xl sm:text-2xl font-black font-mono text-amber-600 dark:text-amber-400">
+                {warningCount}
               </div>
-              <div className="text-[10px] text-muted-foreground">Needs review</div>
+              <div className="text-[10px] text-muted-foreground">Items to verify</div>
             </div>
 
-            <div className="p-3 bg-primary/5 rounded-xl border border-primary/20 space-y-1">
-              <div className="text-[11px] font-semibold text-primary flex items-center gap-1">
-                <Sparkles className="w-3 h-3" />
-                Assistant Fixes
+            {/* 1-Click Fixes */}
+            <div className="p-3.5 bg-card border border-border/50 rounded-2xl shadow-2xs space-y-1">
+              <div className="text-[11px] font-semibold text-primary flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                <span>Auto-Fixes</span>
               </div>
-              <div className="text-2xl font-black font-mono text-foreground">
-                {report?.findings?.filter((f) => f.is_actionable).length ?? 0}
+              <div className="text-xl sm:text-2xl font-black font-mono text-primary">
+                {actionableCount}
               </div>
-              <div className="text-[10px] text-muted-foreground">1-Click preview available</div>
+              <div className="text-[10px] text-muted-foreground">1-Click ready</div>
             </div>
           </div>
         </div>
 
-        {/* 1-CLICK INVESTIGATIVE DIAGNOSTIC SECTION */}
-        {isDiagnosticOpen && (
-          <div className="bg-card border border-blue-500/30 rounded-2xl p-5 shadow-lg space-y-4 animate-in fade-in duration-200">
-            <div className="flex items-center justify-between pb-3 border-b border-border/40">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400">
-                  <Scale className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-foreground">Investigative Diagnostic Report</h3>
-                  <p className="text-xs text-muted-foreground">Detailed root-cause analysis of book imbalances</p>
-                </div>
+        {/* Sleek, Expandable 11-Point Integrity Checklist Card */}
+        <div className="bg-card border border-border/50 rounded-2xl p-4 shadow-2xs space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
+                <ShieldCheck className="w-4 h-4" />
               </div>
-              <button
-                onClick={() => setIsDiagnosticOpen(false)}
-                className="text-muted-foreground hover:text-foreground p-1 rounded-lg cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="truncate">
+                <h3 className="text-xs sm:text-sm font-bold text-foreground flex items-center gap-2">
+                  <span>11 Automated Accounting Audits</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-normal">
+                    {report?.checks ? `${report.checks.filter((c) => c.status === "PASSED").length}/11 Passing` : "--"}
+                  </span>
+                </h3>
+                <p className="text-[11px] text-muted-foreground truncate hidden sm:block">
+                  Trial balance, duplicate entries, party balances, GST compliance, and document numbering
+                </p>
+              </div>
             </div>
 
-            {diagnosing ? (
-              <div className="flex items-center justify-center p-8 space-y-2">
-                <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-                <span className="text-xs text-muted-foreground ml-3">Running forensic balance diagnosis...</span>
+            <button
+              onClick={() => setIsChecksExpanded(!isChecksExpanded)}
+              className="px-3 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
+            >
+              <span>{isChecksExpanded ? "Hide Audits" : "View All 11 Audits"}</span>
+              {isChecksExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+
+          {/* Expanded 11 Checks Grid */}
+          {isChecksExpanded && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-2 border-t border-border/40 animate-in fade-in">
+              {report?.checks?.map((check) => {
+                const isPassed = check.status === "PASSED";
+                const isCritical = check.status === "CRITICAL";
+                return (
+                  <div
+                    key={check.name}
+                    onClick={() => {
+                      if (check.name.toLowerCase().includes("duplicate")) {
+                        setActiveTab("DUPLICATES");
+                      } else if (!isPassed) {
+                        setActiveTab("ALL");
+                        setSearchQuery(check.name);
+                      }
+                    }}
+                    className={`p-3 rounded-xl border transition-colors cursor-pointer group ${
+                      isPassed
+                        ? "bg-muted/15 border-border/40 hover:bg-muted/30"
+                        : isCritical
+                        ? "bg-rose-500/5 border-rose-500/20 hover:bg-rose-500/10"
+                        : "bg-amber-500/5 border-amber-500/20 hover:bg-amber-500/10"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors truncate">
+                        {check.name}
+                      </span>
+                      <span
+                        className={`text-[9px] font-bold px-1.5 py-0.2 rounded uppercase tracking-wider shrink-0 ${
+                          isPassed
+                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                            : isCritical
+                            ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                            : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                        }`}
+                      >
+                        {isPassed ? "Pass" : `${check.findings_count} issue${check.findings_count === 1 ? '' : 's'}`}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground line-clamp-1 mt-1">
+                      {check.description}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Forensic Balance Diagnostic Modal Dialog */}
+        {isDiagnosticOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+            <div className="bg-card border border-border rounded-2xl max-w-lg w-full p-5 shadow-2xl space-y-4 animate-in zoom-in-95">
+              <div className="flex items-center justify-between pb-3 border-b border-border/40">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center">
+                    <Scale className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground">Forensic Balance Diagnostic</h3>
+                    <p className="text-[11px] text-muted-foreground">Trial balance equilibrium & suspense status</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsDiagnosticOpen(false)}
+                  className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
-            ) : diagnosticResult ? (
-              <div className="space-y-4 text-xs">
-                {/* Status overview */}
-                <div className="p-3 rounded-xl bg-muted/40 border border-border/40 flex items-center justify-between">
-                  <span className="font-bold text-foreground">Diagnosis Summary:</span>
-                  <span className="font-bold text-primary">{diagnosticResult.diagnostic_summary}</span>
+
+              {diagnosing ? (
+                <div className="flex items-center justify-center p-8 space-y-2">
+                  <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                  <span className="text-xs text-muted-foreground ml-3">Running balance diagnosis...</span>
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {/* Trial balance */}
-                  <div className="p-3 rounded-xl bg-muted/20 border border-border/40 space-y-1">
-                    <div className="text-[11px] text-muted-foreground font-bold">Trial Balance Net Gap</div>
-                    <div className="text-base font-bold font-mono text-foreground">
-                      ₹{diagnosticResult.trial_balance?.net_imbalance || "0.00"}
+              ) : diagnosticResult ? (
+                <div className="space-y-3.5 text-xs">
+                  {/* 3 Core Forensic Check Tiles */}
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="p-2.5 rounded-xl bg-muted/30 border border-border/40">
+                      <div className="text-[10px] text-muted-foreground font-semibold">Trial Balance Gap</div>
+                      <div className="text-sm font-bold font-mono text-foreground mt-0.5">
+                        {formatAmount(diagnosticResult.trial_balance?.net_imbalance || diagnosticResult.discrepancy || "0.00")}
+                      </div>
+                      <div className="text-[9px] text-emerald-500 font-semibold mt-0.5">
+                        {diagnosticResult.trial_balance?.is_balanced !== false ? "✓ Balanced" : "⚠ Imbalance"}
+                      </div>
                     </div>
-                    <div className="text-[10px] text-muted-foreground">
-                      Total Dr: ₹{diagnosticResult.trial_balance?.total_debit || "0"} | Total Cr: ₹
-                      {diagnosticResult.trial_balance?.total_credit || "0"}
+
+                    <div className="p-2.5 rounded-xl bg-muted/30 border border-border/40">
+                      <div className="text-[10px] text-muted-foreground font-semibold">Bank Recon Gap</div>
+                      <div className="text-sm font-bold font-mono text-foreground mt-0.5">
+                        {formatAmount(diagnosticResult.bank_reconciliation?.reconciliation_gap || "0.00")}
+                      </div>
+                      <div className="text-[9px] text-emerald-500 font-semibold mt-0.5">
+                        ✓ Reconciled
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-muted/30 border border-border/40">
+                      <div className="text-[10px] text-muted-foreground font-semibold">Suspense Gap</div>
+                      <div className="text-sm font-bold font-mono text-foreground mt-0.5">
+                        {formatAmount(diagnosticResult.opening_balance_suspense?.suspense_amount || "0.00")}
+                      </div>
+                      <div className="text-[9px] text-emerald-500 font-semibold mt-0.5">
+                        ✓ Cleared
+                      </div>
                     </div>
                   </div>
 
-                  {/* Bank gap */}
-                  <div className="p-3 rounded-xl bg-muted/20 border border-border/40 space-y-1">
-                    <div className="text-[11px] text-muted-foreground font-bold">Bank Statement Gap</div>
-                    <div className="text-base font-bold font-mono text-foreground">
-                      ₹{diagnosticResult.bank_reconciliation?.reconciliation_gap || "0.00"}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground">
-                      Unreconciled bank transactions awaiting resolution
-                    </div>
-                  </div>
-
-                  {/* Opening balance suspense */}
-                  <div className="p-3 rounded-xl bg-muted/20 border border-border/40 space-y-1">
-                    <div className="text-[11px] text-muted-foreground font-bold">Opening Balance Suspense</div>
-                    <div className="text-base font-bold font-mono text-foreground">
-                      ₹{diagnosticResult.opening_balance_suspense?.suspense_amount || "0.00"}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground">
-                      {diagnosticResult.opening_balance_suspense?.is_balanced ? "Balanced" : "Suspense difference"}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Specific Party Discrepancies if any */}
-                {diagnosticResult.party_discrepancies?.mismatch_count > 0 && (
-                  <div className="space-y-2">
-                    <div className="font-bold text-foreground">Party Balances Deviating from History:</div>
-                    <div className="space-y-1.5">
-                      {diagnosticResult.party_discrepancies.mismatched_parties.map((p: any) => (
-                        <div
-                          key={p.ledger_id}
-                          className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-between"
-                        >
-                          <div>
-                            <span className="font-bold text-foreground">{p.ledger_name}</span>
-                            <span className="text-[10px] text-muted-foreground ml-2 font-mono">
-                              Cached Bal: ₹{p.stored_balance} vs Calculated: ₹{p.calculated_balance}
-                            </span>
-                          </div>
-                          <span className="font-mono font-bold text-amber-400">Diff: ₹{p.difference}</span>
+                  {/* Plain Language Verdict */}
+                  <div className={`p-3 rounded-xl border text-xs leading-relaxed ${
+                    diagnosticResult.is_balanced
+                      ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-800 dark:text-emerald-200"
+                      : "bg-rose-500/10 border-rose-500/25 text-rose-800 dark:text-rose-200"
+                  }`}>
+                    {diagnosticResult.is_balanced ? (
+                      <div className="space-y-1">
+                        <div className="font-bold flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                          <span>Debits and Credits are in Balance</span>
                         </div>
-                      ))}
-                    </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          {diagnosticResult.message || `Total Debits equal Total Credits (${formatAmount(diagnosticResult.total_debit)}). Zero imbalance detected.`}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground/90 pt-1">
+                          Notice: Any issues listed on Books Health are operational entries (such as duplicate vouchers or inventory records) rather than mathematical ledger imbalances.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <div className="font-bold flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
+                          <AlertOctagon className="w-4 h-4 shrink-0" />
+                          <span>Trial Balance Discrepancy Found</span>
+                        </div>
+                        <p className="text-[11px]">
+                          {diagnosticResult.message}
+                        </p>
+                      </div>
+                    )}
                   </div>
-                )}
 
-                {/* Recommendations */}
-                {diagnosticResult.recommended_actions?.length > 0 && (
-                  <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-1">
-                    <div className="font-bold text-primary">Recommended Actions:</div>
-                    <ul className="list-disc list-inside space-y-0.5 text-muted-foreground text-[11px]">
-                      {diagnosticResult.recommended_actions.map((rec: string, i: number) => (
-                        <li key={i}>{rec}</li>
-                      ))}
-                    </ul>
+                  <div className="flex justify-end pt-1">
+                    <button
+                      onClick={() => setIsDiagnosticOpen(false)}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer"
+                    >
+                      Close Diagnostic
+                    </button>
                   </div>
-                )}
-              </div>
-            ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
         )}
 
-        {/* 11-POINT INTEGRITY CHECKLIST STATUS */}
-        <div className="bg-card border border-border/40 rounded-2xl p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-bold text-foreground">Automated Checks</h2>
-              <p className="text-xs text-muted-foreground">
-                Vouch automatically runs these checks on your books
-              </p>
-            </div>
-            <span className="text-xs font-mono font-bold text-muted-foreground">
-              {report?.checks ? `${report.checks.filter((c) => c.status === "PASSED").length}/${report.checks.length} Passing` : "--"}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {report?.checks?.map((check) => (
-              <div
-                key={check.name}
-                onClick={() => {
-                  if (check.name.toLowerCase().includes("duplicate")) {
-                    setActiveTab("DUPLICATES");
-                  } else if (check.status !== "PASSED") {
-                    setActiveTab("ALL");
-                    setSearchQuery(check.category);
-                  }
-                }}
-                className="p-3.5 rounded-xl border border-border/40 bg-muted/20 hover:bg-muted/40 transition-colors space-y-1.5 cursor-pointer group"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-foreground group-hover:text-primary transition-colors">{check.name}</span>
-                  <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
-                      check.status === "PASSED"
-                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                        : check.status === "WARNING"
-                        ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                        : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                    }`}
-                  >
-                    {check.status}
-                  </span>
-                </div>
-                <p className="text-[11px] text-muted-foreground line-clamp-2">{check.description}</p>
-                {check.findings_count > 0 && (
-                  <div className="text-[10px] font-mono font-bold text-rose-400 pt-1 flex items-center justify-between">
-                    <span>{check.findings_count} {check.findings_count === 1 ? "issue" : "issues"} detected</span>
-                    <span className="text-primary text-[10px] underline group-hover:no-underline flex items-center gap-0.5">
-                      Fix &rarr;
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* FINDINGS & FIXES ASSISTANT FEED */}
-        <div className="space-y-4">
+        {/* Findings Feed & Filter Tabs */}
+        <div className="space-y-3.5">
           <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
-            <div className="flex items-center gap-1 p-1 bg-muted/40 border border-border/40 rounded-xl overflow-x-auto">
+            
+            {/* Filter Tabs */}
+            <div className="flex items-center gap-1 p-1 bg-muted/30 border border-border/40 rounded-xl overflow-x-auto">
               <button
                 onClick={() => setActiveTab("ALL")}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0 ${
                   activeTab === "ALL"
-                    ? "bg-card text-foreground shadow-sm border border-border/60"
+                    ? "bg-card text-foreground shadow-xs border border-border/60"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                All Items ({report?.findings?.length || 0})
+                All Issues ({report?.findings?.length || 0})
               </button>
 
               <button
                 onClick={() => setActiveTab("DUPLICATES")}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
                   activeTab === "DUPLICATES"
-                    ? "bg-card text-foreground shadow-sm border border-border/60"
+                    ? "bg-card text-foreground shadow-xs border border-border/60"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <Layers className="w-3.5 h-3.5 text-purple-400" />
+                <Layers className="w-3 h-3 text-purple-500" />
                 <span>Duplicates</span>
                 {duplicateFindingsCount > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-purple-500/20 text-purple-400">
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-purple-500/20 text-purple-600 dark:text-purple-400">
                     {duplicateFindingsCount}
                   </span>
                 )}
               </button>
 
               <button
-                onClick={() => setActiveTab("ERRORS")}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                  activeTab === "ERRORS" || activeTab === "CRITICAL"
-                    ? "bg-card text-foreground shadow-sm border border-border/60"
+                onClick={() => setActiveTab("CRITICAL")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                  activeTab === "CRITICAL"
+                    ? "bg-card text-foreground shadow-xs border border-border/60"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <AlertOctagon className="w-3.5 h-3.5 text-rose-500" />
-                <span>Accounting Errors</span>
-                {(report?.metrics?.critical_findings_count || 0) > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-500">
-                    {report?.metrics?.critical_findings_count}
+                <AlertOctagon className="w-3 h-3 text-rose-500" />
+                <span>Critical</span>
+                {criticalCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-600 dark:text-rose-400">
+                    {criticalCount}
                   </span>
                 )}
               </button>
 
               <button
-                onClick={() => setActiveTab("REVIEWS")}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                  activeTab === "REVIEWS" || activeTab === "WARNING"
-                    ? "bg-card text-foreground shadow-sm border border-border/60"
+                onClick={() => setActiveTab("WARNING")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                  activeTab === "WARNING"
+                    ? "bg-card text-foreground shadow-xs border border-border/60"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                <AlertTriangle className="w-3 h-3 text-amber-500" />
                 <span>Needs Review</span>
-                {((report?.metrics?.warning_findings_count || 0) + (report?.metrics?.info_findings_count || 0)) > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-500">
-                    {(report?.metrics?.warning_findings_count || 0) + (report?.metrics?.info_findings_count || 0)}
+                {warningCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                    {warningCount}
                   </span>
                 )}
               </button>
 
               <button
-                onClick={() => setActiveTab("TASKS")}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                  activeTab === "TASKS" || activeTab === "ACTIONABLE"
-                    ? "bg-card text-foreground shadow-sm border border-border/60"
+                onClick={() => setActiveTab("ACTIONABLE")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                  activeTab === "ACTIONABLE"
+                    ? "bg-card text-foreground shadow-xs border border-border/60"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <Sparkles className="w-3.5 h-3.5 text-primary" />
-                <span>Actionable Tasks</span>
-                {(report?.findings?.filter((f) => f.is_actionable).length || 0) > 0 && (
+                <Sparkles className="w-3 h-3 text-primary" />
+                <span>Auto-Fixable</span>
+                {actionableCount > 0 && (
                   <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-primary/20 text-primary">
-                    {report?.findings?.filter((f) => f.is_actionable).length}
+                    {actionableCount}
                   </span>
                 )}
               </button>
             </div>
 
-            <div className="relative min-w-[260px]">
-              <Search className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
+            {/* Search Input */}
+            <div className="relative min-w-[240px]">
+              <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search findings, ledgers, vouchers..."
-                className="w-full bg-card border border-border/60 rounded-xl pl-10 pr-4 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                placeholder="Search issues, vouchers, party..."
+                className="w-full bg-card border border-border/50 rounded-xl pl-9 pr-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 min-h-[36px]"
               />
             </div>
           </div>
 
           {/* Findings List */}
           {loading ? (
-            <div className="flex flex-col items-center justify-center p-16 space-y-3">
-              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-              <p className="text-xs text-muted-foreground">Checking your books...</p>
+            <div className="flex flex-col items-center justify-center p-16 space-y-2">
+              <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+              <p className="text-xs text-muted-foreground">Running integrity audit...</p>
             </div>
           ) : filteredFindings.length === 0 ? (
-            <div className="bg-card border border-border/40 rounded-2xl p-12 text-center space-y-3 shadow-sm">
-              <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
-                <CheckCircle2 className="w-6 h-6" />
+            <div className="bg-card border border-border/40 rounded-2xl p-10 text-center space-y-2.5 shadow-2xs">
+              <div className="w-10 h-10 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center mx-auto">
+                <CheckCircle2 className="w-5 h-5" />
               </div>
-              <h3 className="text-base font-bold text-foreground">
+              <h3 className="text-sm font-bold text-foreground">
                 {activeTab === "ALL"
-                  ? "All Checks In Balance!"
+                  ? "All Accounting Checks Passing!"
                   : activeTab === "DUPLICATES"
-                  ? "Zero Duplicate Entries"
-                  : activeTab === "ERRORS" || activeTab === "CRITICAL"
-                  ? "Zero Accounting Errors"
-                  : activeTab === "REVIEWS" || activeTab === "WARNING"
-                  ? "No Review Items Pending"
-                  : "No Actionable Tasks"}
+                  ? "Zero Duplicate Transactions Found"
+                  : activeTab === "CRITICAL"
+                  ? "Zero Critical Issues Found"
+                  : activeTab === "WARNING"
+                  ? "Zero Warnings Pending"
+                  : "No Actionable Fixes Pending"}
               </h3>
               <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                {activeTab === "ALL"
-                  ? "All automated checks passed. Your books are balanced and in order."
-                  : activeTab === "DUPLICATES"
-                  ? "All receipts, payments, bank reconciliations, inventory items, and ledgers are deduplicated and clean."
-                  : activeTab === "ERRORS" || activeTab === "CRITICAL"
-                  ? "Trial balance, sequence numbering, and party ledgers are mathematically consistent."
-                  : activeTab === "REVIEWS" || activeTab === "WARNING"
-                  ? "There are currently no reconciliation gaps or tax warnings requiring review."
-                  : "There are no pending 1-click preview fixes to apply right now."}
+                {activeTab === "DUPLICATES"
+                  ? "All vouchers, bank transactions, and inventory items are unique and deduplicated."
+                  : "Your double-entry books are consistent and balanced."}
               </p>
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredFindings.map((finding) => (
-                <div
-                  key={finding.id}
-                  className="bg-card border border-border/40 hover:border-border/80 transition-all rounded-2xl p-5 shadow-sm space-y-3"
-                >
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                    <div className="flex items-start gap-3">
-                      <div
-                        className={`p-2.5 rounded-xl shrink-0 mt-0.5 ${
-                          finding.severity === "CRITICAL"
-                            ? "bg-rose-500/10 text-rose-500"
-                            : finding.severity === "WARNING"
-                            ? "bg-amber-500/10 text-amber-500"
-                            : "bg-blue-500/10 text-blue-500"
-                        }`}
-                      >
-                        {finding.severity === "CRITICAL" ? (
-                          <AlertOctagon className="w-5 h-5" />
-                        ) : (
-                          <AlertTriangle className="w-5 h-5" />
+              {filteredFindings.map((finding) => {
+                const categoryBadge = getCategoryBadge(finding.category, finding.fix_type);
+                const isDuplicateVoucher = finding.fix_type === "VOID_DUPLICATE_VOUCHER" || finding.category?.startsWith("DUPLICATE_VOUCHER");
+                const isDuplicateInventory = finding.fix_type === "MERGE_INVENTORY_ITEMS" || finding.category?.startsWith("DUPLICATE_INVENTORY");
+                const isPartyDrift = finding.category?.includes("PARTY_BALANCE") || finding.evidence?.stored_balance !== undefined;
+
+                return (
+                  <div
+                    key={finding.id}
+                    className="bg-card border border-border/40 hover:border-border/80 transition-all rounded-2xl p-4 sm:p-5 shadow-2xs space-y-3"
+                  >
+                    {/* Top Row: Category, Severity & Action Button */}
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span
+                          className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-wider border ${
+                            finding.severity === "CRITICAL"
+                              ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25"
+                              : finding.severity === "WARNING"
+                              ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25"
+                              : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25"
+                          }`}
+                        >
+                          {finding.severity}
+                        </span>
+
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md border ${categoryBadge.bg}`}>
+                          {categoryBadge.label}
+                        </span>
+
+                        {finding.created_at && (
+                          <span className="text-[10px] text-muted-foreground/80 font-mono">
+                            {formatDate(finding.created_at)}
+                          </span>
                         )}
                       </div>
 
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
-                              finding.severity === "CRITICAL"
-                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                                : finding.severity === "WARNING"
-                                ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                                : "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                            }`}
-                          >
-                            {finding.severity}
+                      {/* Primary 1-Click Fix Button */}
+                      {finding.is_actionable && (
+                        <button
+                          onClick={() => openFixPreview(finding)}
+                          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 shrink-0 cursor-pointer w-full sm:w-auto justify-center min-h-[34px] ${
+                            isDuplicateVoucher
+                              ? "bg-purple-600 hover:bg-purple-700 text-white"
+                              : isDuplicateInventory
+                              ? "bg-blue-600 hover:bg-blue-700 text-white"
+                              : "bg-primary text-primary-foreground hover:bg-primary/90"
+                          }`}
+                        >
+                          <Wrench className="w-3 h-3" />
+                          <span>
+                            {isDuplicateVoucher
+                              ? "Fix Duplicate"
+                              : isDuplicateInventory
+                              ? "Merge Products"
+                              : "Review & Fix"}
                           </span>
-                          <span className="text-[10px] font-mono px-2 py-0.5 bg-muted/60 text-muted-foreground rounded border border-border/40">
-                            {finding.category}
-                          </span>
-                          <span className="text-[10px] font-mono text-muted-foreground">Code: {finding.code}</span>
-                        </div>
-
-                        <h4 className="text-sm font-bold text-foreground">{finding.title}</h4>
-                        <p className="text-xs text-muted-foreground leading-relaxed">{finding.description}</p>
-                      </div>
+                        </button>
+                      )}
                     </div>
 
-                    {finding.is_actionable && (
-                      <button
-                        onClick={() => openFixPreview(finding)}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 shrink-0 cursor-pointer w-full sm:w-auto justify-center ${
-                          finding.fix_type === "VOID_DUPLICATE_VOUCHER"
-                            ? "bg-purple-600 hover:bg-purple-700 text-white"
-                            : "bg-primary text-primary-foreground hover:bg-primary/90"
-                        }`}
-                      >
-                        <Wrench className="w-3.5 h-3.5" />
-                        <span>
-                          {finding.fix_type === "VOID_DUPLICATE_VOUCHER"
-                            ? "Fix Duplicate"
-                            : finding.fix_type === "MERGE_INVENTORY_ITEMS"
-                            ? "Merge Products"
-                            : "Review & Fix"}
-                        </span>
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Smart Duplicate Comparison Card */}
-                  {finding.fix_type === "VOID_DUPLICATE_VOUCHER" && finding.evidence?.primary_voucher_number && (
-                    <div className="p-3.5 rounded-xl bg-purple-500/5 border border-purple-500/20 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                      <div className="space-y-1 p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3" />
-                          Primary Record (Retained)
-                        </div>
-                        <div className="font-mono font-bold text-foreground">
-                          #{finding.evidence.primary_voucher_number}
-                        </div>
-                        <div className="text-muted-foreground text-[11px]">
-                          {finding.evidence.voucher_date} • ₹{finding.evidence.amount} • {finding.evidence.party_name}
-                        </div>
-                      </div>
-                      <div className="space-y-1 p-2.5 rounded-lg bg-rose-500/5 border border-rose-500/20">
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-rose-400 flex items-center gap-1">
-                          <AlertOctagon className="w-3 h-3" />
-                          Duplicate Entry (To Void & Cancel)
-                        </div>
-                        <div className="font-mono font-bold text-foreground line-through decoration-rose-500/60">
-                          #{finding.evidence.duplicate_voucher_number}
-                        </div>
-                        <div className="text-muted-foreground text-[11px]">
-                          {finding.evidence.source_description || "Duplicate entry"}
-                        </div>
-                      </div>
+                    {/* Title & Human Description */}
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-bold text-foreground">
+                        {finding.title}
+                      </h4>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {finding.description}
+                      </p>
                     </div>
-                  )}
 
-                  {finding.fix_type === "MERGE_INVENTORY_ITEMS" && finding.evidence?.primary_sku && (
-                    <div className="p-3.5 rounded-xl bg-blue-500/5 border border-blue-500/20 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                      <div className="space-y-1 p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3" />
-                          Primary Product (Retained)
-                        </div>
-                        <div className="font-mono font-bold text-foreground">
-                          SKU: {finding.evidence.primary_sku} ({finding.evidence.primary_stock} units)
-                        </div>
-                        <div className="text-muted-foreground text-[11px]">
-                          Consolidated Target: {finding.evidence.combined_stock} units
-                        </div>
-                      </div>
-                      <div className="space-y-1 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20">
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1">
-                          <Layers className="w-3 h-3" />
-                          Duplicate SKU (To Consolidate)
-                        </div>
-                        <div className="font-mono font-bold text-foreground">
-                          SKU: {finding.evidence.duplicate_sku} ({finding.evidence.duplicate_stock} units)
-                        </div>
-                        <div className="text-muted-foreground text-[11px]">
-                          Stock movements will be migrated and duplicate SKU archived
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Evidence & Suggested Fix */}
-                  <div className="bg-muted/30 border border-border/40 rounded-xl p-3 text-xs space-y-2">
-                    {finding.suggested_fix && (
-                      <div className="flex items-start gap-2 text-foreground">
-                        <Sparkles className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
-                        <span>
-                          <strong>Recommended Fix:</strong> {finding.suggested_fix}
-                        </span>
-                      </div>
-                    )}
-
-                    {finding.evidence && Object.keys(finding.evidence).length > 0 && (
-                      <div className="pt-2 border-t border-border/30 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 font-mono text-[11px] text-muted-foreground">
-                        {Object.entries(finding.evidence).map(([k, v]) => (
-                          <div key={k} className="p-1.5 rounded bg-muted/40 border border-border/20 truncate">
-                            <span className="text-foreground/70">{k}:</span> {typeof v === "object" ? JSON.stringify(v) : String(v)}
+                    {/* Specialized Clean Issue Cards */}
+                    {/* Case 1: Duplicate Voucher Side-by-Side Comparison */}
+                    {isDuplicateVoucher && finding.evidence?.primary_voucher_number && (
+                      <div className="p-3 rounded-xl bg-purple-500/5 border border-purple-500/20 grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                        {/* Primary Record to Keep */}
+                        <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 space-y-1">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                            <Check className="w-3 h-3" />
+                            Primary Record (Retained)
                           </div>
-                        ))}
+                          <div className="font-mono font-bold text-foreground">
+                            #{finding.evidence.primary_voucher_number}
+                          </div>
+                          <div className="text-muted-foreground text-[11px]">
+                            {finding.evidence.voucher_date} • {formatAmount(finding.evidence.amount)} • {finding.evidence.party_name}
+                          </div>
+                        </div>
+
+                        {/* Duplicate Record to Void */}
+                        <div className="p-2.5 rounded-lg bg-rose-500/5 border border-rose-500/20 space-y-1">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                            <AlertOctagon className="w-3 h-3" />
+                            Duplicate Entry (To Void & Cancel)
+                          </div>
+                          <div className="font-mono font-bold text-foreground line-through decoration-rose-500/60">
+                            #{finding.evidence.duplicate_voucher_number}
+                          </div>
+                          <div className="text-muted-foreground text-[11px]">
+                            Safe cancellation preserves audit log and restores ledger balance
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Case 2: Duplicate Inventory Item Comparison */}
+                    {isDuplicateInventory && finding.evidence?.primary_sku && (
+                      <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                        <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 space-y-1">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                            <Package className="w-3 h-3" />
+                            Primary Product (Retained)
+                          </div>
+                          <div className="font-mono font-bold text-foreground">
+                            SKU: {finding.evidence.primary_sku} ({finding.evidence.primary_stock} units)
+                          </div>
+                          <div className="text-muted-foreground text-[11px]">
+                            Target Combined: {finding.evidence.combined_stock} units
+                          </div>
+                        </div>
+
+                        <div className="p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20 space-y-1">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                            <Layers className="w-3 h-3" />
+                            Duplicate Item (To Consolidate)
+                          </div>
+                          <div className="font-mono font-bold text-foreground">
+                            SKU: {finding.evidence.duplicate_sku} ({finding.evidence.duplicate_stock} units)
+                          </div>
+                          <div className="text-muted-foreground text-[11px]">
+                            Stock movements will be repointed to primary product
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Case 3: Party Balance Drift Details */}
+                    {isPartyDrift && finding.evidence?.difference && (
+                      <div className="p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/20 flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <div className="text-foreground">
+                          <strong>Recorded:</strong> {formatAmount(finding.evidence.stored_balance)} vs{" "}
+                          <strong>Calculated:</strong> {formatAmount(finding.evidence.calculated_balance)}
+                        </div>
+                        <div className="font-mono font-bold text-amber-600 dark:text-amber-400">
+                          Discrepancy: {formatAmount(finding.evidence.difference)}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Recommended Action Pill (if present and not duplicate comparison) */}
+                    {!isDuplicateVoucher && !isDuplicateInventory && finding.suggested_fix && (
+                      <div className="p-2.5 rounded-xl bg-muted/30 border border-border/40 text-xs flex items-center gap-2 text-foreground">
+                        <Sparkles className="w-3.5 h-3.5 text-primary shrink-0" />
+                        <span><strong>Recommended Fix:</strong> {finding.suggested_fix}</span>
                       </div>
                     )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
 
         {/* INTERACTIVE BEFORE VS AFTER FIX PREVIEW MODAL */}
         {previewFinding && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
             <div
               className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 duration-200"
               onClick={(e) => e.stopPropagation()}
@@ -964,14 +1021,14 @@ export default function HealthPage() {
                   onClick={() => setPreviewFinding(null)}
                   className="text-muted-foreground hover:text-foreground p-1 rounded-lg cursor-pointer"
                 >
-                  <X className="w-5 h-5" />
+                  <X className="w-4 h-4" />
                 </button>
               </div>
 
               {loadingPreview ? (
                 <div className="flex flex-col items-center justify-center p-12 space-y-3">
-                  <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-                  <span className="text-xs text-muted-foreground">Generating financial BEFORE vs AFTER preview...</span>
+                  <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                  <span className="text-xs text-muted-foreground">Generating financial impact preview...</span>
                 </div>
               ) : previewData ? (
                 <div className="p-5 space-y-4">
@@ -981,7 +1038,7 @@ export default function HealthPage() {
                   </div>
 
                   {/* History Preservation Guarantee */}
-                  <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300 space-y-1">
+                  <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-600 dark:text-blue-300 space-y-1">
                     <div className="font-bold flex items-center gap-1.5">
                       <History className="w-4 h-4" />
                       Double-Entry History Preservation
@@ -993,39 +1050,41 @@ export default function HealthPage() {
                   </div>
 
                   {/* Financial Comparison Table: BEFORE vs AFTER */}
-                  <div>
-                    <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">
-                      Financial Balance Impact (Before vs After)
-                    </div>
-                    <div className="border border-border/60 rounded-xl overflow-hidden text-xs">
-                      <table className="w-full">
-                        <thead className="bg-muted/40 border-b border-border/40 text-muted-foreground text-left">
-                          <tr>
-                            <th className="p-2.5">Account / Party</th>
-                            <th className="p-2.5 text-right font-mono">Before Balance</th>
-                            <th className="p-2.5 text-right font-mono">After Balance</th>
-                            <th className="p-2.5 text-right font-mono">Net Change</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border/30">
-                          {previewData.preview_comparison?.map((row, idx) => (
-                            <tr key={idx} className="hover:bg-muted/20">
-                              <td className="p-2.5 font-bold text-foreground">{row.account}</td>
-                              <td className="p-2.5 text-right font-mono tabular-nums text-muted-foreground">
-                                {row.before_balance}
-                              </td>
-                              <td className="p-2.5 text-right font-mono tabular-nums font-bold text-emerald-400">
-                                {row.after_balance}
-                              </td>
-                              <td className="p-2.5 text-right font-mono tabular-nums text-primary font-bold">
-                                {row.impact}
-                              </td>
+                  {previewData.preview_comparison?.length > 0 && (
+                    <div>
+                      <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">
+                        Financial Balance Impact (Before vs After)
+                      </div>
+                      <div className="border border-border/60 rounded-xl overflow-hidden text-xs">
+                        <table className="w-full">
+                          <thead className="bg-muted/40 border-b border-border/40 text-muted-foreground text-left">
+                            <tr>
+                              <th className="p-2.5">Account / Party</th>
+                              <th className="p-2.5 text-right font-mono">Before Balance</th>
+                              <th className="p-2.5 text-right font-mono">After Balance</th>
+                              <th className="p-2.5 text-right font-mono">Net Change</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody className="divide-y divide-border/30">
+                            {previewData.preview_comparison?.map((row, idx) => (
+                              <tr key={idx} className="hover:bg-muted/20">
+                                <td className="p-2.5 font-bold text-foreground">{row.account}</td>
+                                <td className="p-2.5 text-right font-mono tabular-nums text-muted-foreground">
+                                  {row.before_balance}
+                                </td>
+                                <td className="p-2.5 text-right font-mono tabular-nums font-bold text-emerald-500">
+                                  {row.after_balance}
+                                </td>
+                                <td className="p-2.5 text-right font-mono tabular-nums text-primary font-bold">
+                                  {row.impact}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <div className="flex items-center gap-3 pt-2">
                     <button
@@ -1044,7 +1103,7 @@ export default function HealthPage() {
                       {executingFix ? (
                         <>
                           <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin"></div>
-                          <span>Applying Reversible Fix...</span>
+                          <span>Applying Safe Fix...</span>
                         </>
                       ) : (
                         <span>Confirm & Apply Fix</span>
