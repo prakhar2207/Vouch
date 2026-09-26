@@ -54,6 +54,26 @@ class SalesForecastView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 
+class MonthlyComparisonView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, company_id=None):
+        try:
+            target_cid = company_id or request.query_params.get('company_id') or request.headers.get('X-Company-ID')
+            if not target_cid:
+                company = Company.objects.filter(users__user=request.user).first()
+            else:
+                company = Company.objects.get(id=target_cid, users__user=request.user)
+
+            if not company:
+                return Response({"success": False, "error": "Company not found"}, status=404)
+
+            days = int(request.query_params.get('days', 30))
+            forecast = AnalyticsEngine.forecast_sales(company, days=days)
+            return Response({"success": True, "data": forecast.get("monthly_comparison")})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
 class DashboardSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 

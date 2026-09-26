@@ -210,7 +210,46 @@ class AnalyticsEngine:
                     "month_end_surge_active": False,
                     "repeat_buyers_modeled": 0,
                     "open_proforma_pipeline": 0.0,
-                    "stock_health_ratio": 1.0
+                    "stock_health_ratio": 1.0,
+                    "stock_constraint_applied": False
+                },
+                "monthly_comparison": {
+                    "current_month": {
+                        "month_name": "Current Month",
+                        "short_name": "Cur",
+                        "days_in_month": 30,
+                        "days_elapsed": 0,
+                        "days_remaining": 30,
+                        "mtd_actual_sales": 0.0,
+                        "mtd_orders": 0,
+                        "remaining_projected_sales": 0.0,
+                        "projected_month_total": 0.0,
+                        "completion_pct": 0.0,
+                        "current_daily_run_rate": 0.0,
+                        "projected_daily_run_rate": 0.0
+                    },
+                    "previous_month": {
+                        "month_name": "Previous Month",
+                        "total_sales": 0.0,
+                        "order_count": 0,
+                        "daily_average": 0.0
+                    },
+                    "mom_comparison": {
+                        "absolute_change": 0.0,
+                        "percentage_change": 0.0,
+                        "pace_status": "NO_PRIOR_MONTH",
+                        "required_daily_to_match_last_month": 0.0,
+                        "summary": "No historical sales data recorded."
+                    },
+                    "yoy_comparison": {
+                        "available": False,
+                        "prior_year_month_name": "",
+                        "prior_year_sales": 0.0,
+                        "percentage_change": 0.0,
+                        "absolute_change": 0.0,
+                        "summary": "No prior year sales data available."
+                    },
+                    "historical_months_series": []
                 }
             }
 
@@ -462,6 +501,14 @@ class AnalyticsEngine:
 
         full_summary = " | ".join(factors_summary_parts)
 
+        # Compute Month-over-Month and Year-over-Year Comparative Benchmarks
+        monthly_comparison = AnalyticsEngine.get_monthly_comparison(
+            company=company,
+            forecast_list=forecast_list,
+            anchor_date=anchor_date,
+            history_span_days=history_span_days
+        )
+
         return {
             "forecast_days": days,
             "projected_total": round(p50_total, 2),
@@ -484,7 +531,262 @@ class AnalyticsEngine:
                 "open_proforma_pipeline": round(open_pipeline_val, 2),
                 "stock_health_ratio": round(stock_health_ratio, 2),
                 "stock_constraint_applied": stock_constraint_multiplier < 1.0
-            }
+            },
+            "monthly_comparison": monthly_comparison
+        }
+
+    @staticmethod
+    def get_monthly_comparison(company: Company, forecast_list=None, anchor_date=None, history_span_days=0):
+        """
+        Calculates Month-over-Month (MoM) and Year-over-Year (YoY) Performance & Projection Benchmark:
+        1. Present Month:
+           - Month-to-date (MTD) actual achieved sales
+           - Days elapsed vs days remaining
+           - Remaining forecasted sales for current month
+           - Projected current month-end total (MTD + Remaining Forecast)
+           - Daily run rates and completion percentage
+        2. Previous Months Performance:
+           - Last completed month actuals (M-1)
+           - Historical completed months series (up to 5 past months)
+        3. Month-over-Month (MoM) Variance:
+           - Expected current month total vs last month actual (% and absolute change)
+           - Required daily sales pace over remaining days to beat last month
+        4. Year-over-Year (YoY) Comparison:
+           - STRICT MANDATE: Only computed if history span >= 330 days and prior year same-month sales exist.
+           - Otherwise excluded with clear rationale.
+        5. Forward Multi-Month Series:
+           - Combined series for comparative charts: Past Months (Actual) + Present Month (MTD + Projected) + Next Month (Projected).
+        """
+        import calendar
+        import datetime
+        from django.db.models import Sum, Count, Max
+
+        today = datetime.date.today()
+        vouchers = Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
+
+        if anchor_date is None:
+            max_v = vouchers.aggregate(m=Max('voucher_date'))['m']
+            if max_v and today >= max_v and (today - max_v).days <= 60:
+                anchor_date = today
+            elif max_v:
+                anchor_date = max_v
+            else:
+                anchor_date = today
+
+        cur_year = anchor_date.year
+        cur_month = anchor_date.month
+        cur_month_start = datetime.date(cur_year, cur_month, 1)
+        _, days_in_cur_month = calendar.monthrange(cur_year, cur_month)
+        cur_month_end = datetime.date(cur_year, cur_month, days_in_cur_month)
+
+        days_elapsed = anchor_date.day
+        days_remaining = max(0, days_in_cur_month - days_elapsed)
+
+        # 1. Present Month Actuals (MTD)
+        mtd_agg = vouchers.filter(
+            voucher_date__gte=cur_month_start,
+            voucher_date__lte=anchor_date
+        ).aggregate(total=Sum('total_amount'), count=Count('id'))
+        mtd_sales = float(mtd_agg['total'] or 0.0)
+        mtd_orders = int(mtd_agg['count'] or 0)
+
+        # 2. Remaining Forecast for Current Month
+        remaining_forecast = 0.0
+        if forecast_list:
+            for item in forecast_list:
+                try:
+                    f_date = datetime.datetime.strptime(item['date'], '%Y-%m-%d').date()
+                    if cur_month_start <= f_date <= cur_month_end and f_date > anchor_date:
+                        remaining_forecast += float(item.get('projected_sales', 0.0))
+                except Exception:
+                    pass
+        remaining_forecast = round(remaining_forecast, 2)
+        projected_month_total = round(mtd_sales + remaining_forecast, 2)
+
+        # Rates
+        current_daily_run_rate = round(mtd_sales / max(1, days_elapsed), 2)
+        projected_daily_run_rate = round(remaining_forecast / max(1, days_remaining), 2) if days_remaining > 0 else 0.0
+        completion_pct = round((mtd_sales / projected_month_total * 100), 1) if projected_month_total > 0 else (100.0 if mtd_sales > 0 else 0.0)
+
+        # 3. Previous Completed Months (Past 5 calendar months)
+        def get_prev_month(y, m, step):
+            total_m = (y * 12 + (m - 1)) - step
+            p_y = total_m // 12
+            p_m = (total_m % 12) + 1
+            return p_y, p_m
+
+        historical_months = []
+        last_month_total = 0.0
+        last_month_name = ""
+        last_month_orders = 0
+
+        for step in range(5, 0, -1):
+            p_y, p_m = get_prev_month(cur_year, cur_month, step)
+            m_start = datetime.date(p_y, p_m, 1)
+            _, p_days = calendar.monthrange(p_y, p_m)
+            m_end = datetime.date(p_y, p_m, p_days)
+
+            agg = vouchers.filter(voucher_date__gte=m_start, voucher_date__lte=m_end).aggregate(
+                total=Sum('total_amount'), count=Count('id')
+            )
+            m_tot = float(agg['total'] or 0.0)
+            m_cnt = int(agg['count'] or 0)
+            m_label = m_start.strftime('%b %Y')
+            m_short = m_start.strftime('%b')
+
+            historical_months.append({
+                "month_key": m_start.strftime('%Y-%m'),
+                "month_label": m_label,
+                "short_name": m_short,
+                "actual_sales": round(m_tot, 2),
+                "projected_sales": 0.0,
+                "total_sales": round(m_tot, 2),
+                "order_count": m_cnt,
+                "is_current": False,
+                "is_projected": False
+            })
+
+            if step == 1:
+                last_month_total = m_tot
+                last_month_name = m_label
+                last_month_orders = m_cnt
+
+        # Add current month to series
+        cur_month_label = anchor_date.strftime('%b %Y')
+        cur_month_short = anchor_date.strftime('%b')
+        historical_months.append({
+            "month_key": cur_month_start.strftime('%Y-%m'),
+            "month_label": f"{cur_month_label} (Current)",
+            "short_name": cur_month_short,
+            "actual_sales": round(mtd_sales, 2),
+            "projected_sales": remaining_forecast,
+            "total_sales": projected_month_total,
+            "order_count": mtd_orders,
+            "is_current": True,
+            "is_projected": False,
+            "days_remaining": days_remaining
+        })
+
+        # Add next month (M+1 projected full month) if forecast covers it
+        next_y, next_m = get_prev_month(cur_year, cur_month, -1)
+        next_month_start = datetime.date(next_y, next_m, 1)
+        _, next_days = calendar.monthrange(next_y, next_m)
+        next_month_end = datetime.date(next_y, next_m, next_days)
+
+        next_month_projected = 0.0
+        if forecast_list:
+            for item in forecast_list:
+                try:
+                    f_date = datetime.datetime.strptime(item['date'], '%Y-%m-%d').date()
+                    if next_month_start <= f_date <= next_month_end:
+                        next_month_projected += float(item.get('projected_sales', 0.0))
+                except Exception:
+                    pass
+        if next_month_projected > 0:
+            historical_months.append({
+                "month_key": next_month_start.strftime('%Y-%m'),
+                "month_label": f"{next_month_start.strftime('%b %Y')} (Projected)",
+                "short_name": next_month_start.strftime('%b'),
+                "actual_sales": 0.0,
+                "projected_sales": round(next_month_projected, 2),
+                "total_sales": round(next_month_projected, 2),
+                "order_count": 0,
+                "is_current": False,
+                "is_projected": True
+            })
+
+        # 4. MoM Comparison (Current Projected vs Last Month Actual)
+        if last_month_total > 0:
+            mom_abs = round(projected_month_total - last_month_total, 2)
+            mom_pct = round(((projected_month_total - last_month_total) / last_month_total) * 100.0, 2)
+            if mom_pct > 1.5:
+                pace_status = "BEATING_LAST_MONTH"
+                mom_summary = f"On track to finish +{mom_pct}% ahead of {last_month_name} (+₹{mom_abs:,.0f})."
+            elif mom_pct < -1.5:
+                pace_status = "PACING_BEHIND"
+                mom_summary = f"Pacing {abs(mom_pct)}% behind {last_month_name} (-₹{abs(mom_abs):,.0f})."
+            else:
+                pace_status = "ON_PAR"
+                mom_summary = f"Tracking on par with {last_month_name} (~0% variance)."
+
+            shortfall = last_month_total - mtd_sales
+            if days_remaining > 0:
+                required_daily = round(max(0.0, shortfall / days_remaining), 2)
+            else:
+                required_daily = 0.0
+        else:
+            mom_abs = 0.0
+            mom_pct = 0.0
+            pace_status = "NO_PRIOR_MONTH"
+            mom_summary = "No previous month transactions found for MoM comparison."
+            required_daily = 0.0
+
+        # 5. YoY Comparison (Same Month in Prior Year)
+        # STRICT MANDATE: Only consider if >= 330 days history is available
+        yoy_available = False
+        py_sales_val = 0.0
+        py_month_name = ""
+        yoy_pct = 0.0
+        yoy_abs = 0.0
+        yoy_summary = "Past-year record not available (< 1 year history); annual YoY comparison excluded."
+
+        if history_span_days >= 330:
+            try:
+                py_start = cur_month_start.replace(year=cur_year - 1)
+                _, py_num_days = calendar.monthrange(py_start.year, py_start.month)
+                py_end = py_start.replace(day=py_num_days)
+                py_agg = vouchers.filter(voucher_date__gte=py_start, voucher_date__lte=py_end).aggregate(
+                    total=Sum('total_amount'), count=Count('id')
+                )
+                py_sales_val = float(py_agg['total'] or 0.0)
+                py_month_name = py_start.strftime('%B %Y')
+
+                if py_sales_val > 0:
+                    yoy_available = True
+                    yoy_abs = round(projected_month_total - py_sales_val, 2)
+                    yoy_pct = round(((projected_month_total - py_sales_val) / py_sales_val) * 100.0, 2)
+                    sign = "+" if yoy_pct >= 0 else ""
+                    yoy_summary = f"Projected {sign}{yoy_pct}% ({sign}₹{yoy_abs:,.0f}) compared to {py_month_name}."
+            except Exception:
+                pass
+
+        return {
+            "current_month": {
+                "month_name": anchor_date.strftime('%B %Y'),
+                "short_name": cur_month_short,
+                "days_in_month": days_in_cur_month,
+                "days_elapsed": days_elapsed,
+                "days_remaining": days_remaining,
+                "mtd_actual_sales": round(mtd_sales, 2),
+                "mtd_orders": mtd_orders,
+                "remaining_projected_sales": remaining_forecast,
+                "projected_month_total": projected_month_total,
+                "completion_pct": completion_pct,
+                "current_daily_run_rate": current_daily_run_rate,
+                "projected_daily_run_rate": projected_daily_run_rate
+            },
+            "previous_month": {
+                "month_name": last_month_name or "Previous Month",
+                "total_sales": round(last_month_total, 2),
+                "order_count": last_month_orders,
+                "daily_average": round(last_month_total / 30.0, 2) if last_month_total > 0 else 0.0
+            },
+            "mom_comparison": {
+                "absolute_change": mom_abs,
+                "percentage_change": mom_pct,
+                "pace_status": pace_status,
+                "required_daily_to_match_last_month": required_daily,
+                "summary": mom_summary
+            },
+            "yoy_comparison": {
+                "available": yoy_available,
+                "prior_year_month_name": py_month_name,
+                "prior_year_sales": round(py_sales_val, 2),
+                "percentage_change": yoy_pct,
+                "absolute_change": yoy_abs,
+                "summary": yoy_summary
+            },
+            "historical_months_series": historical_months
         }
 
     @staticmethod

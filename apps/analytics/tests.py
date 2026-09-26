@@ -245,3 +245,73 @@ class SalesForecastEngineTestCase(TestCase):
         self.assertGreater(res["factors_analyzed"]["repeat_buyers_modeled"], 0)
         self.assertIn("Customer Repurchase Cycles", res["trend_summary"])
 
+    def test_monthly_comparison_structure_and_mom(self):
+        """Verify present month MTD + predicted remainder is compared against last month."""
+        today = datetime.date.today()
+        cur_month_start = today.replace(day=1)
+        prev_month_end = cur_month_start - datetime.timedelta(days=1)
+        prev_month_start = prev_month_end.replace(day=1)
+
+        # 1. Seed last month sales
+        Voucher.objects.create(
+            company=self.company,
+            voucher_number="INV-PREV-01",
+            voucher_type="SALES",
+            voucher_date=prev_month_start + datetime.timedelta(days=5),
+            party_ledger=self.party_a,
+            total_amount=Decimal("100000.00"),
+            status="POSTED",
+            created_by=self.user
+        )
+
+        # 2. Seed present month sales (MTD)
+        Voucher.objects.create(
+            company=self.company,
+            voucher_number="INV-CURR-01",
+            voucher_type="SALES",
+            voucher_date=cur_month_start,
+            party_ledger=self.party_a,
+            total_amount=Decimal("60000.00"),
+            status="POSTED",
+            created_by=self.user
+        )
+
+        forecast = AnalyticsEngine.forecast_sales(self.company, days=30)
+        self.assertIn("monthly_comparison", forecast)
+        mc = forecast["monthly_comparison"]
+
+        self.assertIn("current_month", mc)
+        self.assertIn("previous_month", mc)
+        self.assertIn("mom_comparison", mc)
+        self.assertIn("historical_months_series", mc)
+
+        self.assertEqual(mc["previous_month"]["total_sales"], 100000.0)
+        self.assertEqual(mc["current_month"]["mtd_actual_sales"], 60000.0)
+        self.assertGreaterEqual(mc["current_month"]["projected_month_total"], 60000.0)
+        self.assertIn(mc["mom_comparison"]["pace_status"], ["BEATING_LAST_MONTH", "PACING_BEHIND", "ON_PAR"])
+
+    def test_monthly_comparison_endpoint(self):
+        """API endpoint /api/v1/analytics/monthly-comparison/<cid>/ returns full benchmark structure."""
+        self.client.force_authenticate(user=self.user)
+        today = datetime.date.today()
+        Voucher.objects.create(
+            company=self.company,
+            voucher_number="INV-MC-API-01",
+            voucher_type="SALES",
+            voucher_date=today,
+            party_ledger=self.party_a,
+            total_amount=Decimal("25000.00"),
+            status="POSTED",
+            created_by=self.user
+        )
+
+        url = f"/api/v1/analytics/monthly-comparison/{self.company.id}/"
+        res = self.client.get(url, HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data["success"])
+        self.assertIn("current_month", data["data"])
+        self.assertIn("mom_comparison", data["data"])
+        self.assertIn("historical_months_series", data["data"])
+
+

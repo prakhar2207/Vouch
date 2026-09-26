@@ -58,6 +58,56 @@ export interface ActionableAlert {
   message: string;
 }
 
+export interface MonthlyComparisonResult {
+  current_month: {
+    month_name: string;
+    short_name: string;
+    days_in_month: number;
+    days_elapsed: number;
+    days_remaining: number;
+    mtd_actual_sales: number;
+    mtd_orders: number;
+    remaining_projected_sales: number;
+    projected_month_total: number;
+    completion_pct: number;
+    current_daily_run_rate: number;
+    projected_daily_run_rate: number;
+  };
+  previous_month: {
+    month_name: string;
+    total_sales: number;
+    order_count: number;
+    daily_average: number;
+  };
+  mom_comparison: {
+    absolute_change: number;
+    percentage_change: number;
+    pace_status: "BEATING_LAST_MONTH" | "PACING_BEHIND" | "ON_PAR" | "NO_PRIOR_MONTH";
+    required_daily_to_match_last_month: number;
+    summary: string;
+  };
+  yoy_comparison: {
+    available: boolean;
+    prior_year_month_name: string;
+    prior_year_sales: number;
+    percentage_change: number;
+    absolute_change: number;
+    summary: string;
+  };
+  historical_months_series: Array<{
+    month_key: string;
+    month_label: string;
+    short_name: string;
+    actual_sales: number;
+    projected_sales: number;
+    total_sales: number;
+    order_count: number;
+    is_current: boolean;
+    is_projected: boolean;
+    days_remaining?: number;
+  }>;
+}
+
 export interface SalesForecastResult {
   forecast_days: number;
   projected_total: number;
@@ -86,6 +136,7 @@ export interface SalesForecastResult {
     stock_health_ratio?: number;
     stock_constraint_applied?: boolean;
   };
+  monthly_comparison?: MonthlyComparisonResult;
 }
 
 export interface LocalDashboardResult {
@@ -697,6 +748,134 @@ export class LocalAnalyticsEngine {
       ? `Preliminary projection based on early history (${sampleSize} active selling days recorded).`
       : `${trend.summary} Confidence: ${confidence} | DOW Profile: Active | YoY Seasonality: ${hasYoyHistory ? 'Active' : 'Excluded'}.`;
 
+    // Month-over-Month & Historical Series
+    const curYear = anchorDate.getFullYear();
+    const curMonth = anchorDate.getMonth(); // 0-indexed
+    const daysInCurMonth = new Date(curYear, curMonth + 1, 0).getDate();
+    const daysElapsed = anchorDate.getDate();
+    const daysRemaining = Math.max(0, daysInCurMonth - daysElapsed);
+
+    let mtdSales = 0;
+    const curMonthKey = `${curYear}-${String(curMonth + 1).padStart(2, '0')}`;
+    for (const d of positiveDates) {
+      if (d.startsWith(curMonthKey) && d <= anchorDate.toISOString().slice(0, 10)) {
+        mtdSales += salesByDate[d] || 0;
+      }
+    }
+
+    let remainingForecast = 0;
+    for (const f of forecastList) {
+      if (f.date.startsWith(curMonthKey) && f.date > anchorDate.toISOString().slice(0, 10)) {
+        remainingForecast += f.projected_sales;
+      }
+    }
+    const projectedMonthTotal = Math.round((mtdSales + remainingForecast) * 100) / 100;
+
+    // Previous completed months
+    const historicalMonths: MonthlyComparisonResult["historical_months_series"] = [];
+    let lastMonthTotal = 0;
+    let lastMonthName = "";
+
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const fullMonthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+    for (let step = 5; step >= 1; step--) {
+      const pmDate = new Date(curYear, curMonth - step, 1);
+      const pmKey = `${pmDate.getFullYear()}-${String(pmDate.getMonth() + 1).padStart(2, '0')}`;
+      let mTotal = 0;
+      let mOrders = 0;
+      for (const d of positiveDates) {
+        if (d.startsWith(pmKey)) {
+          mTotal += salesByDate[d] || 0;
+          mOrders++;
+        }
+      }
+      const label = `${monthNames[pmDate.getMonth()]} ${pmDate.getFullYear()}`;
+      historicalMonths.push({
+        month_key: pmKey,
+        month_label: label,
+        short_name: monthNames[pmDate.getMonth()],
+        actual_sales: Math.round(mTotal * 100) / 100,
+        projected_sales: 0,
+        total_sales: Math.round(mTotal * 100) / 100,
+        order_count: mOrders,
+        is_current: false,
+        is_projected: false
+      });
+      if (step === 1) {
+        lastMonthTotal = mTotal;
+        lastMonthName = label;
+      }
+    }
+
+    historicalMonths.push({
+      month_key: curMonthKey,
+      month_label: `${monthNames[curMonth]} ${curYear} (Current)`,
+      short_name: monthNames[curMonth],
+      actual_sales: Math.round(mtdSales * 100) / 100,
+      projected_sales: Math.round(remainingForecast * 100) / 100,
+      total_sales: projectedMonthTotal,
+      order_count: 0,
+      is_current: true,
+      is_projected: false,
+      days_remaining: daysRemaining
+    });
+
+    const momAbs = lastMonthTotal > 0 ? Math.round((projectedMonthTotal - lastMonthTotal) * 100) / 100 : 0;
+    const momPct = lastMonthTotal > 0 ? Math.round(((projectedMonthTotal - lastMonthTotal) / lastMonthTotal) * 10000) / 100 : 0;
+    const paceStatus: "BEATING_LAST_MONTH" | "PACING_BEHIND" | "ON_PAR" | "NO_PRIOR_MONTH" = 
+      lastMonthTotal === 0 ? "NO_PRIOR_MONTH" : momPct > 1.5 ? "BEATING_LAST_MONTH" : momPct < -1.5 ? "PACING_BEHIND" : "ON_PAR";
+
+    const shortfall = Math.max(0, lastMonthTotal - mtdSales);
+    const requiredDaily = daysRemaining > 0 ? Math.round((shortfall / daysRemaining) * 100) / 100 : 0;
+
+    const momSummary = lastMonthTotal > 0
+      ? paceStatus === "BEATING_LAST_MONTH"
+        ? `On track to finish +${momPct}% ahead of ${lastMonthName} (+₹${momAbs.toLocaleString('en-IN')}).`
+        : paceStatus === "PACING_BEHIND"
+        ? `Pacing ${Math.abs(momPct)}% behind ${lastMonthName} (-₹${Math.abs(momAbs).toLocaleString('en-IN')}).`
+        : `Tracking on par with ${lastMonthName} (~0% variance).`
+      : "No previous month transactions found for MoM comparison.";
+
+    const monthlyComparison: MonthlyComparisonResult = {
+      current_month: {
+        month_name: `${fullMonthNames[curMonth]} ${curYear}`,
+        short_name: monthNames[curMonth],
+        days_in_month: daysInCurMonth,
+        days_elapsed: daysElapsed,
+        days_remaining: daysRemaining,
+        mtd_actual_sales: Math.round(mtdSales * 100) / 100,
+        mtd_orders: 0,
+        remaining_projected_sales: Math.round(remainingForecast * 100) / 100,
+        projected_month_total: projectedMonthTotal,
+        completion_pct: projectedMonthTotal > 0 ? Math.round((mtdSales / projectedMonthTotal) * 1000) / 10 : 0,
+        current_daily_run_rate: Math.round((mtdSales / Math.max(1, daysElapsed)) * 100) / 100,
+        projected_daily_run_rate: daysRemaining > 0 ? Math.round((remainingForecast / daysRemaining) * 100) / 100 : 0
+      },
+      previous_month: {
+        month_name: lastMonthName || "Previous Month",
+        total_sales: Math.round(lastMonthTotal * 100) / 100,
+        order_count: 0,
+        daily_average: Math.round((lastMonthTotal / 30) * 100) / 100
+      },
+      mom_comparison: {
+        absolute_change: momAbs,
+        percentage_change: momPct,
+        pace_status: paceStatus,
+        required_daily_to_match_last_month: requiredDaily,
+        summary: momSummary
+      },
+      yoy_comparison: {
+        available: false,
+        prior_year_month_name: "",
+        prior_year_sales: 0,
+        percentage_change: 0,
+        absolute_change: 0,
+        summary: hasYoyHistory ? "Prior year local sync data limited." : "Past-year record not available (< 1 year history); annual YoY comparison excluded."
+      },
+      historical_months_series: historicalMonths
+    };
+
     return {
       forecast_days: days,
       projected_total: Math.round(projectedTotal * 100) / 100,
@@ -720,6 +899,7 @@ export class LocalAnalyticsEngine {
         stock_health_ratio: 1.0,
         stock_constraint_applied: false,
       },
+      monthly_comparison: monthlyComparison
     };
   }
 

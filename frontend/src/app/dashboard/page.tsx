@@ -7,10 +7,13 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
+  Legend,
 } from "recharts";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken, isAuthenticated, getUser } from "@/utils/auth";
@@ -117,6 +120,7 @@ export default function Dashboard() {
   const [forecast, setForecast] = useState<any>(null);
   const [healthReport, setHealthReport] = useState<any>(null);
   const [chartMode, setChartMode] = useState<'VELOCITY' | 'FORECAST'>('VELOCITY');
+  const [forecastSubView, setForecastSubView] = useState<'MONTHLY' | 'DAILY'>('MONTHLY');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [syncStatus, setSyncStatus] = useState<"IDLE" | "SYNCING" | "ERROR">("IDLE");
@@ -822,7 +826,7 @@ export default function Dashboard() {
             </div>
 
             {chartMode === 'FORECAST' ? (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between text-xs px-1 text-muted-foreground font-sans">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span>Projected: <span className="font-bold text-foreground font-mono">₹{(forecast?.projected_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></span>
@@ -832,76 +836,260 @@ export default function Dashboard() {
                       </span>
                     )}
                   </div>
-                  <div>
-                    Daily Avg: <span className="font-bold text-foreground font-mono">₹{(forecast?.projected_daily_average || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  <div className="flex items-center gap-2">
+                    {/* Sub-view toggle */}
+                    <div className="flex items-center bg-muted/60 p-0.5 rounded-md border border-border/40 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setForecastSubView('MONTHLY')}
+                        className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                          forecastSubView === 'MONTHLY'
+                            ? 'bg-card text-foreground shadow-2xs font-semibold'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        Monthly Benchmark
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setForecastSubView('DAILY')}
+                        className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                          forecastSubView === 'DAILY'
+                            ? 'bg-card text-foreground shadow-2xs font-semibold'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        30-Day Curve
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                <div className="h-48 w-full pt-1">
-                  {forecast?.daily_forecast && forecast.daily_forecast.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={forecast.daily_forecast} margin={{ top: 10, right: 15, left: -10, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="forecastGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.35} />
-                            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
-                        <XAxis 
-                          dataKey="date" 
-                          stroke="currentColor" 
-                          className="text-muted-foreground" 
-                          fontSize={11}
-                          tickLine={false}
-                          axisLine={false}
-                          tickMargin={8}
-                          minTickGap={16}
-                          tickFormatter={formatChartDate}
-                        />
-                        <YAxis 
-                          stroke="currentColor" 
-                          className="text-muted-foreground" 
-                          fontSize={11}
-                          tickLine={false}
-                          axisLine={false}
-                          tickFormatter={formatCurrencyShort}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: "var(--card)",
-                            borderColor: "var(--border)",
-                            borderRadius: "12px",
-                            boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
-                            fontSize: "12px",
-                          }}
-                          labelFormatter={(label: any) => {
-                            try {
-                              const d = new Date(label);
-                              if (!isNaN(d.getTime())) {
-                                return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-                              }
-                            } catch {}
-                            return label;
-                          }}
-                          formatter={(val: any) => [`₹${Number(val).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`, "Projected Sales"]}
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="projected_sales"
-                          stroke="#8b5cf6"
-                          strokeWidth={2}
-                          fillOpacity={1}
-                          fill="url(#forecastGrad)"
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                      No sales data available for projection.
+                {forecastSubView === 'MONTHLY' && forecast?.monthly_comparison && (
+                  <div className="space-y-2.5">
+                    {/* Monthly Benchmark KPI Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-muted/30 border border-border/40 p-2.5 rounded-xl">
+                      {/* Present Month */}
+                      <div className="space-y-1">
+                        <div className="text-[11px] text-muted-foreground font-medium flex items-center justify-between">
+                          <span>{forecast.monthly_comparison.current_month.month_name}</span>
+                          <span className="text-[10px] font-mono text-purple-400 font-semibold">
+                            {forecast.monthly_comparison.current_month.completion_pct}% Achieved
+                          </span>
+                        </div>
+                        <div className="text-base font-bold font-mono text-foreground">
+                          ₹{forecast.monthly_comparison.current_month.projected_month_total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground flex items-center justify-between">
+                          <span>MTD: <strong className="text-foreground">₹{formatCurrencyShort(forecast.monthly_comparison.current_month.mtd_actual_sales)}</strong></span>
+                          <span>+ Forecast: <strong className="text-purple-400">₹{formatCurrencyShort(forecast.monthly_comparison.current_month.remaining_projected_sales)}</strong></span>
+                        </div>
+                        {/* Progress Bar */}
+                        <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden flex">
+                          <div 
+                            className="bg-blue-500 h-full transition-all duration-300"
+                            style={{ width: `${Math.min(100, forecast.monthly_comparison.current_month.completion_pct)}%` }}
+                          />
+                          <div 
+                            className="bg-purple-500/60 h-full transition-all duration-300"
+                            style={{ width: `${Math.max(0, 100 - forecast.monthly_comparison.current_month.completion_pct)}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* vs Last Month (MoM) */}
+                      <div className="space-y-1 border-t sm:border-t-0 sm:border-l border-border/40 pt-2 sm:pt-0 sm:pl-3">
+                        <div className="text-[11px] text-muted-foreground font-medium flex items-center justify-between">
+                          <span>vs Last Month ({forecast.monthly_comparison.previous_month.short_name || 'M-1'})</span>
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
+                            forecast.monthly_comparison.mom_comparison.pace_status === 'BEATING_LAST_MONTH'
+                              ? 'bg-emerald-500/10 text-emerald-500'
+                              : forecast.monthly_comparison.mom_comparison.pace_status === 'PACING_BEHIND'
+                              ? 'bg-amber-500/10 text-amber-500'
+                              : 'bg-muted text-muted-foreground'
+                          }`}>
+                            {forecast.monthly_comparison.mom_comparison.percentage_change >= 0 ? '+' : ''}
+                            {forecast.monthly_comparison.mom_comparison.percentage_change}%
+                          </span>
+                        </div>
+                        <div className="text-sm font-semibold font-mono text-foreground">
+                          Last: ₹{(forecast.monthly_comparison.previous_month.total_sales || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground truncate" title={forecast.monthly_comparison.mom_comparison.summary}>
+                          {forecast.monthly_comparison.mom_comparison.summary}
+                        </div>
+                        {forecast.monthly_comparison.mom_comparison.required_daily_to_match_last_month > 0 && (
+                          <div className="text-[10px] text-muted-foreground">
+                            Target: <strong className="text-foreground">₹{formatCurrencyShort(forecast.monthly_comparison.mom_comparison.required_daily_to_match_last_month)}/day</strong> needed ({forecast.monthly_comparison.current_month.days_remaining}d left)
+                          </div>
+                        )}
+                      </div>
+
+                      {/* YoY Benchmark */}
+                      <div className="space-y-1 border-t sm:border-t-0 sm:border-l border-border/40 pt-2 sm:pt-0 sm:pl-3">
+                        <div className="text-[11px] text-muted-foreground font-medium">
+                          Annual YoY Benchmark
+                        </div>
+                        {forecast.monthly_comparison.yoy_comparison?.available ? (
+                          <>
+                            <div className="text-sm font-semibold font-mono text-foreground flex items-center justify-between">
+                              <span>{forecast.monthly_comparison.yoy_comparison.prior_year_month_name}</span>
+                              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
+                                forecast.monthly_comparison.yoy_comparison.percentage_change >= 0
+                                  ? 'bg-emerald-500/10 text-emerald-500'
+                                  : 'bg-rose-500/10 text-rose-500'
+                              }`}>
+                                {forecast.monthly_comparison.yoy_comparison.percentage_change >= 0 ? '+' : ''}
+                                {forecast.monthly_comparison.yoy_comparison.percentage_change}%
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              Prior Year: ₹{(forecast.monthly_comparison.yoy_comparison.prior_year_sales || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            </div>
+                            <div className="text-[10px] text-emerald-500 dark:text-emerald-400 truncate">
+                              {forecast.monthly_comparison.yoy_comparison.summary}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-[11px] text-muted-foreground/80 pt-1">
+                            <span className="inline-block px-2 py-0.5 bg-muted rounded border border-border/40 text-[10px]">
+                              YoY Excluded (&lt; 1 yr history)
+                            </span>
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                              Annual seasonality requires &ge;1 yr past records.
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  )}
-                </div>
+
+                    {/* Comparative Multi-Month Bar Chart */}
+                    <div className="h-44 w-full pt-1">
+                      {forecast.monthly_comparison.historical_months_series && forecast.monthly_comparison.historical_months_series.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            data={forecast.monthly_comparison.historical_months_series}
+                            margin={{ top: 10, right: 15, left: -10, bottom: 0 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
+                            <XAxis
+                              dataKey="short_name"
+                              stroke="currentColor"
+                              className="text-muted-foreground"
+                              fontSize={11}
+                              tickLine={false}
+                              axisLine={false}
+                            />
+                            <YAxis
+                              stroke="currentColor"
+                              className="text-muted-foreground"
+                              fontSize={11}
+                              tickLine={false}
+                              axisLine={false}
+                              tickFormatter={formatCurrencyShort}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: "var(--card)",
+                                borderColor: "var(--border)",
+                                borderRadius: "12px",
+                                boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
+                                fontSize: "12px",
+                              }}
+                              formatter={(val: any, name?: any) => [
+                                `₹${Number(val).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
+                                name === "actual_sales" ? "Actual Sales" : "Forecasted Sales"
+                              ]}
+                              labelFormatter={(label: any, items?: any) => {
+                                const item = (items as any)?.[0]?.payload;
+                                return item ? item.month_label : label;
+                              }}
+                            />
+                            <Legend
+                              wrapperStyle={{ fontSize: "11px", paddingTop: "4px" }}
+                              formatter={(value) => value === "actual_sales" ? "Actual Sales" : "Forecasted Sales"}
+                            />
+                            <Bar dataKey="actual_sales" stackId="monthStack" fill="#3b82f6" radius={[0, 0, 0, 0]} />
+                            <Bar dataKey="projected_sales" stackId="monthStack" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                          No monthly comparison data available.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* 30-Day Curve Area Chart */}
+                {forecastSubView === 'DAILY' && (
+                  <div className="h-48 w-full pt-1">
+                    {forecast?.daily_forecast && forecast.daily_forecast.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={forecast.daily_forecast} margin={{ top: 10, right: 15, left: -10, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="forecastGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.35} />
+                              <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
+                          <XAxis 
+                            dataKey="date" 
+                            stroke="currentColor" 
+                            className="text-muted-foreground" 
+                            fontSize={11}
+                            tickLine={false}
+                            axisLine={false}
+                            tickMargin={8}
+                            minTickGap={16}
+                            tickFormatter={formatChartDate}
+                          />
+                          <YAxis 
+                            stroke="currentColor" 
+                            className="text-muted-foreground" 
+                            fontSize={11}
+                            tickLine={false}
+                            axisLine={false}
+                            tickFormatter={formatCurrencyShort}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: "var(--card)",
+                              borderColor: "var(--border)",
+                              borderRadius: "12px",
+                              boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
+                              fontSize: "12px",
+                            }}
+                            labelFormatter={(label: any) => {
+                              try {
+                                const d = new Date(label);
+                                if (!isNaN(d.getTime())) {
+                                  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                                }
+                              } catch {}
+                              return label;
+                            }}
+                            formatter={(val: any) => [`₹${Number(val).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`, "Projected Sales"]}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="projected_sales"
+                            stroke="#8b5cf6"
+                            strokeWidth={2}
+                            fillOpacity={1}
+                            fill="url(#forecastGrad)"
+                          />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                        No sales data available for projection.
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {forecast?.trend_summary && (
                   <div className="text-[11px] text-muted-foreground bg-muted/40 px-3 py-1.5 rounded-lg border border-border/40 flex items-center gap-1.5">
