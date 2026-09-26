@@ -414,6 +414,7 @@ export default function PurchaseOrderDraftModal({
                     <tr className="bg-muted/40 border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
                       <th className="py-2.5 px-3 w-10 text-center">#</th>
                       <th className="py-2.5 px-3">Item Description</th>
+                      <th className="py-2.5 px-3">Brand</th>
                       <th className="py-2.5 px-3">Category</th>
                       <th className="py-2.5 px-3 text-right">Current Stock</th>
                       <th className="py-2.5 px-3 text-center w-36">Order Quantity</th>
@@ -425,7 +426,7 @@ export default function PurchaseOrderDraftModal({
                   <tbody className="divide-y divide-border/30">
                     {items.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="py-8 text-center text-xs text-muted-foreground">
+                        <td colSpan={9} className="py-8 text-center text-xs text-muted-foreground">
                           No items selected for this purchase order. Select items from the Low-Stock Reorder hub.
                         </td>
                       </tr>
@@ -447,12 +448,20 @@ export default function PurchaseOrderDraftModal({
                                 )}
                               </div>
                               <div className="text-[10px] text-muted-foreground font-mono flex items-center gap-2 mt-0.5">
-                                {it.brand && <span>Brand: {it.brand}</span>}
                                 {it.sku && <span>SKU: {it.sku}</span>}
                                 {it.last_supplier && it.last_supplier !== "Catalog Master" && (
                                   <span className="text-blue-500">Last: {it.last_supplier}</span>
                                 )}
                               </div>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {it.brand ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-primary/10 text-primary border border-primary/20 whitespace-nowrap">
+                                  {it.brand}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground/50 italic font-mono text-[11px]">—</span>
+                              )}
                             </td>
                             <td className="py-2.5 px-3 text-muted-foreground">
                               {it.category_name || "General"}
@@ -536,7 +545,7 @@ export default function PurchaseOrderDraftModal({
                   {items.length > 0 && (
                     <tfoot>
                       <tr className="bg-muted/30 border-t-2 border-border/80 font-bold">
-                        <td colSpan={3} className="py-3 px-3 text-foreground uppercase text-[11px] tracking-wider">
+                        <td colSpan={4} className="py-3 px-3 text-foreground uppercase text-[11px] tracking-wider">
                           Total Summary ({items.length} Unique Items)
                         </td>
                         <td className="py-3 px-3 text-right font-mono text-xs text-muted-foreground">

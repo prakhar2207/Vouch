@@ -23,6 +23,7 @@ import { LocalAnalyticsEngine } from "@/lib/analytics/analytics-engine";
 import { useToast } from "@/context/ToastContext";
 import PurchaseOrderDraftModal, { POOrderItem } from "@/components/modals/PurchaseOrderDraftModal";
 import ItemHistoryModal from "@/components/modals/ItemHistoryModal";
+import MassMinStockModal from "@/components/modals/MassMinStockModal";
 import {
   TrendingUp,
   Sparkles,
@@ -50,6 +51,10 @@ import {
   ExternalLink,
   ChevronRight,
   TrendingDown,
+  Sliders,
+  Download,
+  Archive,
+  Activity,
 } from "lucide-react";
 
 function formatCurrencyShort(val: number): string {
@@ -96,8 +101,19 @@ function AnalyticsHubContent() {
   const [selectedReorderIds, setSelectedReorderIds] = useState<Set<string>>(new Set());
   const [orderQuantities, setOrderQuantities] = useState<Record<string, number>>({});
   const [bulkQuantityInput, setBulkQuantityInput] = useState<number>(10);
-  const [isPoModalOpen, setIsPoModalOpen] = useState<boolean>(false);
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<any>(null);
+  const [isPoModalOpen, setIsPoModalOpen] = useState<boolean>(false);
+
+  // Brand & Sub-View Filter States (Mention Brand & Deadstock / Sitting on Benches)
+  const [inventoryBrandFilter, setInventoryBrandFilter] = useState<string>("ALL");
+  const [inventorySubView, setInventorySubView] = useState<"reorder" | "deadstock">("reorder");
+  const [deadstockAgingFilter, setDeadstockAgingFilter] = useState<"all" | "dormant" | "90" | "60" | "30">("all");
+
+  // Mass-Wise Minimum Required Stock State
+  const [massMinStockInput, setMassMinStockInput] = useState<number>(10);
+  const [isMassMinStockModalOpen, setIsMassMinStockModalOpen] = useState<boolean>(false);
+  const [massMinStockScope, setMassMinStockScope] = useState<"selected" | "category" | "all">("selected");
+  const [updatingMinStock, setUpdatingMinStock] = useState<boolean>(false);
 
   const fetchInventoryAnalytics = async (cid?: string, catId?: string) => {
     const targetCid = cid || effectiveCompanyId || activeCompanyId;
@@ -255,9 +271,32 @@ function AnalyticsHubContent() {
     }
   };
 
+  // Unique brand options across both reorder items and deadstock items
+  const availableBrands = useMemo(() => {
+    const brandsSet = new Set<string>();
+    inventoryAnalytics?.reorder_items?.forEach((it: any) => {
+      if (it.brand && it.brand.trim()) brandsSet.add(it.brand.trim());
+    });
+    inventoryAnalytics?.deadstock_items?.forEach((it: any) => {
+      if (it.brand && it.brand.trim()) brandsSet.add(it.brand.trim());
+    });
+    return Array.from(brandsSet).sort();
+  }, [inventoryAnalytics?.reorder_items, inventoryAnalytics?.deadstock_items]);
+
+  const currentCategoryName = useMemo(() => {
+    if (!inventoryCategoryFilter || inventoryCategoryFilter === "ALL") return "All Categories";
+    const cat = inventoryAnalytics?.categories?.find((c: any) => c.id === inventoryCategoryFilter);
+    return cat ? cat.name : "Category";
+  }, [inventoryAnalytics?.categories, inventoryCategoryFilter]);
+
   const filteredReorderItems = useMemo(() => {
     if (!inventoryAnalytics?.reorder_items) return [];
     let list: any[] = inventoryAnalytics.reorder_items;
+    if (inventoryBrandFilter && inventoryBrandFilter !== "ALL") {
+      list = list.filter(
+        (it: any) => (it.brand || "").trim().toLowerCase() === inventoryBrandFilter.trim().toLowerCase()
+      );
+    }
     if (inventorySearch.trim()) {
       const q = inventorySearch.toLowerCase();
       list = list.filter(
@@ -270,7 +309,145 @@ function AnalyticsHubContent() {
       );
     }
     return list;
-  }, [inventoryAnalytics?.reorder_items, inventorySearch]);
+  }, [inventoryAnalytics?.reorder_items, inventoryBrandFilter, inventorySearch]);
+
+  // Filtered Sitting on Benches / Slow-Moving (Deadstock) Items
+  const filteredDeadstockItems = useMemo(() => {
+    if (!inventoryAnalytics?.deadstock_items) return [];
+    let list: any[] = inventoryAnalytics.deadstock_items;
+    if (inventoryBrandFilter && inventoryBrandFilter !== "ALL") {
+      list = list.filter(
+        (it: any) => (it.brand || "").trim().toLowerCase() === inventoryBrandFilter.trim().toLowerCase()
+      );
+    }
+    if (deadstockAgingFilter !== "all") {
+      if (deadstockAgingFilter === "dormant") {
+        list = list.filter((it: any) => it.status === "DORMANT");
+      } else if (deadstockAgingFilter === "90") {
+        list = list.filter((it: any) => it.status === "CRITICAL_DEADSTOCK" || it.days_idle >= 90);
+      } else if (deadstockAgingFilter === "60") {
+        list = list.filter((it: any) => it.days_idle >= 60);
+      } else if (deadstockAgingFilter === "30") {
+        list = list.filter((it: any) => it.days_idle >= 30);
+      }
+    }
+    if (inventorySearch.trim()) {
+      const q = inventorySearch.toLowerCase();
+      list = list.filter(
+        (it: any) =>
+          it.name?.toLowerCase().includes(q) ||
+          it.brand?.toLowerCase().includes(q) ||
+          it.sku?.toLowerCase().includes(q) ||
+          it.category_name?.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [inventoryAnalytics?.deadstock_items, inventoryBrandFilter, deadstockAgingFilter, inventorySearch]);
+
+  // Mass Min Stock Update Handler
+  const handleApplyMassMinStock = async () => {
+    const targetCid = effectiveCompanyId || activeCompanyId;
+    if (!targetCid) {
+      toast.error("Company not identified");
+      return;
+    }
+    const val = Number(massMinStockInput);
+    if (isNaN(val) || val < 0) {
+      toast.error("Please enter a valid minimum required quantity (0 or greater)");
+      return;
+    }
+
+    if (massMinStockScope === "selected" && selectedReorderIds.size === 0) {
+      toast.error("No items selected. Select items from the table or choose category/catalog scope.");
+      return;
+    }
+
+    setUpdatingMinStock(true);
+    try {
+      const token = getAccessToken();
+      const payload: any = {
+        min_stock_level: val,
+      };
+
+      if (massMinStockScope === "selected") {
+        payload.product_ids = Array.from(selectedReorderIds);
+      } else if (massMinStockScope === "category") {
+        payload.category_id = inventoryCategoryFilter !== "ALL" ? inventoryCategoryFilter : null;
+        if (!payload.category_id) {
+          payload.apply_all = true;
+        }
+      } else {
+        payload.apply_all = true;
+      }
+
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/inventory/bulk-min-stock/${targetCid}/`,
+        payload,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      if (res.data?.success) {
+        toast.success(res.data.message || `Updated minimum stock to ${val} successfully`);
+        setIsMassMinStockModalOpen(false);
+        fetchInventoryAnalytics(targetCid, inventoryCategoryFilter);
+      } else {
+        toast.error(res.data?.error || "Failed to update minimum stock");
+      }
+    } catch (err: any) {
+      console.error("Bulk min stock update error:", err);
+      toast.error(err.response?.data?.error || "Error applying minimum stock mass-wise");
+    } finally {
+      setUpdatingMinStock(false);
+    }
+  };
+
+  // Export Deadstock Report CSV
+  const handleExportDeadstockCsv = () => {
+    const list = filteredDeadstockItems;
+    if (list.length === 0) {
+      toast.error("No deadstock items to export");
+      return;
+    }
+    const headers = [
+      "S.No",
+      "Item Name",
+      "Brand",
+      "SKU",
+      "Category",
+      "Units On Bench",
+      "Unit Cost (INR)",
+      "Locked Capital (INR)",
+      "MRP (INR)",
+      "Days Idle",
+      "Last Activity",
+      "Status"
+    ];
+    const rows = list.map((it: any, idx: number) => [
+      idx + 1,
+      `"${(it.name || "").replace(/"/g, '""')}"`,
+      `"${(it.brand || "").replace(/"/g, '""')}"`,
+      `"${(it.sku || "").replace(/"/g, '""')}"`,
+      `"${(it.category_name || "").replace(/"/g, '""')}"`,
+      it.current_stock,
+      (it.purchase_price || 0).toFixed(2),
+      (it.locked_capital || 0).toFixed(2),
+      (it.selling_price || 0).toFixed(2),
+      it.days_idle,
+      `"${it.last_sale_date ? `Last Sold: ${it.last_sale_date}` : (it.last_purchase_date ? `Purchased: ${it.last_purchase_date}` : 'None')}"`,
+      `"${it.status_label || it.status}"`
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," +
+      [`# SLOW-MOVING & DEADSTOCK INVENTORY REPORT (SITTING ON BENCHES)`, `# Company: ${activeCompany?.name || 'Company'}`, `# Date: ${new Date().toISOString().split('T')[0]}`].join("\n") +
+      "\n\n" + [headers.join(","), ...rows.map((r: any) => r.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Deadstock_Sitting_On_Benches_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success("Deadstock inventory report downloaded successfully");
+  };
 
   const handleToggleSelect = (productId: string) => {
     setSelectedReorderIds((prev) => {
@@ -1063,35 +1240,53 @@ function AnalyticsHubContent() {
               </div>
             </div>
 
-            {/* 3. Smart Low-Stock Reorder Intelligence & Purchase Order Draft Hub */}
+            {/* 3. Inventory Intelligence Hub: Low-Stock Reorders & Sitting on Benches (Deadstock) */}
             <div className="bg-card border border-border/50 rounded-xl p-4 sm:p-5 shadow-2xs space-y-4">
-              {/* Header with Category Filter, Search and Refresh */}
+              {/* Header with Sub-View Switcher & Filter Controls */}
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-border/40 pb-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="p-1.5 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400">
-                      <AlertTriangle className="w-4 h-4" />
+                {/* Left: View Switcher (Reorder vs Sitting on Benches) */}
+                <div className="flex flex-wrap items-center gap-1.5 p-1 bg-muted/60 rounded-xl border border-border/70">
+                  <button
+                    type="button"
+                    onClick={() => setInventorySubView("reorder")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                      inventorySubView === "reorder"
+                        ? "bg-card text-foreground shadow-xs border border-border/60"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Low-Stock Reorders</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 font-mono font-bold">
+                      {filteredReorderItems.length}
                     </span>
-                    <h3 className="text-sm sm:text-base font-bold text-foreground">
-                      Smart Low-Stock Reorder Intelligence & PO Hub
-                    </h3>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                      High Velocity Only
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setInventorySubView("deadstock")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                      inventorySubView === "deadstock"
+                        ? "bg-card text-foreground shadow-xs border border-border/60"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Clock className="w-3.5 h-3.5 text-rose-500" />
+                    <span>Sitting on Benches / Slow-Moving</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-rose-500/10 text-rose-600 dark:text-rose-400 font-mono font-bold">
+                      {filteredDeadstockItems.length}
                     </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Only shows items with <strong>verified sales demand</strong> that are critically short or out of stock (Stock ≤ 10). Deadstock is automatically filtered out.
-                  </p>
+                  </button>
                 </div>
 
-                {/* Filter and Search Bar */}
+                {/* Right: Category, Brand & Search Filters */}
                 <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
                   {/* Category Dropdown */}
                   <div className="relative w-full sm:w-auto">
                     <select
                       value={inventoryCategoryFilter}
                       onChange={(e) => handleCategoryFilterChange(e.target.value)}
-                      className="w-full sm:w-44 bg-muted/60 border border-border/70 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
+                      className="w-full sm:w-40 bg-muted/60 border border-border/70 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
                     >
                       <option value="ALL">All Categories</option>
                       {inventoryAnalytics?.categories?.map((cat: any) => (
@@ -1102,12 +1297,28 @@ function AnalyticsHubContent() {
                     </select>
                   </div>
 
+                  {/* Brand Dropdown (Mention Brand Here As Well!) */}
+                  <div className="relative w-full sm:w-auto">
+                    <select
+                      value={inventoryBrandFilter}
+                      onChange={(e) => setInventoryBrandFilter(e.target.value)}
+                      className="w-full sm:w-36 bg-muted/60 border border-border/70 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
+                    >
+                      <option value="ALL">All Brands ({availableBrands.length})</option>
+                      {availableBrands.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   {/* Search Input */}
-                  <div className="relative w-full sm:w-56">
+                  <div className="relative w-full sm:w-48">
                     <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-2.5" />
                     <input
                       type="text"
-                      placeholder="Search item, size, brand..."
+                      placeholder="Search item, brand, SKU..."
                       value={inventorySearch}
                       onChange={(e) => setInventorySearch(e.target.value)}
                       className="w-full bg-muted/60 border border-border/70 text-foreground pl-8 pr-3 py-1.5 rounded-xl outline-none focus:ring-2 focus:ring-primary/40 text-xs"
@@ -1120,258 +1331,655 @@ function AnalyticsHubContent() {
                     onClick={() => fetchInventoryAnalytics(effectiveCompanyId, inventoryCategoryFilter)}
                     disabled={loadingInventoryAnalytics}
                     className="p-2 rounded-xl bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground border border-border/70 transition-colors cursor-pointer shrink-0"
-                    title="Refresh Reorder Intelligence"
+                    title="Refresh Inventory Intelligence"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${loadingInventoryAnalytics ? "animate-spin text-blue-500" : ""}`} />
                   </button>
                 </div>
               </div>
 
-              {/* Action Toolbar: Select All, Bulk Quantity Setter & Draft PO Trigger */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 bg-muted/30 border border-border/40 rounded-xl">
-                {/* Left: Select All & Bulk Quantity Setter */}
-                <div className="flex flex-wrap items-center gap-3">
-                  {/* Select All Toggle */}
-                  <button
-                    type="button"
-                    onClick={handleSelectAllToggle}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-card hover:bg-muted text-foreground border border-border/60 transition-colors cursor-pointer shadow-2xs"
-                  >
-                    {isAllSelected ? (
-                      <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                    ) : (
-                      <Square className="w-3.5 h-3.5 text-muted-foreground" />
+              {/* ============================================================ */}
+              {/* SUBVIEW 1: SMART LOW-STOCK REORDER INTELLIGENCE & PO HUB     */}
+              {/* ============================================================ */}
+              {inventorySubView === "reorder" && (
+                <div className="space-y-4 animate-in fade-in duration-150">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                    <p className="text-muted-foreground">
+                      Only shows items with <strong>verified sales demand</strong> that are critically short or below minimum required stock (Min Stock). Deadstock is automatically filtered out.
+                    </p>
+                    {inventoryBrandFilter !== "ALL" && (
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 text-[11px] font-semibold self-start sm:self-auto">
+                        <span>Brand Filter:</span>
+                        <span className="font-bold">{inventoryBrandFilter}</span>
+                        <button
+                          type="button"
+                          onClick={() => setInventoryBrandFilter("ALL")}
+                          className="hover:opacity-75 cursor-pointer ml-0.5"
+                          title="Clear brand filter"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     )}
-                    <span>{isAllSelected ? "Deselect All" : `Select All (${filteredReorderItems.length})`}</span>
-                  </button>
-
-                  {/* Bulk Quantity Setter */}
-                  <div className="flex items-center gap-1.5 bg-card px-2.5 py-1 rounded-lg border border-border/60 shadow-2xs">
-                    <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
-                      Set all selected to:
-                    </span>
-                    <input
-                      type="number"
-                      min="1"
-                      value={bulkQuantityInput}
-                      onChange={(e) => setBulkQuantityInput(Math.max(1, parseInt(e.target.value) || 1))}
-                      className="w-12 bg-muted border border-border/70 rounded px-1.5 py-0.5 text-xs font-mono font-bold text-center text-foreground outline-none focus:ring-1 focus:ring-primary"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleApplyBulkQuantity}
-                      className="px-2 py-0.5 rounded text-[11px] font-bold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer"
-                    >
-                      Apply
-                    </button>
-                  </div>
-                </div>
-
-                {/* Right: Selected Counter & Draft PO Trigger */}
-                <div className="flex items-center justify-between md:justify-end gap-3 w-full md:w-auto">
-                  <div className="text-right text-xs">
-                    <div className="font-semibold text-foreground">
-                      <span className="text-blue-600 dark:text-blue-400 font-bold">{selectedItemsData.count}</span> items ({selectedItemsData.units} units)
-                    </div>
-                    <div className="text-[11px] text-muted-foreground font-mono">
-                      Est. ₹{selectedItemsData.cost.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                    </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleOpenPoModal}
-                    disabled={selectedReorderIds.size === 0}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:pointer-events-none text-white transition-all shadow-sm cursor-pointer whitespace-nowrap"
-                  >
-                    <ShoppingCart className="w-4 h-4" />
-                    <span>Draft Purchase Order ({selectedItemsData.count})</span>
-                  </button>
-                </div>
-              </div>
+                  {/* Action Toolbar: Select All, Bulk Quantity, Mass Min Stock & Draft PO Trigger */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 bg-muted/30 border border-border/40 rounded-xl">
+                    {/* Left: Select All, Bulk Order Qty & Mass Min Stock */}
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      {/* Select All Toggle */}
+                      <button
+                        type="button"
+                        onClick={handleSelectAllToggle}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-card hover:bg-muted text-foreground border border-border/60 transition-colors cursor-pointer shadow-2xs"
+                      >
+                        {isAllSelected ? (
+                          <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                        ) : (
+                          <Square className="w-3.5 h-3.5 text-muted-foreground" />
+                        )}
+                        <span>{isAllSelected ? "Deselect All" : `Select All (${filteredReorderItems.length})`}</span>
+                      </button>
 
-              {/* Responsive Reorder Items Table */}
-              {loadingInventoryAnalytics ? (
-                <div className="py-12 text-center text-xs text-muted-foreground space-y-2">
-                  <RefreshCw className="w-5 h-5 animate-spin mx-auto text-blue-500" />
-                  <div>Analyzing item velocity and stock levels...</div>
-                </div>
-              ) : filteredReorderItems.length === 0 ? (
-                <div className="py-12 text-center text-xs text-muted-foreground space-y-1 bg-muted/10 rounded-xl border border-dashed border-border/60">
-                  <PackageCheck className="w-8 h-8 mx-auto text-emerald-500/70" />
-                  <div className="font-bold text-foreground text-sm">No Urgent Reorders Needed!</div>
-                  <p className="max-w-md mx-auto text-[11px]">
-                    All high-velocity fast-moving items currently have sufficient stock on hand. Low-priority deadstock is excluded.
-                  </p>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-border/60 overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="bg-muted/40 border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
-                          <th className="py-2.5 px-3 w-10 text-center">
-                            <input
-                              type="checkbox"
-                              checked={isAllSelected}
-                              onChange={handleSelectAllToggle}
-                              className="rounded border-border cursor-pointer"
-                            />
-                          </th>
-                          <th className="py-2.5 px-2 text-center">Urgency</th>
-                          <th className="py-2.5 px-3">Item / Size</th>
-                          <th className="py-2.5 px-3">Category</th>
-                          <th className="py-2.5 px-3 text-right">Current Stock</th>
-                          <th className="py-2.5 px-3 text-right">Sales Demand</th>
-                          <th className="py-2.5 px-3 text-right">Last Purchase</th>
-                          <th className="py-2.5 px-3 text-center w-36">Order Qty</th>
-                          <th className="py-2.5 px-3 text-right">Est. Total</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border/30">
-                        {filteredReorderItems.map((it: any) => {
-                          const isSelected = selectedReorderIds.has(it.product_id);
-                          const qty = orderQuantities[it.product_id] ?? it.suggested_qty ?? 5;
-                          const lineTotal = qty * (it.purchase_price || 0);
+                      {/* Bulk Quantity Setter */}
+                      <div className="flex items-center gap-1.5 bg-card px-2.5 py-1 rounded-lg border border-border/60 shadow-2xs">
+                        <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                          Set order qty:
+                        </span>
+                        <input
+                          type="number"
+                          min="1"
+                          value={bulkQuantityInput}
+                          onChange={(e) => setBulkQuantityInput(Math.max(1, parseInt(e.target.value) || 1))}
+                          className="w-12 bg-muted border border-border/70 rounded px-1.5 py-0.5 text-xs font-mono font-bold text-center text-foreground outline-none focus:ring-1 focus:ring-primary"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleApplyBulkQuantity}
+                          className="px-2 py-0.5 rounded text-[11px] font-bold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer"
+                        >
+                          Apply
+                        </button>
+                      </div>
 
-                          return (
-                            <tr
-                              key={it.product_id}
-                              className={`transition-colors ${
-                                isSelected ? "bg-blue-500/5 dark:bg-blue-500/10" : "hover:bg-muted/30"
-                              }`}
-                            >
-                              {/* Checkbox */}
-                              <td className="py-2.5 px-3 text-center">
+                      {/* Mass-Wise Minimum Required Stock Button */}
+                      <button
+                        type="button"
+                        onClick={() => setIsMassMinStockModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-card hover:bg-muted text-foreground border border-border/60 transition-colors cursor-pointer shadow-2xs"
+                        title="Configure minimum required quantity mass-wise across selected items, category, or catalog"
+                      >
+                        <Sliders className="w-3.5 h-3.5 text-blue-500" />
+                        <span>Set Min Stock (Mass)</span>
+                      </button>
+                    </div>
+
+                    {/* Right: Selected Counter & Draft PO Trigger */}
+                    <div className="flex items-center justify-between md:justify-end gap-3 w-full md:w-auto">
+                      <div className="text-right text-xs">
+                        <div className="font-semibold text-foreground">
+                          <span className="text-blue-600 dark:text-blue-400 font-bold">{selectedItemsData.count}</span> items ({selectedItemsData.units} units)
+                        </div>
+                        <div className="text-[11px] text-muted-foreground font-mono">
+                          Est. ₹{selectedItemsData.cost.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleOpenPoModal}
+                        disabled={selectedReorderIds.size === 0}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:pointer-events-none text-white transition-all shadow-sm cursor-pointer whitespace-nowrap"
+                      >
+                        <ShoppingCart className="w-4 h-4" />
+                        <span>Draft Purchase Order ({selectedItemsData.count})</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Responsive Reorder Items Table */}
+                  {loadingInventoryAnalytics ? (
+                    <div className="py-12 text-center text-xs text-muted-foreground space-y-2">
+                      <RefreshCw className="w-5 h-5 animate-spin mx-auto text-blue-500" />
+                      <div>Analyzing item velocity and stock levels...</div>
+                    </div>
+                  ) : filteredReorderItems.length === 0 ? (
+                    <div className="py-12 text-center text-xs text-muted-foreground space-y-1 bg-muted/10 rounded-xl border border-dashed border-border/60">
+                      <PackageCheck className="w-8 h-8 mx-auto text-emerald-500/70" />
+                      <div className="font-bold text-foreground text-sm">No Urgent Reorders Needed!</div>
+                      <p className="max-w-md mx-auto text-[11px]">
+                        All high-velocity fast-moving items currently have sufficient stock on hand. Low-priority deadstock is excluded.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-border/60 overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="bg-muted/40 border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
+                              <th className="py-2.5 px-3 w-10 text-center">
                                 <input
                                   type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => handleToggleSelect(it.product_id)}
+                                  checked={isAllSelected}
+                                  onChange={handleSelectAllToggle}
                                   className="rounded border-border cursor-pointer"
                                 />
-                              </td>
+                              </th>
+                              <th className="py-2.5 px-2 text-center">Urgency</th>
+                              <th className="py-2.5 px-3">Item / Size</th>
+                              <th className="py-2.5 px-3">Brand</th>
+                              <th className="py-2.5 px-3">Category</th>
+                              <th className="py-2.5 px-3 text-right">Min Req</th>
+                              <th className="py-2.5 px-3 text-right">Current Stock</th>
+                              <th className="py-2.5 px-3 text-right">Sales Demand</th>
+                              <th className="py-2.5 px-3 text-right">Last Purchase</th>
+                              <th className="py-2.5 px-3 text-center w-36">Order Qty</th>
+                              <th className="py-2.5 px-3 text-right">Est. Total</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border/30">
+                            {filteredReorderItems.map((it: any) => {
+                              const isSelected = selectedReorderIds.has(it.product_id);
+                              const qty = orderQuantities[it.product_id] ?? it.suggested_qty ?? 5;
+                              const lineTotal = qty * (it.purchase_price || 0);
 
-                              {/* Urgency Badge */}
-                              <td className="py-2.5 px-2 text-center">
-                                {it.urgency === "OUT_OF_STOCK" ? (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 whitespace-nowrap">
-                                    Out of Stock
-                                  </span>
-                                ) : it.urgency === "CRITICAL" ? (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 whitespace-nowrap">
-                                    Critical
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20 whitespace-nowrap">
-                                    Low Stock
-                                  </span>
-                                )}
-                              </td>
-
-                              {/* Item Description (Clickable to view history) */}
-                              <td className="py-2.5 px-3">
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedHistoryItem(it)}
-                                  className="text-left font-semibold text-foreground hover:text-blue-500 transition-colors cursor-pointer group flex items-center gap-1.5"
-                                  title="Click to view transaction history"
-                                >
-                                  <span>{it.name}</span>
-                                  <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 text-blue-500 transition-opacity" />
-                                </button>
-                                <div className="text-[10px] text-muted-foreground font-mono flex items-center gap-2 mt-0.5">
-                                  {it.brand && <span>Brand: {it.brand}</span>}
-                                  {it.sku && <span>SKU: {it.sku}</span>}
-                                </div>
-                              </td>
-
-                              {/* Category */}
-                              <td className="py-2.5 px-3 text-muted-foreground">
-                                {it.category_name || "General"}
-                              </td>
-
-                              {/* Current Stock */}
-                              <td className="py-2.5 px-3 text-right font-mono">
-                                <span
-                                  className={`font-bold ${
-                                    it.current_stock <= 0
-                                      ? "text-rose-600 dark:text-rose-400"
-                                      : it.current_stock <= 3
-                                      ? "text-amber-600 dark:text-amber-400"
-                                      : "text-foreground"
+                              return (
+                                <tr
+                                  key={it.product_id}
+                                  className={`transition-colors ${
+                                    isSelected ? "bg-blue-500/5 dark:bg-blue-500/10" : "hover:bg-muted/30"
                                   }`}
                                 >
-                                  {it.current_stock}
-                                </span>{" "}
-                                <span className="text-[10px] text-muted-foreground">{it.unit}</span>
-                              </td>
+                                  {/* Checkbox */}
+                                  <td className="py-2.5 px-3 text-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => handleToggleSelect(it.product_id)}
+                                      className="rounded border-border cursor-pointer"
+                                    />
+                                  </td>
 
-                              {/* Sales Demand */}
-                              <td className="py-2.5 px-3 text-right font-mono text-muted-foreground">
-                                <span className="font-semibold text-blue-600 dark:text-blue-400">
-                                  {it.invoices_count} inv
-                                </span>{" "}
-                                <span className="text-[10px]">({it.total_sold_qty} sold)</span>
-                              </td>
+                                  {/* Urgency Badge */}
+                                  <td className="py-2.5 px-2 text-center">
+                                    {it.urgency === "OUT_OF_STOCK" ? (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 whitespace-nowrap">
+                                        Out of Stock
+                                      </span>
+                                    ) : it.urgency === "CRITICAL" ? (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 whitespace-nowrap">
+                                        Critical
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20 whitespace-nowrap">
+                                        Low Stock
+                                      </span>
+                                    )}
+                                  </td>
 
-                              {/* Last Purchase Rate & Supplier */}
-                              <td className="py-2.5 px-3 text-right font-mono">
-                                <div className="font-semibold text-foreground">
+                                  {/* Item Description (Clickable to view history) */}
+                                  <td className="py-2.5 px-3">
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedHistoryItem(it)}
+                                      className="text-left font-semibold text-foreground hover:text-blue-500 transition-colors cursor-pointer group flex items-center gap-1.5"
+                                      title="Click to view transaction history"
+                                    >
+                                      <span>{it.name}</span>
+                                      <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 text-blue-500 transition-opacity" />
+                                    </button>
+                                    <div className="text-[10px] text-muted-foreground font-mono flex items-center gap-2 mt-0.5">
+                                      {it.sku && <span>SKU: {it.sku}</span>}
+                                    </div>
+                                  </td>
+
+                                  {/* Brand Column (Dedicated & Prominent) */}
+                                  <td className="py-2.5 px-3">
+                                    {it.brand ? (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-primary/10 text-primary border border-primary/20 whitespace-nowrap">
+                                        {it.brand}
+                                      </span>
+                                    ) : (
+                                      <span className="text-muted-foreground/50 italic font-mono text-[11px]">—</span>
+                                    )}
+                                  </td>
+
+                                  {/* Category */}
+                                  <td className="py-2.5 px-3 text-muted-foreground">
+                                    {it.category_name || "General"}
+                                  </td>
+
+                                  {/* Minimum Required Stock (Threshold) */}
+                                  <td className="py-2.5 px-3 text-right font-mono text-xs">
+                                    <span className="font-semibold text-foreground">
+                                      {it.min_required_qty ?? it.reorder_level ?? 10}
+                                    </span>
+                                    {it.has_custom_reorder && (
+                                      <span className="ml-1 text-[9px] font-bold px-1 py-0.2 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                                        Set
+                                      </span>
+                                    )}
+                                  </td>
+
+                                  {/* Current Stock */}
+                                  <td className="py-2.5 px-3 text-right font-mono">
+                                    <span
+                                      className={`font-bold ${
+                                        it.current_stock <= 0
+                                          ? "text-rose-600 dark:text-rose-400"
+                                          : it.current_stock <= 3
+                                          ? "text-amber-600 dark:text-amber-400"
+                                          : "text-foreground"
+                                      }`}
+                                    >
+                                      {it.current_stock}
+                                    </span>{" "}
+                                    <span className="text-[10px] text-muted-foreground">{it.unit}</span>
+                                  </td>
+
+                                  {/* Sales Demand */}
+                                  <td className="py-2.5 px-3 text-right font-mono text-muted-foreground">
+                                    <span className="font-semibold text-blue-600 dark:text-blue-400">
+                                      {it.invoices_count} inv
+                                    </span>{" "}
+                                    <span className="text-[10px]">({it.total_sold_qty} sold)</span>
+                                  </td>
+
+                                  {/* Last Purchase Rate & Supplier */}
+                                  <td className="py-2.5 px-3 text-right font-mono">
+                                    <div className="font-semibold text-foreground">
+                                      ₹{(it.purchase_price || 0).toLocaleString("en-IN", {
+                                        minimumFractionDigits: 2,
+                                        maximumFractionDigits: 2,
+                                      })}
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground truncate max-w-[120px] ml-auto">
+                                      {it.last_supplier || "Catalog"}
+                                    </div>
+                                  </td>
+
+                                  {/* Order Quantity Editor (Editable individual row and bulk) */}
+                                  <td className="py-2.5 px-3 text-center">
+                                    <div className="inline-flex items-center justify-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleItemQuantityChange(it.product_id, Math.max(1, qty - 1))}
+                                        className="w-5 h-5 rounded bg-muted hover:bg-muted/80 text-foreground flex items-center justify-center cursor-pointer transition-colors"
+                                        title="Decrease quantity"
+                                      >
+                                        <Minus className="w-2.5 h-2.5" />
+                                      </button>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        value={qty}
+                                        onChange={(e) =>
+                                          handleItemQuantityChange(it.product_id, Math.max(1, parseInt(e.target.value) || 1))
+                                        }
+                                        className="w-14 bg-card border border-border/80 rounded py-0.5 text-center font-mono font-bold text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
+                                      />
+                                      <span className="text-[10px] text-muted-foreground font-mono">{it.unit}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleItemQuantityChange(it.product_id, qty + 1)}
+                                        className="w-5 h-5 rounded bg-muted hover:bg-muted/80 text-foreground flex items-center justify-center cursor-pointer transition-colors"
+                                        title="Increase quantity"
+                                      >
+                                        <Plus className="w-2.5 h-2.5" />
+                                      </button>
+                                    </div>
+                                  </td>
+
+                                  {/* Line Total */}
+                                  <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
+                                    ₹{lineTotal.toLocaleString("en-IN", {
+                                      minimumFractionDigits: 2,
+                                      maximumFractionDigits: 2,
+                                    })}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ========================================================================= */}
+              {/* SUBVIEW 2: SITTING ON BENCHES / SLOW-MOVING (DEADSTOCK) INTELLIGENCE      */}
+              {/* ========================================================================= */}
+              {inventorySubView === "deadstock" && (
+                <div className="space-y-4 animate-in fade-in duration-150">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                    <p className="text-muted-foreground">
+                      Identifies items with <strong>physical stock on hand</strong> that have zero or low sales activity and have been sitting idle on benches/shelves. Pinpoints trapped working capital.
+                    </p>
+                    {inventoryBrandFilter !== "ALL" && (
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 text-[11px] font-semibold self-start sm:self-auto">
+                        <span>Brand Filter:</span>
+                        <span className="font-bold">{inventoryBrandFilter}</span>
+                        <button
+                          type="button"
+                          onClick={() => setInventoryBrandFilter("ALL")}
+                          className="hover:opacity-75 cursor-pointer ml-0.5"
+                          title="Clear brand filter"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Summary Metric Cards for Deadstock on Benches */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-3.5 bg-muted/20 border border-border/50 rounded-xl">
+                    <div className="space-y-0.5">
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
+                        Trapped Working Capital
+                      </div>
+                      <div className="text-lg sm:text-xl font-bold font-mono text-rose-600 dark:text-rose-400">
+                        ₹{(inventoryAnalytics?.deadstock_summary?.locked_capital || 0).toLocaleString("en-IN", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">
+                        Tied up on benches at purchase cost
+                      </div>
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
+                        Idle Physical Units
+                      </div>
+                      <div className="text-lg sm:text-xl font-bold font-mono text-foreground">
+                        {(inventoryAnalytics?.deadstock_summary?.total_units || 0).toLocaleString("en-IN")} units
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">
+                        Across {inventoryAnalytics?.deadstock_summary?.total_items || 0} slow-moving products
+                      </div>
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
+                        Never Sold (Dormant)
+                      </div>
+                      <div className="text-lg sm:text-xl font-bold font-mono text-purple-600 dark:text-purple-400">
+                        {inventoryAnalytics?.deadstock_summary?.dormant_count || 0} items
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">
+                        Zero sales invoices ever recorded
+                      </div>
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
+                        Critical Inactive (60d+)
+                      </div>
+                      <div className="text-lg sm:text-xl font-bold font-mono text-amber-600 dark:text-amber-400">
+                        {(inventoryAnalytics?.deadstock_summary?.critical_90_count || 0) +
+                          (inventoryAnalytics?.deadstock_summary?.stagnant_60_count || 0)}{" "}
+                        items
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">
+                        No movement in over 60 days
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Top Brands on Benches Quick Bar */}
+                  {inventoryAnalytics?.deadstock_summary?.by_brand &&
+                    inventoryAnalytics.deadstock_summary.by_brand.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2 p-2.5 bg-muted/15 border border-border/40 rounded-xl text-xs">
+                        <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
+                          Top Brands on Benches:
+                        </span>
+                        {inventoryAnalytics.deadstock_summary.by_brand.map((b: any) => (
+                          <button
+                            key={b.brand}
+                            type="button"
+                            onClick={() =>
+                              setInventoryBrandFilter(inventoryBrandFilter === b.brand ? "ALL" : b.brand)
+                            }
+                            className={`px-2.5 py-1 rounded-lg font-mono text-[11px] border transition-all cursor-pointer ${
+                              inventoryBrandFilter === b.brand
+                                ? "bg-primary text-primary-foreground border-primary font-bold shadow-2xs"
+                                : "bg-card hover:bg-muted text-foreground border-border/60 font-medium"
+                            }`}
+                          >
+                            <span>{b.brand}</span>: <span className="font-bold">₹{formatCurrencyShort(b.locked_capital)}</span>
+                          </button>
+                        ))}
+                        {inventoryBrandFilter !== "ALL" && (
+                          <button
+                            type="button"
+                            onClick={() => setInventoryBrandFilter("ALL")}
+                            className="text-[11px] text-muted-foreground hover:text-foreground underline ml-1 cursor-pointer font-medium"
+                          >
+                            Show All
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                  {/* Filter Toolbar: Aging Periods & Export CSV */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-muted/30 border border-border/40 rounded-xl">
+                    {/* Left: Aging Filters */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-semibold text-muted-foreground mr-1">
+                        Idle Period:
+                      </span>
+                      {[
+                        { key: "all", label: "All Idle (>30d)" },
+                        { key: "60", label: "60+ Days" },
+                        { key: "90", label: "90+ Days (Critical)" },
+                        { key: "dormant", label: "Never Sold (Dormant)" },
+                      ].map((f) => (
+                        <button
+                          key={f.key}
+                          type="button"
+                          onClick={() => setDeadstockAgingFilter(f.key as any)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                            deadstockAgingFilter === f.key
+                              ? "bg-primary text-primary-foreground border-primary shadow-2xs"
+                              : "bg-card hover:bg-muted text-muted-foreground hover:text-foreground border-border/60"
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Right: Item Count & Export CSV */}
+                    <div className="flex items-center gap-3">
+                      <div className="text-xs font-mono text-muted-foreground">
+                        Showing <span className="font-bold text-foreground">{filteredDeadstockItems.length}</span> items
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleExportDeadstockCsv}
+                        disabled={filteredDeadstockItems.length === 0}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-card hover:bg-muted text-foreground border border-border/60 transition-colors cursor-pointer shadow-2xs"
+                        title="Download deadstock report in clean CSV spreadsheet"
+                      >
+                        <Download className="w-3.5 h-3.5 text-blue-500" />
+                        <span>Export CSV</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Sitting on Benches Table */}
+                  {loadingInventoryAnalytics ? (
+                    <div className="py-12 text-center text-xs text-muted-foreground space-y-2">
+                      <RefreshCw className="w-5 h-5 animate-spin mx-auto text-blue-500" />
+                      <div>Scanning catalog for idle inventory on benches...</div>
+                    </div>
+                  ) : filteredDeadstockItems.length === 0 ? (
+                    <div className="py-12 text-center text-xs text-muted-foreground space-y-1 bg-muted/10 rounded-xl border border-dashed border-border/60">
+                      <PackageCheck className="w-8 h-8 mx-auto text-emerald-500/70" />
+                      <div className="font-bold text-foreground text-sm">No Deadstock Found!</div>
+                      <p className="max-w-md mx-auto text-[11px]">
+                        No stocked items match the selected idle period or brand criteria. All stocked items have active sales.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-border/60 overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="bg-muted/40 border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
+                              <th className="py-2.5 px-3 w-10 text-center">#</th>
+                              <th className="py-2.5 px-2 text-center">Status</th>
+                              <th className="py-2.5 px-3">Item / Size</th>
+                              <th className="py-2.5 px-3">Brand</th>
+                              <th className="py-2.5 px-3">Category</th>
+                              <th className="py-2.5 px-3 text-right">Units on Bench</th>
+                              <th className="py-2.5 px-3 text-right">Cost Rate</th>
+                              <th className="py-2.5 px-3 text-right">Locked Capital</th>
+                              <th className="py-2.5 px-3 text-right">Catalog MRP</th>
+                              <th className="py-2.5 px-3 text-center">Days Idle</th>
+                              <th className="py-2.5 px-3 text-right">Last Activity</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border/30">
+                            {filteredDeadstockItems.map((it: any, idx: number) => (
+                              <tr
+                                key={it.product_id}
+                                className="hover:bg-muted/30 transition-colors"
+                              >
+                                <td className="py-2.5 px-3 text-center font-mono text-[11px] text-muted-foreground">
+                                  {idx + 1}
+                                </td>
+
+                                {/* Status Badge */}
+                                <td className="py-2.5 px-2 text-center">
+                                  {it.status === "DORMANT" ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 whitespace-nowrap">
+                                      Never Sold
+                                    </span>
+                                  ) : it.status === "CRITICAL_DEADSTOCK" ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 whitespace-nowrap">
+                                      90+ Days
+                                    </span>
+                                  ) : it.status === "STAGNANT" ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 whitespace-nowrap">
+                                      60-90 Days
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20 whitespace-nowrap">
+                                      30-60 Days
+                                    </span>
+                                  )}
+                                </td>
+
+                                {/* Item Description */}
+                                <td className="py-2.5 px-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedHistoryItem(it)}
+                                    className="text-left font-semibold text-foreground hover:text-blue-500 transition-colors cursor-pointer group flex items-center gap-1.5"
+                                    title="Click to view transaction history"
+                                  >
+                                    <span>{it.name}</span>
+                                    <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 text-blue-500 transition-opacity" />
+                                  </button>
+                                  <div className="text-[10px] text-muted-foreground font-mono flex items-center gap-2 mt-0.5">
+                                    {it.sku && <span>SKU: {it.sku}</span>}
+                                  </div>
+                                </td>
+
+                                {/* Brand Column */}
+                                <td className="py-2.5 px-3">
+                                  {it.brand ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-primary/10 text-primary border border-primary/20 whitespace-nowrap">
+                                      {it.brand}
+                                    </span>
+                                  ) : (
+                                    <span className="text-muted-foreground/50 italic font-mono text-[11px]">—</span>
+                                  )}
+                                </td>
+
+                                {/* Category */}
+                                <td className="py-2.5 px-3 text-muted-foreground">
+                                  {it.category_name || "General"}
+                                </td>
+
+                                {/* Physical Units on Bench */}
+                                <td className="py-2.5 px-3 text-right font-mono">
+                                  <span className="font-bold text-foreground">
+                                    {it.current_stock}
+                                  </span>{" "}
+                                  <span className="text-[10px] text-muted-foreground">{it.unit}</span>
+                                </td>
+
+                                {/* Purchase Cost */}
+                                <td className="py-2.5 px-3 text-right font-mono text-muted-foreground">
                                   ₹{(it.purchase_price || 0).toLocaleString("en-IN", {
                                     minimumFractionDigits: 2,
                                     maximumFractionDigits: 2,
                                   })}
-                                </div>
-                                <div className="text-[10px] text-muted-foreground truncate max-w-[120px] ml-auto">
-                                  {it.last_supplier || "Catalog"}
-                                </div>
-                              </td>
+                                </td>
 
-                              {/* Order Quantity Editor (Editable individual row and bulk) */}
-                              <td className="py-2.5 px-3 text-center">
-                                <div className="inline-flex items-center justify-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleItemQuantityChange(it.product_id, Math.max(1, qty - 1))}
-                                    className="w-5 h-5 rounded bg-muted hover:bg-muted/80 text-foreground flex items-center justify-center cursor-pointer transition-colors"
-                                    title="Decrease quantity"
-                                  >
-                                    <Minus className="w-2.5 h-2.5" />
-                                  </button>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    value={qty}
-                                    onChange={(e) =>
-                                      handleItemQuantityChange(it.product_id, Math.max(1, parseInt(e.target.value) || 1))
-                                    }
-                                    className="w-14 bg-card border border-border/80 rounded py-0.5 text-center font-mono font-bold text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
-                                  />
-                                  <span className="text-[10px] text-muted-foreground font-mono">{it.unit}</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleItemQuantityChange(it.product_id, qty + 1)}
-                                    className="w-5 h-5 rounded bg-muted hover:bg-muted/80 text-foreground flex items-center justify-center cursor-pointer transition-colors"
-                                    title="Increase quantity"
-                                  >
-                                    <Plus className="w-2.5 h-2.5" />
-                                  </button>
-                                </div>
-                              </td>
+                                {/* Locked Working Capital */}
+                                <td className="py-2.5 px-3 text-right font-mono font-bold text-rose-600 dark:text-rose-400">
+                                  ₹{(it.locked_capital || 0).toLocaleString("en-IN", {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}
+                                </td>
 
-                              {/* Line Total */}
-                              <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
-                                ₹{lineTotal.toLocaleString("en-IN", {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                })}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                                {/* Potential Revenue (Selling Price) */}
+                                <td className="py-2.5 px-3 text-right font-mono text-muted-foreground">
+                                  ₹{(it.potential_revenue || 0).toLocaleString("en-IN", {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}
+                                </td>
+
+                                {/* Days Idle */}
+                                <td className="py-2.5 px-3 text-center font-mono">
+                                  {it.status === "DORMANT" ? (
+                                    <span className="text-[11px] text-purple-600 dark:text-purple-400 font-bold">
+                                      Never
+                                    </span>
+                                  ) : (
+                                    <span
+                                      className={`text-xs font-semibold ${
+                                        it.days_idle >= 90
+                                          ? "text-rose-600 dark:text-rose-400 font-bold"
+                                          : it.days_idle >= 60
+                                          ? "text-amber-600 dark:text-amber-400"
+                                          : "text-muted-foreground"
+                                      }`}
+                                    >
+                                      {it.days_idle}d
+                                    </span>
+                                  )}
+                                </td>
+
+                                {/* Last Activity */}
+                                <td className="py-2.5 px-3 text-right font-mono text-[10px] text-muted-foreground">
+                                  {it.last_sale_date ? (
+                                    <div>
+                                      <span className="text-blue-500 font-medium">Sold:</span> {it.last_sale_date}
+                                    </div>
+                                  ) : it.last_purchase_date ? (
+                                    <div>
+                                      <span className="text-emerald-500 font-medium">Stocked:</span> {it.last_purchase_date}
+                                    </div>
+                                  ) : (
+                                    <span>No activity</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1536,6 +2144,21 @@ function AnalyticsHubContent() {
             </div>
           </div>
         )}
+
+        {/* Mass-Wise Minimum Required Stock Configuration Modal */}
+        <MassMinStockModal
+          isOpen={isMassMinStockModalOpen}
+          onClose={() => setIsMassMinStockModalOpen(false)}
+          scope={massMinStockScope}
+          onScopeChange={setMassMinStockScope}
+          minStockInput={massMinStockInput}
+          onMinStockInputChange={setMassMinStockInput}
+          onApply={handleApplyMassMinStock}
+          loading={updatingMinStock}
+          selectedCount={selectedReorderIds.size}
+          currentCategoryName={currentCategoryName}
+          hasCategoryFilter={inventoryCategoryFilter !== "ALL"}
+        />
 
         {/* Purchase Order Draft Modal */}
         <PurchaseOrderDraftModal

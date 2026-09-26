@@ -616,15 +616,62 @@ class InventoryItemAnalyticsAPIView(APIView):
             if category_id in ['ALL', 'all', '', None]:
                 category_id = None
             limit = int(request.query_params.get('limit', 10))
-            reorder_limit = int(request.query_params.get('reorder_limit', 100))
+            reorder_limit = int(request.query_params.get('reorder_limit', 150))
+            default_min_stock = float(request.query_params.get('default_min_stock', 10.0))
             from apps.inventory.services.item_analytics_service import ItemAnalyticsService
             result = ItemAnalyticsService.get_top_moving_items(
                 company=company,
                 category_id=category_id,
                 limit=limit,
-                reorder_limit=reorder_limit
+                reorder_limit=reorder_limit,
+                default_min_stock=default_min_stock
             )
             return Response({"success": True, "data": result})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
+
+
+class BulkUpdateMinStockAPIView(APIView):
+    """
+    Mass-wise updates the minimum required stock quantity (reorder_level) for:
+    - An explicit list of product IDs
+    - All products in a specific category
+    - Entire company catalog
+    """
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def post(self, request, company_id):
+        try:
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            min_stock = to_decimal(request.data.get('min_stock_level', 10.0))
+            product_ids = request.data.get('product_ids', [])
+            category_id = request.data.get('category_id')
+            apply_all = request.data.get('apply_all', False)
+
+            qs = Product.objects.filter(company=company, is_active=True)
+            scope_desc = "entire catalog"
+
+            if product_ids and len(product_ids) > 0:
+                qs = qs.filter(id__in=product_ids)
+                scope_desc = f"{len(product_ids)} selected items"
+            elif category_id and category_id not in ['ALL', 'all', '', None]:
+                cat = ProductCategory.objects.filter(id=category_id, company=company).first()
+                cat_name = cat.name if cat else "category"
+                qs = qs.filter(category_id=category_id)
+                scope_desc = f"all items in '{cat_name}'"
+            elif not apply_all:
+                return Response({"success": False, "error": "No items, category, or catalog scope selected for mass update."}, status=400)
+
+            updated_count = qs.update(reorder_level=min_stock)
+
+            return Response({
+                "success": True,
+                "updated_count": updated_count,
+                "min_stock_level": str(min_stock),
+                "scope": scope_desc,
+                "message": f"Successfully updated minimum required quantity to {min_stock} for {updated_count} items ({scope_desc})."
+            })
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
 

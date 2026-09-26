@@ -298,6 +298,23 @@ export default function NewItemInCategoryPage() {
                           </p>
                         )}
                       </div>
+                      <div>
+                        <label className="block text-sm font-medium text-blue-600 dark:text-blue-400 mb-1.5 flex items-center justify-between">
+                          <span>Minimum Required Quantity (Min Stock)</span>
+                          <span className="text-[11px] text-muted-foreground font-normal">Reorder Threshold</span>
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="e.g. 10"
+                          value={formData.reorder_level}
+                          onChange={e => setFormData({ ...formData, reorder_level: e.target.value })}
+                          className="w-full bg-background border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all shadow-xs"
+                        />
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Below this quantity, the item will be flagged as low on stock in Reorder Analytics.
+                        </p>
+                      </div>
                     </div>
                   </div>
 

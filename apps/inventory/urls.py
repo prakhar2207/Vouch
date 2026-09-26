@@ -10,7 +10,8 @@ from .views import (
     BulkBrandDiscountUpdateAPIView,
     CombineInventoryItemsAPIView,
     ProductHistoryAPIView,
-    InventoryItemAnalyticsAPIView
+    InventoryItemAnalyticsAPIView,
+    BulkUpdateMinStockAPIView
 )
 
 urlpatterns = [
@@ -18,6 +19,7 @@ urlpatterns = [
     path('products/<uuid:company_id>/<uuid:product_id>/', ProductDetailView.as_view(), name='product_detail'),
     path('products/<uuid:company_id>/<uuid:product_id>/history/', ProductHistoryAPIView.as_view(), name='product_history'),
     path('analytics/<uuid:company_id>/', InventoryItemAnalyticsAPIView.as_view(), name='inventory_analytics'),
+    path('bulk-min-stock/<uuid:company_id>/', BulkUpdateMinStockAPIView.as_view(), name='bulk_min_stock'),
     path('categories/<uuid:company_id>/', ProductCategoryListView.as_view(), name='category_list'),
     path('categories/<uuid:company_id>/<uuid:category_id>/', ProductCategoryDetailView.as_view(), name='category_detail'),
     path('warehouses/<uuid:company_id>/', WarehouseListView.as_view(), name='warehouse_list'),

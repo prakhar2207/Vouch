@@ -195,6 +195,7 @@ export default function CategoryDetailPage() {
       wholesaler_price: p.wholesaler_price,
       purchase_price: pp,
       stock_quantity: isInt ? Math.round(sq) : sq,
+      reorder_level: p.reorder_level !== undefined ? p.reorder_level : '',
       discount_percent: dp.toFixed(2),
     });
   };
@@ -213,6 +214,9 @@ export default function CategoryDetailPage() {
         ...editData,
         stock_quantity: editData.stock_quantity !== undefined 
           ? (isInt ? Math.round(parseFloat(editData.stock_quantity) || 0) : parseFloat(editData.stock_quantity) || 0)
+          : undefined,
+        reorder_level: editData.reorder_level !== undefined && editData.reorder_level !== ''
+          ? parseFloat(editData.reorder_level) || 0
           : undefined
       };
 
@@ -855,7 +859,7 @@ export default function CategoryDetailPage() {
                                 </div>
                               </div>
 
-                              <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                                 <div>
                                   <label className="text-[10px] uppercase font-semibold text-muted-foreground block mb-0.5">Brand</label>
                                   <input
@@ -881,6 +885,20 @@ export default function CategoryDetailPage() {
                                       setEditData({ ...editData, stock_quantity: isIntegerUnit(v.unit) ? Math.round(val) : val });
                                     }}
                                     className="bg-muted/40 border border-border text-emerald-400 font-mono font-bold px-2 py-1.5 rounded-lg w-full text-xs outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] uppercase font-semibold text-muted-foreground block mb-0.5" title="Items with stock at or below this are low on stock">
+                                    Min Required ({v.unit})
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    placeholder="10"
+                                    value={editData.reorder_level !== undefined ? editData.reorder_level : (v.reorder_level || '')}
+                                    onChange={e => setEditData({ ...editData, reorder_level: e.target.value })}
+                                    className="bg-muted/40 border border-border text-blue-400 font-mono font-bold px-2 py-1.5 rounded-lg w-full text-xs outline-none focus:ring-1 focus:ring-blue-500"
+                                    title="Below this quantity, the item is considered low on stock in Reorder Analytics"
                                   />
                                 </div>
                               </div>
