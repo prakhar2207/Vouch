@@ -31,9 +31,9 @@ class AccountingIntegrityEngine:
         findings.extend(cls.check_duplicate_entries(company))
         findings.extend(cls.check_gst(company))
         findings.extend(cls.check_inventory(company))
-        findings.extend(cls.check_unusual_transactions(company))
+        findings.extend(cls.check_negative_margins(company))
         findings.extend(cls.check_bank_reconciliation(company))
-        findings.extend(cls.check_opening_balances(company))
+        findings.extend(cls.check_cash_and_liquidity(company))
         findings.extend(cls.check_document_numbering(company))
 
         unresolved_bank = BankTransaction.objects.filter(company=company, status='UNRESOLVED').count()
@@ -565,45 +565,99 @@ class AccountingIntegrityEngine:
         return findings
 
     @classmethod
-    def check_unusual_transactions(cls, company: Company) -> List[AccountingFinding]:
-        """8. Check: Unusually large transactions or drastic price jumps."""
+    def check_negative_margins(cls, company: Company) -> List[AccountingFinding]:
+        """
+        8. Check: Detects loss-making sales where products are sold below purchase cost.
+        In B2B wholesale and manufacturing, selling below cost price erodes operating profits
+        and indicates unauthorized discounting or billing clerical errors.
+        """
         findings = []
-        # Find payments > 2.5x average payment
-        avg_pmt = Voucher.objects.filter(company=company, voucher_type__in=['PAYMENT', 'RECEIPT'], status='POSTED').aggregate(a=Avg('total_amount'))['a']
-        if avg_pmt and avg_pmt > 0:
-            threshold = Decimal(str(avg_pmt)) * Decimal('2.5')
-            huge_vouchers = Voucher.objects.filter(
-                company=company,
-                voucher_type__in=['PAYMENT', 'RECEIPT'],
-                status='POSTED',
-                total_amount__gt=threshold
-            ).select_related('party_ledger').defer('attachment_data', 'attachment_mime')[:3]
+        active_titles = set()
 
-            for hv in huge_vouchers:
-                finding, _ = AccountingFinding.objects.update_or_create(
-                    company=company,
-                    category='UNUSUAL_ACTIVITY',
-                    title=f"Unusually large transaction on #{hv.voucher_number}",
-                    is_resolved=False,
-                    defaults={
-                        "severity": "INFO",
-                        "description": f"A payment of ₹{hv.total_amount} was recorded on {hv.voucher_date}. This is 5x higher than typical payments (avg ₹{round(avg_pmt, 2)}).",
-                        "evidence": {
-                            "voucher_number": hv.voucher_number,
-                            "amount": str(hv.total_amount),
-                            "average_amount": str(round(avg_pmt, 2)),
-                            "party": hv.party_ledger.name if hv.party_ledger else "Direct"
-                        },
-                        "expected_state": "Normal business range.",
-                        "actual_state": f"₹{hv.total_amount} payment.",
-                        "probable_cause": "Lump sum settlement or annual payment.",
-                        "suggested_action": "This looks unusual. Verify this payment amount is intentional.",
-                        "confidence": 0.85
-                    }
-                )
-                findings.append(finding)
+        # Clean up any legacy UNUSUAL_ACTIVITY findings
+        AccountingFinding.objects.filter(
+            company=company,
+            category='UNUSUAL_ACTIVITY',
+            is_resolved=False
+        ).update(is_resolved=True, resolved_at=timezone.now())
+
+        # Inspect recent posted sales vouchers (last 100 sales)
+        recent_sales = Voucher.objects.filter(
+            company=company,
+            voucher_type='SALES',
+            status='POSTED'
+        ).only('id', 'voucher_number', 'voucher_date', 'party_ledger_id').prefetch_related('items__product').defer('attachment_data', 'attachment_mime')[:100]
+
+        for v in recent_sales:
+            for item in v.items.all():
+                prod = item.product
+                if not prod or not prod.purchase_price or prod.purchase_price <= Decimal('0.00'):
+                    continue
+
+                qty = Decimal(str(item.quantity or '0.00'))
+                if qty <= Decimal('0.00'):
+                    continue
+
+                # Effective selling rate after item discount
+                rate = Decimal(str(item.rate or '0.00'))
+                disc_pct = Decimal(str(item.discount_percent or '0.00'))
+                effective_rate = rate * (Decimal('1.00') - (disc_pct / Decimal('100.00')))
+                cost_price = Decimal(str(prod.purchase_price or '0.00'))
+
+                # If sold at a loss (more than ₹1 under cost to ignore tiny rounding)
+                if effective_rate < (cost_price - Decimal('1.00')):
+                    unit_loss = cost_price - effective_rate
+                    total_loss = round(unit_loss * qty, 2)
+                    title = f"Loss-making sale: {prod.name} sold below cost on #{v.voucher_number}"
+                    active_titles.add(title)
+
+                    finding, _ = AccountingFinding.objects.update_or_create(
+                        company=company,
+                        category='MARGIN_RISK',
+                        title=title,
+                        is_resolved=False,
+                        defaults={
+                            "severity": "CRITICAL" if total_loss > Decimal('500.00') else "WARNING",
+                            "description": (
+                                f"Product '{prod.name}' was sold on invoice #{v.voucher_number} at ₹{effective_rate:.2f}/unit, "
+                                f"which is below its recorded purchase cost of ₹{cost_price:.2f}/unit. "
+                                f"Total loss on this line item: ₹{total_loss:.2f} (Qty: {qty} {prod.unit or 'units'})."
+                            ),
+                            "evidence": {
+                                "voucher_id": str(v.id),
+                                "voucher_number": v.voucher_number,
+                                "voucher_date": str(v.voucher_date),
+                                "product_id": str(prod.id),
+                                "product_name": prod.name,
+                                "selling_rate": str(round(effective_rate, 2)),
+                                "purchase_cost": str(cost_price),
+                                "unit_loss": str(round(unit_loss, 2)),
+                                "quantity": str(qty),
+                                "total_loss": str(total_loss)
+                            },
+                            "expected_state": f"Selling price should be at or above purchase cost (₹{cost_price:.2f}).",
+                            "actual_state": f"Sold at ₹{effective_rate:.2f} (Loss of ₹{unit_loss:.2f}/unit).",
+                            "probable_cause": "Clerical pricing typo during invoice entry or excessive party discount.",
+                            "suggested_action": "Verify invoice item rate and apply corrected rate or verify special authorized markdown.",
+                            "confidence": 0.98,
+                            "fix_action": "REVIEW_PRICING"
+                        }
+                    )
+                    findings.append(finding)
+
+        # Batch auto-resolve any previous margin findings no longer present
+        AccountingFinding.objects.filter(
+            company=company,
+            category='MARGIN_RISK',
+            is_resolved=False
+        ).exclude(title__in=active_titles).update(is_resolved=True, resolved_at=timezone.now())
 
         return findings
+
+    @classmethod
+    def check_unusual_transactions(cls, company: Company) -> List[AccountingFinding]:
+        """Backward-compatibility alias pointing to check_negative_margins."""
+        return cls.check_negative_margins(company)
 
     @classmethod
     def check_bank_reconciliation(cls, company: Company) -> List[AccountingFinding]:
@@ -647,33 +701,120 @@ class AccountingIntegrityEngine:
         return findings
 
     @classmethod
-    def check_opening_balances(cls, company: Company) -> List[AccountingFinding]:
-        """10. Check: Opening balance equity offset reconciliation."""
+    def check_cash_and_liquidity(cls, company: Company) -> List[AccountingFinding]:
+        """
+        10. Check: Cash Drawer Deficit & Bank Overdraft Safety.
+        In Indian business accounting:
+        - Physical cash-in-hand can NEVER be negative. A negative cash balance means unrecorded
+          cash receipts/sales or omitted bank withdrawals (Contra), and will cause immediate
+          CA audit qualification and Income Tax scrutiny (Section 40A(3) / 269ST).
+        - Negative bank balances without an approved CC/OD facility risk cheque bounce charges,
+          ECS return penalties, and supplier trust erosion.
+        """
         findings = []
-        adj = Ledger.objects.filter(company=company, name__icontains="Opening Balance Adjustment").first()
-        if adj and abs(Decimal(str(adj.current_balance or '0.00'))) > Decimal('100.00'):
-            finding, _ = AccountingFinding.objects.update_or_create(
-                company=company,
-                category='OPENING_BALANCE',
-                title="Opening balance adjustment ledger is not zero",
-                is_resolved=False,
-                defaults={
-                    "severity": "INFO",
-                    "description": f"The Opening Balance Adjustment account has a remaining balance of ₹{adj.current_balance}. Not all asset and liability opening balances have been entered yet.",
-                    "evidence": {
-                        "ledger_name": adj.name,
-                        "balance": str(adj.current_balance)
-                    },
-                    "expected_state": "Opening balance adjustment should zero out when all accounts are entered.",
-                    "actual_state": f"Remaining balance: ₹{adj.current_balance}.",
-                    "probable_cause": "Migration to Vouch is in progress.",
-                    "suggested_action": "Complete onboarding of initial customer, supplier, and bank opening balances.",
-                    "confidence": 0.90
-                }
-            )
-            findings.append(finding)
+        active_titles = set()
+
+        # Clean up any legacy OPENING_BALANCE findings
+        AccountingFinding.objects.filter(
+            company=company,
+            category='OPENING_BALANCE',
+            is_resolved=False
+        ).update(is_resolved=True, resolved_at=timezone.now())
+
+        # 1. Cash Ledgers (Negative Cash in Hand)
+        cash_ledgers = Ledger.objects.filter(
+            company=company,
+            ledger_type='CASH',
+            is_archived=False
+        )
+        for cl in cash_ledgers:
+            bal = Decimal(str(cl.current_balance or '0.00'))
+            if bal < Decimal('-0.05'):
+                deficit = abs(bal)
+                title = f"Negative cash in hand: {cl.name} is ₹{deficit:.2f} in deficit"
+                active_titles.add(title)
+                finding, _ = AccountingFinding.objects.update_or_create(
+                    company=company,
+                    category='LIQUIDITY',
+                    title=title,
+                    is_resolved=False,
+                    defaults={
+                        "severity": "CRITICAL",
+                        "description": (
+                            f"The cash account '{cl.name}' has a negative balance of -₹{deficit:.2f}. "
+                            f"In Indian accounting and tax law, cash-in-hand can never physically be negative. "
+                            f"This indicates cash expenses or supplier payouts were recorded without recording incoming cash sales or bank cash withdrawals."
+                        ),
+                        "evidence": {
+                            "ledger_id": str(cl.id),
+                            "ledger_name": cl.name,
+                            "current_balance": str(bal),
+                            "deficit": str(deficit)
+                        },
+                        "expected_state": f"Cash ledger balance must be ≥ ₹0.00 at all times.",
+                        "actual_state": f"Negative cash balance of -₹{deficit:.2f}.",
+                        "probable_cause": "Omitted cash sales, unrecorded cash receipts from customers, or unentered bank cash withdrawal (Contra).",
+                        "suggested_action": "Record missing cash receipts or record a Contra entry for cash withdrawn from the bank.",
+                        "confidence": 1.0,
+                        "fix_action": "RECORD_CASH_CONTRA"
+                    }
+                )
+                findings.append(finding)
+
+        # 2. Bank Ledgers (Overdrawn Bank Accounts)
+        bank_ledgers = Ledger.objects.filter(
+            company=company,
+            ledger_type='BANK',
+            is_archived=False
+        )
+        for bl in bank_ledgers:
+            bal = Decimal(str(bl.current_balance or '0.00'))
+            # Threshold of -₹500 to ignore minor bank SMS / maintenance charge deductions
+            if bal < Decimal('-500.00'):
+                overdrawn = abs(bal)
+                title = f"Negative bank balance: {bl.name} is overdrawn by ₹{overdrawn:.2f}"
+                active_titles.add(title)
+                finding, _ = AccountingFinding.objects.update_or_create(
+                    company=company,
+                    category='LIQUIDITY',
+                    title=title,
+                    is_resolved=False,
+                    defaults={
+                        "severity": "WARNING",
+                        "description": (
+                            f"The bank ledger '{bl.name}' shows a negative balance of -₹{overdrawn:.2f}. "
+                            f"If this is not an approved Cash Credit (CC) or Overdraft (OD) account, "
+                            f"payments and cheques issued from this account may bounce with penalty charges."
+                        ),
+                        "evidence": {
+                            "ledger_id": str(bl.id),
+                            "ledger_name": bl.name,
+                            "current_balance": str(bal),
+                            "overdrawn_amount": str(overdrawn)
+                        },
+                        "expected_state": f"Bank ledger balance should be positive or within an approved OD limit.",
+                        "actual_state": f"Overdrawn by ₹{overdrawn:.2f}.",
+                        "probable_cause": "Supplier payments or cheques entered in books before customer receipts were deposited and cleared.",
+                        "suggested_action": "Deposit customer funds or record pending bank deposits/transfers to prevent cheque bounce.",
+                        "confidence": 0.95,
+                        "fix_action": "REVIEW_BANK_BALANCE"
+                    }
+                )
+                findings.append(finding)
+
+        # Batch auto-resolve any previous liquidity findings no longer present
+        AccountingFinding.objects.filter(
+            company=company,
+            category='LIQUIDITY',
+            is_resolved=False
+        ).exclude(title__in=active_titles).update(is_resolved=True, resolved_at=timezone.now())
 
         return findings
+
+    @classmethod
+    def check_opening_balances(cls, company: Company) -> List[AccountingFinding]:
+        """Backward-compatibility alias pointing to check_cash_and_liquidity."""
+        return cls.check_cash_and_liquidity(company)
 
     @classmethod
     def check_document_numbering(cls, company: Company) -> List[AccountingFinding]:
@@ -771,23 +912,23 @@ class AccountingIntegrityEngine:
                 "match": lambda f: f.category == 'INVENTORY',
             },
             {
-                "name": "Unusual Transaction Alerts",
-                "category": "UNUSUAL_ACTIVITY",
-                "description": "Flags high-value anomalies and unusual weekend or non-business day entries.",
-                "match": lambda f: f.category == 'UNUSUAL_ACTIVITY',
+                "name": "Profit Margin & Pricing Alerts",
+                "category": "MARGIN_RISK",
+                "description": "Flags loss-making sales where items were sold below recorded purchase cost.",
+                "match": lambda f: f.category in ['MARGIN_RISK', 'UNUSUAL_ACTIVITY'],
             },
             {
                 "name": "Bank Reconciliation",
                 "category": "BANK_RECONCILIATION",
                 "description": "Ensures all imported bank feed transactions are reconciled against book vouchers.",
-                "match": lambda f: f.category == 'BANK_RECONCILIATION',
+                "match": lambda f: f.category in ['BANK', 'BANK_RECONCILIATION'],
                 "extra_count": unresolved_bank,
             },
             {
-                "name": "Opening Balances",
-                "category": "OPENING_BALANCE",
-                "description": "Verifies opening balance suspense accounts are fully resolved and balanced.",
-                "match": lambda f: f.category == 'OPENING_BALANCE',
+                "name": "Cash & Bank Liquidity Safety",
+                "category": "LIQUIDITY",
+                "description": "Detects negative cash in hand (cash deficit) and unplanned bank overdrafts.",
+                "match": lambda f: f.category in ['LIQUIDITY', 'OPENING_BALANCE'],
             },
             {
                 "name": "Voucher Sequence Numbering",

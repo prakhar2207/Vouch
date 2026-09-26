@@ -541,6 +541,8 @@ class AccountingFinding(models.Model):
         ('OPENING_BALANCE', 'Opening Balance Discrepancy'),
         ('NUMBERING', 'Voucher Numbering Sequence'),
         ('UNUSUAL_ACTIVITY', 'Unusual Business Activity'),
+        ('MARGIN_RISK', 'Profit Margin & Pricing Alerts'),
+        ('LIQUIDITY', 'Cash & Bank Liquidity Safety'),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
