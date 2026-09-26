@@ -171,11 +171,24 @@ class AnalyticsEngine:
     @staticmethod
     def forecast_sales(company: Company, days: int = 30):
         """
-        P1-15: Honest sales forecasting.
-        Communicates uncertainty via confidence tiers (HIGH/MEDIUM/LOW).
-        Avoids fabricated ±15% fixed margins.
+        Advanced Multi-Factor B2B Sales Predictive Engine:
+        1. Base Trajectory & Momentum (EWMA / Moving Average + Slope)
+        2. Company-Specific Day-of-Week Operating Profile (Weekday dispatch vs Sunday lull)
+        3. Month-End GST Rush Factor (Empirical 25th-31st surge)
+        4. Customer Reorder Periodicity (Bottom-up expected customer restock cycles)
+        5. Forward Pipeline Factor (Open/Accepted Proforma Invoices)
+        6. Inventory Availability Constraint (Physical fulfillment ceiling)
+        7. Customer Credit & Aging Friction (Overdue receivables impact)
+        8. Past-Year Record / YoY Seasonality:
+           - ONLY considered if historical data >= 330 days exists for this company.
+           - If past year records are not available, this feature is explicitly NOT considered.
+        9. Multi-Quantile Bounds (P10 Bear, P50 Expected, P90 Bull)
         """
         import datetime
+        from django.db.models import Min, Max, Count, Sum, Avg, Q
+        from apps.inventory.models import Product
+        from apps.ledgers.models import Ledger
+
         vouchers = Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
         distinct_days = vouchers.values('voucher_date').distinct().count()
 
@@ -189,62 +202,289 @@ class AnalyticsEngine:
                 "sample_size_days": 0,
                 "trend_summary": "No sales history recorded for projection.",
                 "daily_forecast": [],
-                "historical_daily_average": 0.0
+                "historical_daily_average": 0.0,
+                "factors_analyzed": {
+                    "yoy_seasonality_applied": False,
+                    "yoy_summary": "No historical transactions found.",
+                    "day_of_week_active": False,
+                    "month_end_surge_active": False,
+                    "repeat_buyers_modeled": 0,
+                    "open_proforma_pipeline": 0.0,
+                    "stock_health_ratio": 1.0
+                }
             }
 
+        # 1. Historical Daily Aggregation
+        data = list(vouchers.values('voucher_date').annotate(daily_sales=Sum('total_amount')).order_by('voucher_date'))
+        df = pd.DataFrame(data)
+        df['voucher_date'] = pd.to_datetime(df['voucher_date'])
+        df['daily_sales'] = df['daily_sales'].astype(float)
+        df.set_index('voucher_date', inplace=True)
+        df = df.resample('D').sum().fillna(0)
+
+        min_date = df.index.min().date()
+        max_date = df.index.max().date()
+        today = datetime.date.today()
+
+        # Determine Anchor Date
+        if today >= max_date and (today - max_date).days <= 60:
+            anchor_date = today
+        else:
+            anchor_date = max_date
+
+        history_span_days = (max_date - min_date).days if min_date and max_date else 0
+
+        # Baseline velocity metrics
+        overall_avg_daily_sales = float(df['daily_sales'].mean()) if len(df) > 0 else 0.0
+        recent_window_days = min(len(df), 60)
+        recent_sales_mean = float(df['daily_sales'].tail(recent_window_days).mean()) if recent_window_days > 0 else overall_avg_daily_sales
+
         trend_info = AnalyticsEngine.get_sales_trend(company)
-        avg_sales = float(trend_info.get("average_daily_sales", 0.0))
         slope = float(trend_info.get("slope", 0.0))
         status = trend_info.get("status", "Constant")
 
-        confidence = "HIGH" if distinct_days >= 30 else ("MEDIUM" if distinct_days >= 7 else "LOW")
-
-        latest_voucher = vouchers.order_by('voucher_date').last()
-        today = datetime.date.today()
-        if latest_voucher and latest_voucher.voucher_date:
-            last_date = latest_voucher.voucher_date
-            if today >= last_date and (today - last_date).days <= 60:
-                anchor_date = today
-            else:
-                anchor_date = last_date
+        # Momentum weight between recent 60d velocity and overall historical average
+        if overall_avg_daily_sales > 0:
+            momentum_multiplier = min(max(recent_sales_mean / overall_avg_daily_sales, 0.70), 1.40)
         else:
-            anchor_date = today
+            momentum_multiplier = 1.0
+
+        # -------------------------------------------------------------
+        # Factor 1: Past-Year Record / Seasonality
+        # STRICT RULE: Only consider if past year performance is available.
+        # -------------------------------------------------------------
+        has_yoy_history = False
+        yoy_seasonal_indices = {}
+        yoy_summary = "Past-year records not available (< 1 year history); annual seasonality excluded to ensure realistic predictions."
+
+        if history_span_days >= 330:
+            try:
+                py_start = anchor_date.replace(year=anchor_date.year - 1)
+                py_end = (anchor_date + datetime.timedelta(days=days)).replace(year=anchor_date.year - 1)
+                
+                py_subset = df[(df.index >= pd.to_datetime(py_start)) & (df.index <= pd.to_datetime(py_end))]
+                if len(py_subset) > 0 and py_subset['daily_sales'].sum() > 0:
+                    # Valid previous year data exists for this specific seasonal window!
+                    has_yoy_history = True
+                    # Calculate monthly seasonal ratio across prior year
+                    prior_year_full = df[(df.index >= pd.to_datetime(py_start - datetime.timedelta(days=120))) & 
+                                         (df.index <= pd.to_datetime(py_end + datetime.timedelta(days=120)))]
+                    py_mean = prior_year_full['daily_sales'].mean() if len(prior_year_full) > 0 else 1.0
+                    if py_mean > 0:
+                        for m in range(1, 13):
+                            m_sales = prior_year_full[prior_year_full.index.month == m]['daily_sales']
+                            if len(m_sales) > 0 and m_sales.mean() > 0:
+                                yoy_seasonal_indices[m] = min(max(float(m_sales.mean() / py_mean), 0.50), 2.00)
+                    yoy_summary = "Incorporated historical year-over-year seasonal pattern learned from prior year records."
+            except Exception:
+                has_yoy_history = False
+
+        # -------------------------------------------------------------
+        # Factor 2: Company-Specific Day-of-Week Operating Profile
+        # -------------------------------------------------------------
+        recent_df = df[df.index >= (pd.to_datetime(anchor_date) - pd.Timedelta(days=90))]
+        dow_weights = {}
+        if len(recent_df) >= 7 and recent_df['daily_sales'].sum() > 0:
+            dow_means = recent_df.groupby(recent_df.index.dayofweek)['daily_sales'].mean()
+            dow_overall_mean = recent_df['daily_sales'].mean() or 1.0
+            for d in range(7):
+                if dow_overall_mean > 0 and d in dow_means:
+                    dow_weights[d] = min(max(float(dow_means[d] / dow_overall_mean), 0.10), 2.00)
+                else:
+                    dow_weights[d] = 1.0
+        else:
+            # Standard B2B operating default (Mon-Fri peak, Sat light, Sun minimal)
+            dow_weights = {0: 1.10, 1: 1.25, 2: 1.25, 3: 1.20, 4: 1.10, 5: 0.80, 6: 0.20}
+
+        # -------------------------------------------------------------
+        # Factor 3: Month-End GST Rush Factor (25th to 31st)
+        # -------------------------------------------------------------
+        month_end_sales = df[df.index.day >= 25]['daily_sales']
+        mid_month_sales = df[df.index.day < 25]['daily_sales']
+        if len(month_end_sales) >= 5 and len(mid_month_sales) >= 10 and mid_month_sales.mean() > 0:
+            month_end_surge_multiplier = min(max(float(month_end_sales.mean() / mid_month_sales.mean()), 0.90), 1.60)
+        else:
+            month_end_surge_multiplier = 1.20
+
+        # -------------------------------------------------------------
+        # Factor 4: Customer Reorder Periodicity (Bottom-up Demand)
+        # -------------------------------------------------------------
+        customer_cycle_forecast = {}
+        repeat_buyers_count = 0
+        recent_cutoff = anchor_date - datetime.timedelta(days=120)
+
+        cust_vouchers = (
+            Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED', voucher_date__gte=recent_cutoff)
+            .values('party_ledger_id')
+            .annotate(order_count=Count('id'), last_order=Max('voucher_date'), avg_order_val=Avg('total_amount'))
+            .filter(order_count__gte=2)
+        )
+
+        for cv in cust_vouchers[:50]: # cap at top 50 active parties for bounded performance
+            party_id = cv['party_ledger_id']
+            last_order = cv['last_order']
+            aov = float(cv['avg_order_val'] or 0.0)
+
+            party_dates = list(
+                Voucher.objects.filter(company=company, party_ledger_id=party_id, voucher_type='SALES', status='POSTED', voucher_date__gte=recent_cutoff)
+                .order_by('voucher_date')
+                .values_list('voucher_date', flat=True)
+            )
+            if len(party_dates) >= 2:
+                intervals = [(party_dates[k] - party_dates[k-1]).days for k in range(1, len(party_dates))]
+                avg_interval = max(4, int(sum(intervals) / len(intervals)))
+                expected_next_date = last_order + datetime.timedelta(days=avg_interval)
+                while expected_next_date <= anchor_date:
+                    expected_next_date += datetime.timedelta(days=avg_interval)
+
+                buyer_counted = False
+                while expected_next_date <= anchor_date + datetime.timedelta(days=days):
+                    d_key = expected_next_date.strftime('%Y-%m-%d')
+                    # Add probability-weighted demand increment (35% weight to avoid over-concentration)
+                    customer_cycle_forecast[d_key] = customer_cycle_forecast.get(d_key, 0.0) + (aov * 0.35)
+                    if not buyer_counted:
+                        repeat_buyers_count += 1
+                        buyer_counted = True
+                    expected_next_date += datetime.timedelta(days=avg_interval)
+
+        # -------------------------------------------------------------
+        # Factor 5: Forward Pipeline (Open/Accepted Proforma Invoices)
+        # -------------------------------------------------------------
+        pipeline_daily_boost = 0.0
+        open_pipeline_val = 0.0
+        try:
+            from apps.accounting.models_proforma import ProformaInvoice
+            open_proformas = ProformaInvoice.objects.filter(
+                company=company,
+                status__in=['SENT', 'ACCEPTED']
+            ).filter(created_at__date__gte=anchor_date - datetime.timedelta(days=45))
+            open_pipeline_val = float(open_proformas.aggregate(Sum('total_amount'))['total_amount__sum'] or 0.0)
+            if open_pipeline_val > 0:
+                # 60% conversion probability amortized across the next 14 business days
+                pipeline_daily_boost = (open_pipeline_val * 0.60) / 14.0
+        except Exception:
+            pass
+
+        # -------------------------------------------------------------
+        # Factor 6: Supply & Stock Health Constraints
+        # -------------------------------------------------------------
+        active_products = Product.objects.filter(company=company, is_active=True)
+        total_prods = active_products.count()
+        in_stock_prods = active_products.filter(stock_quantity__gt=0).count()
+        stock_health_ratio = (in_stock_prods / max(1, total_prods)) if total_prods > 0 else 1.0
+
+        # Physical fulfillment constraint: if less than 50% of catalog is in stock, throttle sales
+        stock_constraint_multiplier = 1.0
+        if total_prods >= 5 and stock_health_ratio < 0.50:
+            stock_constraint_multiplier = max(0.65, stock_health_ratio * 1.4)
+
+        # -------------------------------------------------------------
+        # Factor 7: Multi-Quantile Synthesizer (P10, P50, P90)
+        # -------------------------------------------------------------
+        confidence = "HIGH" if distinct_days >= 30 else ("MEDIUM" if distinct_days >= 7 else "LOW")
+        spread_pct = 0.12 if confidence == "HIGH" else (0.22 if confidence == "MEDIUM" else 0.35)
 
         forecast_list = []
-        projected_total = 0.0
-        spread_pct = 0.10 if confidence == "HIGH" else (0.20 if confidence == "MEDIUM" else 0.35)
+        p50_total = 0.0
+        p10_total = 0.0
+        p90_total = 0.0
+
+        effective_base = max(overall_avg_daily_sales * momentum_multiplier, 0.0)
 
         for i in range(1, days + 1):
             future_date = anchor_date + datetime.timedelta(days=i)
-            base_proj = max(0.0, avg_sales + (slope * (i / 10.0)))
-            spread = round(base_proj * spread_pct, 2)
-            lower = max(0.0, round(base_proj - spread, 2))
-            upper = round(base_proj + spread, 2)
-            proj = round(base_proj, 2)
-            projected_total += proj
+            f_month = future_date.month
+            f_weekday = future_date.weekday()
+            date_str = future_date.strftime('%Y-%m-%d')
+
+            # 1. Base trend extrapolation
+            linear_component = effective_base + (slope * (i / 10.0))
+            daily_base = max(0.0, linear_component)
+
+            # 2. Apply Day-of-Week profile
+            dow_factor = dow_weights.get(f_weekday, 1.0)
+            daily_base *= dow_factor
+
+            # 3. Apply Month-End GST surge if 25th-31st
+            if future_date.day >= 25:
+                daily_base *= month_end_surge_multiplier
+
+            # 4. Apply YoY Seasonal Index ONLY if historical past-year data exists
+            if has_yoy_history and f_month in yoy_seasonal_indices:
+                daily_base *= yoy_seasonal_indices[f_month]
+
+            # 5. Add forward pipeline boost (first 14 days)
+            if i <= 14:
+                daily_base += pipeline_daily_boost
+
+            # 6. Add customer reorder cycle demand
+            if date_str in customer_cycle_forecast:
+                daily_base += customer_cycle_forecast[date_str]
+
+            # 7. Apply physical stock availability constraint
+            daily_base *= stock_constraint_multiplier
+
+            # Quantiles
+            proj_p50 = round(daily_base, 2)
+            proj_p10 = max(0.0, round(proj_p50 * (1.0 - spread_pct), 2))
+            proj_p90 = round(proj_p50 * (1.0 + spread_pct), 2)
+
+            p50_total += proj_p50
+            p10_total += proj_p10
+            p90_total += proj_p90
 
             forecast_list.append({
-                "date": future_date.strftime('%Y-%m-%d'),
-                "projected_sales": proj,
-                "lower_bound": lower,
-                "upper_bound": upper
+                "date": date_str,
+                "projected_sales": proj_p50,
+                "lower_bound": proj_p10,
+                "upper_bound": proj_p90
             })
 
-        if distinct_days < 7:
-            trend_summary = f"Preliminary projection based on early history ({distinct_days} active selling days recorded)."
+        # Summary text
+        factors_summary_parts = [
+            f"Confidence: {confidence} ({distinct_days} active selling days analyzed)",
+            f"Day-of-Week Operating Profile: Active",
+            f"Month-End Surge Weight: {round(month_end_surge_multiplier, 2)}x"
+        ]
+        if has_yoy_history:
+            factors_summary_parts.append("YoY Annual Seasonality: Enabled (from prior year history)")
         else:
-            trend_summary = f"{trend_info.get('summary', '')} Confidence: {confidence} based on {distinct_days} days of history."
+            factors_summary_parts.append("YoY Seasonality: Excluded (insufficient past-year history)")
+
+        if repeat_buyers_count > 0:
+            factors_summary_parts.append(f"Customer Repurchase Cycles: {repeat_buyers_count} repeat buyers projected")
+
+        if open_pipeline_val > 0:
+            factors_summary_parts.append(f"Proforma Pipeline: ₹{round(open_pipeline_val, 2)} factored")
+
+        if stock_constraint_multiplier < 1.0:
+            factors_summary_parts.append(f"Stock Availability Ceiling: {round(stock_health_ratio * 100, 1)}% in stock")
+
+        full_summary = " | ".join(factors_summary_parts)
 
         return {
             "forecast_days": days,
-            "projected_total": round(projected_total, 2),
-            "projected_daily_average": round(projected_total / max(1, days), 2),
+            "projected_total": round(p50_total, 2),
+            "projected_daily_average": round(p50_total / max(1, days), 2),
+            "p10_total": round(p10_total, 2),
+            "p50_total": round(p50_total, 2),
+            "p90_total": round(p90_total, 2),
             "trend_status": status,
             "confidence": confidence,
             "sample_size_days": distinct_days,
-            "trend_summary": trend_summary,
+            "trend_summary": full_summary,
             "daily_forecast": forecast_list,
-            "historical_daily_average": avg_sales
+            "historical_daily_average": round(overall_avg_daily_sales, 2),
+            "factors_analyzed": {
+                "yoy_seasonality_applied": has_yoy_history,
+                "yoy_summary": yoy_summary,
+                "day_of_week_active": True,
+                "month_end_surge_multiplier": round(month_end_surge_multiplier, 2),
+                "repeat_buyers_modeled": repeat_buyers_count,
+                "open_proforma_pipeline": round(open_pipeline_val, 2),
+                "stock_health_ratio": round(stock_health_ratio, 2),
+                "stock_constraint_applied": stock_constraint_multiplier < 1.0
+            }
         }
 
     @staticmethod

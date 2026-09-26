@@ -824,8 +824,13 @@ export default function Dashboard() {
             {chartMode === 'FORECAST' ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs px-1 text-muted-foreground font-sans">
-                  <div>
-                    Projected Total: <span className="font-bold text-foreground font-mono">₹{(forecast?.projected_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span>Projected: <span className="font-bold text-foreground font-mono">₹{(forecast?.projected_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></span>
+                    {forecast?.p10_total && forecast?.p90_total && (
+                      <span className="text-[10px] text-muted-foreground/80 font-mono">
+                        (₹{formatCurrencyShort(forecast.p10_total)} - ₹{formatCurrencyShort(forecast.p90_total)})
+                      </span>
+                    )}
                   </div>
                   <div>
                     Daily Avg: <span className="font-bold text-foreground font-mono">₹{(forecast?.projected_daily_average || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
@@ -901,7 +906,40 @@ export default function Dashboard() {
                 {forecast?.trend_summary && (
                   <div className="text-[11px] text-muted-foreground bg-muted/40 px-3 py-1.5 rounded-lg border border-border/40 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                    <span>{forecast.trend_summary}</span>
+                    <span className="truncate">{forecast.trend_summary}</span>
+                  </div>
+                )}
+
+                {forecast?.factors_analyzed && (
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${forecast.factors_analyzed.yoy_seasonality_applied ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' : 'bg-muted text-muted-foreground border-border/40'}`}>
+                      {forecast.factors_analyzed.yoy_seasonality_applied ? '✓ YoY Seasonality Active' : 'YoY Seasonality Excluded (<1yr)'}
+                    </span>
+                    {forecast.factors_analyzed.day_of_week_active && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20">
+                        Day-of-Week Profile
+                      </span>
+                    )}
+                    {(forecast.factors_analyzed.month_end_surge_multiplier || 1.0) > 1.0 && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+                        Month-End Surge ({forecast.factors_analyzed.month_end_surge_multiplier}x)
+                      </span>
+                    )}
+                    {(forecast.factors_analyzed.repeat_buyers_modeled || 0) > 0 && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20">
+                        {forecast.factors_analyzed.repeat_buyers_modeled} Repeat Cycles
+                      </span>
+                    )}
+                    {(forecast.factors_analyzed.open_proforma_pipeline || 0) > 0 && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20">
+                        Pipeline: ₹{formatCurrencyShort(forecast.factors_analyzed.open_proforma_pipeline)}
+                      </span>
+                    )}
+                    {forecast.factors_analyzed.stock_constraint_applied && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20">
+                        Stock Guard Active
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
