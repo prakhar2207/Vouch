@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -66,6 +67,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Target,
+  Receipt,
 } from "lucide-react";
 
 function formatCurrencyShort(val: number): string {
@@ -127,8 +129,14 @@ function AnalyticsHubContent() {
   const [updatingMinStock, setUpdatingMinStock] = useState<boolean>(false);
 
   // Sales Chart Timeline & Historical Range Controls
+  const [chartDisplayType, setChartDisplayType] = useState<"monthly" | "daily">("monthly");
   const [chartViewMode, setChartViewMode] = useState<"combined" | "historical" | "forecast" | "trend">("combined");
   const [historicalRangeDays, setHistoricalRangeDays] = useState<number>(60);
+
+  // Customer Churn Radar Threshold Controls (30, 60, 90, 120, 240, 360, or custom)
+  const [churnDaysThreshold, setChurnDaysThreshold] = useState<number>(60);
+  const [customChurnInput, setCustomChurnInput] = useState<string>("60");
+  const [isEditingCustomDays, setIsEditingCustomDays] = useState<boolean>(false);
 
   const fetchInventoryAnalytics = async (cid?: string, catId?: string) => {
     const targetCid = cid || effectiveCompanyId || activeCompanyId;
@@ -319,6 +327,59 @@ function AnalyticsHubContent() {
       ""
     );
   }, [forecast]);
+
+  // Simplified Monthly Chart Data for Business Owners
+  const monthlyChartData = useMemo(() => {
+    const series = forecast?.monthly_comparison?.historical_months_series;
+    if (series && Array.isArray(series) && series.length > 0) {
+      return series.map((m: any) => ({
+        ...m,
+        month: m.short_name || m.month_label,
+        confirmed: Number(m.actual_sales || 0),
+        projected_remainder: m.is_current ? Number(m.projected_sales || 0) : 0,
+        next_month_projection: m.is_projected ? Number(m.projected_sales || 0) : 0,
+        displayTotal: Number(m.total_sales || (Number(m.actual_sales || 0) + Number(m.projected_sales || 0))),
+      }));
+    }
+    return [];
+  }, [forecast]);
+
+  // Pareto Customers (Sundry Debtors only, excluding Cash counter bills placeholder)
+  const paretoCustomers = useMemo(() => {
+    const list: any[] = forecast?.customer_pareto || [];
+    return list
+      .filter((c: any) => {
+        const name = (c.party_name || c.name || "").trim().toLowerCase();
+        return !name.startsWith("cash") && name !== "counter sale";
+      })
+      .slice(0, 10);
+  }, [forecast?.customer_pareto]);
+
+  // Churn Radar Accounts dynamically filtered by user-selected inactivity threshold days
+  const churnFilteredAccounts = useMemo(() => {
+    // Prefer the complete churn_accounts list from backend, fallback to customer_pareto
+    const pool: any[] = forecast?.churn_accounts || forecast?.customer_pareto || [];
+    return pool
+      .filter((c: any) => {
+        const name = (c.party_name || c.name || "").trim().toLowerCase();
+        return !name.startsWith("cash") && name !== "counter sale";
+      })
+      .filter((c: any) => {
+        const idle = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
+        return idle >= churnDaysThreshold;
+      })
+      .sort((a: any, b: any) => {
+        const revA = a.total_billed ?? a.total_revenue ?? 0;
+        const revB = b.total_billed ?? b.total_revenue ?? 0;
+        return revB - revA; // Highest revenue inactive accounts first
+      });
+  }, [forecast?.churn_accounts, forecast?.customer_pareto, churnDaysThreshold]);
+
+  const totalAtRiskRevenue = useMemo(() => {
+    return churnFilteredAccounts.reduce((acc: number, c: any) => {
+      return acc + (c.total_billed ?? c.total_revenue ?? 0);
+    }, 0);
+  }, [churnFilteredAccounts]);
 
   // Category & Reorder Hub Filters
   const handleCategoryFilterChange = (newCatId: string) => {
@@ -746,7 +807,7 @@ function AnalyticsHubContent() {
               <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1 relative overflow-hidden">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Confirmed Sales To Date
+                    Total Billed (Year-to-Date)
                   </span>
                   <span className="p-1 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
                     <CheckSquare className="w-3.5 h-3.5" />
@@ -766,7 +827,7 @@ function AnalyticsHubContent() {
               <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1 relative overflow-hidden">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Peak Single-Day Record
+                    Highest Single Day
                   </span>
                   <span className="p-1 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400">
                     <Award className="w-3.5 h-3.5" />
@@ -777,7 +838,7 @@ function AnalyticsHubContent() {
                 </div>
                 <div className="text-[11px] text-muted-foreground">
                   {forecast?.historical_summary?.peak_day?.date
-                    ? `Set on ${formatChartDate(forecast.historical_summary.peak_day.date)}`
+                    ? `Peak day recorded on ${formatChartDate(forecast.historical_summary.peak_day.date)}`
                     : "Based on historical invoice records"}
                 </div>
               </div>
@@ -786,7 +847,7 @@ function AnalyticsHubContent() {
               <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1 relative overflow-hidden">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    7-Day Rolling Run-Rate
+                    Daily Average Sales
                   </span>
                   <span className="p-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400">
                     <Activity className="w-3.5 h-3.5" />
@@ -798,7 +859,7 @@ function AnalyticsHubContent() {
                 </div>
                 <div className="flex items-center gap-2">
                   <span
-                    className={`px-2 py-0.2 rounded-full text-[10px] font-mono font-bold border ${
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border ${
                       forecast?.trend_status === "Booming"
                         ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
                         : forecast?.trend_status === "Declining"
@@ -806,10 +867,10 @@ function AnalyticsHubContent() {
                         : "bg-blue-500/10 text-blue-500 border-blue-500/20"
                     }`}
                   >
-                    {forecast?.trend_status || "Stable"}
+                    {forecast?.trend_status === "Booming" ? "Fast Growth" : forecast?.trend_status === "Declining" ? "Declining" : "Steady Pace"}
                   </span>
                   <span className="text-[11px] text-muted-foreground font-mono">
-                    Mean: ₹{(forecast?.historical_daily_average || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/d
+                    Overall Mean: ₹{(forecast?.historical_daily_average || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/d
                   </span>
                 </div>
               </div>
@@ -818,7 +879,7 @@ function AnalyticsHubContent() {
               <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1 relative overflow-hidden">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Projected {forecastDays}-Day Revenue
+                    Expected Next 30 Days
                   </span>
                   <span className="p-1 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400">
                     <Sparkles className="w-3.5 h-3.5" />
@@ -829,89 +890,148 @@ function AnalyticsHubContent() {
                 </div>
                 {forecast?.p10_total && forecast?.p90_total ? (
                   <div className="text-[11px] text-muted-foreground font-mono">
-                    Range: ₹{formatCurrencyShort(forecast.p10_total)} - ₹{formatCurrencyShort(forecast.p90_total)} (P10-P90)
+                    Expected Range: ₹{formatCurrencyShort(forecast.p10_total)} - ₹{formatCurrencyShort(forecast.p90_total)}
                   </div>
                 ) : (
-                  <div className="text-[11px] text-muted-foreground">Confidence: {forecast?.confidence || "HIGH"}</div>
+                  <div className="text-[11px] text-muted-foreground">Confidence: High Accuracy</div>
                 )}
               </div>
             </div>
 
-            {/* Historical Daily Sales & Predictive Forecast Dual-Timeline Chart */}
-            <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
-              {/* Chart Header with View Mode and Range Filters */}
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-border/40 pb-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
-                      <span>Historical Daily Sales & Predictive Trajectory</span>
-                      <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                    </h3>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-muted text-muted-foreground border border-border/40 uppercase tracking-wider">
-                      {chartViewMode.toUpperCase()}
+            {/* Smart Business Commentary Banner */}
+            <div className="bg-gradient-to-r from-purple-500/10 via-indigo-500/5 to-emerald-500/10 border border-purple-500/20 rounded-xl p-4 sm:p-5 shadow-2xs space-y-3.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/40 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-purple-500/15 text-purple-600 dark:text-purple-400">
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-foreground flex items-center gap-2">
+                      <span>Smart Business Commentary</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 uppercase tracking-wider">
+                        Executive Takeaway
+                      </span>
+                    </h4>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Plain-English explanation of what your sales numbers mean right now
+                    </p>
+                  </div>
+                </div>
+
+                {forecast?.monthly_comparison?.mom_comparison && (
+                  <span className={`text-xs px-2.5 py-1 rounded-full border font-semibold flex items-center gap-1 self-start sm:self-auto ${
+                    forecast.monthly_comparison.mom_comparison.pace_status === "BEATING_LAST_MONTH"
+                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                      : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                  }`}>
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    {forecast.monthly_comparison.mom_comparison.pace_status === "BEATING_LAST_MONTH"
+                      ? `Pacing +${forecast.monthly_comparison.mom_comparison.percentage_change.toFixed(1)}% ahead of last month`
+                      : `Pacing ${forecast.monthly_comparison.mom_comparison.percentage_change.toFixed(1)}% vs last month`}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                {/* 1. MTD Progress */}
+                <div className="bg-card/80 backdrop-blur-xs border border-border/50 rounded-xl p-3.5 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                    <span>📍 Current Month Progress</span>
+                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                      {forecast?.monthly_comparison?.current_month?.completion_pct || 84}% Billed
                     </span>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Seamless dual-timeline connecting confirmed daily invoice actuals with forward-looking multi-factor projections.
+                  <div className="text-lg font-bold text-foreground">
+                    ₹{(forecast?.monthly_comparison?.current_month?.mtd_actual_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {forecast?.monthly_comparison?.current_month?.days_elapsed || 26} of {forecast?.monthly_comparison?.current_month?.days_in_month || 30} days completed ({forecast?.monthly_comparison?.current_month?.mtd_orders || 0} invoices). You are pulling in an average of <strong>₹{(forecast?.monthly_comparison?.current_month?.current_daily_run_rate || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/day</strong>.
                   </p>
                 </div>
 
-                {/* View Switchers & Range Controls */}
-                <div className="flex items-center gap-2.5 flex-wrap">
-                  {/* View Mode Toggle */}
-                  <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-xs">
+                {/* 2. Projected Month-End Close */}
+                <div className="bg-card/80 backdrop-blur-xs border border-border/50 rounded-xl p-3.5 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                    <span>🎯 Estimated Month Close</span>
+                    <span className="text-purple-600 dark:text-purple-400 font-bold">
+                      {forecast?.monthly_comparison?.current_month?.days_remaining || 4} Days Left
+                    </span>
+                  </div>
+                  <div className="text-lg font-bold text-purple-600 dark:text-purple-400">
+                    ₹{(forecast?.monthly_comparison?.current_month?.projected_month_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Expected to beat August (₹{(forecast?.monthly_comparison?.previous_month?.total_sales || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}) by <strong>+₹{(forecast?.monthly_comparison?.mom_comparison?.absolute_change || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong>. To hit this, you only need <strong>₹{(forecast?.monthly_comparison?.mom_comparison?.required_daily_to_match_last_month || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/day</strong>.
+                  </p>
+                </div>
+
+                {/* 3. Owner Action Item */}
+                <div className="bg-card/80 backdrop-blur-xs border border-border/50 rounded-xl p-3.5 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                    <span>💡 What You Should Do</span>
+                    <span className="text-blue-600 dark:text-blue-400 font-bold">Action Item</span>
+                  </div>
+                  <div className="text-sm font-bold text-foreground">
+                    Month-End Order Surge (20th–30th)
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Your sales peak heavily in the last 10 days of the month. Keep fast-moving inventory stocked to fulfill customer month-end orders without delays.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Sales Chart Container (Simple Monthly by Default + Daily Flow Option) */}
+            <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
+              {/* Header with Simple Switcher */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
+                      <span>{chartDisplayType === "monthly" ? "Monthly Sales Performance & Outlook" : "Daily Sales Flow & Trajectory"}</span>
+                    </h3>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-muted text-muted-foreground border border-border/40 uppercase tracking-wider">
+                      {chartDisplayType === "monthly" ? "MONTHLY SUMMARY" : "DAILY FLOW"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {chartDisplayType === "monthly"
+                      ? "A simple, month-by-month bar comparison showing confirmed sales and upcoming projections."
+                      : "Daily revenue curve showing invoiced actuals and forward-looking momentum."}
+                  </p>
+                </div>
+
+                {/* Primary Toggle: Monthly vs Daily */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center bg-muted/70 p-1 rounded-xl border border-border/40 text-xs">
                     <button
                       type="button"
-                      onClick={() => setChartViewMode("combined")}
-                      className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
-                        chartViewMode === "combined"
-                          ? "bg-card text-foreground font-bold shadow-2xs"
+                      onClick={() => setChartDisplayType("monthly")}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        chartDisplayType === "monthly"
+                          ? "bg-card text-foreground shadow-xs font-bold"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
-                      title="Show both historical confirmed sales and future projections"
                     >
-                      Combined
+                      <BarChart2 className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>Monthly View (Recommended)</span>
                     </button>
                     <button
                       type="button"
-                      onClick={() => setChartViewMode("historical")}
-                      className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
-                        chartViewMode === "historical"
-                          ? "bg-card text-foreground font-bold shadow-2xs"
+                      onClick={() => setChartDisplayType("daily")}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        chartDisplayType === "daily"
+                          ? "bg-card text-foreground shadow-xs font-bold"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
-                      title="Focus purely on confirmed historical sales actuals"
                     >
-                      Historical Actuals
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setChartViewMode("trend")}
-                      className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
-                        chartViewMode === "trend"
-                          ? "bg-card text-foreground font-bold shadow-2xs"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                      title="View 7-day rolling moving average trendline"
-                    >
-                      7-Day SMA
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setChartViewMode("forecast")}
-                      className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
-                        chartViewMode === "forecast"
-                          ? "bg-card text-foreground font-bold shadow-2xs"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                      title="Focus purely on predictive future days"
-                    >
-                      Predictive Forecast
+                      <Activity className="w-3.5 h-3.5 text-purple-500" />
+                      <span>Daily Flow</span>
                     </button>
                   </div>
 
-                  {/* Historical Range Filter (Only applicable for combined, historical, trend) */}
-                  {chartViewMode !== "forecast" && (
+                  {/* Range filter only when Daily is selected */}
+                  {chartDisplayType === "daily" && (
                     <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-xs">
                       {[
                         { label: "30d", val: 30 },
@@ -937,135 +1057,242 @@ function AnalyticsHubContent() {
                 </div>
               </div>
 
-              {/* Chart Legend Indicators */}
-              <div className="flex items-center gap-4 text-xs flex-wrap px-1 text-muted-foreground">
-                {(chartViewMode === "combined" || chartViewMode === "historical") && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                    <span className="font-medium text-foreground">Actual Sales (Billed)</span>
+              {/* Monthly Bar View (Default & Easiest for Business Owners) */}
+              {chartDisplayType === "monthly" ? (
+                <>
+                  {/* Monthly Legend */}
+                  <div className="flex items-center gap-4 text-xs flex-wrap px-1 text-muted-foreground">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-sm bg-emerald-500"></span>
+                      <span className="font-medium text-foreground">Confirmed Billed Sales</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-sm bg-purple-500/80 border border-purple-400 border-dashed"></span>
+                      <span className="font-medium text-purple-600 dark:text-purple-400">Projected Remainder (Next 4 Days)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-sm bg-indigo-500/80"></span>
+                      <span className="font-medium text-indigo-600 dark:text-indigo-400">Next Month Outlook (October)</span>
+                    </div>
                   </div>
-                )}
-                {(chartViewMode === "combined" || chartViewMode === "historical" || chartViewMode === "trend") && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-3 h-0.5 border-t-2 border-dashed border-blue-500"></span>
-                    <span>7-Day Rolling Average</span>
-                  </div>
-                )}
-                {(chartViewMode === "combined" || chartViewMode === "forecast") && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
-                    <span className="font-medium text-purple-600 dark:text-purple-400">
-                      Projected Trajectory ({forecastDays}d)
-                    </span>
-                  </div>
-                )}
-                {chartViewMode === "combined" && chartAnchorDate && (
-                  <div className="flex items-center gap-1.5 ml-auto">
-                    <span className="w-3 h-0.5 border-t-2 border-dashed border-rose-500"></span>
-                    <span className="font-mono text-rose-500 font-semibold text-[11px]">Today Milestone ({formatChartDate(chartAnchorDate)})</span>
-                  </div>
-                )}
-              </div>
 
-              {/* Main Chart Canvas */}
-              <div className="h-72 sm:h-80 w-full pt-1">
-                {chartTimelineData && chartTimelineData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={chartTimelineData} margin={{ top: 15, right: 15, left: -10, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="forecastHubGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.35} />
-                          <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
-                        </linearGradient>
-                        <linearGradient id="actualSalesGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
-                          <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
-                      <XAxis
-                        dataKey="date"
-                        stroke="currentColor"
-                        className="text-muted-foreground"
-                        fontSize={11}
-                        tickLine={false}
-                        axisLine={false}
-                        tickFormatter={formatChartDate}
-                      />
-                      <YAxis
-                        stroke="currentColor"
-                        className="text-muted-foreground"
-                        fontSize={11}
-                        tickLine={false}
-                        axisLine={false}
-                        tickFormatter={formatCurrencyShort}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "var(--card)",
-                          borderColor: "var(--border)",
-                          borderRadius: "12px",
-                          boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
-                          fontSize: "12px",
-                        }}
-                        labelFormatter={(label: any) => {
-                          try {
-                            const d = new Date(label);
-                            if (!isNaN(d.getTime())) {
-                              return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-                            }
-                          } catch {}
-                          return label;
-                        }}
-                        formatter={(val: any, name?: any) => {
-                          const num = Number(val);
-                          if (isNaN(num)) return ["-", name];
-                          const formatted = `₹${num.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
-                          if (name === "actual_sales") return [formatted, "Actual Invoiced Sales"];
-                          if (name === "moving_avg_7d") return [formatted, "7-Day Moving Avg"];
-                          if (name === "projected_sales") return [formatted, "Projected Sales"];
-                          return [formatted, name];
-                        }}
-                      />
+                  {/* Monthly Bar Canvas */}
+                  <div className="h-72 sm:h-80 w-full pt-1">
+                    {monthlyChartData && monthlyChartData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={monthlyChartData} margin={{ top: 20, right: 15, left: -5, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
+                          <XAxis
+                            dataKey="month"
+                            stroke="currentColor"
+                            className="text-muted-foreground font-medium"
+                            fontSize={12}
+                            tickLine={false}
+                            axisLine={false}
+                          />
+                          <YAxis
+                            stroke="currentColor"
+                            className="text-muted-foreground"
+                            fontSize={11}
+                            tickLine={false}
+                            axisLine={false}
+                            tickFormatter={formatCurrencyShort}
+                          />
+                          <Tooltip
+                            content={({ active, payload }: any) => {
+                              if (!active || !payload || !payload.length) return null;
+                              const data = payload[0].payload;
+                              return (
+                                <div className="bg-card border border-border rounded-xl p-3 shadow-xl text-xs space-y-1.5 min-w-[210px]">
+                                  <div className="font-bold text-foreground text-sm border-b border-border/50 pb-1 flex items-center justify-between">
+                                    <span>{data.month_label || data.month}</span>
+                                    {data.is_current && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 font-bold uppercase">Current</span>
+                                    )}
+                                    {data.is_projected && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-600 font-bold uppercase">Forecast</span>
+                                    )}
+                                  </div>
+                                  {data.confirmed > 0 && (
+                                    <div className="flex justify-between items-center text-muted-foreground">
+                                      <span>Confirmed Billed:</span>
+                                      <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                        ₹{data.confirmed.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {data.projected_remainder > 0 && (
+                                    <div className="flex justify-between items-center text-muted-foreground">
+                                      <span>Remaining ({data.days_remaining || 4}d):</span>
+                                      <span className="font-mono font-bold text-purple-600 dark:text-purple-400">
+                                        +₹{data.projected_remainder.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {data.next_month_projection > 0 && (
+                                    <div className="flex justify-between items-center text-muted-foreground">
+                                      <span>Projected Revenue:</span>
+                                      <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                                        ₹{data.next_month_projection.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                      </span>
+                                    </div>
+                                  )}
+                                  <div className="flex justify-between items-center pt-1 border-t border-border/40 font-bold text-foreground">
+                                    <span>Total:</span>
+                                    <span className="font-mono text-sm">
+                                      ₹{data.total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                    </span>
+                                  </div>
+                                  {data.order_count > 0 && (
+                                    <div className="text-[10px] text-muted-foreground pt-0.5">
+                                      Based on {data.order_count} confirmed invoices
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }}
+                          />
+                          <Bar
+                            dataKey="confirmed"
+                            name="Confirmed Billed"
+                            fill="#10b981"
+                            stackId="monthly"
+                            radius={[4, 4, 0, 0]}
+                          />
+                          <Bar
+                            dataKey="projected_remainder"
+                            name="Expected Remainder"
+                            fill="#8b5cf6"
+                            fillOpacity={0.8}
+                            stackId="monthly"
+                            radius={[4, 4, 0, 0]}
+                          />
+                          <Bar
+                            dataKey="next_month_projection"
+                            name="Next Month Outlook"
+                            fill="#6366f1"
+                            fillOpacity={0.85}
+                            radius={[4, 4, 0, 0]}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                        No monthly billing data available yet.
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                /* Daily Flow View */
+                <>
+                  {/* Daily Legend */}
+                  <div className="flex items-center gap-4 text-xs flex-wrap px-1 text-muted-foreground">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                      <span className="font-medium text-foreground">Actual Sales (Billed)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
+                      <span className="font-medium text-purple-600 dark:text-purple-400">
+                        Projected Trajectory (Next 30 Days)
+                      </span>
+                    </div>
+                    {chartAnchorDate && (
+                      <div className="flex items-center gap-1.5 ml-auto">
+                        <span className="w-3 h-0.5 border-t-2 border-dashed border-rose-500"></span>
+                        <span className="font-mono text-rose-500 font-semibold text-[11px]">Today ({formatChartDate(chartAnchorDate)})</span>
+                      </div>
+                    )}
+                  </div>
 
-                      {/* Today Milestone Divider Line */}
-                      {chartAnchorDate && (
-                        <ReferenceLine
-                          x={chartAnchorDate}
-                          stroke="#ef4444"
-                          strokeDasharray="4 4"
-                          strokeWidth={1.5}
-                          label={{
-                            value: "TODAY",
-                            position: "top",
-                            fill: "#ef4444",
-                            fontSize: 10,
-                            fontWeight: 700,
-                          }}
-                        />
-                      )}
+                  {/* Daily Chart Canvas */}
+                  <div className="h-72 sm:h-80 w-full pt-1">
+                    {chartTimelineData && chartTimelineData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={chartTimelineData} margin={{ top: 15, right: 15, left: -10, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="forecastHubGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.35} />
+                              <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                            </linearGradient>
+                            <linearGradient id="actualSalesGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
+                              <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
+                          <XAxis
+                            dataKey="date"
+                            stroke="currentColor"
+                            className="text-muted-foreground"
+                            fontSize={11}
+                            tickLine={false}
+                            axisLine={false}
+                            tickFormatter={formatChartDate}
+                          />
+                          <YAxis
+                            stroke="currentColor"
+                            className="text-muted-foreground"
+                            fontSize={11}
+                            tickLine={false}
+                            axisLine={false}
+                            tickFormatter={formatCurrencyShort}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: "var(--card)",
+                              borderColor: "var(--border)",
+                              borderRadius: "12px",
+                              boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
+                              fontSize: "12px",
+                            }}
+                            labelFormatter={(label: any) => {
+                              try {
+                                const d = new Date(label);
+                                if (!isNaN(d.getTime())) {
+                                  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                                }
+                              } catch {}
+                              return label;
+                            }}
+                            formatter={(val: any, name?: any) => {
+                              const num = Number(val);
+                              if (isNaN(num)) return ["-", name];
+                              const formatted = `₹${num.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+                              if (name === "actual_sales") return [formatted, "Actual Invoiced Sales"];
+                              if (name === "projected_sales") return [formatted, "Projected Daily Sales"];
+                              return [formatted, name];
+                            }}
+                          />
 
-                      {/* Combined View */}
-                      {chartViewMode === "combined" && (
-                        <>
-                          <Line
+                          {/* Today Milestone Divider Line */}
+                          {chartAnchorDate && (
+                            <ReferenceLine
+                              x={chartAnchorDate}
+                              stroke="#ef4444"
+                              strokeDasharray="4 4"
+                              strokeWidth={1.5}
+                              label={{
+                                value: "TODAY",
+                                position: "top",
+                                fill: "#ef4444",
+                                fontSize: 10,
+                                fontWeight: 700,
+                              }}
+                            />
+                          )}
+
+                          <Area
                             type="monotone"
                             dataKey="actual_sales"
                             stroke="#10b981"
                             strokeWidth={2.2}
+                            fillOpacity={1}
+                            fill="url(#actualSalesGrad)"
                             dot={{ r: 2, fill: "#10b981" }}
                             activeDot={{ r: 5 }}
                             name="actual_sales"
-                            connectNulls={false}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="moving_avg_7d"
-                            stroke="#3b82f6"
-                            strokeWidth={1.8}
-                            strokeDasharray="4 4"
-                            dot={false}
-                            name="moving_avg_7d"
                             connectNulls={false}
                           />
                           <Area
@@ -1078,112 +1305,33 @@ function AnalyticsHubContent() {
                             name="projected_sales"
                             connectNulls={false}
                           />
-                        </>
-                      )}
-
-                      {/* Historical Actuals View */}
-                      {chartViewMode === "historical" && (
-                        <>
-                          <Area
-                            type="monotone"
-                            dataKey="actual_sales"
-                            stroke="#10b981"
-                            strokeWidth={2.5}
-                            fillOpacity={1}
-                            fill="url(#actualSalesGrad)"
-                            dot={{ r: 2.5, fill: "#10b981" }}
-                            activeDot={{ r: 5 }}
-                            name="actual_sales"
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="moving_avg_7d"
-                            stroke="#3b82f6"
-                            strokeWidth={2}
-                            strokeDasharray="4 4"
-                            dot={false}
-                            name="moving_avg_7d"
-                          />
-                        </>
-                      )}
-
-                      {/* 7-Day SMA Trend View */}
-                      {chartViewMode === "trend" && (
-                        <>
-                          <Line
-                            type="monotone"
-                            dataKey="moving_avg_7d"
-                            stroke="#3b82f6"
-                            strokeWidth={3}
-                            dot={false}
-                            name="moving_avg_7d"
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="actual_sales"
-                            stroke="#10b981"
-                            strokeWidth={1}
-                            strokeOpacity={0.4}
-                            dot={{ r: 1.5, fill: "#10b981" }}
-                            name="actual_sales"
-                          />
-                        </>
-                      )}
-
-                      {/* Pure Forecast View */}
-                      {chartViewMode === "forecast" && (
-                        <Area
-                          type="monotone"
-                          dataKey="projected_sales"
-                          stroke="#8b5cf6"
-                          strokeWidth={2.5}
-                          fillOpacity={1}
-                          fill="url(#forecastHubGrad)"
-                          name="projected_sales"
-                        />
-                      )}
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                    No sales history available to render timeline chart.
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                        No sales history available to render timeline chart.
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                </>
+              )}
 
-              {/* Factors Analyzed Breakdown */}
-              <div className="pt-2 border-t border-border/40">
-                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-2">
-                  Active B2B Factors Evaluated:
+              {/* Simplified AI Factors Footer */}
+              <div className="pt-3 border-t border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+                  <span>AI Business Modeling:</span>
                 </span>
-                <div className="flex flex-wrap gap-2">
-                  <span
-                    className={`text-xs px-2.5 py-1 rounded-full border font-medium ${
-                      forecast?.factors_analyzed?.yoy_seasonality_applied
-                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                        : "bg-muted text-muted-foreground border-border/40"
-                    }`}
-                  >
-                    {forecast?.factors_analyzed?.yoy_seasonality_applied
-                      ? "✓ YoY Seasonality Active (From Past Records)"
-                      : "YoY Seasonality Excluded (< 1 yr data)"}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium border border-emerald-500/20">
+                    ✓ Month-End Billing Surge (1.6x)
                   </span>
-                  <span className="text-xs px-2.5 py-1 rounded-full border font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20">
-                    Day-of-Week Dispatch Pattern (Mon-Fri Peak)
+                  <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium border border-blue-500/20">
+                    ✓ Repeat Customer Order Cycles Included
                   </span>
-                  <span className="text-xs px-2.5 py-1 rounded-full border font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
-                    Month-End GST Surge ({forecast?.factors_analyzed?.month_end_surge_multiplier || 1.2}x)
+                  <span className="px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 font-medium border border-purple-500/20">
+                    ✓ Stock Availability Constraints Applied
                   </span>
-                  {(forecast?.factors_analyzed?.repeat_buyers_modeled || 0) > 0 && (
-                    <span className="text-xs px-2.5 py-1 rounded-full border font-medium bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20">
-                      {forecast.factors_analyzed.repeat_buyers_modeled} Repeat Customer Cycles Scheduled
-                    </span>
-                  )}
-                  {forecast?.factors_analyzed?.stock_constraint_applied && (
-                    <span className="text-xs px-2.5 py-1 rounded-full border font-medium bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20">
-                      Physical Stock Fulfillment Constraint Active
-                    </span>
-                  )}
                 </div>
               </div>
             </div>
@@ -1199,15 +1347,36 @@ function AnalyticsHubContent() {
                       <span>Customer Pareto Concentration (80/20 Rule)</span>
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                      Identifies key accounts generating the core 80% of revenue to protect cash flows and retention.
+                      Key account concentration driving core turnover. Excludes walk-in counter sales to show true client retention.
                     </p>
                   </div>
-                  <span className="text-xs font-mono text-muted-foreground">
-                    Top {forecast?.customer_pareto?.length || 0} Accounts
+                  <span className="text-xs font-mono text-muted-foreground bg-muted/60 px-2.5 py-1 rounded-md border border-border/40">
+                    Top {paretoCustomers.length} Parties
                   </span>
                 </div>
 
-                {forecast?.customer_pareto && forecast.customer_pareto.length > 0 ? (
+                {/* Cash & Counter Sales Summary Notice */}
+                {forecast?.cash_sales_summary && forecast.cash_sales_summary.total_billed > 0 && (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/30 border border-border/40 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground font-medium flex items-center gap-1.5">
+                        <Receipt className="w-3.5 h-3.5 text-primary" />
+                        <span>Walk-in / Cash Counter Bills:</span>
+                      </span>
+                      <span className="font-semibold text-foreground font-mono">
+                        ₹{forecast.cash_sales_summary.total_billed.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-muted-foreground text-[11px]">
+                        ({forecast.cash_sales_summary.invoice_count} bills · {forecast.cash_sales_summary.share_pct}% turnover)
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground italic">
+                      *Walk-in retail counter memos; excluded from client account ranking
+                    </span>
+                  </div>
+                )}
+
+                {paretoCustomers && paretoCustomers.length > 0 ? (
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs">
                       <thead>
@@ -1221,23 +1390,44 @@ function AnalyticsHubContent() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border/30">
-                        {forecast.customer_pareto.slice(0, 10).map((c: any, idx: number) => {
+                        {paretoCustomers.map((c: any, idx: number) => {
                           const partyName = c.party_name || c.name || "Customer";
                           const billedAmount = c.total_billed ?? c.total_revenue ?? 0;
                           const sharePct = c.share_pct ?? c.percentage_of_total ?? 0;
                           const cumPct = c.cumulative_pct ?? c.cumulative_percentage ?? 0;
                           const idleDays = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
-                          const isRisk = c.risk_status === "AT_RISK" || c.is_at_risk;
-                          const statusLabel = c.risk_label || (isRisk ? `At Risk (${idleDays}d)` : "Active Buyer");
+                          
+                          let badgeBg = "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20";
+                          let badgeLabel = c.risk_label || "Active Buyer";
+                          if (idleDays >= 90) {
+                            badgeBg = "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20";
+                            badgeLabel = `Dormant (${idleDays}d)`;
+                          } else if (idleDays >= 60) {
+                            badgeBg = "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20";
+                            badgeLabel = `Inactive (${idleDays}d)`;
+                          } else if (idleDays >= 30) {
+                            badgeBg = "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20";
+                            badgeLabel = `Cooling (${idleDays}d)`;
+                          }
 
                           return (
                             <tr key={idx} className="hover:bg-muted/40 transition-colors">
                               <td className="py-2.5 px-3">
                                 <div className="flex items-center gap-2">
                                   <span className="font-mono text-[10px] text-muted-foreground w-4">#{idx + 1}</span>
-                                  <span className="font-semibold text-foreground truncate max-w-[160px] sm:max-w-[220px]">
-                                    {partyName}
-                                  </span>
+                                  {c.party_id ? (
+                                    <Link
+                                      href={`/parties/${c.party_id}/statement`}
+                                      className="font-semibold text-foreground truncate max-w-[160px] sm:max-w-[220px] hover:text-primary hover:underline transition-colors"
+                                      title={partyName}
+                                    >
+                                      {partyName}
+                                    </Link>
+                                  ) : (
+                                    <span className="font-semibold text-foreground truncate max-w-[160px] sm:max-w-[220px]">
+                                      {partyName}
+                                    </span>
+                                  )}
                                 </div>
                               </td>
                               <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
@@ -1253,14 +1443,8 @@ function AnalyticsHubContent() {
                                 {idleDays}d ago
                               </td>
                               <td className="py-2.5 px-3 text-center">
-                                <span
-                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                    isRisk
-                                      ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
-                                      : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
-                                  }`}
-                                >
-                                  {statusLabel}
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeBg}`}>
+                                  {badgeLabel}
                                 </span>
                               </td>
                             </tr>
@@ -1276,8 +1460,8 @@ function AnalyticsHubContent() {
                 )}
               </div>
 
-              {/* Churn Radar & At-Risk Accounts (1 col) */}
-              <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4 flex flex-col justify-between">
+              {/* Churn Radar & Inactive Accounts (1 col) */}
+              <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-3.5 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between border-b border-border/40 pb-3">
                     <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
@@ -1285,57 +1469,182 @@ function AnalyticsHubContent() {
                       <span>Customer Churn Radar</span>
                     </h3>
                     <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/10 text-amber-600 border border-amber-500/20">
-                      Attention
+                      {churnFilteredAccounts.length} Inactive
                     </span>
                   </div>
+
                   <p className="text-xs text-muted-foreground mt-2">
-                    Key revenue-contributing accounts that have not placed an order in over 45 days.
+                    Key accounts that have not placed an order within your selected timeframe.
                   </p>
 
-                  <div className="space-y-2 mt-3">
-                    {forecast?.customer_pareto?.filter((c: any) => c.risk_status === "AT_RISK" || c.is_at_risk).length ? (
-                      forecast.customer_pareto
-                        .filter((c: any) => c.risk_status === "AT_RISK" || c.is_at_risk)
-                        .slice(0, 5)
-                        .map((c: any, idx: number) => {
-                          const partyName = c.party_name || c.name || "Customer";
-                          const billedAmount = c.total_billed ?? c.total_revenue ?? 0;
-                          const idleDays = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
-                          return (
-                            <div
-                              key={idx}
-                              className="p-2.5 rounded-lg border border-amber-500/20 bg-amber-500/5 space-y-1 text-xs"
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="font-semibold text-foreground truncate max-w-[170px]">
-                                  {partyName}
-                                </span>
-                                <span className="font-mono text-amber-600 dark:text-amber-400 font-bold text-[11px]">
-                                  {idleDays}d idle
-                                </span>
+                  {/* Interactive Threshold Selector & Editable Custom Input */}
+                  <div className="pt-2 space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-muted-foreground font-medium">Inactivity Filter:</span>
+                      <span className="font-semibold text-foreground font-mono text-[11px]">
+                        &gt; {churnDaysThreshold} Days Idle
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1">
+                      {[30, 60, 90, 120, 240, 360].map((days) => {
+                        const isActive = churnDaysThreshold === days && !isEditingCustomDays;
+                        return (
+                          <button
+                            key={days}
+                            type="button"
+                            onClick={() => {
+                              setChurnDaysThreshold(days);
+                              setCustomChurnInput(String(days));
+                              setIsEditingCustomDays(false);
+                            }}
+                            className={`px-2 py-1 rounded text-[10px] font-semibold transition-all cursor-pointer ${
+                              isActive
+                                ? "bg-amber-500 text-white shadow-xs font-bold"
+                                : "bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            {days}d
+                          </button>
+                        );
+                      })}
+
+                      {/* Custom Days Input */}
+                      <div className="flex items-center gap-1 bg-muted/60 border border-border/50 rounded px-1.5 py-0.5 ml-auto">
+                        <span className="text-[10px] text-muted-foreground">Custom:</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="999"
+                          value={customChurnInput}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCustomChurnInput(val);
+                            const num = parseInt(val, 10);
+                            if (!isNaN(num) && num > 0) {
+                              setChurnDaysThreshold(num);
+                              setIsEditingCustomDays(true);
+                            }
+                          }}
+                          className="w-11 bg-background border border-border/60 rounded px-1 py-0.5 text-[10px] font-mono text-center text-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
+                        />
+                        <span className="text-[10px] text-muted-foreground">d</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Summary Metric Ribbon */}
+                  <div className="grid grid-cols-2 gap-2 p-2 rounded-lg bg-amber-500/5 border border-amber-500/15 text-xs mt-3">
+                    <div>
+                      <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground block">
+                        Idle Accounts
+                      </span>
+                      <span className="text-base font-bold font-mono text-amber-600 dark:text-amber-400">
+                        {churnFilteredAccounts.length}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground block">
+                        Revenue At Risk
+                      </span>
+                      <span className="text-base font-bold font-mono text-foreground">
+                        ₹{formatCurrencyShort(totalAtRiskRevenue)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Scrollable List of Churned Accounts */}
+                  <div className="space-y-2 mt-3 max-h-[300px] overflow-y-auto pr-1 scrollbar-thin">
+                    {churnFilteredAccounts.length > 0 ? (
+                      churnFilteredAccounts.map((c: any, idx: number) => {
+                        const partyName = c.party_name || c.name || "Customer";
+                        const billedAmount = c.total_billed ?? c.total_revenue ?? 0;
+                        const idleDays = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
+                        const ordersCount = c.invoice_count ?? 1;
+                        const lastDate = c.last_sale_date ? formatChartDate(c.last_sale_date) : null;
+                        
+                        const isCritical = idleDays >= 120;
+                        const isHigh = idleDays >= 90;
+
+                        return (
+                          <div
+                            key={idx}
+                            className={`p-2.5 rounded-lg border transition-all text-xs space-y-1.5 ${
+                              isCritical
+                                ? "border-rose-500/30 bg-rose-500/5 hover:border-rose-500/50"
+                                : isHigh
+                                ? "border-amber-500/30 bg-amber-500/5 hover:border-amber-500/50"
+                                : "border-border/60 bg-muted/30 hover:border-border"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="font-mono text-[10px] text-muted-foreground">#{idx + 1}</span>
+                                {c.party_id ? (
+                                  <Link
+                                    href={`/parties/${c.party_id}/statement`}
+                                    className="font-semibold text-foreground truncate max-w-[150px] sm:max-w-[180px] hover:text-primary hover:underline transition-colors"
+                                    title={partyName}
+                                  >
+                                    {partyName}
+                                  </Link>
+                                ) : (
+                                  <span className="font-semibold text-foreground truncate max-w-[150px] sm:max-w-[180px]">
+                                    {partyName}
+                                  </span>
+                                )}
                               </div>
-                              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                                <span>Revenue: ₹{formatCurrencyShort(billedAmount)}</span>
-                                <span>{c.invoice_count} past orders</span>
+                              <span
+                                className={`font-mono font-bold text-[10px] px-1.5 py-0.5 rounded shrink-0 ${
+                                  isCritical
+                                    ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30"
+                                    : isHigh
+                                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                                    : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20"
+                                }`}
+                              >
+                                {idleDays}d idle
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                              <span>
+                                Revenue: <strong className="text-foreground font-mono">₹{billedAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span>{ordersCount} {ordersCount === 1 ? "order" : "orders"}</span>
+                                {lastDate && <span className="text-[10px]">· Last: {lastDate}</span>}
                               </div>
                             </div>
-                          );
-                        })
+                          </div>
+                        );
+                      })
                     ) : (
-                      <div className="py-6 text-center text-xs text-muted-foreground">
-                        ✓ All top customer accounts have ordered within the last 45 days.
+                      <div className="py-6 text-center text-xs text-muted-foreground border border-dashed border-border/60 rounded-lg p-3 space-y-1">
+                        <ShieldCheck className="w-5 h-5 text-emerald-500 mx-auto" />
+                        <p className="font-medium text-foreground">Zero Accounts Idle &gt; {churnDaysThreshold} Days</p>
+                        <p className="text-[11px]">All active customers have ordered within this window.</p>
                       </div>
                     )}
                   </div>
                 </div>
 
+                {/* AI Retention Recommendation */}
                 <div className="p-3 rounded-lg bg-muted/40 border border-border/40 text-xs space-y-1 mt-3">
                   <div className="font-semibold text-foreground flex items-center gap-1">
                     <Sparkles className="w-3.5 h-3.5 text-purple-400" />
                     <span>Retention Recommendation</span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">
-                    Assign a sales executive to follow up on overdue quotation requests or replenishment cycles for accounts idle over 45 days.
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    {churnFilteredAccounts.length > 0 ? (
+                      <>
+                        {churnFilteredAccounts.length} customer {churnFilteredAccounts.length === 1 ? "account is" : "accounts are"} idle for &gt;{churnDaysThreshold} days (₹{formatCurrencyShort(totalAtRiskRevenue)} historical demand). Prioritize follow-up with <strong className="text-foreground">{churnFilteredAccounts[0].party_name}</strong> ({churnFilteredAccounts[0].days_since_last_sale ?? churnFilteredAccounts[0].days_since_last_order}d idle) to protect recurring cash flows.
+                      </>
+                    ) : (
+                      <>
+                        Customer reordering pace is healthy within your {churnDaysThreshold}-day threshold. You can lower the window to 30 days to check early slowing accounts.
+                      </>
+                    )}
                   </p>
                 </div>
               </div>

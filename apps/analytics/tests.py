@@ -314,4 +314,72 @@ class SalesForecastEngineTestCase(TestCase):
         self.assertIn("mom_comparison", data["data"])
         self.assertIn("historical_months_series", data["data"])
 
+    def test_forecast_excludes_cash_from_customer_pareto_and_tracks_churn(self):
+        """Cash sales are excluded from Customer Pareto & churn radar, tracked in cash_sales_summary."""
+        today = datetime.date.today()
+        grp_cash = LedgerGroup.objects.create(company=self.company, name="Cash-in-Hand", nature="ASSET")
+        cash_ledger = Ledger.objects.create(
+            company=self.company,
+            group=grp_cash,
+            name="Cash",
+            ledger_type="CASH"
+        )
+
+        # 1. Walk-in cash bill: 50,000
+        Voucher.objects.create(
+            company=self.company,
+            voucher_number="INV-CASH-01",
+            voucher_type="SALES",
+            voucher_date=today,
+            party_ledger=cash_ledger,
+            total_amount=Decimal("50000.00"),
+            status="POSTED",
+            created_by=self.user
+        )
+
+        # 2. Party A sale: 40,000 (recent, 10 days ago)
+        Voucher.objects.create(
+            company=self.company,
+            voucher_number="INV-PARTY-A-01",
+            voucher_type="SALES",
+            voucher_date=today - datetime.timedelta(days=10),
+            party_ledger=self.party_a,
+            total_amount=Decimal("40000.00"),
+            status="POSTED",
+            created_by=self.user
+        )
+
+        # 3. Party B sale: 20,000 (dormant, 95 days ago)
+        Voucher.objects.create(
+            company=self.company,
+            voucher_number="INV-PARTY-B-01",
+            voucher_type="SALES",
+            voucher_date=today - datetime.timedelta(days=95),
+            party_ledger=self.party_b,
+            total_amount=Decimal("20000.00"),
+            status="POSTED",
+            created_by=self.user
+        )
+
+        forecast = AnalyticsEngine.forecast_sales(self.company, days=30)
+
+        # Check cash summary
+        self.assertIn("cash_sales_summary", forecast)
+        self.assertEqual(forecast["cash_sales_summary"]["total_billed"], 50000.0)
+        self.assertEqual(forecast["cash_sales_summary"]["invoice_count"], 1)
+
+        # Check Pareto: Cash must NOT be in customer_pareto
+        pareto_names = [p["party_name"] for p in forecast["customer_pareto"]]
+        self.assertNotIn("Cash", pareto_names)
+        self.assertEqual(pareto_names[0], "Mega Corp Alpha")
+        self.assertEqual(forecast["customer_pareto"][0]["risk_status"], "HEALTHY")
+
+        # Check churn accounts: Party B is idle >= 90 days and marked DORMANT
+        churn = forecast["churn_accounts"]
+        party_b_churn = next((c for c in churn if c["party_name"] == "Beta Traders"), None)
+        self.assertIsNotNone(party_b_churn)
+        self.assertGreaterEqual(party_b_churn["days_since_last_sale"], 90)
+        self.assertEqual(party_b_churn["risk_status"], "DORMANT")
+
+
 

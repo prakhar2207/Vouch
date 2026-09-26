@@ -18,6 +18,24 @@ from apps.companies.models import Company
 
 class AnalyticsEngine:
     @staticmethod
+    def is_cash_voucher_filter():
+        """
+        Returns a Q filter identifying cash/counter vouchers or placeholder cash ledgers.
+        In Indian business accounting, cash bills are generated for walk-in counter customers
+        who do not require an invoice under their own GSTIN/party ledger. They are not a single party.
+        """
+        return (
+            Q(party_ledger__isnull=True) |
+            Q(party_ledger__group__name__icontains='cash') |
+            Q(party_ledger__name__iexact='cash') |
+            Q(party_ledger__name__icontains='cash sale') |
+            Q(party_ledger__name__icontains='counter sale') |
+            Q(party_ledger__name__icontains='cash in hand') |
+            Q(party_ledger__name__icontains='cash a/c') |
+            Q(party_ledger__name__icontains='cash account')
+        )
+
+    @staticmethod
     def get_rfm_segments(company: Company):
         """
         Calculates Recency, Frequency, Monetary (RFM) and clusters customers using KMeans from scikit-learn.
@@ -27,6 +45,7 @@ class AnalyticsEngine:
         
         party_stats = list(
             Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
+            .exclude(AnalyticsEngine.is_cash_voucher_filter())
             .values('party_ledger__name')
             .annotate(
                 last_purchase=Max('voucher_date'),
@@ -214,6 +233,12 @@ class AnalyticsEngine:
                     "anchor_date": None
                 },
                 "customer_pareto": [],
+                "churn_accounts": [],
+                "cash_sales_summary": {
+                    "total_billed": 0.0,
+                    "invoice_count": 0,
+                    "share_pct": 0.0,
+                },
                 "brand_contribution": [],
                 "working_capital_cycle": None,
                 "historical_daily_average": 0.0,
@@ -368,6 +393,7 @@ class AnalyticsEngine:
 
         cust_vouchers = (
             Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED', voucher_date__gte=recent_cutoff)
+            .exclude(AnalyticsEngine.is_cash_voucher_filter())
             .values('party_ledger_id')
             .annotate(order_count=Count('id'), last_order=Max('voucher_date'), avg_order_val=Avg('total_amount'))
             .filter(order_count__gte=2)
@@ -580,9 +606,28 @@ class AnalyticsEngine:
         }
 
         # 9. Customer Pareto 80/20 & Churn Risk Radar
+        cash_filter = AnalyticsEngine.is_cash_voucher_filter()
         total_sales_val = float(df['daily_sales'].sum()) or 1.0
-        cust_agg = (
+
+        # Calculate Cash / Counter walk-in sales aggregate separately
+        cash_sales_agg = (
             Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
+            .filter(cash_filter)
+            .aggregate(total_billed=Sum('total_amount'), inv_count=Count('id'))
+        )
+        cash_billed = float(cash_sales_agg['total_billed'] or 0.0)
+        cash_orders = int(cash_sales_agg['inv_count'] or 0)
+        cash_share_pct = round((cash_billed / total_sales_val) * 100, 1) if total_sales_val > 0 else 0.0
+        cash_sales_summary = {
+            "total_billed": round(cash_billed, 2),
+            "invoice_count": cash_orders,
+            "share_pct": cash_share_pct,
+        }
+
+        # Query all real customer party accounts (excluding Cash placeholder / counter sales)
+        cust_agg = list(
+            Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
+            .exclude(cash_filter)
             .values('party_ledger__name', 'party_ledger_id')
             .annotate(
                 total_billed=Sum('total_amount'),
@@ -591,37 +636,62 @@ class AnalyticsEngine:
             )
             .order_by('-total_billed')
         )
+        total_party_sales = sum(float(ca['total_billed'] or 0.0) for ca in cust_agg) or 1.0
+
+        all_churn_accounts = []
         customer_pareto = []
         running_pareto_pct = 0.0
-        for ca in cust_agg[:12]:
+
+        for idx, ca in enumerate(cust_agg):
             billed = float(ca['total_billed'] or 0.0)
-            share_pct = round((billed / total_sales_val) * 100, 1)
+            share_pct = round((billed / total_party_sales) * 100, 1)
+            total_turnover_share = round((billed / total_sales_val) * 100, 1)
             running_pareto_pct += share_pct
             last_date = ca['last_sale']
             days_since = (anchor_date - last_date).days if last_date else 999
             
-            if days_since >= 60 and ca['inv_count'] >= 2:
+            # Accurate churn / dormancy status based on days since last order
+            if days_since >= 90:
+                risk_status = "DORMANT"
+                risk_label = "Dormant (90d+)"
+            elif days_since >= 60:
                 risk_status = "AT_RISK"
                 risk_label = "Inactive (60d+)"
-            elif days_since >= 30 and ca['inv_count'] >= 3:
+            elif days_since >= 30:
                 risk_status = "COOLING"
-                risk_label = "Slowing Down"
+                risk_label = "Cooling (30-60d)"
             else:
                 risk_status = "HEALTHY"
                 risk_label = "Active Buyer"
 
-            customer_pareto.append({
-                "party_name": ca['party_ledger__name'] or "Cash / Counter Sale",
-                "party_id": str(ca['party_ledger_id']) if ca['party_ledger_id'] else None,
+            party_name = (ca['party_ledger__name'] or "Customer").strip()
+            party_id_str = str(ca['party_ledger_id']) if ca['party_ledger_id'] else None
+            last_date_str = last_date.strftime('%Y-%m-%d') if last_date else None
+
+            account_item = {
+                "party_name": party_name,
+                "name": party_name,
+                "party_id": party_id_str,
                 "total_billed": billed,
+                "total_revenue": billed,
                 "share_pct": share_pct,
-                "cumulative_pct": round(running_pareto_pct, 1),
+                "percentage_of_total": share_pct,
+                "total_turnover_share": total_turnover_share,
+                "cumulative_pct": round(min(100.0, running_pareto_pct), 1),
+                "cumulative_percentage": round(min(100.0, running_pareto_pct), 1),
                 "invoice_count": ca['inv_count'],
-                "last_sale_date": last_date.strftime('%Y-%m-%d') if last_date else None,
+                "last_sale_date": last_date_str,
+                "last_order_date": last_date_str,
                 "days_since_last_sale": days_since,
+                "days_since_last_order": days_since,
                 "risk_status": risk_status,
-                "risk_label": risk_label
-            })
+                "risk_label": risk_label,
+                "is_at_risk": risk_status in ["AT_RISK", "DORMANT"],
+            }
+
+            all_churn_accounts.append(account_item)
+            if idx < 20: # Keep top 20 for Pareto table
+                customer_pareto.append(account_item)
 
         # 10. Brand Contribution & Revenue Share
         from apps.accounting.models import VoucherItem
@@ -722,6 +792,8 @@ class AnalyticsEngine:
             "combined_series": combined_series,
             "historical_summary": historical_summary,
             "customer_pareto": customer_pareto,
+            "churn_accounts": all_churn_accounts,
+            "cash_sales_summary": cash_sales_summary,
             "brand_contribution": brand_contribution,
             "working_capital_cycle": working_capital_cycle,
             "historical_daily_average": round(overall_avg_daily_sales, 2),

@@ -168,6 +168,27 @@ export interface SalesForecastResult {
     is_at_risk: boolean;
     last_order_date: string | null;
   }>;
+  churn_accounts?: Array<{
+    party_id: string | null;
+    party_name: string;
+    name?: string;
+    total_billed: number;
+    total_revenue?: number;
+    share_pct?: number;
+    percentage_of_total?: number;
+    invoice_count: number;
+    last_sale_date: string | null;
+    days_since_last_sale: number;
+    days_since_last_order?: number;
+    risk_status: "HEALTHY" | "COOLING" | "AT_RISK" | "DORMANT";
+    risk_label: string;
+    is_at_risk?: boolean;
+  }>;
+  cash_sales_summary?: {
+    total_billed: number;
+    invoice_count: number;
+    share_pct: number;
+  };
   brand_contribution?: Array<{
     brand: string;
     total_revenue: number;
