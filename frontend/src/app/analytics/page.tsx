@@ -20,6 +20,9 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { useCompany } from "@/context/CompanyContext";
 import { useFinancialYear } from "@/context/FinancialYearContext";
 import { LocalAnalyticsEngine } from "@/lib/analytics/analytics-engine";
+import { useToast } from "@/context/ToastContext";
+import PurchaseOrderDraftModal, { POOrderItem } from "@/components/modals/PurchaseOrderDraftModal";
+import ItemHistoryModal from "@/components/modals/ItemHistoryModal";
 import {
   TrendingUp,
   Sparkles,
@@ -34,6 +37,19 @@ import {
   Landmark,
   FileText,
   AlertCircle,
+  ShoppingCart,
+  CheckSquare,
+  Square,
+  PackageCheck,
+  AlertTriangle,
+  Search,
+  Filter,
+  Plus,
+  Minus,
+  Check,
+  ExternalLink,
+  ChevronRight,
+  TrendingDown,
 } from "lucide-react";
 
 function formatCurrencyShort(val: number): string {
@@ -67,6 +83,54 @@ function AnalyticsHubContent() {
   const [insights, setInsights] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [retailDiscount, setRetailDiscount] = useState<number>(0);
+
+  const { toast } = useToast();
+
+  // Inventory Analytics & Smart Reorder Hub State
+  const [effectiveCompanyId, setEffectiveCompanyId] = useState<string>("");
+  const [inventoryAnalytics, setInventoryAnalytics] = useState<any>(null);
+  const [loadingInventoryAnalytics, setLoadingInventoryAnalytics] = useState<boolean>(false);
+  const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState<string>("ALL");
+  const [inventorySearch, setInventorySearch] = useState<string>("");
+  const [selectedReorderIds, setSelectedReorderIds] = useState<Set<string>>(new Set());
+  const [orderQuantities, setOrderQuantities] = useState<Record<string, number>>({});
+  const [bulkQuantityInput, setBulkQuantityInput] = useState<number>(10);
+  const [isPoModalOpen, setIsPoModalOpen] = useState<boolean>(false);
+  const [selectedHistoryItem, setSelectedHistoryItem] = useState<any>(null);
+
+  const fetchInventoryAnalytics = async (cid?: string, catId?: string) => {
+    const targetCid = cid || effectiveCompanyId || activeCompanyId;
+    if (!targetCid) return;
+    setLoadingInventoryAnalytics(true);
+    try {
+      const token = getAccessToken();
+      const headers = { Authorization: `Bearer ${token}` };
+      const categoryParam = catId !== undefined ? catId : inventoryCategoryFilter;
+      const catQuery = categoryParam && categoryParam !== "ALL" ? `&category_id=${categoryParam}` : "";
+      const url = `${API_BASE_URL}/api/v1/inventory/analytics/${targetCid}/?limit=15&reorder_limit=150${catQuery}`;
+      const res = await axios.get(url, { headers });
+      if (res.data?.success) {
+        setInventoryAnalytics(res.data.data);
+
+        // Pre-populate suggested order quantities for items if not already customized
+        if (res.data.data?.reorder_items) {
+          setOrderQuantities((prev) => {
+            const next = { ...prev };
+            res.data.data.reorder_items.forEach((it: any) => {
+              if (next[it.product_id] === undefined) {
+                next[it.product_id] = it.suggested_qty || 5;
+              }
+            });
+            return next;
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load inventory analytics:", err);
+    } finally {
+      setLoadingInventoryAnalytics(false);
+    }
+  };
 
   const { activeCompany, companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
@@ -102,6 +166,8 @@ function AnalyticsHubContent() {
         }
 
         const validCid = cid;
+        setEffectiveCompanyId(validCid);
+        fetchInventoryAnalytics(validCid, inventoryCategoryFilter);
         const fyOptions = {
           startDate: activeFY?.start_date,
           endDate: activeFY?.end_date,
@@ -172,6 +238,141 @@ function AnalyticsHubContent() {
       setActiveTab(tab as any);
     }
   }, [searchParams]);
+
+  // Category & Reorder Hub Filters
+  const handleCategoryFilterChange = (newCatId: string) => {
+    setInventoryCategoryFilter(newCatId);
+    if (effectiveCompanyId) {
+      fetchInventoryAnalytics(effectiveCompanyId, newCatId);
+    }
+  };
+
+  const filteredReorderItems = useMemo(() => {
+    if (!inventoryAnalytics?.reorder_items) return [];
+    let list: any[] = inventoryAnalytics.reorder_items;
+    if (inventorySearch.trim()) {
+      const q = inventorySearch.toLowerCase();
+      list = list.filter(
+        (it: any) =>
+          it.name?.toLowerCase().includes(q) ||
+          it.brand?.toLowerCase().includes(q) ||
+          it.sku?.toLowerCase().includes(q) ||
+          it.category_name?.toLowerCase().includes(q) ||
+          it.last_supplier?.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [inventoryAnalytics?.reorder_items, inventorySearch]);
+
+  const handleToggleSelect = (productId: string) => {
+    setSelectedReorderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) {
+        next.delete(productId);
+      } else {
+        next.add(productId);
+      }
+      return next;
+    });
+  };
+
+  const isAllSelected = useMemo(() => {
+    if (filteredReorderItems.length === 0) return false;
+    return filteredReorderItems.every((it: any) => selectedReorderIds.has(it.product_id));
+  }, [filteredReorderItems, selectedReorderIds]);
+
+  const handleSelectAllToggle = () => {
+    if (isAllSelected) {
+      setSelectedReorderIds((prev) => {
+        const next = new Set(prev);
+        filteredReorderItems.forEach((it: any) => next.delete(it.product_id));
+        return next;
+      });
+    } else {
+      setSelectedReorderIds((prev) => {
+        const next = new Set(prev);
+        filteredReorderItems.forEach((it: any) => next.add(it.product_id));
+        return next;
+      });
+    }
+  };
+
+  const handleApplyBulkQuantity = () => {
+    if (selectedReorderIds.size === 0) {
+      toast.error("Please select items first to apply bulk quantity");
+      return;
+    }
+    const qty = Math.max(1, bulkQuantityInput || 1);
+    setOrderQuantities((prev) => {
+      const next = { ...prev };
+      selectedReorderIds.forEach((pid) => {
+        next[pid] = qty;
+      });
+      return next;
+    });
+    toast.success(`Set order quantity to ${qty} for ${selectedReorderIds.size} selected item(s)`);
+  };
+
+  const handleItemQuantityChange = (productId: string, newQty: number) => {
+    const qty = Math.max(1, newQty || 1);
+    setOrderQuantities((prev) => ({
+      ...prev,
+      [productId]: qty,
+    }));
+  };
+
+  const handleRemoveFromDraft = (productId: string) => {
+    setSelectedReorderIds((prev) => {
+      const next = new Set(prev);
+      next.delete(productId);
+      return next;
+    });
+  };
+
+  const selectedItemsData = useMemo(() => {
+    const items = (inventoryAnalytics?.reorder_items || []).filter((it: any) =>
+      selectedReorderIds.has(it.product_id)
+    );
+    const count = items.length;
+    const units = items.reduce(
+      (acc: number, it: any) => acc + (orderQuantities[it.product_id] ?? it.suggested_qty ?? 5),
+      0
+    );
+    const cost = items.reduce(
+      (acc: number, it: any) =>
+        acc + (orderQuantities[it.product_id] ?? it.suggested_qty ?? 5) * (it.purchase_price || 0),
+      0
+    );
+    return { count, units, cost };
+  }, [inventoryAnalytics?.reorder_items, selectedReorderIds, orderQuantities]);
+
+  const poDraftItems: POOrderItem[] = useMemo(() => {
+    const list = inventoryAnalytics?.reorder_items || [];
+    return list
+      .filter((it: any) => selectedReorderIds.has(it.product_id))
+      .map((it: any) => ({
+        product_id: it.product_id,
+        name: it.name,
+        brand: it.brand || "",
+        sku: it.sku || "",
+        unit: it.unit || "PCS",
+        category_name: it.category_name || "General",
+        current_stock: it.current_stock || 0,
+        order_quantity: orderQuantities[it.product_id] ?? it.suggested_qty ?? 5,
+        purchase_price: it.purchase_price || 0,
+        last_supplier: it.last_supplier,
+        urgency: it.urgency,
+        urgency_label: it.urgency_label,
+      }));
+  }, [inventoryAnalytics?.reorder_items, selectedReorderIds, orderQuantities]);
+
+  const handleOpenPoModal = () => {
+    if (selectedReorderIds.size === 0) {
+      toast.error("Please select at least one item to draft a purchase order");
+      return;
+    }
+    setIsPoModalOpen(true);
+  };
 
   // Inventory discount calculation
   const stockValuation = useMemo(() => {
@@ -277,7 +478,7 @@ function AnalyticsHubContent() {
             }`}
           >
             <Boxes className="w-3.5 h-3.5" />
-            <span>Inventory Valuation & Margin</span>
+            <span>Inventory & Reorder Hub</span>
           </button>
 
           <button
@@ -853,6 +1054,435 @@ function AnalyticsHubContent() {
                 </div>
               </div>
             </div>
+
+            {/* 3. Smart Low-Stock Reorder Intelligence & Purchase Order Draft Hub */}
+            <div className="bg-card border border-border/50 rounded-xl p-4 sm:p-5 shadow-2xs space-y-4">
+              {/* Header with Category Filter, Search and Refresh */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-border/40 pb-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                      <AlertTriangle className="w-4 h-4" />
+                    </span>
+                    <h3 className="text-sm sm:text-base font-bold text-foreground">
+                      Smart Low-Stock Reorder Intelligence & PO Hub
+                    </h3>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                      High Velocity Only
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Only shows items with <strong>verified sales demand</strong> that are critically short or out of stock (Stock ≤ 10). Deadstock is automatically filtered out.
+                  </p>
+                </div>
+
+                {/* Filter and Search Bar */}
+                <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                  {/* Category Dropdown */}
+                  <div className="relative w-full sm:w-auto">
+                    <select
+                      value={inventoryCategoryFilter}
+                      onChange={(e) => handleCategoryFilterChange(e.target.value)}
+                      className="w-full sm:w-44 bg-muted/60 border border-border/70 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
+                    >
+                      <option value="ALL">All Categories</option>
+                      {inventoryAnalytics?.categories?.map((cat: any) => (
+                        <option key={cat.id} value={cat.id}>
+                          {cat.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Search Input */}
+                  <div className="relative w-full sm:w-56">
+                    <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Search item, size, brand..."
+                      value={inventorySearch}
+                      onChange={(e) => setInventorySearch(e.target.value)}
+                      className="w-full bg-muted/60 border border-border/70 text-foreground pl-8 pr-3 py-1.5 rounded-xl outline-none focus:ring-2 focus:ring-primary/40 text-xs"
+                    />
+                  </div>
+
+                  {/* Refresh Button */}
+                  <button
+                    type="button"
+                    onClick={() => fetchInventoryAnalytics(effectiveCompanyId, inventoryCategoryFilter)}
+                    disabled={loadingInventoryAnalytics}
+                    className="p-2 rounded-xl bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground border border-border/70 transition-colors cursor-pointer shrink-0"
+                    title="Refresh Reorder Intelligence"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingInventoryAnalytics ? "animate-spin text-blue-500" : ""}`} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Action Toolbar: Select All, Bulk Quantity Setter & Draft PO Trigger */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 bg-muted/30 border border-border/40 rounded-xl">
+                {/* Left: Select All & Bulk Quantity Setter */}
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Select All Toggle */}
+                  <button
+                    type="button"
+                    onClick={handleSelectAllToggle}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-card hover:bg-muted text-foreground border border-border/60 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    {isAllSelected ? (
+                      <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    ) : (
+                      <Square className="w-3.5 h-3.5 text-muted-foreground" />
+                    )}
+                    <span>{isAllSelected ? "Deselect All" : `Select All (${filteredReorderItems.length})`}</span>
+                  </button>
+
+                  {/* Bulk Quantity Setter */}
+                  <div className="flex items-center gap-1.5 bg-card px-2.5 py-1 rounded-lg border border-border/60 shadow-2xs">
+                    <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                      Set all selected to:
+                    </span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={bulkQuantityInput}
+                      onChange={(e) => setBulkQuantityInput(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="w-12 bg-muted border border-border/70 rounded px-1.5 py-0.5 text-xs font-mono font-bold text-center text-foreground outline-none focus:ring-1 focus:ring-primary"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleApplyBulkQuantity}
+                      className="px-2 py-0.5 rounded text-[11px] font-bold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+
+                {/* Right: Selected Counter & Draft PO Trigger */}
+                <div className="flex items-center justify-between md:justify-end gap-3 w-full md:w-auto">
+                  <div className="text-right text-xs">
+                    <div className="font-semibold text-foreground">
+                      <span className="text-blue-600 dark:text-blue-400 font-bold">{selectedItemsData.count}</span> items ({selectedItemsData.units} units)
+                    </div>
+                    <div className="text-[11px] text-muted-foreground font-mono">
+                      Est. ₹{selectedItemsData.cost.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleOpenPoModal}
+                    disabled={selectedReorderIds.size === 0}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:pointer-events-none text-white transition-all shadow-sm cursor-pointer whitespace-nowrap"
+                  >
+                    <ShoppingCart className="w-4 h-4" />
+                    <span>Draft Purchase Order ({selectedItemsData.count})</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Responsive Reorder Items Table */}
+              {loadingInventoryAnalytics ? (
+                <div className="py-12 text-center text-xs text-muted-foreground space-y-2">
+                  <RefreshCw className="w-5 h-5 animate-spin mx-auto text-blue-500" />
+                  <div>Analyzing item velocity and stock levels...</div>
+                </div>
+              ) : filteredReorderItems.length === 0 ? (
+                <div className="py-12 text-center text-xs text-muted-foreground space-y-1 bg-muted/10 rounded-xl border border-dashed border-border/60">
+                  <PackageCheck className="w-8 h-8 mx-auto text-emerald-500/70" />
+                  <div className="font-bold text-foreground text-sm">No Urgent Reorders Needed!</div>
+                  <p className="max-w-md mx-auto text-[11px]">
+                    All high-velocity fast-moving items currently have sufficient stock on hand. Low-priority deadstock is excluded.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-border/60 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="bg-muted/40 border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
+                          <th className="py-2.5 px-3 w-10 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isAllSelected}
+                              onChange={handleSelectAllToggle}
+                              className="rounded border-border cursor-pointer"
+                            />
+                          </th>
+                          <th className="py-2.5 px-2 text-center">Urgency</th>
+                          <th className="py-2.5 px-3">Item / Size</th>
+                          <th className="py-2.5 px-3">Category</th>
+                          <th className="py-2.5 px-3 text-right">Current Stock</th>
+                          <th className="py-2.5 px-3 text-right">Sales Demand</th>
+                          <th className="py-2.5 px-3 text-right">Last Purchase</th>
+                          <th className="py-2.5 px-3 text-center w-36">Order Qty</th>
+                          <th className="py-2.5 px-3 text-right">Est. Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/30">
+                        {filteredReorderItems.map((it: any) => {
+                          const isSelected = selectedReorderIds.has(it.product_id);
+                          const qty = orderQuantities[it.product_id] ?? it.suggested_qty ?? 5;
+                          const lineTotal = qty * (it.purchase_price || 0);
+
+                          return (
+                            <tr
+                              key={it.product_id}
+                              className={`transition-colors ${
+                                isSelected ? "bg-blue-500/5 dark:bg-blue-500/10" : "hover:bg-muted/30"
+                              }`}
+                            >
+                              {/* Checkbox */}
+                              <td className="py-2.5 px-3 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => handleToggleSelect(it.product_id)}
+                                  className="rounded border-border cursor-pointer"
+                                />
+                              </td>
+
+                              {/* Urgency Badge */}
+                              <td className="py-2.5 px-2 text-center">
+                                {it.urgency === "OUT_OF_STOCK" ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 whitespace-nowrap">
+                                    Out of Stock
+                                  </span>
+                                ) : it.urgency === "CRITICAL" ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 whitespace-nowrap">
+                                    Critical
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20 whitespace-nowrap">
+                                    Low Stock
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Item Description (Clickable to view history) */}
+                              <td className="py-2.5 px-3">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedHistoryItem(it)}
+                                  className="text-left font-semibold text-foreground hover:text-blue-500 transition-colors cursor-pointer group flex items-center gap-1.5"
+                                  title="Click to view transaction history"
+                                >
+                                  <span>{it.name}</span>
+                                  <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 text-blue-500 transition-opacity" />
+                                </button>
+                                <div className="text-[10px] text-muted-foreground font-mono flex items-center gap-2 mt-0.5">
+                                  {it.brand && <span>Brand: {it.brand}</span>}
+                                  {it.sku && <span>SKU: {it.sku}</span>}
+                                </div>
+                              </td>
+
+                              {/* Category */}
+                              <td className="py-2.5 px-3 text-muted-foreground">
+                                {it.category_name || "General"}
+                              </td>
+
+                              {/* Current Stock */}
+                              <td className="py-2.5 px-3 text-right font-mono">
+                                <span
+                                  className={`font-bold ${
+                                    it.current_stock <= 0
+                                      ? "text-rose-600 dark:text-rose-400"
+                                      : it.current_stock <= 3
+                                      ? "text-amber-600 dark:text-amber-400"
+                                      : "text-foreground"
+                                  }`}
+                                >
+                                  {it.current_stock}
+                                </span>{" "}
+                                <span className="text-[10px] text-muted-foreground">{it.unit}</span>
+                              </td>
+
+                              {/* Sales Demand */}
+                              <td className="py-2.5 px-3 text-right font-mono text-muted-foreground">
+                                <span className="font-semibold text-blue-600 dark:text-blue-400">
+                                  {it.invoices_count} inv
+                                </span>{" "}
+                                <span className="text-[10px]">({it.total_sold_qty} sold)</span>
+                              </td>
+
+                              {/* Last Purchase Rate & Supplier */}
+                              <td className="py-2.5 px-3 text-right font-mono">
+                                <div className="font-semibold text-foreground">
+                                  ₹{(it.purchase_price || 0).toLocaleString("en-IN", {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground truncate max-w-[120px] ml-auto">
+                                  {it.last_supplier || "Catalog"}
+                                </div>
+                              </td>
+
+                              {/* Order Quantity Editor (Editable individual row and bulk) */}
+                              <td className="py-2.5 px-3 text-center">
+                                <div className="inline-flex items-center justify-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleItemQuantityChange(it.product_id, Math.max(1, qty - 1))}
+                                    className="w-5 h-5 rounded bg-muted hover:bg-muted/80 text-foreground flex items-center justify-center cursor-pointer transition-colors"
+                                    title="Decrease quantity"
+                                  >
+                                    <Minus className="w-2.5 h-2.5" />
+                                  </button>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={qty}
+                                    onChange={(e) =>
+                                      handleItemQuantityChange(it.product_id, Math.max(1, parseInt(e.target.value) || 1))
+                                    }
+                                    className="w-14 bg-card border border-border/80 rounded py-0.5 text-center font-mono font-bold text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
+                                  />
+                                  <span className="text-[10px] text-muted-foreground font-mono">{it.unit}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleItemQuantityChange(it.product_id, qty + 1)}
+                                    className="w-5 h-5 rounded bg-muted hover:bg-muted/80 text-foreground flex items-center justify-center cursor-pointer transition-colors"
+                                    title="Increase quantity"
+                                  >
+                                    <Plus className="w-2.5 h-2.5" />
+                                  </button>
+                                </div>
+                              </td>
+
+                              {/* Line Total */}
+                              <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
+                                ₹{lineTotal.toLocaleString("en-IN", {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 4. Item Velocity & Most Frequent Movement Section */}
+            <div className="bg-card border border-border/50 rounded-xl p-4 sm:p-5 shadow-2xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/40 pb-3">
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-foreground flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-blue-500" />
+                    <span>Item Velocity & Most Frequent Movement</span>
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Top recurring items sold and purchased across posted invoices and vendor bills.
+                  </p>
+                </div>
+                <div className="text-xs text-muted-foreground font-mono">
+                  {inventoryCategoryFilter === "ALL"
+                    ? "All Categories"
+                    : inventoryAnalytics?.categories?.find((c: any) => c.id === inventoryCategoryFilter)?.name || "Category Filtered"}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Most Frequent Sold */}
+                <div className="bg-muted/20 border border-border/60 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                      Most Frequent Items Sold
+                    </span>
+                    <span className="text-[10px] text-muted-foreground font-mono">By Invoice Count</span>
+                  </div>
+
+                  {(!inventoryAnalytics?.top_sold || inventoryAnalytics.top_sold.length === 0) ? (
+                    <div className="py-6 text-center text-xs text-muted-foreground">
+                      No sales transactions recorded for this selection.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {inventoryAnalytics.top_sold.map((it: any, idx: number) => (
+                        <div
+                          key={idx}
+                          onClick={() => setSelectedHistoryItem(it)}
+                          className="flex items-center justify-between p-2.5 rounded-lg bg-card/60 hover:bg-muted/40 border border-border/30 text-xs transition-colors cursor-pointer group"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-mono text-[10px] text-muted-foreground w-4">#{idx + 1}</span>
+                            <div className="truncate">
+                              <div className="font-semibold text-foreground group-hover:text-blue-500 transition-colors truncate">
+                                {it.name}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground font-mono">
+                                {it.brand || "Unbranded"} • Stock: {it.current_stock} {it.unit}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right font-mono shrink-0 ml-2">
+                            <div className="font-bold text-blue-600 dark:text-blue-400">
+                              {it.invoices_count} inv ({it.total_qty} {it.unit})
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              ₹{it.total_revenue?.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Most Frequent Purchased */}
+                <div className="bg-muted/20 border border-border/60 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                      Most Frequent Items Purchased
+                    </span>
+                    <span className="text-[10px] text-muted-foreground font-mono">By Bill Count</span>
+                  </div>
+
+                  {(!inventoryAnalytics?.top_purchased || inventoryAnalytics.top_purchased.length === 0) ? (
+                    <div className="py-6 text-center text-xs text-muted-foreground">
+                      No purchase transactions recorded for this selection.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {inventoryAnalytics.top_purchased.map((it: any, idx: number) => (
+                        <div
+                          key={idx}
+                          onClick={() => setSelectedHistoryItem(it)}
+                          className="flex items-center justify-between p-2.5 rounded-lg bg-card/60 hover:bg-muted/40 border border-border/30 text-xs transition-colors cursor-pointer group"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-mono text-[10px] text-muted-foreground w-4">#{idx + 1}</span>
+                            <div className="truncate">
+                              <div className="font-semibold text-foreground group-hover:text-emerald-500 transition-colors truncate">
+                                {it.name}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground font-mono">
+                                {it.brand || "Unbranded"} • Stock: {it.current_stock} {it.unit}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right font-mono shrink-0 ml-2">
+                            <div className="font-bold text-emerald-600 dark:text-emerald-400">
+                              {it.bills_count} bills ({it.total_qty} {it.unit})
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              ₹{it.total_spend?.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -898,6 +1528,31 @@ function AnalyticsHubContent() {
             </div>
           </div>
         )}
+
+        {/* Purchase Order Draft Modal */}
+        <PurchaseOrderDraftModal
+          isOpen={isPoModalOpen}
+          onClose={() => setIsPoModalOpen(false)}
+          items={poDraftItems}
+          companyName={activeCompany?.name || "Company"}
+          companyGstin={activeCompany?.gstin || ""}
+          companyAddress={
+            activeCompany?.address
+              ? `${activeCompany.address}${activeCompany.city ? `, ${activeCompany.city}` : ""}`
+              : ""
+          }
+          onUpdateQuantity={handleItemQuantityChange}
+          onRemoveItem={handleRemoveFromDraft}
+        />
+
+        {/* Item Invoice & Bill History Inspection Modal */}
+        <ItemHistoryModal
+          isOpen={!!selectedHistoryItem}
+          onClose={() => setSelectedHistoryItem(null)}
+          productId={selectedHistoryItem?.product_id || selectedHistoryItem?.id || null}
+          productName={selectedHistoryItem?.name || ""}
+          companyId={effectiveCompanyId || activeCompanyId || ""}
+        />
       </div>
     </DashboardLayout>
   );

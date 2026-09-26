@@ -1,6 +1,6 @@
-﻿from decimal import Decimal
+from decimal import Decimal
 from django.db.models import Sum, Count, Avg, F
-from apps.inventory.models import Product, InventoryEntry
+from apps.inventory.models import Product, InventoryEntry, ProductCategory
 from apps.accounting.models import VoucherItem, Voucher
 
 class ItemAnalyticsService:
@@ -112,7 +112,11 @@ class ItemAnalyticsService:
         }
 
     @staticmethod
-    def get_top_moving_items(company, category_id=None, limit=10):
+    def get_top_moving_items(company, category_id=None, limit=10, reorder_limit=100):
+        # 0. Categories list
+        categories = list(ProductCategory.objects.filter(company=company).values('id', 'name').order_by('name'))
+        categories_data = [{"id": str(c["id"]), "name": c["name"]} for c in categories]
+
         # 1. Top Purchased Items
         purchases_qs = VoucherItem.objects.filter(
             voucher__company=company,
@@ -195,7 +199,104 @@ class ItemAnalyticsService:
             for r in top_sold_raw
         ]
 
+        # 3. High-Velocity Low-Stock Reorder Intelligence
+        # Strictly flags items that are actively purchased/sold (sales demand >= 1 invoice and sold_qty > 0)
+        # but are short or out of stock in inventory (current_stock <= max(10, reorder_level)).
+        # Items with no or negligible sales are treated as low priority / deadstock and omitted.
+        reorder_raw = sales_qs.values(
+            'product_id',
+            'product__name',
+            'product__brand',
+            'product__sku',
+            'product__unit',
+            'product__category__name',
+            'product__category_id',
+            'product__stock_quantity',
+            'product__purchase_price',
+            'product__reorder_level'
+        ).annotate(
+            total_sold_qty=Sum('quantity'),
+            invoices_count=Count('voucher_id', distinct=True)
+        ).filter(total_sold_qty__gt=0, invoices_count__gte=1)
+
+        reorder_candidates = []
+        for r in reorder_raw:
+            stock = float(r['product__stock_quantity'] or 0)
+            reorder_lvl = float(r['product__reorder_level'] or 10)
+            thresh = max(10.0, reorder_lvl)
+            if stock <= thresh:
+                sold_qty = float(r['total_sold_qty'] or 0)
+                inv_cnt = r['invoices_count']
+                if stock <= 0:
+                    urgency = 'OUT_OF_STOCK'
+                    urgency_score = 100 + inv_cnt * 10
+                    urgency_label = 'Out of Stock'
+                elif stock <= 3:
+                    urgency = 'CRITICAL'
+                    urgency_score = 60 + inv_cnt * 5 - stock * 2
+                    urgency_label = 'Critical Stock'
+                else:
+                    urgency = 'LOW_STOCK'
+                    urgency_score = 30 + inv_cnt * 2 - stock
+                    urgency_label = 'Low Stock'
+
+                avg_per_sale = sold_qty / max(1, inv_cnt)
+                suggested_qty = max(5, int(round(avg_per_sale * 2 / 5.0) * 5))
+                if suggested_qty == 0:
+                    suggested_qty = 5
+
+                reorder_candidates.append({
+                    'product_id': str(r['product_id']),
+                    'name': r['product__name'],
+                    'brand': r['product__brand'] or '',
+                    'sku': r['product__sku'],
+                    'unit': r['product__unit'] or 'PCS',
+                    'category_name': r['product__category__name'] or 'General',
+                    'category_id': str(r['product__category_id']) if r['product__category_id'] else None,
+                    'current_stock': stock,
+                    'reorder_level': reorder_lvl,
+                    'total_sold_qty': sold_qty,
+                    'invoices_count': inv_cnt,
+                    'purchase_price': float(r['product__purchase_price'] or 0),
+                    'suggested_qty': suggested_qty,
+                    'urgency': urgency,
+                    'urgency_score': urgency_score,
+                    'urgency_label': urgency_label
+                })
+
+        reorder_candidates.sort(key=lambda x: -x['urgency_score'])
+        top_reorder = reorder_candidates[:reorder_limit]
+
+        # Fast batch lookup of latest purchase rates & vendors
+        if top_reorder:
+            cand_pids = [item['product_id'] for item in top_reorder]
+            p_items = VoucherItem.objects.filter(
+                product_id__in=cand_pids,
+                voucher__company=company,
+                voucher__voucher_type='PURCHASE',
+                voucher__status='POSTED'
+            ).values('product_id', 'rate', 'voucher__party_ledger__name', 'voucher__voucher_date').order_by('-voucher__voucher_date')
+
+            last_purchases = {}
+            for pi in p_items:
+                pid = str(pi['product_id'])
+                if pid not in last_purchases:
+                    last_purchases[pid] = {
+                        'rate': float(pi['rate']),
+                        'supplier': pi['voucher__party_ledger__name'] or 'Direct'
+                    }
+
+            for item in top_reorder:
+                pid = item['product_id']
+                if pid in last_purchases:
+                    item['purchase_price'] = last_purchases[pid]['rate']
+                    item['last_supplier'] = last_purchases[pid]['supplier']
+                else:
+                    item['last_supplier'] = 'Catalog Master'
+
         return {
             "top_purchased": top_purchased,
-            "top_sold": top_sold
+            "top_sold": top_sold,
+            "reorder_items": top_reorder,
+            "categories": categories_data
         }

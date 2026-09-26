@@ -613,9 +613,17 @@ class InventoryItemAnalyticsAPIView(APIView):
         try:
             company = Company.objects.get(id=company_id, users__user=request.user)
             category_id = request.query_params.get('category_id')
+            if category_id in ['ALL', 'all', '', None]:
+                category_id = None
             limit = int(request.query_params.get('limit', 10))
+            reorder_limit = int(request.query_params.get('reorder_limit', 100))
             from apps.inventory.services.item_analytics_service import ItemAnalyticsService
-            result = ItemAnalyticsService.get_top_moving_items(company=company, category_id=category_id, limit=limit)
+            result = ItemAnalyticsService.get_top_moving_items(
+                company=company,
+                category_id=category_id,
+                limit=limit,
+                reorder_limit=reorder_limit
+            )
             return Response({"success": True, "data": result})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
