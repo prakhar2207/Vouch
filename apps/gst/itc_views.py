@@ -141,7 +141,7 @@ class ITCReconciliationListView(APIView):
             company=company,
             voucher_type__in=['PURCHASE', 'DEBIT_NOTE'],
             status__in=['POSTED', 'VALIDATING']
-        ).select_related('party_ledger').prefetch_related('items', 'gstr2b_matches')
+        ).select_related('party_ledger').prefetch_related('items', 'gstr2b_matches').defer('attachment_data', 'attachment_mime')
 
         for v in vouchers:
             if filter_status not in ['ALL', 'MATCHED', 'MISMATCHED', 'MISSING_IN_2B']:
@@ -266,7 +266,7 @@ class ITCSmartPaymentHoldView(APIView):
 
         try:
             company = get_requested_company(request)
-            voucher = Voucher.objects.get(id=voucher_id, company=company)
+            voucher = Voucher.objects.defer('attachment_data', 'attachment_mime').get(id=voucher_id, company=company)
         except Voucher.DoesNotExist:
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
@@ -301,7 +301,7 @@ class ITCVendorNoticeView(APIView):
     def get(self, request, voucher_id, *args, **kwargs):
         try:
             company = get_requested_company(request)
-            voucher = Voucher.objects.select_related('party_ledger').prefetch_related('items').get(id=voucher_id, company=company)
+            voucher = Voucher.objects.select_related('party_ledger').prefetch_related('items').defer('attachment_data', 'attachment_mime').get(id=voucher_id, company=company)
         except Voucher.DoesNotExist:
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:

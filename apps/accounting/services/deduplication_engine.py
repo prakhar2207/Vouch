@@ -162,19 +162,19 @@ class TransactionDeduplicationEngine:
             return None
 
         v_type = 'RECEIPT' if is_money_in else 'PAYMENT'
-        company = bank_tx.company
+        company_id = bank_tx.company_id
         tx_date = bank_tx.transaction_date
         start_date = tx_date - datetime.timedelta(days=date_window_days)
         end_date = tx_date + datetime.timedelta(days=date_window_days)
 
         candidates = Voucher.objects.filter(
-            company=company,
+            company_id=company_id,
             voucher_type=v_type,
             status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
             total_amount=amount,
             voucher_date__gte=start_date,
             voucher_date__lte=end_date
-        ).select_related('party_ledger')
+        ).select_related('party_ledger').defer('attachment_data', 'attachment_mime')
 
         if party:
             candidates = candidates.filter(party_ledger=party)
@@ -188,7 +188,7 @@ class TransactionDeduplicationEngine:
         cand_ids = [c.id for c in cand_list]
         reconciled_voucher_ids = set(
             BankTransaction.objects.filter(
-                company=company,
+                company_id=company_id,
                 status='RECONCILED',
                 matched_voucher_id__in=cand_ids
             ).exclude(id=bank_tx.id).order_by().values_list('matched_voucher_id', flat=True)
@@ -261,6 +261,7 @@ class TransactionDeduplicationEngine:
                     status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
                 )
                 .order_by('created_at')
+                .prefetch_related('allocations_made', 'allocations_received', 'items')
                 .defer('attachment_data', 'attachment_mime')
             )
 
@@ -275,11 +276,11 @@ class TransactionDeduplicationEngine:
             # 3. Otherwise, the earliest created voucher is primary.
             def rank_primary(v: Voucher):
                 score = 0
-                if v.allocations_made.exists():
+                if bool(v.allocations_made.all()):
                     score += 10
-                if v.allocations_received.exists():
+                if bool(v.allocations_received.all()):
                     score += 10
-                if v.items.exists():
+                if bool(v.items.all()):
                     score += 5
                 # Earliest creation date preferred if scores tie
                 return (score, -v.created_at.timestamp())
@@ -288,9 +289,19 @@ class TransactionDeduplicationEngine:
             primary_v = sorted_vouchers[0]
             duplicate_vs = sorted_vouchers[1:]
 
+            v_ids = [v.id for v in vouchers]
+            bank_txs_map = {
+                bt.matched_voucher_id: bt
+                for bt in BankTransaction.objects.filter(
+                    company=company,
+                    matched_voucher_id__in=v_ids
+                ).select_related('bank_ledger')
+            }
+
             for dup_v in duplicate_vs:
                 # Detect origin / cause
-                is_bank_recon = BankTransaction.objects.filter(matched_voucher=dup_v).exists()
+                linked_bank_tx = bank_txs_map.get(dup_v.id)
+                is_bank_recon = bool(linked_bank_tx)
                 is_rapid = (dup_v.created_at - primary_v.created_at).total_seconds() < 300
 
                 if is_bank_recon:
@@ -299,9 +310,6 @@ class TransactionDeduplicationEngine:
                     source_desc = "Rapid double-click submission (created within seconds of original)"
                 else:
                     source_desc = "Identical manual double-entry"
-
-                # Check linked bank transaction on duplicate voucher
-                linked_bank_tx = BankTransaction.objects.filter(matched_voucher=dup_v).first()
 
                 findings_data.append({
                     "type": "DUPLICATE_VOUCHER",
@@ -411,6 +419,7 @@ class TransactionDeduplicationEngine:
                 )
                 .exclude(status='EXCLUDED')
                 .exclude(is_excluded=True)
+                .select_related('bank_ledger')
                 .order_by('created_at')
             )
             if len(txs) < 2:
@@ -448,7 +457,10 @@ class TransactionDeduplicationEngine:
                 })
 
         # 2. Unresolved bank transactions matching an existing manual voucher
-        unresolved_txs = BankTransaction.objects.filter(company=company, status='UNRESOLVED')[:25]
+        unresolved_txs = BankTransaction.objects.filter(
+            company=company,
+            status='UNRESOLVED'
+        ).select_related('bank_ledger')[:25]
         for utx in unresolved_txs:
             match = cls.detect_existing_voucher_for_bank_tx(utx)
             if match and match['confidence'] >= 0.90:
@@ -504,17 +516,18 @@ class TransactionDeduplicationEngine:
                     name=item['name'],
                     brand=item['brand'],
                     is_active=True
-                ).select_related('category').order_by('created_at')
+                )
+                .select_related('category')
+                .annotate(
+                    movements=Count('entries', distinct=True) + Count('voucher_items', distinct=True)
+                )
+                .order_by('created_at')
             )
             if len(prods) < 2:
                 continue
 
             # Primary product: the one with more transaction movements or earliest created
-            def rank_prod(p: Product):
-                movements = p.entries.count() + p.voucher_items.count()
-                return (movements, -p.created_at.timestamp())
-
-            sorted_prods = sorted(prods, key=rank_prod, reverse=True)
+            sorted_prods = sorted(prods, key=lambda p: (getattr(p, 'movements', 0), -p.created_at.timestamp()), reverse=True)
             primary_prod = sorted_prods[0]
             duplicate_prods = sorted_prods[1:]
 

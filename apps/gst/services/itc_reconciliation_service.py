@@ -567,7 +567,7 @@ class ITCReconciliationService:
             company=company,
             voucher_type__in=['PURCHASE', 'DEBIT_NOTE'],
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).prefetch_related('items')
+        ).prefetch_related('items').defer('attachment_data', 'attachment_mime')
 
         matched_vouchers_count = 0
         mismatched_vouchers_count = 0
@@ -638,7 +638,7 @@ class ITCReconciliationService:
             voucher_date__lte=prev_fy_end,
             itc_match_status__in=['MISSING_IN_2B', 'MISMATCHED', 'UNCHECKED'],
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).prefetch_related('items')
+        ).select_related('party_ledger').prefetch_related('items').defer('attachment_data', 'attachment_mime')
 
         expiring_list = []
         total_expiring_itc = Decimal('0.00')

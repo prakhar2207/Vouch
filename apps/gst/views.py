@@ -109,7 +109,7 @@ class EWayBillGenerateAPIView(APIView):
         if not voucher_id:
             return Response({"success": False, "error": "voucher_id is required."}, status=400)
 
-        voucher = Voucher.objects.filter(id=voucher_id, company__users__user=request.user).first()
+        voucher = Voucher.objects.filter(id=voucher_id, company__users__user=request.user).defer('attachment_data', 'attachment_mime').first()
         if not voucher:
             return Response({"success": False, "error": "Voucher not found or access denied."}, status=404)
 

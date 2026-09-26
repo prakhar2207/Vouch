@@ -17,26 +17,97 @@ class AccountingIntegrityEngine:
     """
 
     @classmethod
+    def _get_or_create_finding(
+        cls,
+        company: Company,
+        category: str,
+        title: str,
+        defaults: Dict[str, Any],
+        existing_findings_map: Optional[Dict[str, AccountingFinding]] = None
+    ) -> AccountingFinding:
+        """
+        Gets existing finding or creates new one without executing redundant SELECT/UPDATE queries.
+        Updates fields in-memory if existing finding has changed.
+        """
+        finding = None
+        if existing_findings_map is not None:
+            finding = existing_findings_map.get((category, title)) or existing_findings_map.get(title)
+        else:
+            finding = AccountingFinding.objects.filter(
+                company=company,
+                category=category,
+                title=title,
+                is_resolved=False
+            ).first()
+
+        if finding:
+            changed = False
+            for k, val in defaults.items():
+                if getattr(finding, k) != val:
+                    setattr(finding, k, val)
+                    changed = True
+            if changed:
+                finding.save()
+        else:
+            finding = AccountingFinding.objects.create(
+                company=company,
+                category=category,
+                title=title,
+                is_resolved=False,
+                **defaults
+            )
+            if existing_findings_map is not None:
+                existing_findings_map[(category, title)] = finding
+                existing_findings_map[title] = finding
+
+        return finding
+
+    @classmethod
     def run_all_checks(cls, company: Company) -> Dict[str, Any]:
         """
         Runs all 11 integrity checks for a company and generates/updates AccountingFinding records.
         Returns a comprehensive health report with transparent scoring.
         """
+        # Prefetch ALL unresolved findings for this company in 1 single query
+        existing_findings_list = list(AccountingFinding.objects.filter(company=company, is_resolved=False))
+        existing_findings_map: Dict[Any, AccountingFinding] = {
+            f.title: f for f in existing_findings_list
+        }
+        for f in existing_findings_list:
+            existing_findings_map[(f.category, f.title)] = f
+
+        # Query bank transaction status counts once in 1 query for reconciliation check and score deduction
+        bank_status_counts = dict(
+            BankTransaction.objects.filter(
+                company=company,
+                status__in=['UNRESOLVED', 'MATCHED_SUGGESTED']
+            ).values('status').annotate(c=Count('id')).values_list('status', 'c')
+        )
+        unresolved_bank = bank_status_counts.get('UNRESOLVED', 0)
+
         findings: List[AccountingFinding] = []
 
-        findings.extend(cls.check_trial_balance(company))
-        findings.extend(cls.check_party_balances(company))
-        findings.extend(cls.check_payment_allocations(company))
-        findings.extend(cls.check_wrong_party(company))
-        findings.extend(cls.check_duplicate_entries(company))
-        findings.extend(cls.check_gst(company))
-        findings.extend(cls.check_inventory(company))
-        findings.extend(cls.check_negative_margins(company))
-        findings.extend(cls.check_bank_reconciliation(company))
-        findings.extend(cls.check_cash_and_liquidity(company))
-        findings.extend(cls.check_document_numbering(company))
+        findings.extend(cls.check_trial_balance(company, existing_findings_map=existing_findings_map))
+        findings.extend(cls.check_party_balances(company, existing_findings_map=existing_findings_map))
+        findings.extend(cls.check_payment_allocations(company, existing_findings_map=existing_findings_map))
+        findings.extend(cls.check_wrong_party(company, existing_findings_map=existing_findings_map))
+        findings.extend(cls.check_duplicate_entries(company, existing_findings_map=existing_findings_map))
+        findings.extend(cls.check_gst(company, existing_findings_map=existing_findings_map))
+        findings.extend(cls.check_inventory(company, existing_findings_map=existing_findings_map))
+        findings.extend(cls.check_negative_margins(company, existing_findings_map=existing_findings_map))
+        findings.extend(cls.check_bank_reconciliation(company, existing_findings_map=existing_findings_map, bank_status_counts=bank_status_counts))
+        findings.extend(cls.check_cash_and_liquidity(company, existing_findings_map=existing_findings_map))
+        findings.extend(cls.check_document_numbering(company, existing_findings_map=existing_findings_map))
 
-        unresolved_bank = BankTransaction.objects.filter(company=company, status='UNRESOLVED').count()
+        # Single batch auto-resolve: resolve any previously open findings that are no longer detected
+        detected_ids = {f.id for f in findings if f.id}
+        stale_findings = [f for f in existing_findings_list if f.id not in detected_ids]
+        if stale_findings:
+            stale_ids = [f.id for f in stale_findings]
+            AccountingFinding.objects.filter(id__in=stale_ids).update(
+                is_resolved=True,
+                resolved_at=timezone.now()
+            )
 
         # Calculate transparent Bookkeeping Health Score
         score_data = cls.calculate_health_score(company, findings, unresolved_bank=unresolved_bank)
@@ -93,7 +164,7 @@ class AccountingIntegrityEngine:
         }
 
     @classmethod
-    def check_trial_balance(cls, company: Company) -> List[AccountingFinding]:
+    def check_trial_balance(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """1. Check: Total Debit == Total Credit across all posted entries."""
         findings = []
         entries = LedgerEntry.objects.filter(company=company, voucher__status__in=['POSTED', 'REVERSED', 'CORRECTED'])
@@ -130,13 +201,12 @@ class AccountingIntegrityEngine:
             else:
                 cause += " Discrepancy likely stems from opening balance equity offset or manual adjustment."
 
-            finding, _ = AccountingFinding.objects.update_or_create(
+            finding = cls._get_or_create_finding(
                 company=company,
                 category='TRIAL_BALANCE',
-                is_resolved=False,
+                title=f"Trial balance difference of ₹{diff}",
                 defaults={
                     "severity": "CRITICAL",
-                    "title": f"Trial balance difference of ₹{diff}",
                     "description": f"The books do not balance. Total Debits: ₹{total_dr}, Total Credits: ₹{total_cr}. Difference: ₹{diff}.",
                     "evidence": {
                         "total_debit": str(total_dr),
@@ -150,16 +220,19 @@ class AccountingIntegrityEngine:
                     "suggested_action": "Run balance reconciliation or check unbalanced vouchers.",
                     "confidence": 1.0,
                     "fix_action": "RECALCULATE_BALANCE"
-                }
+                },
+                existing_findings_map=existing_findings_map
             )
             findings.append(finding)
-        else:
-            AccountingFinding.objects.filter(company=company, category='TRIAL_BALANCE', is_resolved=False).update(is_resolved=True, resolved_at=timezone.now())
+        elif existing_findings_map is None:
+            stale = AccountingFinding.objects.filter(company=company, category='TRIAL_BALANCE', is_resolved=False)
+            if stale.exists():
+                stale.update(is_resolved=True, resolved_at=timezone.now())
 
         return findings
 
     @classmethod
-    def check_party_balances(cls, company: Company) -> List[AccountingFinding]:
+    def check_party_balances(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """2. Check: Cached current_balance matches derived sum of entries for all parties."""
         findings = []
         parties = list(Ledger.objects.filter(company=company, ledger_type__in=['CUSTOMER', 'SUPPLIER'], is_archived=False))
@@ -190,13 +263,16 @@ class AccountingIntegrityEngine:
         totals_map = {row['ledger_id']: row for row in entry_totals}
 
         # Pre-fetch existing unresolved findings to avoid N SELECT queries in loop
-        existing_findings = {
-            f.title: f for f in AccountingFinding.objects.filter(
-                company=company,
-                category__in=['PARTY_BALANCE', 'WRONG_PARTY'],
-                is_resolved=False
-            )
-        }
+        if existing_findings_map is None:
+            existing_findings = {
+                f.title: f for f in AccountingFinding.objects.filter(
+                    company=company,
+                    category__in=['PARTY_BALANCE', 'WRONG_PARTY'],
+                    is_resolved=False
+                )
+            }
+        else:
+            existing_findings = existing_findings_map
 
         for p in parties:
             has_op = p.id in ledgers_with_opening
@@ -243,26 +319,19 @@ class AccountingIntegrityEngine:
                     "confidence": 0.99,
                     "fix_action": "RECALCULATE_BALANCE"
                 }
-                finding = existing_findings.get(title)
-                if finding:
-                    for k, val in defaults.items():
-                        setattr(finding, k, val)
-                    finding.save()
-                else:
-                    finding = AccountingFinding.objects.create(
-                        company=company,
-                        category='PARTY_BALANCE',
-                        title=title,
-                        is_resolved=False,
-                        **defaults
-                    )
-                    existing_findings[title] = finding
+                finding = cls._get_or_create_finding(
+                    company=company,
+                    category='PARTY_BALANCE',
+                    title=title,
+                    defaults=defaults,
+                    existing_findings_map=existing_findings
+                )
                 findings.append(finding)
 
         return findings
 
     @classmethod
-    def check_payment_allocations(cls, company: Company) -> List[AccountingFinding]:
+    def check_payment_allocations(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """3. Check: Payment allocations do not exceed invoice total or cross company boundaries."""
         findings = []
         allocs = PaymentAllocation.objects.filter(company=company).select_related(
@@ -277,11 +346,10 @@ class AccountingIntegrityEngine:
                 continue
             # Cross company check
             if alloc.payment_voucher.company_id != alloc.invoice_voucher.company_id:
-                finding, _ = AccountingFinding.objects.update_or_create(
+                finding = cls._get_or_create_finding(
                     company=company,
                     category='PAYMENT',
                     title=f"Cross-company payment allocation #{alloc.id}",
-                    is_resolved=False,
                     defaults={
                         "severity": "CRITICAL",
                         "description": f"Payment #{alloc.payment_voucher.voucher_number} is allocated to invoice #{alloc.invoice_voucher.voucher_number} from another company.",
@@ -291,7 +359,8 @@ class AccountingIntegrityEngine:
                         "probable_cause": "Corrupted offline command sync or invalid foreign key assignment.",
                         "suggested_action": "Remove illegal cross-company allocation.",
                         "confidence": 1.0
-                    }
+                    },
+                    existing_findings_map=existing_findings_map
                 )
                 findings.append(finding)
 
@@ -318,11 +387,10 @@ class AccountingIntegrityEngine:
                 if total_alloc > inv_total + Decimal('0.05'):
                     title = f"Invoice #{inv.voucher_number} is over-allocated"
                     active_overalloc_titles.add(title)
-                    finding, _ = AccountingFinding.objects.update_or_create(
+                    finding = cls._get_or_create_finding(
                         company=company,
                         category='PAYMENT',
                         title=title,
-                        is_resolved=False,
                         defaults={
                             "severity": "CRITICAL",
                             "description": f"Invoice #{inv.voucher_number} total is ₹{inv.total_amount}, but total payments allocated equal ₹{total_alloc}.",
@@ -340,25 +408,29 @@ class AccountingIntegrityEngine:
                             "suggested_action": "Re-run automated FIFO allocation for this party.",
                             "confidence": 0.98,
                             "fix_action": "RECONCILE_FIFO"
-                        }
+                        },
+                        existing_findings_map=existing_findings_map
                     )
                     findings.append(finding)
 
-        # Batch resolve all previously open over-allocation findings that are no longer over-allocated (1 single query instead of N+1 loops)
-        AccountingFinding.objects.filter(
-            company=company,
-            category='PAYMENT',
-            title__endswith='is over-allocated',
-            is_resolved=False
-        ).exclude(title__in=active_overalloc_titles).update(
-            is_resolved=True,
-            resolved_at=timezone.now()
-        )
+        # Batch resolve only if standalone and stale findings exist
+        if existing_findings_map is None:
+            stale = AccountingFinding.objects.filter(
+                company=company,
+                category='PAYMENT',
+                title__endswith='is over-allocated',
+                is_resolved=False
+            ).exclude(title__in=active_overalloc_titles)
+            if stale.exists():
+                stale.update(
+                    is_resolved=True,
+                    resolved_at=timezone.now()
+                )
 
         return findings
 
     @classmethod
-    def check_wrong_party(cls, company: Company) -> List[AccountingFinding]:
+    def check_wrong_party(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """4. Check: Detects invoices/payments likely assigned to the wrong party."""
         findings = []
         recent_vouchers = list(Voucher.objects.filter(
@@ -381,11 +453,10 @@ class AccountingIntegrityEngine:
 
                 for other_v in other_parties_with_same_bill:
                     if other_v.party_ledger and other_v.total_amount == v.total_amount:
-                        finding, _ = AccountingFinding.objects.update_or_create(
+                        finding = cls._get_or_create_finding(
                             company=company,
                             category='WRONG_PARTY',
                             title=f"Possible wrong party on invoice #{v.voucher_number}",
-                            is_resolved=False,
                             defaults={
                                 "severity": "WARNING",
                                 "description": f"Invoice #{v.voucher_number} for ₹{v.total_amount} is currently under {v.party_ledger.name}. However, supplier bill #{v.external_invoice_number} for ₹{other_v.total_amount} was also found under {other_v.party_ledger.name}.",
@@ -404,14 +475,15 @@ class AccountingIntegrityEngine:
                                 "suggested_action": f"Move invoice #{v.voucher_number} from {v.party_ledger.name} to {other_v.party_ledger.name}.",
                                 "confidence": 0.94,
                                 "fix_action": "MOVE_PARTY"
-                            }
+                            },
+                            existing_findings_map=existing_findings_map
                         )
                         findings.append(finding)
 
         return findings
 
     @classmethod
-    def check_duplicate_entries(cls, company: Company) -> List[AccountingFinding]:
+    def check_duplicate_entries(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """
         5. Check: Intelligent Deduplication Engine across Receipts, Payments/Transactions,
         Banking, Inventory, and Ledgers.
@@ -424,13 +496,16 @@ class AccountingIntegrityEngine:
         active_titles = set()
 
         # Pre-fetch existing duplicate findings to eliminate SELECT ... FOR UPDATE (N+1 queries)
-        existing_findings = {
-            f.title: f for f in AccountingFinding.objects.filter(
-                company=company,
-                category__in=['DUPLICATE', 'DUPLICATE_BANK', 'DUPLICATE_INVENTORY', 'DUPLICATE_LEDGER'],
-                is_resolved=False
-            )
-        }
+        if existing_findings_map is None:
+            existing_findings = {
+                f.title: f for f in AccountingFinding.objects.filter(
+                    company=company,
+                    category__in=['DUPLICATE', 'DUPLICATE_BANK', 'DUPLICATE_INVENTORY', 'DUPLICATE_LEDGER'],
+                    is_resolved=False
+                )
+            }
+        else:
+            existing_findings = existing_findings_map
 
         for item in scanned_items:
             active_titles.add(item['title'])
@@ -445,32 +520,24 @@ class AccountingIntegrityEngine:
                 "confidence": item.get('confidence', 0.95),
                 "fix_action": item.get('fix_action')
             }
-            finding = existing_findings.get(item['title'])
-            if finding:
-                changed = False
-                for k, v in defaults.items():
-                    if getattr(finding, k) != v:
-                        setattr(finding, k, v)
-                        changed = True
-                if changed:
-                    finding.save()
-            else:
-                finding = AccountingFinding.objects.create(
-                    company=company,
-                    category=item['category'],
-                    title=item['title'],
-                    is_resolved=False,
-                    **defaults
-                )
-                existing_findings[item['title']] = finding
+            finding = cls._get_or_create_finding(
+                company=company,
+                category=item['category'],
+                title=item['title'],
+                defaults=defaults,
+                existing_findings_map=existing_findings
+            )
             findings.append(finding)
 
-        # Auto-resolve previously open duplicate findings that are no longer detected
-        AccountingFinding.objects.filter(
-            company=company,
-            category__in=['DUPLICATE', 'DUPLICATE_BANK', 'DUPLICATE_INVENTORY', 'DUPLICATE_LEDGER'],
-            is_resolved=False
-        ).exclude(title__in=active_titles).update(is_resolved=True, resolved_at=timezone.now())
+        # Auto-resolve previously open duplicate findings only if standalone and stale findings exist
+        if existing_findings_map is None:
+            stale = AccountingFinding.objects.filter(
+                company=company,
+                category__in=['DUPLICATE', 'DUPLICATE_BANK', 'DUPLICATE_INVENTORY', 'DUPLICATE_LEDGER'],
+                is_resolved=False
+            ).exclude(title__in=active_titles)
+            if stale.exists():
+                stale.update(is_resolved=True, resolved_at=timezone.now())
 
         return findings
 
@@ -480,7 +547,7 @@ class AccountingIntegrityEngine:
         return cls.check_duplicate_entries(company)
 
     @classmethod
-    def check_gst(cls, company: Company) -> List[AccountingFinding]:
+    def check_gst(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """6. Check: GST rate and place-of-supply consistency."""
         findings = []
         company_state = (company.state_code or "").strip()
@@ -504,11 +571,10 @@ class AccountingIntegrityEngine:
                 # Intra-state check: Should not have IGST
                 if is_intra and igst > Decimal('0.50') and cgst == Decimal('0.00'):
                     half_tax = str(round(igst / Decimal('2.0'), 2))
-                    finding, _ = AccountingFinding.objects.update_or_create(
+                    finding = cls._get_or_create_finding(
                         company=company,
                         category='GST',
                         title=f"GST mismatch on Invoice #{v.voucher_number}",
-                        is_resolved=False,
                         defaults={
                             "severity": "WARNING",
                             "description": f"This transaction appears to be intra-state (State {company_state}), but IGST of ₹{igst} was applied instead of CGST + SGST.",
@@ -525,7 +591,8 @@ class AccountingIntegrityEngine:
                             "probable_cause": "Wrong tax type selected during invoice creation.",
                             "suggested_action": "Review invoice tax breakdown and correct.",
                             "confidence": 0.95
-                        }
+                        },
+                        existing_findings_map=existing_findings_map
                     )
                     findings.append(finding)
                     break
@@ -533,17 +600,16 @@ class AccountingIntegrityEngine:
         return findings
 
     @classmethod
-    def check_inventory(cls, company: Company) -> List[AccountingFinding]:
+    def check_inventory(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """7. Check: Negative stock or warehouse stock discrepancies."""
         findings = []
         neg_products = Product.objects.filter(company=company, stock_quantity__lt=0)
 
         for p in neg_products:
-            finding, _ = AccountingFinding.objects.update_or_create(
+            finding = cls._get_or_create_finding(
                 company=company,
                 category='INVENTORY',
                 title=f"Negative stock for {p.name}",
-                is_resolved=False,
                 defaults={
                     "severity": "WARNING",
                     "description": f"{p.name} has a recorded stock of {p.stock_quantity} {p.unit or 'units'}. Sales exceeded recorded purchases.",
@@ -558,14 +624,15 @@ class AccountingIntegrityEngine:
                     "probable_cause": "Supplier purchase bill was not entered before recording the sale.",
                     "suggested_action": "Enter pending purchase bills or post a stock adjustment.",
                     "confidence": 0.99
-                }
+                },
+                existing_findings_map=existing_findings_map
             )
             findings.append(finding)
 
         return findings
 
     @classmethod
-    def check_negative_margins(cls, company: Company) -> List[AccountingFinding]:
+    def check_negative_margins(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """
         8. Check: Detects loss-making sales where products are sold below purchase cost.
         In B2B wholesale and manufacturing, selling below cost price erodes operating profits
@@ -574,12 +641,14 @@ class AccountingIntegrityEngine:
         findings = []
         active_titles = set()
 
-        # Clean up any legacy UNUSUAL_ACTIVITY findings
-        AccountingFinding.objects.filter(
-            company=company,
-            category='UNUSUAL_ACTIVITY',
-            is_resolved=False
-        ).update(is_resolved=True, resolved_at=timezone.now())
+        if existing_findings_map is None:
+            legacy = AccountingFinding.objects.filter(
+                company=company,
+                category='UNUSUAL_ACTIVITY',
+                is_resolved=False
+            )
+            if legacy.exists():
+                legacy.update(is_resolved=True, resolved_at=timezone.now())
 
         # Inspect recent posted sales vouchers (last 100 sales)
         recent_sales = Voucher.objects.filter(
@@ -611,11 +680,10 @@ class AccountingIntegrityEngine:
                     title = f"Loss-making sale: {prod.name} sold below cost on #{v.voucher_number}"
                     active_titles.add(title)
 
-                    finding, _ = AccountingFinding.objects.update_or_create(
+                    finding = cls._get_or_create_finding(
                         company=company,
                         category='MARGIN_RISK',
                         title=title,
-                        is_resolved=False,
                         defaults={
                             "severity": "CRITICAL" if total_loss > Decimal('500.00') else "WARNING",
                             "description": (
@@ -641,32 +709,44 @@ class AccountingIntegrityEngine:
                             "suggested_action": "Verify invoice item rate and apply corrected rate or verify special authorized markdown.",
                             "confidence": 0.98,
                             "fix_action": "REVIEW_PRICING"
-                        }
+                        },
+                        existing_findings_map=existing_findings_map
                     )
                     findings.append(finding)
 
-        # Batch auto-resolve any previous margin findings no longer present
-        AccountingFinding.objects.filter(
-            company=company,
-            category='MARGIN_RISK',
-            is_resolved=False
-        ).exclude(title__in=active_titles).update(is_resolved=True, resolved_at=timezone.now())
+        # Batch auto-resolve only if standalone and stale findings exist
+        if existing_findings_map is None:
+            stale = AccountingFinding.objects.filter(
+                company=company,
+                category='MARGIN_RISK',
+                is_resolved=False
+            ).exclude(title__in=active_titles)
+            if stale.exists():
+                stale.update(is_resolved=True, resolved_at=timezone.now())
 
         return findings
 
     @classmethod
-    def check_unusual_transactions(cls, company: Company) -> List[AccountingFinding]:
+    def check_unusual_transactions(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """Backward-compatibility alias pointing to check_negative_margins."""
-        return cls.check_negative_margins(company)
+        return cls.check_negative_margins(company, existing_findings_map=existing_findings_map)
 
     @classmethod
-    def check_bank_reconciliation(cls, company: Company) -> List[AccountingFinding]:
+    def check_bank_reconciliation(
+        cls,
+        company: Company,
+        existing_findings_map: Optional[Dict[str, Any]] = None,
+        bank_status_counts: Optional[Dict[str, int]] = None
+    ) -> List[AccountingFinding]:
         """9. Check: Unresolved bank transactions requiring attention."""
         findings = []
-        unres_count = BankTransaction.objects.filter(
-            company=company,
-            status__in=['UNRESOLVED', 'MATCHED_SUGGESTED']
-        ).count()
+        if bank_status_counts is not None:
+            unres_count = sum(bank_status_counts.values())
+        else:
+            unres_count = BankTransaction.objects.filter(
+                company=company,
+                status__in=['UNRESOLVED', 'MATCHED_SUGGESTED']
+            ).count()
 
         if unres_count > 0:
             totals = BankTransaction.objects.filter(
@@ -675,11 +755,10 @@ class AccountingIntegrityEngine:
             ).aggregate(dr=Sum('debit_amount'), cr=Sum('credit_amount'))
 
             total_val = Decimal(str(totals['dr'] or '0.00')) + Decimal(str(totals['cr'] or '0.00'))
-            finding, _ = AccountingFinding.objects.update_or_create(
+            finding = cls._get_or_create_finding(
                 company=company,
                 category='BANK',
                 title=f"{unres_count} bank transactions need review",
-                is_resolved=False,
                 defaults={
                     "severity": "WARNING",
                     "description": f"There are {unres_count} bank transactions totaling ₹{total_val} that have not yet been reconciled into the books.",
@@ -694,14 +773,15 @@ class AccountingIntegrityEngine:
                     "probable_cause": "Recent bank statement uploaded without final matching.",
                     "suggested_action": "Go to Bank Reconciliation to review suggestions and match parties.",
                     "confidence": 0.95
-                }
+                },
+                existing_findings_map=existing_findings_map
             )
             findings.append(finding)
 
         return findings
 
     @classmethod
-    def check_cash_and_liquidity(cls, company: Company) -> List[AccountingFinding]:
+    def check_cash_and_liquidity(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """
         10. Check: Cash Drawer Deficit & Bank Overdraft Safety.
         In Indian business accounting:
@@ -714,30 +794,36 @@ class AccountingIntegrityEngine:
         findings = []
         active_titles = set()
 
-        # Clean up any legacy OPENING_BALANCE findings
-        AccountingFinding.objects.filter(
+        if existing_findings_map is None:
+            legacy = AccountingFinding.objects.filter(
+                company=company,
+                category='OPENING_BALANCE',
+                is_resolved=False
+            )
+            if legacy.exists():
+                legacy.update(is_resolved=True, resolved_at=timezone.now())
+
+        # Single combined query for Cash and Bank ledgers
+        liquid_ledgers = list(Ledger.objects.filter(
             company=company,
-            category='OPENING_BALANCE',
-            is_resolved=False
-        ).update(is_resolved=True, resolved_at=timezone.now())
+            ledger_type__in=['CASH', 'BANK'],
+            is_archived=False
+        ).only('id', 'name', 'ledger_type', 'current_balance'))
+
+        cash_ledgers = [l for l in liquid_ledgers if l.ledger_type == 'CASH']
+        bank_ledgers = [l for l in liquid_ledgers if l.ledger_type == 'BANK']
 
         # 1. Cash Ledgers (Negative Cash in Hand)
-        cash_ledgers = Ledger.objects.filter(
-            company=company,
-            ledger_type='CASH',
-            is_archived=False
-        )
         for cl in cash_ledgers:
             bal = Decimal(str(cl.current_balance or '0.00'))
             if bal < Decimal('-0.05'):
                 deficit = abs(bal)
                 title = f"Negative cash in hand: {cl.name} is ₹{deficit:.2f} in deficit"
                 active_titles.add(title)
-                finding, _ = AccountingFinding.objects.update_or_create(
+                finding = cls._get_or_create_finding(
                     company=company,
                     category='LIQUIDITY',
                     title=title,
-                    is_resolved=False,
                     defaults={
                         "severity": "CRITICAL",
                         "description": (
@@ -757,16 +843,12 @@ class AccountingIntegrityEngine:
                         "suggested_action": "Record missing cash receipts or record a Contra entry for cash withdrawn from the bank.",
                         "confidence": 1.0,
                         "fix_action": "RECORD_CASH_CONTRA"
-                    }
+                    },
+                    existing_findings_map=existing_findings_map
                 )
                 findings.append(finding)
 
         # 2. Bank Ledgers (Overdrawn Bank Accounts)
-        bank_ledgers = Ledger.objects.filter(
-            company=company,
-            ledger_type='BANK',
-            is_archived=False
-        )
         for bl in bank_ledgers:
             bal = Decimal(str(bl.current_balance or '0.00'))
             # Threshold of -₹500 to ignore minor bank SMS / maintenance charge deductions
@@ -774,11 +856,10 @@ class AccountingIntegrityEngine:
                 overdrawn = abs(bal)
                 title = f"Negative bank balance: {bl.name} is overdrawn by ₹{overdrawn:.2f}"
                 active_titles.add(title)
-                finding, _ = AccountingFinding.objects.update_or_create(
+                finding = cls._get_or_create_finding(
                     company=company,
                     category='LIQUIDITY',
                     title=title,
-                    is_resolved=False,
                     defaults={
                         "severity": "WARNING",
                         "description": (
@@ -798,35 +879,38 @@ class AccountingIntegrityEngine:
                         "suggested_action": "Deposit customer funds or record pending bank deposits/transfers to prevent cheque bounce.",
                         "confidence": 0.95,
                         "fix_action": "REVIEW_BANK_BALANCE"
-                    }
+                    },
+                    existing_findings_map=existing_findings_map
                 )
                 findings.append(finding)
 
-        # Batch auto-resolve any previous liquidity findings no longer present
-        AccountingFinding.objects.filter(
-            company=company,
-            category='LIQUIDITY',
-            is_resolved=False
-        ).exclude(title__in=active_titles).update(is_resolved=True, resolved_at=timezone.now())
+        # Batch auto-resolve only if standalone and stale findings exist
+        if existing_findings_map is None:
+            stale = AccountingFinding.objects.filter(
+                company=company,
+                category='LIQUIDITY',
+                is_resolved=False
+            ).exclude(title__in=active_titles)
+            if stale.exists():
+                stale.update(is_resolved=True, resolved_at=timezone.now())
 
         return findings
 
     @classmethod
-    def check_opening_balances(cls, company: Company) -> List[AccountingFinding]:
+    def check_opening_balances(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """Backward-compatibility alias pointing to check_cash_and_liquidity."""
-        return cls.check_cash_and_liquidity(company)
+        return cls.check_cash_and_liquidity(company, existing_findings_map=existing_findings_map)
 
     @classmethod
-    def check_document_numbering(cls, company: Company) -> List[AccountingFinding]:
+    def check_document_numbering(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
         """11. Check: Duplicate voucher sequence numbers within same FY."""
         findings = []
         dups = Voucher.objects.filter(company=company).values('financial_year', 'voucher_type', 'voucher_number').annotate(c=Count('id')).filter(c__gt=1)
         for item in dups[:3]:
-            finding, _ = AccountingFinding.objects.update_or_create(
+            finding = cls._get_or_create_finding(
                 company=company,
                 category='NUMBERING',
                 title=f"Duplicate voucher number #{item['voucher_number']}",
-                is_resolved=False,
                 defaults={
                     "severity": "CRITICAL",
                     "description": f"Voucher number #{item['voucher_number']} ({item['voucher_type']}) exists more than once in the same financial year.",
@@ -836,7 +920,8 @@ class AccountingIntegrityEngine:
                     "probable_cause": "Manual number override or concurrent sequence allocation.",
                     "suggested_action": "Resync sequence numbering.",
                     "confidence": 1.0
-                }
+                },
+                existing_findings_map=existing_findings_map
             )
             findings.append(finding)
 

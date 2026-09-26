@@ -35,7 +35,7 @@ class VoucherSnapshotAPIView(APIView):
 
     def get(self, request, voucher_id):
         company = _get_active_company(request)
-        voucher = Voucher.objects.filter(id=voucher_id, company=company).first()
+        voucher = Voucher.objects.filter(id=voucher_id, company=company).defer('attachment_data', 'attachment_mime').first()
         if not voucher:
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -65,7 +65,7 @@ class VoucherPDFStreamAPIView(APIView):
 
     def get(self, request, voucher_id):
         company = _get_active_company(request)
-        voucher = Voucher.objects.filter(id=voucher_id, company=company).first()
+        voucher = Voucher.objects.filter(id=voucher_id, company=company).defer('attachment_data', 'attachment_mime').first()
         if not voucher:
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -86,7 +86,7 @@ class VoucherShareAPIView(APIView):
 
     def post(self, request, voucher_id):
         company = _get_active_company(request)
-        voucher = Voucher.objects.filter(id=voucher_id, company=company).first()
+        voucher = Voucher.objects.filter(id=voucher_id, company=company).defer('attachment_data', 'attachment_mime').first()
         if not voucher:
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
 

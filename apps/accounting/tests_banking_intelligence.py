@@ -525,26 +525,35 @@ class BankIntelligenceAndAccountingHealthTests(APITestCase):
         self.assertIn("-5", findings[0].description)
 
     def test_19_unusual_transaction_warning(self):
-        """Scenario 19: Warns about a payment that is 5x larger than normal average."""
-        # Average payments around ₹1,000
-        for i in range(3):
-            Voucher.objects.create(
-                company=self.company, financial_year=self.fy, voucher_type="PAYMENT",
-                voucher_number=f"NORM-0{i}", voucher_date=datetime.date(2026, 9, 1),
-                status="POSTED", total_amount=Decimal('1000.00'), created_by=self.user
-            )
+        """Scenario 19: Warns about loss-making sales where product is sold below cost price."""
+        from apps.inventory.models import Product
+        from apps.accounting.models import VoucherItem
 
-        # Huge payment: ₹50,000
-        huge = Voucher.objects.create(
-            company=self.company, financial_year=self.fy, voucher_type="PAYMENT",
-            voucher_number="HUGE-01", voucher_date=datetime.date(2026, 9, 5),
-            status="POSTED", total_amount=Decimal('50000.00'), created_by=self.user
+        prod = Product.objects.create(
+            company=self.company,
+            name="Industrial Cable",
+            purchase_price=Decimal('500.00'),
+            selling_price=Decimal('700.00'),
+            stock_quantity=100
         )
 
-        findings = AccountingIntegrityEngine.check_unusual_transactions(self.company)
+        sale_vch = Voucher.objects.create(
+            company=self.company, financial_year=self.fy, voucher_type="SALES",
+            voucher_number="SALE-LOSS-01", voucher_date=datetime.date(2026, 9, 5),
+            status="POSTED", total_amount=Decimal('350.00'), created_by=self.user
+        )
+        VoucherItem.objects.create(
+            voucher=sale_vch,
+            product=prod,
+            quantity=1,
+            rate=Decimal('350.00'),
+            taxable_amount=Decimal('350.00')
+        )
+
+        findings = AccountingIntegrityEngine.check_negative_margins(self.company)
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0].severity, 'INFO')
-        self.assertIn("Unusually large", findings[0].title)
+        self.assertIn(findings[0].severity, ['WARNING', 'CRITICAL'])
+        self.assertIn("Loss-making sale", findings[0].title)
 
     def test_20_diagnose_balance_mismatch_flagship(self):
         """Scenario 20: 'Why is my balance not matching?' isolates Trial Balance discrepancy."""
