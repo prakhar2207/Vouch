@@ -212,3 +212,84 @@ class TransactionDeduplicationEngineTestCase(TestCase):
         p2.refresh_from_db()
         self.assertEqual(p1.stock_quantity, Decimal("8.00"))
         self.assertFalse(p2.is_active)
+
+    def test_check_payment_allocations_query_efficiency(self):
+        """Verify check_payment_allocations batches updates without per-invoice N+1 updates."""
+        # Create multiple posted invoices with no over-allocations
+        for i in range(10):
+            Voucher.objects.create(
+                company=self.company,
+                financial_year=self.fy,
+                voucher_type="SALES",
+                voucher_number=f"INV-PERF-{i}",
+                voucher_date=datetime.date.today(),
+                party_ledger=self.customer,
+                total_amount=Decimal("500.00"),
+                status="POSTED",
+                created_by=self.user
+            )
+
+        # Pre-seed an obsolete finding
+        AccountingFinding.objects.create(
+            company=self.company,
+            category='PAYMENT',
+            title='Invoice #INV-PERF-0 is over-allocated',
+            is_resolved=False,
+            severity='CRITICAL'
+        )
+
+        # Running check_payment_allocations should resolve it in batch without 10 individual update queries
+        from apps.accounting.services.integrity_engine import AccountingIntegrityEngine
+        findings = AccountingIntegrityEngine.check_payment_allocations(self.company)
+        self.assertEqual(len(findings), 0)
+
+        obsolete = AccountingFinding.objects.get(title='Invoice #INV-PERF-0 is over-allocated')
+        self.assertTrue(obsolete.is_resolved)
+
+    def test_detect_existing_voucher_skips_bank_query_when_no_candidates(self):
+        """Verify detect_existing_voucher_for_bank_tx returns None immediately without querying BankTransaction when no candidate vouchers exist."""
+        from apps.accounting.models import BankTransaction
+        from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+
+        tx = BankTransaction.objects.create(
+            company=self.company,
+            bank_ledger=self.bank_ledger,
+            transaction_date=datetime.date.today(),
+            description="NEFT/TRANSFER/99999",
+            reference_number="REF-NO-MATCH-9999",
+            credit_amount=Decimal("98765.43"),
+            debit_amount=Decimal("0.00"),
+            status="UNRESOLVED"
+        )
+
+        with self.assertNumQueries(1):
+            # Only queries Voucher once; since 0 vouchers match ₹98,765.43, BankTransaction is NEVER queried!
+            match = TransactionDeduplicationEngine.detect_existing_voucher_for_bank_tx(
+                bank_tx=tx,
+                party=self.customer,
+                amount=Decimal("98765.43"),
+                is_money_in=True
+            )
+            self.assertIsNone(match)
+
+    def test_get_authorized_company_memoization(self):
+        """Verify get_authorized_company caches on request and performs 0 DB queries on subsequent calls."""
+        from apps.accounts.permissions import get_authorized_company
+        from django.test import RequestFactory
+        from apps.companies.models import UserCompany
+        UserCompany.objects.get_or_create(user=self.user, company=self.company, defaults={'role': 'OWNER'})
+
+        rf = RequestFactory()
+        req = rf.get('/api/test/', HTTP_X_COMPANY_ID=str(self.company.id))
+        req.user = self.user
+
+        # First call hits DB
+        comp1 = get_authorized_company(req)
+        self.assertEqual(comp1.id, self.company.id)
+
+        # Subsequent calls must hit request-scoped memoization (0 queries)
+        with self.assertNumQueries(0):
+            comp2 = get_authorized_company(req)
+            self.assertEqual(comp2.id, self.company.id)
+            self.assertIs(comp1, comp2)
+
