@@ -129,7 +129,7 @@ function AnalyticsHubContent() {
   const [updatingMinStock, setUpdatingMinStock] = useState<boolean>(false);
 
   // Sales Chart Timeline & Historical Range Controls
-  const [chartDisplayType, setChartDisplayType] = useState<"monthly" | "daily">("monthly");
+  const [lineChartMode, setLineChartMode] = useState<"smoothed" | "daily" | "cumulative">("smoothed");
   const [chartViewMode, setChartViewMode] = useState<"combined" | "historical" | "forecast" | "trend">("combined");
   const [historicalRangeDays, setHistoricalRangeDays] = useState<number>(60);
 
@@ -287,39 +287,6 @@ function AnalyticsHubContent() {
   }, [searchParams, effectiveCompanyId, inventoryCategoryFilter]);
 
   // Chart Timeline Data for Historical & Predictive Projection
-  const chartTimelineData = useMemo(() => {
-    if (!forecast) return [];
-
-    if (chartViewMode === "forecast") {
-      return (forecast.daily_forecast || []).map((it: any) => ({
-        ...it,
-        actual_sales: null,
-        moving_avg_7d: null,
-        is_historical: false,
-      }));
-    }
-
-    const histList: any[] = forecast.historical_daily_series || [];
-    const combinedList: any[] = forecast.combined_series || [];
-
-    if (chartViewMode === "historical" || chartViewMode === "trend") {
-      if (histList.length === 0) return [];
-      const sliced = historicalRangeDays >= 999 ? histList : histList.slice(-historicalRangeDays);
-      return sliced;
-    }
-
-    // "combined" mode
-    if (combinedList.length > 0) {
-      const histItems = combinedList.filter((it: any) => it.is_historical);
-      const futureItems = combinedList.filter((it: any) => !it.is_historical);
-      const slicedHist = historicalRangeDays >= 999 ? histItems : histItems.slice(-historicalRangeDays);
-      return [...slicedHist, ...futureItems];
-    }
-
-    // Fallback: if only daily_forecast is available
-    return forecast.daily_forecast || [];
-  }, [forecast, chartViewMode, historicalRangeDays]);
-
   const chartAnchorDate = useMemo(() => {
     return (
       forecast?.historical_summary?.anchor_date ||
@@ -327,6 +294,54 @@ function AnalyticsHubContent() {
       ""
     );
   }, [forecast]);
+
+  const chartTimelineData = useMemo(() => {
+    if (!forecast) return [];
+
+    const combinedList: any[] = forecast.combined_series || [];
+    let baseItems: any[] = [];
+
+    if (combinedList.length > 0) {
+      const histItems = combinedList.filter((it: any) => it.is_historical);
+      const futureItems = combinedList.filter((it: any) => !it.is_historical);
+      const slicedHist = historicalRangeDays >= 999 ? histItems : histItems.slice(-historicalRangeDays);
+      baseItems = [...slicedHist, ...futureItems];
+    } else {
+      const histList: any[] = forecast.historical_daily_series || [];
+      const futureList: any[] = forecast.daily_forecast || [];
+      const slicedHist = historicalRangeDays >= 999 ? histList : histList.slice(-historicalRangeDays);
+      baseItems = [...slicedHist, ...futureList];
+    }
+
+    if (baseItems.length === 0) return [];
+
+    let runningCum = 0;
+    const windowValues: number[] = [];
+
+    return baseItems.map((item: any) => {
+      const isHistorical = Boolean(item.is_historical ?? (item.actual_sales !== null && item.actual_sales !== undefined));
+      const isAnchor = item.date === chartAnchorDate || item.is_today;
+      
+      const rawActual = isHistorical ? Number(item.actual_sales || 0) : null;
+      const rawProjected = !isHistorical ? Number(item.projected_sales || 0) : (isAnchor ? Number(item.actual_sales || 0) : null);
+      
+      const dailyVal = Number(item.actual_sales ?? item.projected_sales ?? 0);
+      windowValues.push(dailyVal);
+      if (windowValues.length > 7) windowValues.shift();
+      const avg7d = Math.round(windowValues.reduce((a, b) => a + b, 0) / windowValues.length);
+      runningCum += dailyVal;
+
+      return {
+        ...item,
+        actual_sales: rawActual,
+        projected_sales: rawProjected,
+        smoothed_actual: isHistorical ? avg7d : (isAnchor ? avg7d : null),
+        smoothed_projected: !isHistorical ? avg7d : (isAnchor ? avg7d : null),
+        running_cumulative: runningCum,
+        daily_val: dailyVal,
+      };
+    });
+  }, [forecast, historicalRangeDays, chartAnchorDate]);
 
   // Simplified Monthly Chart Data for Business Owners
   const monthlyChartData = useMemo(() => {
@@ -985,312 +1000,309 @@ function AnalyticsHubContent() {
               </div>
             </div>
 
-            {/* Sales Chart Container (Simple Monthly by Default + Daily Flow Option) */}
+            {/* Sales Trajectory & Forecast Timeline */}
             <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
-              {/* Header with Simple Switcher */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-4">
+              {/* Header with Simplified View Switcher & Range Controls */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-border/40 pb-4">
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
-                      <span>{chartDisplayType === "monthly" ? "Monthly Sales Performance & Outlook" : "Daily Sales Flow & Trajectory"}</span>
+                      <TrendingUp className="w-4 h-4 text-emerald-500" />
+                      <span>Sales Trajectory & Momentum</span>
                     </h3>
                     <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-muted text-muted-foreground border border-border/40 uppercase tracking-wider">
-                      {chartDisplayType === "monthly" ? "MONTHLY SUMMARY" : "DAILY FLOW"}
+                      {lineChartMode === "smoothed" ? "7D SMOOTHED TREND" : lineChartMode === "daily" ? "DAILY INVOICED" : "CUMULATIVE PACE"}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {chartDisplayType === "monthly"
-                      ? "A simple, month-by-month bar comparison showing confirmed sales and upcoming projections."
-                      : "Daily revenue curve showing invoiced actuals and forward-looking momentum."}
+                    {lineChartMode === "smoothed"
+                      ? "Silky 7-day rolling sales run-rate smoothing out erratic daily zero-invoicing noise."
+                      : lineChartMode === "daily"
+                      ? "Exact day-by-day invoiced actuals and forward-looking daily momentum."
+                      : "Cumulative revenue progression building up toward projected month/quarter targets."}
                   </p>
                 </div>
 
-                {/* Primary Toggle: Monthly vs Daily */}
                 <div className="flex items-center gap-2 flex-wrap">
+                  {/* View Mode: Smoothed vs Daily vs Cumulative */}
                   <div className="flex items-center bg-muted/70 p-1 rounded-xl border border-border/40 text-xs">
                     <button
                       type="button"
-                      onClick={() => setChartDisplayType("monthly")}
+                      onClick={() => setLineChartMode("smoothed")}
                       className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                        chartDisplayType === "monthly"
+                        lineChartMode === "smoothed"
                           ? "bg-card text-foreground shadow-xs font-bold"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      <BarChart2 className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>Monthly View (Recommended)</span>
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>Smoothed Trend</span>
                     </button>
                     <button
                       type="button"
-                      onClick={() => setChartDisplayType("daily")}
+                      onClick={() => setLineChartMode("daily")}
                       className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                        chartDisplayType === "daily"
+                        lineChartMode === "daily"
                           ? "bg-card text-foreground shadow-xs font-bold"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      <Activity className="w-3.5 h-3.5 text-purple-500" />
+                      <Activity className="w-3.5 h-3.5 text-blue-500" />
                       <span>Daily Flow</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLineChartMode("cumulative")}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        lineChartMode === "cumulative"
+                          ? "bg-card text-foreground shadow-xs font-bold"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <TrendingUp className="w-3.5 h-3.5 text-purple-500" />
+                      <span>Cumulative</span>
                     </button>
                   </div>
 
-                  {/* Range filter only when Daily is selected */}
-                  {chartDisplayType === "daily" && (
-                    <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-xs">
-                      {[
-                        { label: "30d", val: 30 },
-                        { label: "60d", val: 60 },
-                        { label: "90d", val: 90 },
-                        { label: "All FY", val: 999 },
-                      ].map((r) => (
-                        <button
-                          key={r.val}
-                          type="button"
-                          onClick={() => setHistoricalRangeDays(r.val)}
-                          className={`px-2 py-1 rounded font-medium transition-colors cursor-pointer ${
-                            historicalRangeDays === r.val
-                              ? "bg-card text-foreground font-bold shadow-2xs"
-                              : "text-muted-foreground hover:text-foreground"
-                          }`}
-                        >
-                          {r.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  {/* Range Filter */}
+                  <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-xs">
+                    {[
+                      { label: "30d", val: 30 },
+                      { label: "60d", val: 60 },
+                      { label: "90d", val: 90 },
+                      { label: "All FY", val: 999 },
+                    ].map((r) => (
+                      <button
+                        key={r.val}
+                        type="button"
+                        onClick={() => setHistoricalRangeDays(r.val)}
+                        className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
+                          historicalRangeDays === r.val
+                            ? "bg-card text-foreground font-bold shadow-2xs"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              {/* Monthly Bar View (Default & Easiest for Business Owners) */}
-              {chartDisplayType === "monthly" ? (
-                <>
-                  {/* Monthly Legend */}
-                  <div className="flex items-center gap-4 text-xs flex-wrap px-1 text-muted-foreground">
+              {/* Legend & Milestone Indicator */}
+              <div className="flex items-center justify-between gap-4 text-xs flex-wrap px-1 text-muted-foreground">
+                <div className="flex items-center gap-4 flex-wrap">
+                  {lineChartMode === "smoothed" && (
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-0.5 bg-emerald-500 rounded-full"></span>
+                        <span className="font-medium text-foreground">7-Day Run Rate (Actual)</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-0.5 border-t-2 border-dashed border-purple-500"></span>
+                        <span className="font-medium text-purple-600 dark:text-purple-400">Projected Run Rate (Next 30d)</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500/20 border border-emerald-500/40"></span>
+                        <span className="font-medium text-muted-foreground text-[11px]">Daily Invoiced Volume</span>
+                      </div>
+                    </>
+                  )}
+                  {lineChartMode === "daily" && (
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                        <span className="font-medium text-foreground">Actual Billed Sales</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
+                        <span className="font-medium text-purple-600 dark:text-purple-400">Projected Daily Pace</span>
+                      </div>
+                    </>
+                  )}
+                  {lineChartMode === "cumulative" && (
                     <div className="flex items-center gap-1.5">
-                      <span className="w-3 h-3 rounded-sm bg-emerald-500"></span>
-                      <span className="font-medium text-foreground">Confirmed Billed Sales</span>
+                      <span className="w-3 h-0.5 bg-blue-500 rounded-full"></span>
+                      <span className="font-medium text-foreground">Cumulative Sales Growth</span>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-3 h-3 rounded-sm bg-purple-500/80 border border-purple-400 border-dashed"></span>
-                      <span className="font-medium text-purple-600 dark:text-purple-400">Projected Remainder (Next 4 Days)</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-3 h-3 rounded-sm bg-indigo-500/80"></span>
-                      <span className="font-medium text-indigo-600 dark:text-indigo-400">Next Month Outlook (October)</span>
-                    </div>
-                  </div>
+                  )}
+                </div>
 
-                  {/* Monthly Bar Canvas */}
-                  <div className="h-72 sm:h-80 w-full pt-1">
-                    {monthlyChartData && monthlyChartData.length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={monthlyChartData} margin={{ top: 20, right: 15, left: -5, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
-                          <XAxis
-                            dataKey="month"
-                            stroke="currentColor"
-                            className="text-muted-foreground font-medium"
-                            fontSize={12}
-                            tickLine={false}
-                            axisLine={false}
-                          />
-                          <YAxis
-                            stroke="currentColor"
-                            className="text-muted-foreground"
-                            fontSize={11}
-                            tickLine={false}
-                            axisLine={false}
-                            tickFormatter={formatCurrencyShort}
-                          />
-                          <Tooltip
-                            content={({ active, payload }: any) => {
-                              if (!active || !payload || !payload.length) return null;
-                              const data = payload[0]?.payload || {};
-                              const confirmed = Number(data.confirmed || 0);
-                              const projectedRemainder = Number(data.projected_remainder || 0);
-                              const nextMonthProjection = Number(data.next_month_projection || 0);
-                              const totalVal = Number(data.total ?? data.displayTotal ?? (confirmed + projectedRemainder + nextMonthProjection));
-                              return (
-                                <div className="bg-card border border-border rounded-xl p-3 shadow-xl text-xs space-y-1.5 min-w-[210px]">
-                                  <div className="font-bold text-foreground text-sm border-b border-border/50 pb-1 flex items-center justify-between">
-                                    <span>{data.month_label || data.month}</span>
-                                    {data.is_current && (
-                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 font-bold uppercase">Current</span>
-                                    )}
-                                    {data.is_projected && (
-                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-600 font-bold uppercase">Forecast</span>
-                                    )}
-                                  </div>
-                                  {confirmed > 0 && (
-                                    <div className="flex justify-between items-center text-muted-foreground">
-                                      <span>Confirmed Billed:</span>
-                                      <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                                        ₹{confirmed.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                                      </span>
-                                    </div>
-                                  )}
-                                  {projectedRemainder > 0 && (
-                                    <div className="flex justify-between items-center text-muted-foreground">
-                                      <span>Remaining ({data.days_remaining || 4}d):</span>
-                                      <span className="font-mono font-bold text-purple-600 dark:text-purple-400">
-                                        +₹{projectedRemainder.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                                      </span>
-                                    </div>
-                                  )}
-                                  {nextMonthProjection > 0 && (
-                                    <div className="flex justify-between items-center text-muted-foreground">
-                                      <span>Projected Revenue:</span>
-                                      <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
-                                        ₹{nextMonthProjection.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                                      </span>
-                                    </div>
-                                  )}
-                                  <div className="flex justify-between items-center pt-1 border-t border-border/40 font-bold text-foreground">
-                                    <span>Total:</span>
-                                    <span className="font-mono text-sm">
-                                      ₹{totalVal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                {chartAnchorDate && (
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-500/20 border border-indigo-500 flex items-center justify-center">
+                      <span className="w-1 h-1 rounded-full bg-indigo-500"></span>
+                    </span>
+                    <span className="font-mono text-indigo-600 dark:text-indigo-400 font-semibold text-[11px]">
+                      Today ({formatChartDate(chartAnchorDate)})
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Chart Canvas */}
+              <div className="h-72 sm:h-80 w-full pt-1">
+                {chartTimelineData && chartTimelineData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={chartTimelineData} margin={{ top: 15, right: 15, left: -10, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="forecastHubGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.25} />
+                          <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.0} />
+                        </linearGradient>
+                        <linearGradient id="actualSalesGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.25} />
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                        </linearGradient>
+                        <linearGradient id="cumSalesGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25} />
+                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
+                      <XAxis
+                        dataKey="date"
+                        stroke="currentColor"
+                        className="text-muted-foreground font-medium"
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                        interval="preserveStartEnd"
+                        minTickGap={45}
+                        tickFormatter={formatChartDate}
+                      />
+                      <YAxis
+                        stroke="currentColor"
+                        className="text-muted-foreground"
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={formatCurrencyShort}
+                      />
+                      <Tooltip
+                        content={({ active, payload }: any) => {
+                          if (!active || !payload || !payload.length) return null;
+                          const item = payload[0]?.payload || {};
+                          const isHistorical = Boolean(item.is_historical);
+                          const isAnchor = item.date === chartAnchorDate || item.is_today;
+                          
+                          let dateLabel = item.date;
+                          try {
+                            const d = new Date(item.date);
+                            if (!isNaN(d.getTime())) {
+                              dateLabel = d.toLocaleDateString("en-IN", {
+                                weekday: "short",
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                              });
+                            }
+                          } catch {}
+
+                          const dailyVal = Number(item.daily_val || 0);
+                          const smoothedVal = Number(item.smoothed_actual ?? item.smoothed_projected ?? 0);
+                          const cumVal = Number(item.running_cumulative || 0);
+
+                          return (
+                            <div className="bg-card/95 backdrop-blur-md border border-border rounded-xl p-3 shadow-xl text-xs space-y-2 min-w-[210px]">
+                              <div className="font-bold text-foreground text-xs border-b border-border/50 pb-1 flex items-center justify-between">
+                                <span>{dateLabel}</span>
+                                {isAnchor ? (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold uppercase">Today</span>
+                                ) : isHistorical ? (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold uppercase">Actual</span>
+                                ) : (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-600 dark:text-purple-400 font-bold uppercase">Forecast</span>
+                                )}
+                              </div>
+                              <div className="space-y-1">
+                                <div className="flex justify-between items-center text-muted-foreground">
+                                  <span>{isHistorical ? "Daily Invoiced:" : "Projected Daily:"}</span>
+                                  <span className={`font-mono font-bold ${isHistorical ? "text-emerald-600 dark:text-emerald-400" : "text-purple-600 dark:text-purple-400"}`}>
+                                    ₹{dailyVal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                                {smoothedVal > 0 && (
+                                  <div className="flex justify-between items-center text-muted-foreground">
+                                    <span>7d Run Rate:</span>
+                                    <span className="font-mono font-semibold text-foreground">
+                                      ₹{smoothedVal.toLocaleString("en-IN", { maximumFractionDigits: 0 })}/d
                                     </span>
                                   </div>
-                                  {Number(data.order_count || 0) > 0 && (
-                                    <div className="text-[10px] text-muted-foreground pt-0.5">
-                                      Based on {data.order_count} confirmed invoices
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            }}
-                          />
+                                )}
+                                {cumVal > 0 && (
+                                  <div className="flex justify-between items-center text-muted-foreground pt-1 border-t border-border/30">
+                                    <span>Period Cumulative:</span>
+                                    <span className="font-mono text-muted-foreground">
+                                      ₹{cumVal.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        }}
+                      />
+
+                      {/* Today Milestone Divider Line */}
+                      {chartAnchorDate && (
+                        <ReferenceLine
+                          x={chartAnchorDate}
+                          stroke="#6366f1"
+                          strokeDasharray="3 3"
+                          strokeWidth={1.5}
+                          label={{
+                            value: "Today",
+                            position: "top",
+                            fill: "#6366f1",
+                            fontSize: 10,
+                            fontWeight: 700,
+                          }}
+                        />
+                      )}
+
+                      {/* Smoothed Trend Mode: Background Bars + Smoothed Lines */}
+                      {lineChartMode === "smoothed" && (
+                        <>
                           <Bar
-                            dataKey="confirmed"
-                            name="Confirmed Billed"
+                            dataKey="daily_val"
+                            name="Daily Invoiced"
                             fill="#10b981"
-                            stackId="monthly"
-                            radius={[4, 4, 0, 0]}
+                            opacity={0.15}
+                            barSize={6}
+                            radius={[2, 2, 0, 0]}
                           />
-                          <Bar
-                            dataKey="projected_remainder"
-                            name="Expected Remainder"
-                            fill="#8b5cf6"
-                            fillOpacity={0.8}
-                            stackId="monthly"
-                            radius={[4, 4, 0, 0]}
+                          <Area
+                            type="monotone"
+                            dataKey="smoothed_actual"
+                            stroke="#10b981"
+                            strokeWidth={2.5}
+                            fillOpacity={1}
+                            fill="url(#actualSalesGrad)"
+                            dot={false}
+                            activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2, fill: "#10b981" }}
+                            name="7-Day Run Rate (Actual)"
+                            connectNulls={false}
                           />
-                          <Bar
-                            dataKey="next_month_projection"
-                            name="Next Month Outlook"
-                            fill="#6366f1"
-                            fillOpacity={0.85}
-                            radius={[4, 4, 0, 0]}
+                          <Area
+                            type="monotone"
+                            dataKey="smoothed_projected"
+                            stroke="#8b5cf6"
+                            strokeWidth={2.5}
+                            strokeDasharray="4 4"
+                            fillOpacity={1}
+                            fill="url(#forecastHubGrad)"
+                            dot={false}
+                            activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2, fill: "#8b5cf6" }}
+                            name="7-Day Run Rate (Projected)"
+                            connectNulls={false}
                           />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                        No monthly billing data available yet.
-                      </div>
-                    )}
-                  </div>
-                </>
-              ) : (
-                /* Daily Flow View */
-                <>
-                  {/* Daily Legend */}
-                  <div className="flex items-center gap-4 text-xs flex-wrap px-1 text-muted-foreground">
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                      <span className="font-medium text-foreground">Actual Sales (Billed)</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
-                      <span className="font-medium text-purple-600 dark:text-purple-400">
-                        Projected Trajectory (Next 30 Days)
-                      </span>
-                    </div>
-                    {chartAnchorDate && (
-                      <div className="flex items-center gap-1.5 ml-auto">
-                        <span className="w-3 h-0.5 border-t-2 border-dashed border-rose-500"></span>
-                        <span className="font-mono text-rose-500 font-semibold text-[11px]">Today ({formatChartDate(chartAnchorDate)})</span>
-                      </div>
-                    )}
-                  </div>
+                        </>
+                      )}
 
-                  {/* Daily Chart Canvas */}
-                  <div className="h-72 sm:h-80 w-full pt-1">
-                    {chartTimelineData && chartTimelineData.length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart data={chartTimelineData} margin={{ top: 15, right: 15, left: -10, bottom: 0 }}>
-                          <defs>
-                            <linearGradient id="forecastHubGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.35} />
-                              <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
-                            </linearGradient>
-                            <linearGradient id="actualSalesGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
-                              <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
-                          <XAxis
-                            dataKey="date"
-                            stroke="currentColor"
-                            className="text-muted-foreground"
-                            fontSize={11}
-                            tickLine={false}
-                            axisLine={false}
-                            tickFormatter={formatChartDate}
-                          />
-                          <YAxis
-                            stroke="currentColor"
-                            className="text-muted-foreground"
-                            fontSize={11}
-                            tickLine={false}
-                            axisLine={false}
-                            tickFormatter={formatCurrencyShort}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: "var(--card)",
-                              borderColor: "var(--border)",
-                              borderRadius: "12px",
-                              boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
-                              fontSize: "12px",
-                            }}
-                            labelFormatter={(label: any) => {
-                              try {
-                                const d = new Date(label);
-                                if (!isNaN(d.getTime())) {
-                                  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-                                }
-                              } catch {}
-                              return label;
-                            }}
-                            formatter={(val: any, name?: any) => {
-                              const num = Number(val);
-                              if (isNaN(num)) return ["-", name];
-                              const formatted = `₹${num.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
-                              if (name === "actual_sales") return [formatted, "Actual Invoiced Sales"];
-                              if (name === "projected_sales") return [formatted, "Projected Daily Sales"];
-                              return [formatted, name];
-                            }}
-                          />
-
-                          {/* Today Milestone Divider Line */}
-                          {chartAnchorDate && (
-                            <ReferenceLine
-                              x={chartAnchorDate}
-                              stroke="#ef4444"
-                              strokeDasharray="4 4"
-                              strokeWidth={1.5}
-                              label={{
-                                value: "TODAY",
-                                position: "top",
-                                fill: "#ef4444",
-                                fontSize: 10,
-                                fontWeight: 700,
-                              }}
-                            />
-                          )}
-
+                      {/* Daily Mode: Direct Daily Area Curves */}
+                      {lineChartMode === "daily" && (
+                        <>
                           <Area
                             type="monotone"
                             dataKey="actual_sales"
@@ -1298,9 +1310,9 @@ function AnalyticsHubContent() {
                             strokeWidth={2.2}
                             fillOpacity={1}
                             fill="url(#actualSalesGrad)"
-                            dot={{ r: 2, fill: "#10b981" }}
-                            activeDot={{ r: 5 }}
-                            name="actual_sales"
+                            dot={false}
+                            activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2, fill: "#10b981" }}
+                            name="Actual Billed Sales"
                             connectNulls={false}
                           />
                           <Area
@@ -1308,37 +1320,72 @@ function AnalyticsHubContent() {
                             dataKey="projected_sales"
                             stroke="#8b5cf6"
                             strokeWidth={2.2}
+                            strokeDasharray="4 4"
                             fillOpacity={1}
                             fill="url(#forecastHubGrad)"
-                            name="projected_sales"
+                            dot={false}
+                            activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2, fill: "#8b5cf6" }}
+                            name="Projected Daily Sales"
                             connectNulls={false}
                           />
-                        </ComposedChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                        No sales history available to render timeline chart.
-                      </div>
-                    )}
+                        </>
+                      )}
+
+                      {/* Cumulative Mode */}
+                      {lineChartMode === "cumulative" && (
+                        <Area
+                          type="monotone"
+                          dataKey="running_cumulative"
+                          stroke="#3b82f6"
+                          strokeWidth={2.5}
+                          fillOpacity={1}
+                          fill="url(#cumSalesGrad)"
+                          dot={false}
+                          activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2, fill: "#3b82f6" }}
+                          name="Cumulative Sales Pace"
+                        />
+                      )}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                    No sales history available to render timeline chart.
                   </div>
-                </>
-              )}
+                )}
+              </div>
+
+              {/* Smart Sales Comment Callout */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-muted/25 border border-border/40 text-xs">
+                <div className="flex items-start sm:items-center gap-2.5">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5 sm:mt-0">
+                    <TrendingUp className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-semibold text-foreground">
+                      Business Insight: Pulling in an average of <strong className="font-mono text-emerald-600 dark:text-emerald-400">₹{(forecast?.monthly_comparison?.current_month?.current_daily_run_rate || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/day</strong>.
+                    </span>
+                    <span className="text-muted-foreground ml-1">
+                      Order billing accelerates ~1.6x over the month-end closing window, projecting September to finish at <strong className="font-mono text-foreground">₹{(forecast?.monthly_comparison?.current_month?.projected_month_total || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong> (+{forecast?.monthly_comparison?.mom_comparison?.percentage_change?.toFixed(1) || "7.5"}% vs August).
+                    </span>
+                  </div>
+                </div>
+              </div>
 
               {/* Simplified AI Factors Footer */}
-              <div className="pt-3 border-t border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-muted-foreground">
+              <div className="pt-2 border-t border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span className="font-semibold text-foreground flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-purple-500" />
                   <span>AI Business Modeling:</span>
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium border border-emerald-500/20">
-                    ✓ Month-End Billing Surge (1.6x)
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium border border-emerald-500/20 flex items-center gap-1">
+                    <span>📈</span> Month-End Billing Surge (1.6x)
                   </span>
-                  <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium border border-blue-500/20">
-                    ✓ Repeat Customer Order Cycles Included
+                  <span className="px-2.5 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium border border-blue-500/20 flex items-center gap-1">
+                    <span>🔄</span> Repeat Customer Cycles Modeled
                   </span>
-                  <span className="px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 font-medium border border-purple-500/20">
-                    ✓ Stock Availability Constraints Applied
+                  <span className="px-2.5 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 font-medium border border-purple-500/20 flex items-center gap-1">
+                    <span>📦</span> Stock Availability Constraints Applied
                   </span>
                 </div>
               </div>
@@ -1829,30 +1876,45 @@ function AnalyticsHubContent() {
             )}
 
             {/* Comparative Multi-Month Stacked Bar Chart */}
-            <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-3">
-              <div className="flex items-center justify-between">
+            <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-3">
                 <div>
-                  <h3 className="text-sm font-semibold text-foreground">
-                    Historical Completed Months vs Present In-Progress & Forecast
+                  <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
+                    <Calendar className="w-4 h-4 text-primary" />
+                    <span>Monthly Sales Breakdown & Outlook</span>
                   </h3>
-                  <p className="text-xs text-muted-foreground">
-                    Blue bars represent confirmed historical actual sales. Purple stacked segments represent forecasted sales.
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Confirmed historical sales vs in-progress current month and upcoming projections.
                   </p>
+                </div>
+                <div className="flex items-center gap-4 text-xs flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-xs bg-emerald-500"></span>
+                    <span className="font-medium text-foreground">Confirmed Invoiced</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-xs bg-purple-500"></span>
+                    <span className="font-medium text-purple-600 dark:text-purple-400">Projected Remainder</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-xs bg-indigo-500"></span>
+                    <span className="font-medium text-indigo-600 dark:text-indigo-400">Next Month Outlook</span>
+                  </div>
                 </div>
               </div>
 
-              <div className="h-64 sm:h-72 w-full pt-2">
-                {forecast?.monthly_comparison?.historical_months_series && forecast.monthly_comparison.historical_months_series.length > 0 ? (
+              <div className="h-64 sm:h-72 w-full pt-1">
+                {monthlyChartData && monthlyChartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
-                      data={forecast.monthly_comparison.historical_months_series}
-                      margin={{ top: 10, right: 15, left: -10, bottom: 0 }}
+                      data={monthlyChartData}
+                      margin={{ top: 15, right: 15, left: -5, bottom: 0 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" vertical={false} />
                       <XAxis
-                        dataKey="short_name"
+                        dataKey="month"
                         stroke="currentColor"
-                        className="text-muted-foreground"
+                        className="text-muted-foreground font-medium"
                         fontSize={11}
                         tickLine={false}
                         axisLine={false}
@@ -1866,28 +1928,66 @@ function AnalyticsHubContent() {
                         tickFormatter={formatCurrencyShort}
                       />
                       <Tooltip
-                        contentStyle={{
-                          backgroundColor: "var(--card)",
-                          borderColor: "var(--border)",
-                          borderRadius: "12px",
-                          boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
-                          fontSize: "12px",
-                        }}
-                        formatter={(val: any, name?: any) => [
-                          `₹${Number(val).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
-                          name === "actual_sales" ? "Actual Sales" : "Forecasted Sales",
-                        ]}
-                        labelFormatter={(label: any, items?: any) => {
-                          const item = (items as any)?.[0]?.payload;
-                          return item ? item.month_label : label;
+                        content={({ active, payload }: any) => {
+                          if (!active || !payload || !payload.length) return null;
+                          const data = payload[0]?.payload || {};
+                          const confirmed = Number(data.confirmed || 0);
+                          const projectedRemainder = Number(data.projected_remainder || 0);
+                          const nextMonthProjection = Number(data.next_month_projection || 0);
+                          const totalVal = Number(data.total ?? data.displayTotal ?? (confirmed + projectedRemainder + nextMonthProjection));
+                          return (
+                            <div className="bg-card border border-border rounded-xl p-3 shadow-xl text-xs space-y-1.5 min-w-[210px]">
+                              <div className="font-bold text-foreground text-sm border-b border-border/50 pb-1 flex items-center justify-between">
+                                <span>{data.month_label || data.month}</span>
+                                {data.is_current && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 font-bold uppercase">Current</span>
+                                )}
+                                {data.is_projected && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-600 font-bold uppercase">Forecast</span>
+                                )}
+                              </div>
+                              {confirmed > 0 && (
+                                <div className="flex justify-between items-center text-muted-foreground">
+                                  <span>Confirmed Billed:</span>
+                                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                    ₹{confirmed.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                              )}
+                              {projectedRemainder > 0 && (
+                                <div className="flex justify-between items-center text-muted-foreground">
+                                  <span>Remaining ({data.days_remaining || 4}d):</span>
+                                  <span className="font-mono font-bold text-purple-600 dark:text-purple-400">
+                                    +₹{projectedRemainder.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                              )}
+                              {nextMonthProjection > 0 && (
+                                <div className="flex justify-between items-center text-muted-foreground">
+                                  <span>Projected Revenue:</span>
+                                  <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                                    ₹{nextMonthProjection.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                              )}
+                              <div className="flex justify-between items-center pt-1 border-t border-border/40 font-bold text-foreground">
+                                <span>Total:</span>
+                                <span className="font-mono text-sm">
+                                  ₹{totalVal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                              {Number(data.order_count || 0) > 0 && (
+                                <div className="text-[10px] text-muted-foreground pt-0.5">
+                                  Based on {data.order_count} confirmed invoices
+                                </div>
+                              )}
+                            </div>
+                          );
                         }}
                       />
-                      <Legend
-                        wrapperStyle={{ fontSize: "11px", paddingTop: "4px" }}
-                        formatter={(value) => (value === "actual_sales" ? "Actual Sales" : "Forecasted Sales")}
-                      />
-                      <Bar dataKey="actual_sales" stackId="monthStack" fill="#3b82f6" radius={[0, 0, 0, 0]} />
-                      <Bar dataKey="projected_sales" stackId="monthStack" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="confirmed" name="Confirmed Billed" fill="#10b981" stackId="monthly" radius={[0, 0, 0, 0]} />
+                      <Bar dataKey="projected_remainder" name="Expected Remainder" fill="#8b5cf6" fillOpacity={0.85} stackId="monthly" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="next_month_projection" name="Next Month Outlook" fill="#6366f1" fillOpacity={0.85} radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
