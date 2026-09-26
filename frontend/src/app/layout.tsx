@@ -37,9 +37,9 @@ export const metadata: Metadata = {
   description: "Keyboard-first cloud ERP and accounting platform with automated GST compliance and AI bill extraction.",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/favicon.ico",
-    shortcut: "/favicon.ico",
-    apple: "/icons/apple-touch-icon.png",
+    icon: "/favicon.ico?v=2",
+    shortcut: "/favicon.ico?v=2",
+    apple: "/icons/apple-touch-icon.png?v=2",
   },
   appleWebApp: {
     capable: true,
