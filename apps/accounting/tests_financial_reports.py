@@ -206,3 +206,46 @@ class FinancialStatementsAndBulkResolveTests(TestCase):
         pl_data = FinancialStatementsService.generate_profit_and_loss(self.company)
         self.assertEqual(Decimal(pl_data['trading_account']['opening_stock']), Decimal('3400.00'))
 
+    def test_06_finance_cost_classification_and_date_range_stock_valuation(self):
+        """
+        P0 Test: Verifies that:
+        1. Ledgers with finance costs / interest are classified as Indirect Expenses in P&L,
+           never corrupting Trading Account Gross Profit.
+        2. Stock valuation at specific date ranges rolls back accurately.
+        """
+        # Create Bank Interest ledger under Direct Expenses group to test safeguard
+        led_interest = Ledger.objects.create(
+            company=self.company,
+            group=self.grp_direct_exp,
+            name='Bank Interest',
+            ledger_type='GENERAL'
+        )
+
+        # Post an interest payment of 500
+        v_int = Voucher.objects.create(
+            company=self.company, financial_year=self.fy, voucher_type='PAYMENT',
+            voucher_number='PAY-INT-01', voucher_date='2026-05-20', status='POSTED',
+            total_amount=Decimal('500.00'), created_by=self.user
+        )
+        LedgerEntry.objects.create(company=self.company, voucher=v_int, ledger=led_interest, debit_amount=Decimal('500.00'), credit_amount=Decimal('0.00'))
+        LedgerEntry.objects.create(company=self.company, voucher=v_int, ledger=self.led_bank, debit_amount=Decimal('0.00'), credit_amount=Decimal('500.00'))
+
+        # Post a sales voucher in May (1,000)
+        v_sale = Voucher.objects.create(
+            company=self.company, financial_year=self.fy, voucher_type='SALES',
+            voucher_number='INV-INT-01', voucher_date='2026-05-10', status='POSTED',
+            total_amount=Decimal('1000.00'), created_by=self.user
+        )
+        LedgerEntry.objects.create(company=self.company, voucher=v_sale, ledger=self.led_customer, debit_amount=Decimal('1000.00'), credit_amount=Decimal('0.00'))
+        LedgerEntry.objects.create(company=self.company, voucher=v_sale, ledger=self.led_sales, debit_amount=Decimal('0.00'), credit_amount=Decimal('1000.00'))
+
+        pl = FinancialStatementsService.generate_profit_and_loss(self.company, '2026-05-01', '2026-05-31')
+        # Direct expenses should NOT include Bank Interest
+        self.assertEqual(Decimal(pl['trading_account']['direct_expense']['total']), Decimal('0.00'))
+        # Indirect expenses should include Bank Interest (500)
+        self.assertEqual(Decimal(pl['profit_and_loss']['indirect_expense']['total']), Decimal('500.00'))
+        # Gross profit should be 1000.00, Net profit should be 500.00
+        self.assertEqual(Decimal(pl['trading_account']['gross_profit']), Decimal('1000.00'))
+        self.assertEqual(Decimal(pl['profit_and_loss']['net_profit']), Decimal('500.00'))
+
+

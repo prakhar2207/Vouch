@@ -35,17 +35,31 @@ class FinancialStatementsService:
         return total_val.quantize(Decimal('0.01'))
 
     @classmethod
-    def calculate_opening_stock_valuation(cls, company: Company, as_of_date=None) -> Decimal:
+    def calculate_stock_valuation_as_of(cls, company: Company, as_of_date=None, is_period_start: bool = False) -> Decimal:
         """
-        Calculates opening stock valuation derived from total stock not invoiced across all invoices:
-        Formula: Opening Stock = Current Stock + Sold Stock - Purchased Stock
-        For each product:
-          opening_qty = max(0, current_stock_qty + total_sold_qty - total_purchased_qty)
-          opening_val = opening_qty * purchase_price
-        Includes all invoices.
+        Calculates inventory valuation as of a specific date by rolling back sales and purchases
+        from current live stock quantity.
+
+        - If as_of_date is None or (as_of_date >= today and not is_period_start):
+            Returns current live stock valuation.
+        - If is_period_start is True:
+            Rolls back all movements that occurred ON or AFTER as_of_date (voucher_date >= as_of_date).
+            This represents the stock valuation at the beginning of as_of_date.
+        - If is_period_start is False:
+            Rolls back all movements that occurred STRICTLY AFTER as_of_date (voucher_date > as_of_date).
+            This represents the stock valuation at the end of as_of_date.
         """
         from apps.accounting.models import VoucherItem
         from django.db.models import Sum
+
+        today = datetime.date.today()
+        d_as_of = cls.parse_date(as_of_date)
+
+        if d_as_of is None:
+            return cls.get_inventory_valuation(company)
+
+        if d_as_of >= today and not is_period_start:
+            return cls.get_inventory_valuation(company)
 
         sales_qs = VoucherItem.objects.filter(
             voucher__company=company,
@@ -58,9 +72,12 @@ class FinancialStatementsService:
             voucher__status='POSTED'
         )
 
-        if as_of_date:
-            sales_qs = sales_qs.filter(voucher__voucher_date__lte=as_of_date)
-            pur_qs = pur_qs.filter(voucher__voucher_date__lte=as_of_date)
+        if is_period_start:
+            sales_qs = sales_qs.filter(voucher__voucher_date__gte=d_as_of)
+            pur_qs = pur_qs.filter(voucher__voucher_date__gte=d_as_of)
+        else:
+            sales_qs = sales_qs.filter(voucher__voucher_date__gt=d_as_of)
+            pur_qs = pur_qs.filter(voucher__voucher_date__gt=d_as_of)
 
         sales_by_prod = {
             row['product_id']: Decimal(str(row['tot_qty'] or 0))
@@ -72,7 +89,7 @@ class FinancialStatementsService:
         }
 
         products = Product.objects.filter(company=company, is_active=True)
-        total_opening_val = Decimal('0.00')
+        total_val = Decimal('0.00')
 
         for p in products:
             cost = Decimal(str(p.purchase_price or '0.00'))
@@ -80,10 +97,22 @@ class FinancialStatementsService:
             sold_qty = sales_by_prod.get(p.id, Decimal('0.00'))
             pur_qty = pur_by_prod.get(p.id, Decimal('0.00'))
 
-            opening_qty = max(Decimal('0.00'), curr_qty + sold_qty - pur_qty)
-            total_opening_val += (opening_qty * cost)
+            # Rollback: stock_then = curr_qty + sold_since - bought_since
+            adj_qty = max(Decimal('0.00'), curr_qty + sold_qty - pur_qty)
+            total_val += (adj_qty * cost)
 
-        return total_opening_val.quantize(Decimal('0.01'))
+        return total_val.quantize(Decimal('0.01'))
+
+    @classmethod
+    def calculate_opening_stock_valuation(cls, company: Company, as_of_date=None) -> Decimal:
+        """
+        Calculates opening stock valuation derived from total stock not invoiced across all invoices.
+        If as_of_date is provided, calculates stock at the start of that date or fiscal year.
+        """
+        d_as_of = cls.parse_date(as_of_date)
+        if d_as_of is None:
+            d_as_of = cls.get_fiscal_year_start(datetime.date.today())
+        return cls.calculate_stock_valuation_as_of(company, as_of_date=d_as_of, is_period_start=True)
 
     @classmethod
     def generate_profit_and_loss(cls, company: Company, from_date=None, to_date=None) -> Dict[str, Any]:
@@ -145,9 +174,8 @@ class FinancialStatementsService:
                     'DIRECT' in grp_name or
                     'SALES' in grp_name or
                     'OPERATING' in grp_name or
-                    ledger.ledger_type == 'SALES' or
-                    ('INDIRECT' not in grp_name and 'OTHER' not in grp_name)
-                )
+                    ledger.ledger_type == 'SALES'
+                ) and 'INDIRECT' not in grp_name and 'OTHER' not in grp_name
 
                 if is_direct_income:
                     direct_income_rows.append(row_item)
@@ -166,6 +194,9 @@ class FinancialStatementsService:
                 if 'COST OF GOODS SOLD' in l_name or 'COGS' in l_name:
                     continue
 
+                # Finance costs, bank interest, borrowing costs are strictly Indirect Expenses (Finance Costs in P&L)
+                is_finance_cost = any(k in l_name for k in ['INTEREST', 'FINANCE', 'BANK CHARGE', 'BORROWING', 'PROCESSING FEE'])
+
                 is_direct_expense = (
                     'DIRECT' in grp_name or
                     'PURCHASE' in grp_name or
@@ -174,7 +205,7 @@ class FinancialStatementsService:
                     'FREIGHT' in l_name or
                     'WAGES' in l_name or
                     ledger.ledger_type == 'PURCHASE'
-                ) and 'INDIRECT' not in grp_name
+                ) and 'INDIRECT' not in grp_name and not is_finance_cost
 
                 if is_direct_expense:
                     direct_expense_rows.append(row_item)
@@ -183,11 +214,11 @@ class FinancialStatementsService:
                     indirect_expense_rows.append(row_item)
                     total_indirect_expense += ledger_expense
 
-        # Live inventory valuation representing true physical stock on hand
-        closing_stock = cls.get_inventory_valuation(company)
+        # Stock valuation at start of period (before from_date movements)
+        opening_stock = cls.calculate_stock_valuation_as_of(company, as_of_date=d_from, is_period_start=True)
 
-        # Calculate opening stock from total stock not invoiced across all invoices
-        opening_stock = cls.calculate_opening_stock_valuation(company, as_of_date=d_to)
+        # Stock valuation at end of period (inclusive of to_date movements)
+        closing_stock = cls.calculate_stock_valuation_as_of(company, as_of_date=d_to, is_period_start=False)
         gross_profit = (total_direct_income + closing_stock) - (opening_stock + total_direct_expense)
         net_profit = gross_profit + total_indirect_income - total_indirect_expense
 
@@ -290,37 +321,41 @@ class FinancialStatementsService:
             }
 
             if nature in ('LIABILITY', 'EQUITY'):
+                signed_bal = cl_bal if cl_type == 'CR' else -cl_bal
+
                 if 'CAPITAL' in grp_name or nature == 'EQUITY':
                     if 'DRAWING' in l_name:
                         total_drawings += cl_bal
                         row_item["is_drawing"] = True
                         capital_rows.append(row_item)
                     else:
-                        total_capital += cl_bal
+                        total_capital += signed_bal
                         capital_rows.append(row_item)
                 elif 'LOAN' in grp_name or 'BORROWING' in grp_name or 'OVERDRAFT' in grp_name or 'OD' in grp_name:
-                    total_loans += cl_bal
+                    total_loans += signed_bal
                     loan_liability_rows.append(row_item)
                 else:
-                    total_current_liabilities += cl_bal
+                    total_current_liabilities += signed_bal
                     current_liability_rows.append(row_item)
 
             elif nature == 'ASSET':
+                signed_bal = cl_bal if cl_type == 'DR' else -cl_bal
+
                 if 'STOCK' in grp_name or 'STOCK IN HAND' in l_name or 'STOCK-IN-HAND' in l_name:
                     stock_in_hand_val += cl_bal
                     continue
 
                 if 'FIXED' in grp_name or 'PLANT' in grp_name or 'FURNITURE' in grp_name or 'EQUIPMENT' in grp_name:
-                    total_fixed_assets += cl_bal
+                    total_fixed_assets += signed_bal
                     fixed_asset_rows.append(row_item)
                 elif 'BANK' in grp_name or 'CASH' in grp_name or ledger.ledger_type in ('BANK', 'CASH'):
-                    total_bank_cash += cl_bal
+                    total_bank_cash += signed_bal
                     bank_and_cash_rows.append(row_item)
                 else:
-                    total_current_assets += cl_bal
+                    total_current_assets += signed_bal
                     current_asset_rows.append(row_item)
 
-        closing_stock = cls.get_inventory_valuation(company)
+        closing_stock = cls.calculate_stock_valuation_as_of(company, as_of_date=d_as_of, is_period_start=False)
 
         if closing_stock > Decimal('0.00'):
             current_asset_rows.insert(0, {
