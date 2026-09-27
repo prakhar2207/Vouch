@@ -433,24 +433,40 @@ export default function BalanceSheetPage() {
                         </div>
 
                         <div className="divide-y divide-border/20 pl-2">
-                          {data.liabilities_and_equity.equity.capital_rows.map((row) => (
-                            <Link
-                              key={row.ledger_id}
-                              href={`/ledgers/${row.ledger_id}/statement`}
-                              className="px-4 py-2 flex justify-between items-center hover:bg-primary/5 transition-colors group cursor-pointer"
-                            >
-                              <div>
-                                <div className="font-medium text-foreground group-hover:text-primary flex items-center gap-1">
-                                  <span>{row.ledger_name}</span>
-                                  <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          {data.liabilities_and_equity.equity.capital_rows.map((row) => {
+                            const isSynthetic = row.ledger_id.startsWith('proprietor-') || row.ledger_id.startsWith('unallocated-');
+                            return isSynthetic ? (
+                              <div
+                                key={row.ledger_id}
+                                className="px-4 py-2 flex justify-between items-center"
+                              >
+                                <div>
+                                  <div className="font-medium text-foreground">{row.ledger_name}</div>
+                                  <div className="text-[11px] text-muted-foreground">{row.group_name}</div>
                                 </div>
-                                <div className="text-[11px] text-muted-foreground">{row.group_name}</div>
+                                <span className="font-mono font-medium text-foreground">
+                                  ₹{formatINR(row.balance)}
+                                </span>
                               </div>
-                              <span className="font-mono font-medium text-foreground group-hover:text-primary">
-                                {formatINR(row.balance)}
-                              </span>
-                            </Link>
-                          ))}
+                            ) : (
+                              <Link
+                                key={row.ledger_id}
+                                href={`/ledgers/${row.ledger_id}/statement`}
+                                className="px-4 py-2 flex justify-between items-center hover:bg-primary/5 transition-colors group cursor-pointer"
+                              >
+                                <div>
+                                  <div className="font-medium text-foreground group-hover:text-primary flex items-center gap-1">
+                                    <span>{row.ledger_name}</span>
+                                    <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                  </div>
+                                  <div className="text-[11px] text-muted-foreground">{row.group_name}</div>
+                                </div>
+                                <span className="font-mono font-medium text-foreground group-hover:text-primary">
+                                  ₹{formatINR(row.balance)}
+                                </span>
+                              </Link>
+                            );
+                          })}
 
                           {/* Opening Stock (Inventory Equity Contribution) */}
                           {parseFloat(data.liabilities_and_equity.equity.opening_stock || '0') > 0 && (

@@ -320,40 +320,86 @@ class FinancialStatementsService:
                 "balance_type": cl_type
             }
 
-            if nature in ('LIABILITY', 'EQUITY'):
-                signed_bal = cl_bal if cl_type == 'CR' else -cl_bal
+            # 1. Equity / Capital
+            if 'CAPITAL' in grp_name or nature == 'EQUITY':
+                if 'DRAWING' in l_name:
+                    total_drawings += cl_bal
+                    row_item["is_drawing"] = True
+                    capital_rows.append(row_item)
+                else:
+                    signed_bal = cl_bal if cl_type == 'CR' else -cl_bal
+                    total_capital += signed_bal
+                    capital_rows.append(row_item)
 
-                if 'CAPITAL' in grp_name or nature == 'EQUITY':
-                    if 'DRAWING' in l_name:
-                        total_drawings += cl_bal
-                        row_item["is_drawing"] = True
-                        capital_rows.append(row_item)
-                    else:
-                        total_capital += signed_bal
-                        capital_rows.append(row_item)
-                elif 'LOAN' in grp_name or 'BORROWING' in grp_name or 'OVERDRAFT' in grp_name or 'OD' in grp_name:
-                    total_loans += signed_bal
+            # 2. Loans / Borrowings / Overdraft
+            elif 'LOAN' in grp_name or 'BORROWING' in grp_name or 'OVERDRAFT' in grp_name or 'OD' in grp_name:
+                if cl_type == 'CR':
+                    total_loans += cl_bal
                     loan_liability_rows.append(row_item)
                 else:
-                    total_current_liabilities += signed_bal
-                    current_liability_rows.append(row_item)
-
-            elif nature == 'ASSET':
-                signed_bal = cl_bal if cl_type == 'DR' else -cl_bal
-
-                if 'STOCK' in grp_name or 'STOCK IN HAND' in l_name or 'STOCK-IN-HAND' in l_name:
-                    stock_in_hand_val += cl_bal
-                    continue
-
-                if 'FIXED' in grp_name or 'PLANT' in grp_name or 'FURNITURE' in grp_name or 'EQUIPMENT' in grp_name:
-                    total_fixed_assets += signed_bal
-                    fixed_asset_rows.append(row_item)
-                elif 'BANK' in grp_name or 'CASH' in grp_name or ledger.ledger_type in ('BANK', 'CASH'):
-                    total_bank_cash += signed_bal
-                    bank_and_cash_rows.append(row_item)
-                else:
-                    total_current_assets += signed_bal
+                    total_current_assets += cl_bal
+                    row_item["group_name"] = "Loans & Advances (Asset)"
                     current_asset_rows.append(row_item)
+
+            # 3. Bank & Cash
+            elif 'BANK' in grp_name or 'CASH' in grp_name or ledger.ledger_type in ('BANK', 'CASH'):
+                signed_bal = cl_bal if cl_type == 'DR' else -cl_bal
+                if signed_bal < Decimal('0.00'):
+                    row_item["balance_type"] = "CR"
+                    row_item["balance"] = str(abs(signed_bal))
+                    row_item["group_name"] = "Bank Overdraft / OD"
+                    loan_liability_rows.append(row_item)
+                    total_loans += abs(signed_bal)
+                else:
+                    bank_and_cash_rows.append(row_item)
+                    total_bank_cash += signed_bal
+
+            # 4. Fixed Assets
+            elif 'FIXED' in grp_name or 'PLANT' in grp_name or 'FURNITURE' in grp_name or 'EQUIPMENT' in grp_name:
+                total_fixed_assets += cl_bal
+                fixed_asset_rows.append(row_item)
+
+            # 5. Debtors / Customers
+            elif 'DEBTOR' in grp_name or ledger.ledger_type == 'CUSTOMER':
+                if cl_type == 'CR':
+                    row_item["ledger_name"] = f"Advance from {ledger.name}"
+                    row_item["group_name"] = "Advance from Customers"
+                    current_liability_rows.append(row_item)
+                    total_current_liabilities += cl_bal
+                else:
+                    current_asset_rows.append(row_item)
+                    total_current_assets += cl_bal
+
+            # 6. Creditors / Suppliers
+            elif 'CREDITOR' in grp_name or ledger.ledger_type == 'SUPPLIER':
+                if cl_type == 'DR':
+                    row_item["ledger_name"] = f"Advance to {ledger.name}"
+                    row_item["group_name"] = "Advance to Suppliers"
+                    current_asset_rows.append(row_item)
+                    total_current_assets += cl_bal
+                else:
+                    current_liability_rows.append(row_item)
+                    total_current_liabilities += cl_bal
+
+            # 7. Duties & Taxes / GST
+            elif 'DUTIES' in grp_name or 'TAX' in grp_name or 'GST' in grp_name:
+                if cl_type == 'DR':
+                    row_item["group_name"] = "Input Tax Credit (ITC)"
+                    current_asset_rows.append(row_item)
+                    total_current_assets += cl_bal
+                else:
+                    row_item["group_name"] = "Duties & Taxes Payable"
+                    current_liability_rows.append(row_item)
+                    total_current_liabilities += cl_bal
+
+            # 8. Other Assets vs Liabilities
+            else:
+                if cl_type == 'CR':
+                    current_liability_rows.append(row_item)
+                    total_current_liabilities += cl_bal
+                else:
+                    current_asset_rows.append(row_item)
+                    total_current_assets += cl_bal
 
         closing_stock = cls.calculate_stock_valuation_as_of(company, as_of_date=d_as_of, is_period_start=False)
 
@@ -367,9 +413,41 @@ class FinancialStatementsService:
             })
             total_current_assets += closing_stock
 
-        effective_equity = total_capital + opening_stock + net_profit - total_drawings
+        opening_capital = total_capital + opening_stock
+        effective_equity = opening_capital + net_profit - total_drawings
         total_liabilities = effective_equity + total_loans + total_current_liabilities
         total_assets = total_fixed_assets + total_current_assets + total_bank_cash
+
+        # Format clean, audit-compliant capital rows
+        final_capital_rows = []
+        has_named_capital = False
+        for r in capital_rows:
+            if 'ADJUSTMENT' in r['ledger_name'].upper():
+                continue
+            has_named_capital = True
+            final_capital_rows.append(r)
+
+        if not has_named_capital:
+            final_capital_rows.append({
+                "ledger_id": "proprietor-capital",
+                "ledger_name": "Proprietor's Capital (Opening Net Worth)",
+                "group_name": "Capital Account",
+                "balance": str(opening_capital),
+                "balance_type": "CR" if opening_capital >= Decimal('0.00') else "DR"
+            })
+        else:
+            unallocated = opening_capital - sum(
+                Decimal(r['balance']) if r['balance_type'] == 'CR' else -Decimal(r['balance'])
+                for r in final_capital_rows if not r.get('is_drawing')
+            )
+            if unallocated != Decimal('0.00'):
+                final_capital_rows.append({
+                    "ledger_id": "unallocated-opening-equity",
+                    "ledger_name": "Unallocated Opening Capital / Inventory Equity",
+                    "group_name": "Capital Account",
+                    "balance": str(abs(unallocated)),
+                    "balance_type": "CR" if unallocated >= Decimal('0.00') else "DR"
+                })
 
         diff = (total_assets - total_liabilities).quantize(Decimal('0.01'))
         is_balanced = abs(diff) <= Decimal('0.05')
@@ -386,9 +464,10 @@ class FinancialStatementsService:
             "difference": str(diff),
             "liabilities_and_equity": {
                 "equity": {
-                    "capital_rows": capital_rows,
-                    "total_capital": str(total_capital),
-                    "opening_stock": str(opening_stock),
+                    "capital_rows": final_capital_rows,
+                    "opening_capital": str(opening_capital),
+                    "total_capital": str(opening_capital),
+                    "opening_stock": "0.00",
                     "total_drawings": str(total_drawings),
                     "net_profit": str(net_profit),
                     "effective_equity": str(effective_equity)
