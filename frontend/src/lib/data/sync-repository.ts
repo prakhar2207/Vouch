@@ -14,11 +14,11 @@ export class SyncRepository {
   /**
    * Triggers a coordinated sync (push outbox mutations then pull incremental changes).
    */
-  async triggerSync(companyId: string): Promise<boolean> {
+  async triggerSync(companyId: string, force: boolean = false): Promise<boolean> {
     if (!companyId) return false;
     try {
       await executeClientOutboxSync();
-      const pullRes = await pullIncrementalChanges(companyId);
+      const pullRes = await pullIncrementalChanges(companyId, undefined, { force });
       return pullRes.success;
     } catch (e) {
       console.warn("[SyncRepo] Sync failed:", e);

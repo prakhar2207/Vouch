@@ -301,7 +301,8 @@ let isPullInProgress = false;
  */
 export async function pullIncrementalChanges(
   companyId: string,
-  onProgress?: (msg: string) => void
+  onProgress?: (msg: string) => void,
+  options?: { force?: boolean }
 ): Promise<{ success: boolean; totalRecords: number; error?: string }> {
     if (!companyId || typeof window === "undefined" || !navigator.onLine) {
       return { success: false, totalRecords: 0 };
@@ -309,15 +310,23 @@ export async function pullIncrementalChanges(
     if (isPullInProgress) {
       return { success: false, totalRecords: 0, error: "Pull already in progress" };
     }
-    isPullInProgress = true;
 
     try {
+      const metaCheck = await offlineDb.syncMeta.get(companyId);
+      const now = Date.now();
+      // Cooldown throttle: skip redundant rapid pulls within 15 seconds unless forced
+      if (!options?.force && metaCheck?.lastSuccessfulSyncAt && (now - metaCheck.lastSuccessfulSyncAt) < 15000) {
+        return { success: true, totalRecords: 0 };
+      }
+
+      isPullInProgress = true;
+
       const token = getAccessToken();
       if (!token) {
         return { success: false, totalRecords: 0, error: "Authentication required" };
       }
 
-      let meta = await offlineDb.syncMeta.get(companyId);
+      let meta = metaCheck;
       if (!meta) {
         meta = {
           companyId,
@@ -566,6 +575,14 @@ export async function pullIncrementalChanges(
 
       hasMore = Boolean(resData.has_more);
       currentCursor = resData.next_cursor;
+
+      // Resumable sync: checkpoint cursor progress after each ingested batch
+      if (currentCursor) {
+        await offlineDb.syncMeta.update(companyId, {
+          changeCursor: currentCursor,
+          snapshotCursor: snapshotCursor || undefined,
+        }).catch(() => {});
+      }
     }
 
     // Update sync metadata upon complete consumption

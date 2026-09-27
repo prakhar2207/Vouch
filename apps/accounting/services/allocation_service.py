@@ -64,7 +64,7 @@ class PaymentAllocationService:
             party_ledger=party_ledger,
             voucher_type__in=target_vtypes,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).annotate(effective_due=Coalesce('due_date', 'voucher_date')).order_by('effective_due', 'created_at'))
+        ).defer('attachment_data', 'attachment_mime').annotate(effective_due=Coalesce('due_date', 'voucher_date')).order_by('effective_due', 'created_at'))
 
         if not invoices:
             return []
@@ -129,7 +129,7 @@ class PaymentAllocationService:
             party_ledger=party,
             voucher_type__in=target_vtypes,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).annotate(effective_due=Coalesce('due_date', 'voucher_date')).order_by('effective_due', 'created_at')
+        ).defer('attachment_data', 'attachment_mime').annotate(effective_due=Coalesce('due_date', 'voucher_date')).order_by('effective_due', 'created_at')
 
         # Check for explicit invoice reference match in reference_number
         preferred_inv = None
@@ -258,7 +258,7 @@ class PaymentAllocationService:
             company=company,
             voucher_type__in=target_vtypes,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        )
+        ).defer('attachment_data', 'attachment_mime')
         if as_of_date or end_date:
             inv_qs = inv_qs.filter(voucher_date__lte=as_of_date or end_date)
         if start_date:
@@ -378,7 +378,7 @@ class PaymentAllocationService:
             company=company,
             voucher_type__in=['PAYMENT', 'RECEIPT'],
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        )
+        ).defer('attachment_data', 'attachment_mime')
         if party_ledger:
             qs = qs.filter(party_ledger=party_ledger)
 

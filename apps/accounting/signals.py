@@ -46,3 +46,13 @@ def emit_sync_event_on_delete(sender, instance, **kwargs):
     company_id = get_company_id(instance)
     log_sync_event(company_id, sender.__name__.upper(), instance.id, 'DELETE')
 
+@receiver(post_delete, sender=Voucher)
+def cleanup_voucher_inventory_entries(sender, instance, **kwargs):
+    """
+    Prevents orphaned InventoryEntry records from persisting when a Voucher is deleted.
+    Protects product deletion and prevents phantom stock drift.
+    """
+    from apps.inventory.models import InventoryEntry
+    InventoryEntry.objects.filter(voucher_id=instance.id).delete()
+
+

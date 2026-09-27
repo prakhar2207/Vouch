@@ -342,7 +342,7 @@ export default function Dashboard() {
     setSyncStatus("SYNCING");
     setSyncMessage("Syncing local books...");
     await executeClientOutboxSync();
-    await pullIncrementalChanges(cid, (msg) => setSyncMessage(msg));
+    await pullIncrementalChanges(cid, (msg) => setSyncMessage(msg), { force: true });
     const refreshed = await LocalAnalyticsEngine.getDashboardAnalytics(cid);
     setInsights(refreshed);
     setVouchers(refreshed.recent_vouchers || []);

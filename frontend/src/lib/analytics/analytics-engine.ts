@@ -272,6 +272,20 @@ export class LocalAnalyticsEngine {
     allEffectiveVouchers: Map<string, SyncedVoucher>
   ): number {
     if (!this.isEffectiveVoucher(invoice)) return 0;
+
+    // P0: Cash counter sales or invoices settled at point of sale are immediately paid (not credit debt)
+    const pName = (invoice.partyName || "").toLowerCase().trim();
+    if (
+      pName === "cash" ||
+      pName.includes("counter sale") ||
+      pName.includes("cash sale") ||
+      pName === "cash a/c" ||
+      pName === "cash in hand" ||
+      pName === "cash account" ||
+      invoice.paymentStatus === "PAID"
+    ) {
+      return 0;
+    }
     
     // Find all allocations for this invoice
     const allocations = allAllocations.filter(pa => pa.invoiceVoucherId === invoice.id);
@@ -405,6 +419,17 @@ export class LocalAnalyticsEngine {
       }
 
       for (const p of partyAggregates) {
+        const pNameLower = (p.partyName || "").toLowerCase().trim();
+        const isCashParty = (
+          pNameLower === "cash" ||
+          pNameLower.includes("counter sale") ||
+          pNameLower.includes("cash sale") ||
+          pNameLower === "cash a/c" ||
+          pNameLower === "cash in hand" ||
+          pNameLower === "cash account"
+        );
+        if (isCashParty) continue;
+
         salesByParty[p.partyId] = {
           name: p.partyName,
           count: p.invoiceCount,
@@ -442,16 +467,28 @@ export class LocalAnalyticsEngine {
           // Daily trend accumulation
           salesByDate[vDate] = (salesByDate[vDate] || 0) + amt;
 
-          // Customer RFM accumulation (Canonical partyLedgerId grouping)
-          const partyKey = v.partyLedgerId || v.partyName || "Counter Sale / Cash";
-          const partyName = v.partyName || "Counter Sale / Cash";
-          if (!salesByParty[partyKey]) {
-            salesByParty[partyKey] = { name: partyName, count: 0, total: 0, lastDate: vDate };
-          }
-          salesByParty[partyKey].count += 1;
-          salesByParty[partyKey].total += amt;
-          if (vDate > salesByParty[partyKey].lastDate) {
-            salesByParty[partyKey].lastDate = vDate;
+          // Customer RFM accumulation (Exclude generic Cash counter sales from customer ranking)
+          const partyKey = v.partyLedgerId || v.partyName || "";
+          const partyName = v.partyName || "";
+          const pNameLower = partyName.toLowerCase().trim();
+          const isCashParty = (
+            pNameLower === "cash" ||
+            pNameLower.includes("counter sale") ||
+            pNameLower.includes("cash sale") ||
+            pNameLower === "cash a/c" ||
+            pNameLower === "cash in hand" ||
+            pNameLower === "cash account"
+          );
+
+          if (!isCashParty && partyKey) {
+            if (!salesByParty[partyKey]) {
+              salesByParty[partyKey] = { name: partyName, count: 0, total: 0, lastDate: vDate };
+            }
+            salesByParty[partyKey].count += 1;
+            salesByParty[partyKey].total += amt;
+            if (vDate > salesByParty[partyKey].lastDate) {
+              salesByParty[partyKey].lastDate = vDate;
+            }
           }
 
           // Check overdue (P0: Payment Allocation drives outstanding)
