@@ -247,10 +247,14 @@ class OpeningBalanceAndPartyAccountingTests(TestCase):
         self.assertEqual(customer.opening_balance, Decimal('80000.00'))
         self.assertEqual(customer.current_balance, Decimal('90000.00'))  # 80k + 10k sale
 
-        # Verify differential voucher
-        diff_vch = Voucher.objects.filter(party_ledger=customer, voucher_type="JOURNAL", correction_reason="Auditor corrected initial ledger").first()
-        self.assertIsNotNone(diff_vch)
-        self.assertEqual(diff_vch.total_amount, Decimal('30000.00'))
+        # Verify standard OPENING double-entry voucher
+        op_vch = Voucher.objects.filter(party_ledger=customer, voucher_type="OPENING").first()
+        self.assertIsNotNone(op_vch)
+        self.assertEqual(op_vch.total_amount, Decimal('80000.00'))
+        # Verify entries are balanced
+        dr_sum = sum(e.debit_amount for e in op_vch.ledger_entries.all())
+        cr_sum = sum(e.credit_amount for e in op_vch.ledger_entries.all())
+        self.assertEqual(dr_sum, cr_sum)
 
         # Verify audit log
         self.assertTrue(AuditLog.objects.filter(company=self.company, model_name="LedgerOpeningBalance", action="UPDATE").exists())

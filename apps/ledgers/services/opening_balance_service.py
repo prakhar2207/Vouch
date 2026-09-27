@@ -259,6 +259,9 @@ class OpeningBalanceService:
         if not new_balance_type:
             new_balance_type = ledger.opening_balance_type or 'DEBIT'
         new_balance_type = new_balance_type.upper()
+        if new_amount < Decimal('0.00'):
+            new_amount = abs(new_amount)
+            new_balance_type = 'CREDIT' if new_balance_type == 'DEBIT' else 'DEBIT'
 
         old_amount = Decimal(str(ledger.opening_balance or '0.00'))
         old_type = ledger.opening_balance_type or 'DEBIT'
@@ -284,10 +287,66 @@ class OpeningBalanceService:
         ledger.opening_balance_type = new_balance_type
         ledger.save(update_fields=['opening_balance', 'opening_balance_type'])
 
+        adj_ledger = cls.get_or_create_opening_adjustment_ledger(company)
+
+        if new_amount > Decimal('0.00'):
+            from apps.accounting.services.sequence_service import InvoiceSequenceService
+            fy = InvoiceSequenceService.get_or_create_active_fy(company, ledger.opening_date or timezone.now().date())
+            v_num = f"OP-{str(ledger.id)[:8].upper()}"
+            if Voucher.objects.filter(company=company, voucher_number=v_num).exists():
+                v_num = f"{v_num}-{int(timezone.now().timestamp()) % 10000}"
+
+            vch = Voucher.objects.create(
+                company=company,
+                financial_year=fy,
+                voucher_type='OPENING',
+                voucher_number=v_num,
+                voucher_date=ledger.opening_date or fy.start_date,
+                due_date=ledger.opening_date or fy.start_date,
+                party_ledger=ledger,
+                status='POSTED',
+                total_amount=new_amount,
+                narration=f"Opening Balance for {ledger.name}",
+                created_by=user
+            )
+
+            if new_balance_type == 'DEBIT':
+                LedgerEntry.objects.create(
+                    company=company,
+                    voucher=vch,
+                    ledger=ledger,
+                    debit_amount=new_amount,
+                    credit_amount=Decimal('0.00'),
+                    narration=f"Opening Balance Dr for {ledger.name}"
+                )
+                LedgerEntry.objects.create(
+                    company=company,
+                    voucher=vch,
+                    ledger=adj_ledger,
+                    debit_amount=Decimal('0.00'),
+                    credit_amount=new_amount,
+                    narration=f"Opening balance offset for {ledger.name}"
+                )
+            else:
+                LedgerEntry.objects.create(
+                    company=company,
+                    voucher=vch,
+                    ledger=adj_ledger,
+                    debit_amount=new_amount,
+                    credit_amount=Decimal('0.00'),
+                    narration=f"Opening balance offset for {ledger.name}"
+                )
+                LedgerEntry.objects.create(
+                    company=company,
+                    voucher=vch,
+                    ledger=ledger,
+                    debit_amount=Decimal('0.00'),
+                    credit_amount=new_amount,
+                    narration=f"Opening Balance Cr for {ledger.name}"
+                )
+
         from apps.accounting.services.voucher_service import VoucherService
         VoucherService.recalculate_ledger_balance(ledger)
-
-        adj_ledger = cls.get_or_create_opening_adjustment_ledger(company)
         if adj_ledger:
             VoucherService.recalculate_ledger_balance(adj_ledger)
 
