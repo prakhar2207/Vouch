@@ -129,15 +129,19 @@ class AccountingIntegrityEngine:
         }
         score_breakdown = {
             "base_score": 100,
+            "core_integrity_score": score_data.get("core_integrity_score", score_data["score"]),
+            "reconciliation_score": score_data.get("reconciliation_score", 100),
             "critical_deductions": score_data["critical_count"] * 15,
             "warning_deductions": score_data["warning_count"] * 5,
-            "unresolved_bank_deductions": min(15, unresolved_bank * 1),
-            "formula": "Base (100) - Critical (15) - Warning (5) - Unresolved Bank (1)"
+            "unresolved_bank_deductions": min(35, unresolved_bank * 1),
+            "formula": "Blended 75% Core Ledger Integrity + 25% Operational Reconciliation Pipeline"
         }
 
         return {
             "timestamp": timezone.now().isoformat(),
             "health_score": score_data["score"],
+            "core_integrity_score": score_data.get("core_integrity_score", score_data["score"]),
+            "reconciliation_score": score_data.get("reconciliation_score", 100),
             "health_status": score_data["status"],
             "status": score_data["status"],
             "score_breakdown": score_breakdown,
@@ -610,9 +614,9 @@ class AccountingIntegrityEngine:
 
     @classmethod
     def check_inventory(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
-        """7. Check: Negative stock or warehouse stock discrepancies."""
+        """7. Check: Negative stock, orphan test items, and inventory valuation discrepancies."""
         findings = []
-        neg_products = Product.objects.filter(company=company, stock_quantity__lt=0)
+        neg_products = Product.objects.filter(company=company, is_active=True, stock_quantity__lt=0)
 
         for p in neg_products:
             finding = cls._get_or_create_finding(
@@ -626,13 +630,47 @@ class AccountingIntegrityEngine:
                         "product_id": str(p.id),
                         "product_name": p.name,
                         "current_stock": str(p.stock_quantity),
-                        "unit": p.unit or "units"
+                        "unit": p.unit or "units",
+                        "action_url": f"/inventory",
+                        "action_label": "View Inventory"
                     },
                     "expected_state": "Physical stock cannot be less than zero.",
                     "actual_state": f"Stock is {p.stock_quantity}.",
                     "probable_cause": "Supplier purchase bill was not entered before recording the sale.",
                     "suggested_action": "Enter pending purchase bills or post a stock adjustment.",
                     "confidence": 0.99
+                },
+                existing_findings_map=existing_findings_map
+            )
+            findings.append(finding)
+
+        # Audit: In-stock items with zero purchase price (distorts stock valuation)
+        zero_cost_prods = Product.objects.filter(company=company, is_active=True, stock_quantity__gt=0, purchase_price=0)
+        if zero_cost_prods.exists():
+            z_count = zero_cost_prods.count()
+            sample_names = ", ".join(zero_cost_prods.values_list('name', flat=True)[:3])
+            sample_items = [
+                {"id": str(item["id"]), "name": item["name"], "stock_quantity": str(item["stock_quantity"])}
+                for item in zero_cost_prods.values('id', 'name', 'stock_quantity')[:5]
+            ]
+            finding = cls._get_or_create_finding(
+                company=company,
+                category='INVENTORY',
+                title=f"{z_count} in-stock item{'s' if z_count > 1 else ''} have zero cost price",
+                defaults={
+                    "severity": "INFO",
+                    "description": f"{z_count} products (including {sample_names}) have physical stock on hand but ₹0.00 purchase price, which understates your inventory valuation on the Balance Sheet.",
+                    "evidence": {
+                        "zero_cost_count": z_count,
+                        "sample_items": sample_items,
+                        "action_url": "/inventory",
+                        "action_label": "Update Item Prices"
+                    },
+                    "expected_state": "All active items in stock should have a recorded cost price.",
+                    "actual_state": f"{z_count} items have purchase_price = 0.00.",
+                    "probable_cause": "Items imported from sales list or entered without opening supplier invoice.",
+                    "suggested_action": "Update product purchase prices in the Inventory catalog.",
+                    "confidence": 0.90
                 },
                 existing_findings_map=existing_findings_map
             )
@@ -696,13 +734,16 @@ class AccountingIntegrityEngine:
                         "unresolved_count": unres_count,
                         "total_amount": str(total_val),
                         "debit_total": str(totals['dr'] or '0.00'),
-                        "credit_total": str(totals['cr'] or '0.00')
+                        "credit_total": str(totals['cr'] or '0.00'),
+                        "action_url": "/banking",
+                        "action_label": "Open Bank Reconciliation"
                     },
                     "expected_state": "All bank statement rows should be accounted for in vouchers.",
                     "actual_state": f"{unres_count} rows unresolved.",
                     "probable_cause": "Recent bank statement uploaded without final matching.",
                     "suggested_action": "Go to Bank Reconciliation to review suggestions and match parties.",
-                    "confidence": 0.95
+                    "confidence": 0.95,
+                    "fix_action": "NAVIGATE_BANK_RECON"
                 },
                 existing_findings_map=existing_findings_map
             )
@@ -736,12 +777,12 @@ class AccountingIntegrityEngine:
         # Single combined query for Cash and Bank ledgers
         liquid_ledgers = list(Ledger.objects.filter(
             company=company,
-            ledger_type__in=['CASH', 'BANK'],
+            ledger_type__in=['CASH', 'BANK', 'BANK_OD', 'BANK_OCC', 'OD', 'CC'],
             is_archived=False
-        ).only('id', 'name', 'ledger_type', 'current_balance'))
+        ).select_related('group'))
 
         cash_ledgers = [l for l in liquid_ledgers if l.ledger_type == 'CASH']
-        bank_ledgers = [l for l in liquid_ledgers if l.ledger_type == 'BANK']
+        bank_ledgers = [l for l in liquid_ledgers if l.ledger_type in ['BANK', 'BANK_OD', 'BANK_OCC', 'OD', 'CC']]
 
         # 1. Cash Ledgers (Negative Cash in Hand)
         for cl in cash_ledgers:
@@ -778,9 +819,52 @@ class AccountingIntegrityEngine:
                 )
                 findings.append(finding)
 
-        # 2. Bank Ledgers (Overdrawn Bank Accounts)
+        # 2. Bank Ledgers (Overdrawn Bank Accounts & OD Limit Breaches)
         for bl in bank_ledgers:
             bal = Decimal(str(bl.current_balance or '0.00'))
+            if bl.is_bank_od:
+                # Bank OD / CC facility: utilized credit balance is normal up to sanctioned credit limit
+                credit_limit = Decimal(str(bl.credit_limit or '0.00'))
+                if credit_limit > Decimal('0.00'):
+                    utilized = abs(bal) if bal < Decimal('0.00') else Decimal('0.00')
+                    if utilized > credit_limit + Decimal('500.00'):
+                        excess = utilized - credit_limit
+                        title = f"OD limit breached: {bl.name} exceeded sanctioned limit by ₹{excess:.2f}"
+                        active_titles.add(title)
+                        finding = cls._get_or_create_finding(
+                            company=company,
+                            category='LIQUIDITY',
+                            title=title,
+                            defaults={
+                                "severity": "CRITICAL",
+                                "description": (
+                                    f"The Bank OD/CC account '{bl.name}' has utilized ₹{utilized:.2f} of credit, "
+                                    f"exceeding the sanctioned credit limit of ₹{credit_limit:.2f} by ₹{excess:.2f}. "
+                                    f"Transactions drawn beyond the limit may attract penal interest or be declined by the bank."
+                                ),
+                                "evidence": {
+                                    "ledger_id": str(bl.id),
+                                    "ledger_name": bl.name,
+                                    "current_balance": str(bal),
+                                    "credit_limit": str(credit_limit),
+                                    "overdrawn_amount": str(excess),
+                                    "action_url": "/banking",
+                                    "action_label": "Review Bank Account"
+                                },
+                                "expected_state": f"OD utilization (₹{utilized:.2f}) must remain within sanctioned limit (₹{credit_limit:.2f}).",
+                                "actual_state": f"Sanctioned limit exceeded by ₹{excess:.2f}.",
+                                "probable_cause": "Supplier payouts or withdrawals exceeded the approved OD/CC sanction limit.",
+                                "suggested_action": "Deposit customer funds or request the bank for an ad-hoc limit enhancement.",
+                                "confidence": 0.98,
+                                "fix_action": "REVIEW_BANK_BALANCE"
+                            },
+                            existing_findings_map=existing_findings_map
+                        )
+                        findings.append(finding)
+                # If within limit (or no limit set), OD account is operating normally; do not flag as deficit.
+                continue
+
+            # Standard Current / Savings Bank Account (not an OD account)
             # Threshold of -₹500 to ignore minor bank SMS / maintenance charge deductions
             if bal < Decimal('-500.00'):
                 overdrawn = abs(bal)
@@ -801,12 +885,14 @@ class AccountingIntegrityEngine:
                             "ledger_id": str(bl.id),
                             "ledger_name": bl.name,
                             "current_balance": str(bal),
-                            "overdrawn_amount": str(overdrawn)
+                            "overdrawn_amount": str(overdrawn),
+                            "action_url": "/banking",
+                            "action_label": "Review Bank Account"
                         },
                         "expected_state": f"Bank ledger balance should be positive or within an approved OD limit.",
                         "actual_state": f"Overdrawn by ₹{overdrawn:.2f}.",
                         "probable_cause": "Supplier payments or cheques entered in books before customer receipts were deposited and cleared.",
-                        "suggested_action": "Deposit customer funds or record pending bank deposits/transfers to prevent cheque bounce.",
+                        "suggested_action": "Deposit customer funds or update account group to Bank OD A/c if this is an approved overdraft facility.",
                         "confidence": 0.95,
                         "fix_action": "REVIEW_BANK_BALANCE"
                     },
@@ -860,27 +946,48 @@ class AccountingIntegrityEngine:
     @classmethod
     def calculate_health_score(cls, company: Company, findings: List[AccountingFinding], unresolved_bank: Optional[int] = None) -> Dict[str, Any]:
         """
-        Computes a transparent data-quality score:
-        Base = 100%
-        - 15% per Critical issue
-        - 5% per Warning
-        - 1% per unresolved bank transaction
-        Floor = 0%
+        Computes transparent dual-tier data-quality scores:
+        1. Core Ledger Integrity (Audit-Ready Score):
+           - Checks fundamental accounting invariants (Trial Balance, Party Balances, Payment Allocations, Duplicate Vouchers, Cash Deficit).
+        2. Operational Reconciliation Score:
+           - Measures pending pipeline tasks (Bank Statement imports pending match, inventory zero-cost catalog items).
+        3. Blended Overall Health Score:
+           - 75% Core Integrity + 25% Operational Pipeline.
         """
-        critical_count = sum(1 for f in findings if f.severity == 'CRITICAL' and not f.is_resolved)
-        warning_count = sum(1 for f in findings if f.severity == 'WARNING' and not f.is_resolved)
-        info_count = sum(1 for f in findings if f.severity == 'INFO' and not f.is_resolved)
+        active_findings = [f for f in findings if not f.is_resolved]
+
+        CORE_CATEGORIES = {'TRIAL_BALANCE', 'PARTY_BALANCE', 'PAYMENT', 'WRONG_PARTY', 'NUMBERING', 'DUPLICATE', 'DUPLICATE_BANK', 'DUPLICATE_INVENTORY', 'DUPLICATE_LEDGER', 'LIQUIDITY'}
+        RECON_CATEGORIES = {'BANK', 'BANK_RECONCILIATION', 'INVENTORY', 'GST'}
+
+        core_critical = sum(1 for f in active_findings if f.severity == 'CRITICAL' and f.category in CORE_CATEGORIES)
+        core_warning = sum(1 for f in active_findings if f.severity == 'WARNING' and f.category in CORE_CATEGORIES)
+
+        recon_critical = sum(1 for f in active_findings if f.severity == 'CRITICAL' and f.category in RECON_CATEGORIES)
+        recon_warning = sum(1 for f in active_findings if f.severity == 'WARNING' and f.category in RECON_CATEGORIES)
+
+        critical_count = sum(1 for f in active_findings if f.severity == 'CRITICAL')
+        warning_count = sum(1 for f in active_findings if f.severity == 'WARNING')
+        info_count = sum(1 for f in active_findings if f.severity == 'INFO')
 
         if unresolved_bank is None:
             unresolved_bank = BankTransaction.objects.filter(company=company, status='UNRESOLVED').count()
 
-        penalty = (critical_count * 15) + (warning_count * 5) + min(15, unresolved_bank * 1)
-        score = max(0, 100 - penalty)
+        # Core Integrity Score (100% if double-entry books balance with zero critical defects)
+        core_penalty = (core_critical * 20) + (core_warning * 5)
+        core_integrity_score = max(0, 100 - core_penalty)
+
+        # Operational Reconciliation Score (Pipeline progress)
+        bank_penalty = min(35, unresolved_bank * 1)
+        recon_penalty = bank_penalty + (recon_critical * 20) + (recon_warning * 10)
+        reconciliation_score = max(0, 100 - recon_penalty)
+
+        # Blended Score: 75% Core Integrity + 25% Operational Reconciliation
+        score = int(round((core_integrity_score * 0.75) + (reconciliation_score * 0.25)))
 
         status = 'HEALTHY'
-        if critical_count > 0:
+        if core_critical > 0 or critical_count > 0:
             status = 'CRITICAL'
-        elif warning_count > 0:
+        elif warning_count > 0 or unresolved_bank > 0:
             status = 'NEEDS_ATTENTION'
 
         check_configs = [
@@ -931,7 +1038,6 @@ class AccountingIntegrityEngine:
                 "category": "BANK_RECONCILIATION",
                 "description": "Ensures all imported bank feed transactions are reconciled against book vouchers.",
                 "match": lambda f: f.category in ['BANK', 'BANK_RECONCILIATION'],
-                "extra_count": unresolved_bank,
             },
             {
                 "name": "Cash & Bank Liquidity Safety",
@@ -950,12 +1056,12 @@ class AccountingIntegrityEngine:
         checks_summary = []
         for cfg in check_configs:
             matched = [f for f in findings if cfg["match"](f) and not f.is_resolved]
-            count = len(matched) + cfg.get("extra_count", 0)
+            count = len(matched)
 
             if any(f.severity == 'CRITICAL' for f in matched):
                 chk_status = "CRITICAL"
                 severity = "CRITICAL"
-            elif any(f.severity == 'WARNING' for f in matched) or cfg.get("extra_count", 0) > 0:
+            elif any(f.severity == 'WARNING' for f in matched) or (cfg["category"] == "BANK_RECONCILIATION" and unresolved_bank > 0):
                 chk_status = "WARNING"
                 severity = "WARNING"
             elif any(f.severity == 'INFO' for f in matched):
@@ -981,6 +1087,8 @@ class AccountingIntegrityEngine:
 
         return {
             "score": score,
+            "core_integrity_score": core_integrity_score,
+            "reconciliation_score": reconciliation_score,
             "status": status,
             "checks_summary": checks_summary,
             "critical_count": critical_count,

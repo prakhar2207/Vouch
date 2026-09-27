@@ -75,6 +75,18 @@ class Ledger(models.Model):
         return 'OTHER'
 
     @property
+    def is_bank_od(self):
+        if (self.ledger_type or '').upper() in ['BANK_OD', 'BANK_OCC', 'OD', 'CC']:
+            return True
+        grp_name = (self.group.name if self.group else '').lower()
+        if any(term in grp_name for term in ['od', 'occ', 'overdraft', 'cash credit']):
+            return True
+        name_lower = (self.name or '').lower()
+        if any(term in name_lower for term in ['od a/c', 'cc a/c', 'overdraft', 'cash credit']):
+            return True
+        return False
+
+    @property
     def normal_balance(self):
         lt = (self.ledger_type or '').upper()
         if lt in ('CUSTOMER', 'DEBTOR'):
@@ -82,6 +94,8 @@ class Ledger(models.Model):
         if lt in ('SUPPLIER', 'CREDITOR'):
             return 'CREDIT'
         if lt in ('BANK', 'CASH'):
+            if self.is_bank_od:
+                return 'CREDIT'
             return 'DEBIT'
         
         role = self.canonical_role

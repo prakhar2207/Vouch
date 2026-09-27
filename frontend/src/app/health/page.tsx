@@ -58,7 +58,18 @@ interface AccountingFindingItem {
 interface HealthReport {
   timestamp: string;
   health_score: number;
+  core_integrity_score?: number;
+  reconciliation_score?: number;
   health_status: "HEALTHY" | "NEEDS_ATTENTION" | "CRITICAL";
+  score_breakdown?: {
+    base_score: number;
+    core_integrity_score: number;
+    reconciliation_score: number;
+    critical_deductions: number;
+    warning_deductions: number;
+    unresolved_bank_deductions: number;
+    formula: string;
+  };
   metrics: {
     total_checks: number;
     passed_checks: number;
@@ -88,6 +99,8 @@ interface FixPreviewData {
   }>;
 }
 
+export type HealthTab = "ALL" | "BANK" | "INVENTORY" | "GST" | "DUPLICATES" | "CRITICAL" | "ACTIONABLE";
+
 export default function HealthPage() {
   const router = useRouter();
   const { toast } = useToast();
@@ -98,7 +111,7 @@ export default function HealthPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"ALL" | "DUPLICATES" | "CRITICAL" | "WARNING" | "ACTIONABLE">("ALL");
+  const [activeTab, setActiveTab] = useState<HealthTab>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
   // Expandable audits checklist
@@ -325,6 +338,18 @@ export default function HealthPage() {
     return report?.findings?.filter((f) => f.category?.startsWith("DUPLICATE") || f.fix_type === "VOID_DUPLICATE_VOUCHER")?.length || 0;
   }, [report]);
 
+  const bankFindingsCount = useMemo(() => {
+    return report?.findings?.filter((f) => f.category?.includes("BANK") || f.category === "LIQUIDITY")?.length || 0;
+  }, [report]);
+
+  const inventoryFindingsCount = useMemo(() => {
+    return report?.findings?.filter((f) => f.category?.includes("INVENTORY"))?.length || 0;
+  }, [report]);
+
+  const gstFindingsCount = useMemo(() => {
+    return report?.findings?.filter((f) => f.category?.includes("GST"))?.length || 0;
+  }, [report]);
+
   const criticalCount = report?.metrics?.critical_findings_count || 0;
   const warningCount = (report?.metrics?.warning_findings_count || 0) + (report?.metrics?.info_findings_count || 0);
   const actionableCount = report?.findings?.filter((f) => f.is_actionable).length || 0;
@@ -335,10 +360,14 @@ export default function HealthPage() {
 
     if (activeTab === "DUPLICATES") {
       list = list.filter((f) => f.category?.startsWith("DUPLICATE") || f.fix_type === "VOID_DUPLICATE_VOUCHER");
+    } else if (activeTab === "BANK") {
+      list = list.filter((f) => f.category?.includes("BANK") || f.category === "LIQUIDITY");
+    } else if (activeTab === "INVENTORY") {
+      list = list.filter((f) => f.category?.includes("INVENTORY"));
+    } else if (activeTab === "GST") {
+      list = list.filter((f) => f.category?.includes("GST"));
     } else if (activeTab === "CRITICAL") {
       list = list.filter((f) => f.severity === "CRITICAL");
-    } else if (activeTab === "WARNING") {
-      list = list.filter((f) => f.severity === "WARNING" || f.severity === "INFO");
     } else if (activeTab === "ACTIONABLE") {
       list = list.filter((f) => f.is_actionable);
     }
@@ -402,10 +431,10 @@ export default function HealthPage() {
         {/* Clean Executive Overview (2-Card Hero) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           
-          {/* Health Score & Status Banner (5 cols) */}
-          <div className="lg:col-span-5 bg-card border border-border/50 rounded-2xl p-5 shadow-2xs flex items-center gap-4.5">
+          {/* Health Score & Dual-Tier Status Banner (6 cols) */}
+          <div className="lg:col-span-6 bg-card border border-border/50 rounded-2xl p-5 shadow-2xs flex flex-col sm:flex-row items-center gap-5">
             {/* Circular Gauge */}
-            <div className="relative w-18 h-18 sm:w-20 sm:h-20 flex items-center justify-center shrink-0">
+            <div className="relative w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center shrink-0">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
                 <circle
                   className="text-muted/30"
@@ -421,6 +450,8 @@ export default function HealthPage() {
                     criticalCount === 0
                       ? warningCount === 0
                         ? "text-emerald-500"
+                        : (report?.core_integrity_score ?? 100) === 100
+                        ? "text-blue-500"
                         : "text-amber-500"
                       : "text-rose-500"
                   }
@@ -435,58 +466,88 @@ export default function HealthPage() {
                 />
               </svg>
               <div className="absolute flex flex-col items-center justify-center">
-                <span className="text-base sm:text-lg font-black font-mono tracking-tight text-foreground">
+                <span className="text-lg sm:text-xl font-black font-mono tracking-tight text-foreground">
                   {report?.health_score ?? 0}%
                 </span>
+                <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider">Health</span>
               </div>
             </div>
 
-            {/* Status Information */}
-            <div className="space-y-1 flex-1 min-w-0">
-              <div className="flex items-center gap-2">
+            {/* Status & Dual-Tier Score Breakdown */}
+            <div className="space-y-2 flex-1 min-w-0 w-full">
+              <div className="flex items-center justify-between gap-2">
                 <span
                   className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
                     criticalCount === 0
-                      ? warningCount === 0
+                      ? (report?.core_integrity_score ?? 100) === 100
                         ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25"
-                        : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25"
+                        : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25"
                       : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25"
                   }`}
                 >
                   {criticalCount === 0
-                    ? warningCount === 0
-                      ? "All Books Balanced"
+                    ? (report?.core_integrity_score ?? 100) === 100
+                      ? "Core Books Balanced"
                       : "Needs Review"
                     : "Action Required"}
                 </span>
+
+                <span className="text-[10px] text-muted-foreground/80 font-mono">
+                  {report?.timestamp ? new Date(report.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Just now"}
+                </span>
               </div>
 
-              <h2 className="text-sm font-bold text-foreground truncate">
-                {criticalCount === 0
-                  ? warningCount === 0
-                    ? "Books are healthy & audit-ready"
-                    : `${warningCount} items require verification`
-                  : `${criticalCount} critical issues need attention`}
-              </h2>
+              {/* Dual-Tier Meters */}
+              <div className="space-y-2 pt-0.5">
+                {/* 1. Core Double-Entry Integrity */}
+                <div className="p-2 rounded-xl bg-muted/25 border border-border/40 space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-foreground flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>Core Ledger Integrity</span>
+                    </span>
+                    <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                      {report?.core_integrity_score ?? 100}%
+                    </span>
+                  </div>
+                  <div className="w-full bg-muted/50 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className="bg-emerald-500 h-1.5 rounded-full transition-all duration-500"
+                      style={{ width: `${report?.core_integrity_score ?? 100}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    Trial balance, party ledgers & zero cash drawer deficit
+                  </div>
+                </div>
 
-              <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
-                {criticalCount === 0
-                  ? warningCount === 0
-                    ? "Every debit matches credit, sequential numbering is valid, and zero duplicate entries exist."
-                    : "Trial balance is balanced. Review unallocated bank transactions or party balance warnings."
-                  : duplicateFindingsCount > 0
-                  ? `Includes ${duplicateFindingsCount} duplicate transactions. Review and apply 1-click fixes below.`
-                  : "Accounting inconsistencies detected. Review critical entries below."}
-              </p>
-
-              <div className="text-[10px] text-muted-foreground/80 font-mono pt-0.5">
-                Last checked: {report?.timestamp ? new Date(report.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Just now"}
+                {/* 2. Operational Reconciliation Pipeline */}
+                <div className="p-2 rounded-xl bg-muted/25 border border-border/40 space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-foreground flex items-center gap-1.5">
+                      <RefreshCw className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
+                      <span>Reconciliation Pipeline</span>
+                    </span>
+                    <span className="font-bold font-mono text-cyan-600 dark:text-cyan-400">
+                      {report?.reconciliation_score ?? 100}%
+                    </span>
+                  </div>
+                  <div className="w-full bg-muted/50 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className="bg-cyan-500 h-1.5 rounded-full transition-all duration-500"
+                      style={{ width: `${report?.reconciliation_score ?? 100}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    Bank statement match & inventory pricing maintenance
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* 4 Key Stat Tiles (7 cols) */}
-          <div className="lg:col-span-7 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          {/* 4 Key Stat Tiles (6 cols) */}
+          <div className="lg:col-span-6 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
             
             {/* Passed Checks */}
             <div className="p-3.5 bg-card border border-border/50 rounded-2xl shadow-2xs space-y-1">
@@ -744,6 +805,57 @@ export default function HealthPage() {
               </button>
 
               <button
+                onClick={() => setActiveTab("BANK")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                  activeTab === "BANK"
+                    ? "bg-card text-foreground shadow-xs border border-border/60"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Layers className="w-3 h-3 text-cyan-500" />
+                <span>Bank & Cash</span>
+                {bankFindingsCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-600 dark:text-cyan-400">
+                    {bankFindingsCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab("INVENTORY")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                  activeTab === "INVENTORY"
+                    ? "bg-card text-foreground shadow-xs border border-border/60"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Package className="w-3 h-3 text-emerald-500" />
+                <span>Inventory</span>
+                {inventoryFindingsCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                    {inventoryFindingsCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab("GST")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                  activeTab === "GST"
+                    ? "bg-card text-foreground shadow-xs border border-border/60"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Scale className="w-3 h-3 text-rose-500" />
+                <span>GST</span>
+                {gstFindingsCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-600 dark:text-rose-400">
+                    {gstFindingsCount}
+                  </span>
+                )}
+              </button>
+
+              <button
                 onClick={() => setActiveTab("DUPLICATES")}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
                   activeTab === "DUPLICATES"
@@ -773,23 +885,6 @@ export default function HealthPage() {
                 {criticalCount > 0 && (
                   <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-600 dark:text-rose-400">
                     {criticalCount}
-                  </span>
-                )}
-              </button>
-
-              <button
-                onClick={() => setActiveTab("WARNING")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                  activeTab === "WARNING"
-                    ? "bg-card text-foreground shadow-xs border border-border/60"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <AlertTriangle className="w-3 h-3 text-amber-500" />
-                <span>Needs Review</span>
-                {warningCount > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-600 dark:text-amber-400">
-                    {warningCount}
                   </span>
                 )}
               </button>
@@ -839,12 +934,16 @@ export default function HealthPage() {
               <h3 className="text-sm font-bold text-foreground">
                 {activeTab === "ALL"
                   ? "All Accounting Checks Passing!"
+                  : activeTab === "BANK"
+                  ? "All Bank & Cash Accounts Reconciled"
+                  : activeTab === "INVENTORY"
+                  ? "All Inventory Items Healthy"
+                  : activeTab === "GST"
+                  ? "All GST & Tax Checks Passing"
                   : activeTab === "DUPLICATES"
                   ? "Zero Duplicate Transactions Found"
                   : activeTab === "CRITICAL"
                   ? "Zero Critical Issues Found"
-                  : activeTab === "WARNING"
-                  ? "Zero Warnings Pending"
                   : "No Actionable Fixes Pending"}
               </h3>
               <p className="text-xs text-muted-foreground max-w-sm mx-auto">
@@ -893,8 +992,8 @@ export default function HealthPage() {
                         )}
                       </div>
 
-                      {/* Primary 1-Click Fix Button */}
-                      {finding.is_actionable && (
+                      {/* Primary Action Button: 1-Click Fix or Direct Navigation */}
+                      {finding.is_actionable ? (
                         <button
                           onClick={() => openFixPreview(finding)}
                           className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 shrink-0 cursor-pointer w-full sm:w-auto justify-center min-h-[34px] ${
@@ -918,7 +1017,15 @@ export default function HealthPage() {
                               : "Review & Fix"}
                           </span>
                         </button>
-                      )}
+                      ) : finding.evidence?.action_url ? (
+                        <Link
+                          href={finding.evidence.action_url}
+                          className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground transition-all shadow-2xs flex items-center gap-1.5 shrink-0 cursor-pointer w-full sm:w-auto justify-center min-h-[34px] border border-primary/25"
+                        >
+                          <span>{finding.evidence.action_label || "Open Page"}</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </Link>
+                      ) : null}
                     </div>
 
                     {/* Title & Human Description */}
@@ -1056,8 +1163,54 @@ export default function HealthPage() {
                       </div>
                     )}
 
+                    {/* Case 4: Zero-Cost Catalog Items */}
+                    {finding.evidence?.zero_cost_count && (
+                      <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 text-xs space-y-2">
+                        <div className="font-semibold text-foreground flex items-center justify-between">
+                          <span>Items in stock without cost price ({finding.evidence.zero_cost_count}):</span>
+                          <Link href="/inventory" className="text-primary hover:underline text-[11px] flex items-center gap-1 font-medium">
+                            Catalog <ExternalLink className="w-2.5 h-2.5" />
+                          </Link>
+                        </div>
+                        {finding.evidence.sample_items && finding.evidence.sample_items.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {finding.evidence.sample_items.map((item: any) => (
+                              <span key={item.id} className="px-2 py-0.5 rounded-md bg-card border border-border/50 text-[11px] text-foreground font-mono">
+                                {item.name} ({item.stock_quantity} units)
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Case 5: Bank Reconciliation Pending Summary */}
+                    {finding.evidence?.unresolved_count && (
+                      <div className="p-3 rounded-xl bg-cyan-500/5 border border-cyan-500/20 text-xs flex flex-wrap items-center justify-between gap-3">
+                        <div className="space-y-0.5">
+                          <div className="text-foreground">
+                            <strong>{finding.evidence.unresolved_count} bank statement rows</strong> totaling{" "}
+                            <span className="font-mono font-bold text-cyan-600 dark:text-cyan-400">
+                              {formatAmount(finding.evidence.total_amount)}
+                            </span>{" "}
+                            pending match.
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            Debits: {formatAmount(finding.evidence.debit_total)} • Credits: {formatAmount(finding.evidence.credit_total)}
+                          </div>
+                        </div>
+                        <Link
+                          href="/banking"
+                          className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow-2xs"
+                        >
+                          <span>Open Bank Reconciliation</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </Link>
+                      </div>
+                    )}
+
                     {/* Recommended Action Pill (if present and not duplicate comparison) */}
-                    {!isDuplicateVoucher && !isDuplicateInventory && finding.suggested_fix && (
+                    {!isDuplicateVoucher && !isDuplicateInventory && !finding.evidence?.unresolved_count && finding.suggested_fix && (
                       <div className="p-2.5 rounded-xl bg-muted/30 border border-border/40 text-xs flex items-center gap-2 text-foreground">
                         <Sparkles className="w-3.5 h-3.5 text-primary shrink-0" />
                         <span><strong>Recommended Fix:</strong> {finding.suggested_fix}</span>
