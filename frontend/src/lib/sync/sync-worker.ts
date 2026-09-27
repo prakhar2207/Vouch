@@ -363,7 +363,7 @@ export async function pullIncrementalChanges(
           body: JSON.stringify({
             company_id: companyId,
             cursor: currentCursor,
-            limit: 200,
+            limit: 500,
           }),
         });
 
@@ -424,6 +424,7 @@ export async function pullIncrementalChanges(
           id: p.id,
           companyId: p.company_id || companyId,
           name: p.name,
+          brand: p.brand || undefined,
           sku: p.sku,
           hsnCode: p.hsn_code,
           unit: p.unit || "PCS",

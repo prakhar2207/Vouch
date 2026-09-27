@@ -572,18 +572,21 @@ export class LocalAnalyticsEngine {
     // --- D. Actionable Alerts ---
     const alerts: ActionableAlert[] = [];
     for (const lp of lowStockProducts.slice(0, 4)) {
+      const brandStr = lp.brand ? ` (${lp.brand})` : "";
       alerts.push({
         type: "LOW_STOCK",
         severity: "WARNING",
-        message: `Low Stock: '${lp.name}' has only ${lp.currentStock} ${lp.unit || "units"} remaining.`,
+        message: `Low Stock: '${lp.name}${brandStr}' has only ${lp.currentStock} ${lp.unit || "units"} remaining.`,
       });
     }
     for (const oi of overdueInvoices.slice(0, 3)) {
       const dueInfo = oi.dueDate ? `was due on ${oi.dueDate}` : "is past 30 days";
+      const outstandingAmt = this.calculateInvoiceOutstanding(oi, allAllocations, activeVouchersMap);
+      const displayAmt = outstandingAmt > 0 ? outstandingAmt : Number(oi.totalAmount) || 0;
       alerts.push({
         type: "OVERDUE_INVOICE",
         severity: "INFO",
-        message: `Overdue Bill: Invoice #${oi.voucherNumber} for ${oi.partyName || "Customer"} (₹${oi.totalAmount.toLocaleString("en-IN")}) ${dueInfo}.`,
+        message: `Overdue Bill: Invoice #${oi.voucherNumber || ""} for ${oi.partyName || "Customer"} (₹${displayAmt.toLocaleString("en-IN", { minimumFractionDigits: 2 })}) ${dueInfo}.`,
       });
     }
 

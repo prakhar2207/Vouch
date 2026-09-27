@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
@@ -151,10 +151,10 @@ export default function ItemHistoryModal({
                   Current Stock
                 </div>
                 <div className="mt-1 text-lg font-bold font-mono text-emerald-400">
-                  {product?.current_stock?.toLocaleString()} <span className="text-xs font-normal text-muted-foreground">{product?.unit}</span>
+                  {Number(product?.current_stock || 0).toLocaleString()} <span className="text-xs font-normal text-muted-foreground">{product?.unit}</span>
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-0.5 font-mono">
-                  {product?.purchase_price > 0 ? `Cost: ₹${product.purchase_price.toFixed(2)}` : "Cost: —"}
+                  {product?.purchase_price > 0 ? `Cost: ₹${Number(product.purchase_price).toFixed(2)}` : "Cost: —"}
                 </div>
               </div>
 
@@ -165,10 +165,10 @@ export default function ItemHistoryModal({
                   Purchased
                 </div>
                 <div className="mt-1 text-lg font-bold font-mono text-foreground">
-                  {metrics?.total_purchased_qty?.toLocaleString()} <span className="text-xs font-normal text-muted-foreground">{product?.unit}</span>
+                  {Number(metrics?.total_purchased_qty || 0).toLocaleString()} <span className="text-xs font-normal text-muted-foreground">{product?.unit}</span>
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-0.5">
-                  {metrics?.purchase_bills_count} bill(s) • ₹{metrics?.total_purchased_val?.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                  {metrics?.purchase_bills_count || 0} bill(s) • ₹{Number(metrics?.total_purchased_val || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
                 </div>
               </div>
 
@@ -179,10 +179,10 @@ export default function ItemHistoryModal({
                   Sold Out
                 </div>
                 <div className="mt-1 text-lg font-bold font-mono text-foreground">
-                  {metrics?.total_sold_qty?.toLocaleString()} <span className="text-xs font-normal text-muted-foreground">{product?.unit}</span>
+                  {Number(metrics?.total_sold_qty || 0).toLocaleString()} <span className="text-xs font-normal text-muted-foreground">{product?.unit}</span>
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-0.5">
-                  {metrics?.sales_invoices_count} invoice(s) • ₹{metrics?.total_sold_val?.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                  {metrics?.sales_invoices_count || 0} invoice(s) • ₹{Number(metrics?.total_sold_val || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
                 </div>
               </div>
 
@@ -286,7 +286,7 @@ export default function ItemHistoryModal({
                               {p.gst_rate}%
                             </td>
                             <td className="p-2.5 text-right font-mono font-bold text-foreground">
-                              ₹{p.total_amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                              ₹{Number(p.total_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                             </td>
                           </tr>
                         ))}
@@ -340,7 +340,7 @@ export default function ItemHistoryModal({
                               {s.discount_percent > 0 ? `${s.discount_percent}%` : "—"}
                             </td>
                             <td className="p-2.5 text-right font-mono font-bold text-foreground">
-                              ₹{s.total_amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                              ₹{Number(s.total_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                             </td>
                           </tr>
                         ))}

@@ -17,13 +17,22 @@ class ProductCategoryListView(APIView):
     
     def get(self, request, company_id):
         try:
-            from django.db.models import F, Sum, ExpressionWrapper, DecimalField
+            from django.db.models import F, Sum, Count, Case, When, ExpressionWrapper, DecimalField
             from decimal import Decimal
             company = Company.objects.get(id=company_id, users__user=request.user)
             categories = ProductCategory.objects.filter(company=company).order_by('name')
             
             stock_val_expr = ExpressionWrapper(F('stock_quantity') * F('purchase_price'), output_field=DecimalField(max_digits=15, decimal_places=2))
             retail_val_expr = ExpressionWrapper(F('stock_quantity') * F('selling_price'), output_field=DecimalField(max_digits=15, decimal_places=2))
+            
+            prods_qs = Product.objects.filter(company=company, is_active=True)
+            cat_stats = prods_qs.values('category_id').annotate(
+                item_count=Count('id'),
+                stock_qty=Sum(Case(When(stock_quantity__gt=0, then=F('stock_quantity')), default=Decimal('0.00'), output_field=DecimalField(max_digits=15, decimal_places=2))),
+                stock_val=Sum(Case(When(stock_quantity__gt=0, then=stock_val_expr), default=Decimal('0.00'), output_field=DecimalField(max_digits=15, decimal_places=2))),
+                retail_val=Sum(Case(When(stock_quantity__gt=0, then=retail_val_expr), default=Decimal('0.00'), output_field=DecimalField(max_digits=15, decimal_places=2))),
+            )
+            cat_stats_map = {row['category_id']: row for row in cat_stats}
             
             data = []
             overall_stock_value = Decimal('0.00')
@@ -32,11 +41,16 @@ class ProductCategoryListView(APIView):
             overall_items_count = 0
             
             for c in categories:
-                cat_prods = c.products.all()
-                cat_stock_val = cat_prods.filter(stock_quantity__gt=0).annotate(v=stock_val_expr).aggregate(Sum('v'))['v__sum'] or Decimal('0.00')
-                cat_retail_val = cat_prods.filter(stock_quantity__gt=0).annotate(v=retail_val_expr).aggregate(Sum('v'))['v__sum'] or Decimal('0.00')
-                cat_stock_qty = cat_prods.filter(stock_quantity__gt=0).aggregate(Sum('stock_quantity'))['stock_quantity__sum'] or Decimal('0.00')
-                item_count = cat_prods.count()
+                stats = cat_stats_map.get(c.id, {
+                    'item_count': 0,
+                    'stock_qty': Decimal('0.00'),
+                    'stock_val': Decimal('0.00'),
+                    'retail_val': Decimal('0.00'),
+                })
+                cat_stock_val = stats['stock_val'] or Decimal('0.00')
+                cat_retail_val = stats['retail_val'] or Decimal('0.00')
+                cat_stock_qty = stats['stock_qty'] or Decimal('0.00')
+                item_count = stats['item_count'] or 0
                 
                 overall_stock_value += cat_stock_val
                 overall_retail_value += cat_retail_val
@@ -55,15 +69,12 @@ class ProductCategoryListView(APIView):
                 })
                 
             # Also account for unassigned products
-            unassigned_prods = Product.objects.filter(company=company, category__isnull=True)
-            if unassigned_prods.exists():
-                un_stock_val = unassigned_prods.filter(stock_quantity__gt=0).annotate(v=stock_val_expr).aggregate(Sum('v'))['v__sum'] or Decimal('0.00')
-                un_retail_val = unassigned_prods.filter(stock_quantity__gt=0).annotate(v=retail_val_expr).aggregate(Sum('v'))['v__sum'] or Decimal('0.00')
-                un_stock_qty = unassigned_prods.filter(stock_quantity__gt=0).aggregate(Sum('stock_quantity'))['stock_quantity__sum'] or Decimal('0.00')
-                overall_stock_value += un_stock_val
-                overall_retail_value += un_retail_val
-                overall_stock_qty += un_stock_qty
-                overall_items_count += unassigned_prods.count()
+            unassigned_stats = cat_stats_map.get(None)
+            if unassigned_stats:
+                overall_stock_value += unassigned_stats['stock_val'] or Decimal('0.00')
+                overall_retail_value += unassigned_stats['retail_val'] or Decimal('0.00')
+                overall_stock_qty += unassigned_stats['stock_qty'] or Decimal('0.00')
+                overall_items_count += unassigned_stats['item_count'] or 0
 
             return Response({
                 "success": True, 

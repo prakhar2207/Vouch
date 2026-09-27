@@ -74,6 +74,7 @@ export interface SyncedProduct {
   id: string; // product UUID
   companyId: string;
   name: string;
+  brand?: string;
   sku?: string;
   hsnCode?: string;
   unit: string;

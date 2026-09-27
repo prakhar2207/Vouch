@@ -122,6 +122,9 @@ class SyncPullAPIView(APIView):
         if not skip_master_data and ledger_ids:
             ledgers = Ledger.objects.filter(id__in=ledger_ids)
             for l in ledgers:
+                if not getattr(l, 'is_active', True):
+                    changes_dict['ledgers']['deleted'].append({'id': str(l.id)})
+                    continue
                 item = {
                     'id': str(l.id),
                     'company_id': str(company.id),
@@ -152,10 +155,14 @@ class SyncPullAPIView(APIView):
         if not skip_master_data and product_ids:
             products = Product.objects.filter(id__in=product_ids)
             for p in products:
+                if not getattr(p, 'is_active', True):
+                    changes_dict['products']['deleted'].append({'id': str(p.id)})
+                    continue
                 item = {
                     'id': str(p.id),
                     'company_id': str(company.id),
                     'name': p.name,
+                    'brand': getattr(p, 'brand', '') or '',
                     'sku': p.sku or '',
                     'hsn_code': getattr(p, 'hsn_code', '') or '',
                     'unit': getattr(p, 'unit', 'PCS') or 'PCS',

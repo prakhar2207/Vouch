@@ -35,6 +35,7 @@ export class ProductsRepository {
               id: String(p.id),
               companyId,
               name: p.name,
+              brand: p.brand || "",
               sku: p.sku || "",
               hsnCode: p.hsn_code || "",
               unit: p.unit || "PCS",
@@ -42,6 +43,7 @@ export class ProductsRepository {
               salesPrice: Number(p.selling_price || p.sales_price) || 0,
               gstRate: Number(p.gst_rate) || 0,
               currentStock: Number(p.stock_quantity || p.current_stock) || 0,
+              reorderLevel: Number(p.reorder_level) || 0,
               serverUpdatedAt: Date.now(),
             }));
             await offlineDb.syncedProducts.bulkPut(toPut);
@@ -55,7 +57,9 @@ export class ProductsRepository {
 
     let filtered = products;
     if (options.lowStockOnly) {
-      filtered = filtered.filter((p) => p.currentStock <= 5);
+      filtered = filtered.filter(
+        (p) => p.currentStock > 0 && p.currentStock <= (p.reorderLevel > 0 ? p.reorderLevel : 5)
+      );
     }
     if (options.search) {
       const q = options.search.trim().toLowerCase();
