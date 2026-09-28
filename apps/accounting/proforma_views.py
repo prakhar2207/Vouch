@@ -378,23 +378,19 @@ class ProformaDetailAPIView(APIView):
         data = serialize_proforma(proforma, include_items=True)
         comp = proforma.company
 
-        sig_url = ''
-        if getattr(comp, 'proprietor_signature', None):
+        sig_url = getattr(comp, 'signature_data', None) or ''
+        if not sig_url and getattr(comp, 'proprietor_signature', None):
             try:
                 sig_url = comp.proprietor_signature.url
             except Exception:
                 sig_url = ''
-        if not sig_url and getattr(comp, 'signature_data', None):
-            sig_url = comp.signature_data
 
-        logo_url = ''
-        if getattr(comp, 'logo', None):
+        logo_url = getattr(comp, 'logo_data', None) or ''
+        if not logo_url and getattr(comp, 'logo', None):
             try:
                 logo_url = comp.logo.url
             except Exception:
                 logo_url = ''
-        if not logo_url and getattr(comp, 'logo_data', None):
-            logo_url = comp.logo_data
 
         # Add company billing meta for print layout
         data["company_details"] = {
