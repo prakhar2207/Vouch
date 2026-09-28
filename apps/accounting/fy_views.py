@@ -27,8 +27,14 @@ class FinancialYearListCreateAPIView(APIView):
         except Exception:
             company = None
 
+        if not company and request.user.is_authenticated:
+            from apps.companies.models import UserCompany
+            uc = UserCompany.objects.filter(user=request.user).select_related('company').first()
+            if uc:
+                company = uc.company
+
         if not company:
-            return Response({"success": False, "error": "Company not found"}, status=404)
+            return Response({"success": True, "data": []})
 
         # Ensure at least current FY exists
         InvoiceSequenceService.get_or_create_active_fy(company)

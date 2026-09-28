@@ -42,8 +42,18 @@ export function FinancialYearProvider({ children }: { children: React.ReactNode 
 
     try {
       const token = getAccessToken();
+      const activeCo = typeof window !== "undefined"
+        ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("active_company_id"))
+        : null;
+
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (activeCo) {
+        headers["X-Company-ID"] = activeCo;
+      }
+
       const res = await axios.get(`${API_BASE_URL}/api/v1/financial-years/`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers,
+        params: activeCo ? { company_id: activeCo } : undefined
       });
 
       if (res.data?.success && Array.isArray(res.data.data)) {
@@ -68,7 +78,8 @@ export function FinancialYearProvider({ children }: { children: React.ReactNode 
         }
       }
     } catch (err) {
-      console.error("Failed to load financial years", err);
+      // Graceful fallback for initial load without active company selected yet
+      console.warn("Financial years not yet provisioned for active context");
     } finally {
       setLoading(false);
     }

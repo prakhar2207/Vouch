@@ -284,7 +284,7 @@ export default function ProformaDetailPage() {
     return typeof window !== 'undefined' ? window.location.href : '';
   }, [upiId, company.legal_name, company.name, finalGrandTotal, doc?.proforma_number]);
 
-  // High-Resolution Vector PDF Generator (with OKLCH color normalization to prevent canvas parser crash)
+  // High-Resolution Vector PDF Generator (with full modern color normalization to prevent canvas parser crash)
   const handleDownloadPdf = async () => {
     const element = document.getElementById('proforma-sheet');
     if (!element) return;
@@ -312,38 +312,61 @@ export default function ProformaDetailPage() {
       clone.style.backgroundColor = '#ffffff';
       clone.style.boxSizing = 'border-box';
       clone.style.margin = '0 auto';
+      clone.style.boxShadow = 'none';
 
       sandbox.appendChild(clone);
       document.body.appendChild(sandbox);
 
-      // Normalizes any Tailwind v4 OKLCH colors to standard RGB/HEX using canvas context
+      // Normalizes any Tailwind v4 OKLAB / OKLCH / color-mix colors to standard RGB/HEX using canvas context
       const canvasHelper = document.createElement('canvas');
+      canvasHelper.width = 1;
+      canvasHelper.height = 1;
       const ctx = canvasHelper.getContext('2d');
-      if (ctx) {
-        const allElements = [clone, ...Array.from(clone.querySelectorAll('*'))];
-        const colorProps = [
-          'color', 'backgroundColor', 'borderColor',
-          'borderTopColor', 'borderRightColor', 'borderBottomColor', 'borderLeftColor',
-          'outlineColor', 'fill', 'stroke'
-        ];
-        allElements.forEach((el: any) => {
+
+      const sanitizeColorString = (val: string): string => {
+        if (!val || typeof val !== 'string') return val;
+        if (!/(?:oklab|oklch|color-mix|lab|hwb)\(/i.test(val)) return val;
+        if (!ctx) return '#0f172a';
+        return val.replace(/(?:oklab|oklch|color-mix|lab|hwb)\([^)]+\)/gi, (match) => {
           try {
-            const cs = window.getComputedStyle(el);
+            ctx.fillStyle = '#000000';
+            ctx.fillStyle = match;
+            return ctx.fillStyle; // Converts to #rrggbb or rgb(...) in browser
+          } catch {
+            return '#0f172a';
+          }
+        });
+      };
+
+      const colorProps = [
+        'color', 'backgroundColor', 'borderColor',
+        'borderTopColor', 'borderRightColor', 'borderBottomColor', 'borderLeftColor',
+        'outlineColor', 'fill', 'stroke'
+      ];
+
+      const sanitizeElements = (root: HTMLElement, docRef?: Document) => {
+        const allElements = [root, ...Array.from(root.querySelectorAll('*'))] as HTMLElement[];
+        allElements.forEach((el) => {
+          try {
+            // Strip out shadow and filters that carry oklab values
+            el.style.boxShadow = 'none';
+            el.style.textShadow = 'none';
+            el.style.filter = 'none';
+
+            const win = docRef?.defaultView || window;
+            const cs = win.getComputedStyle(el);
             colorProps.forEach((prop) => {
-              const val = cs.getPropertyValue(prop);
-              if (val && val.includes('oklch')) {
-                ctx.fillStyle = '#000000';
-                try {
-                  ctx.fillStyle = val;
-                  el.style.setProperty(prop, ctx.fillStyle, 'important');
-                } catch {
-                  el.style.setProperty(prop, '#0f172a', 'important');
-                }
+              const val = (cs as any)[prop] || cs.getPropertyValue(prop.replace(/([A-Z])/g, '-$1').toLowerCase());
+              if (val && /(?:oklab|oklch|color-mix|lab|hwb)/i.test(val)) {
+                const converted = sanitizeColorString(val);
+                el.style.setProperty(prop.replace(/([A-Z])/g, '-$1').toLowerCase(), converted, 'important');
               }
             });
           } catch {}
         });
-      }
+      };
+
+      sanitizeElements(clone);
 
       const canvas = await (html2canvas as any)(clone, {
         scale: 2,
@@ -352,6 +375,18 @@ export default function ProformaDetailPage() {
         logging: false,
         backgroundColor: '#ffffff',
         width: targetWidthPx,
+        onclone: (clonedDoc: Document, clonedEl: HTMLElement) => {
+          const style = clonedDoc.createElement('style');
+          style.innerHTML = `
+            * {
+              box-shadow: none !important;
+              text-shadow: none !important;
+              filter: none !important;
+            }
+          `;
+          clonedDoc.head.appendChild(style);
+          sanitizeElements(clonedEl, clonedDoc);
+        },
       });
 
       document.body.removeChild(sandbox);
@@ -476,7 +511,7 @@ export default function ProformaDetailPage() {
 
   return (
     <DashboardLayout>
-      {/* Strict Print CSS: Ensures Zero Header/Footer Chrome & Strict Full-Height A4 Geometry */}
+      {/* Strict Print CSS: Ensures Zero Header/Footer Chrome & Strict Single-Page A4 Geometry */}
       <style>{`
         @media print {
           html, body {
@@ -486,29 +521,35 @@ export default function ProformaDetailPage() {
             padding: 0 !important;
             background: #ffffff !important;
             color: #0f172a !important;
+            height: auto !important;
+            min-height: 100% !important;
           }
           header, nav, aside, [role="navigation"], .print\\:hidden {
             display: none !important;
           }
           @page {
             size: A4 portrait;
-            margin: 8mm 6mm;
+            margin: 6mm 8mm;
           }
           #proforma-sheet {
             width: 100% !important;
             min-width: 100% !important;
             max-width: 100% !important;
-            min-height: 275mm !important;
-            height: 275mm !important;
+            min-height: auto !important;
+            height: auto !important;
             padding: 0 !important;
             margin: 0 !important;
             box-shadow: none !important;
             border: none !important;
+            page-break-after: ${isMultiPageExpected ? 'auto' : 'avoid'} !important;
+            break-after: ${isMultiPageExpected ? 'auto' : 'avoid'} !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
         }
       `}</style>
 
-      <div className="max-w-5xl mx-auto space-y-4 pb-20">
+      <div className="max-w-5xl mx-auto space-y-4 pb-20 print:p-0 print:m-0 print:pb-0 print:space-y-0">
         
         {/* Action Header (Completely Hidden in Print Mode) */}
         <div className="print:hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-card/70 backdrop-blur-md border border-border p-3.5 rounded-2xl shadow-xs">
@@ -658,17 +699,17 @@ export default function ProformaDetailPage() {
         {/* ULTRA-PREMIUM MODERN A4 PROFORMA INVOICE SHEET                            */}
         {/* Clean, Light, Professional Enterprise Standard (Selling Point Aesthetic)  */}
         {/* ========================================================================= */}
-        <div className="w-full overflow-x-auto p-2 sm:p-6 flex justify-center bg-slate-100/80 dark:bg-slate-950/40 print:bg-white print:p-0">
+        <div className="w-full overflow-x-auto p-2 sm:p-6 flex justify-center bg-slate-100/80 dark:bg-slate-950/40 print:bg-white print:p-0 print:m-0">
           <div 
             id="proforma-sheet"
-            className="w-[210mm] max-w-[210mm] shrink-0 min-h-[275mm] print:min-h-[275mm] print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-slate-900 p-8 sm:p-9 print:p-0 shadow-2xl print:shadow-none flex flex-col justify-between mx-auto font-sans border border-slate-200/90 print:border-none rounded-2xl print:rounded-none transition-all"
+            className="w-[210mm] max-w-[210mm] shrink-0 min-h-[260mm] print:min-h-0 print:h-auto print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-slate-900 p-8 sm:p-9 print:p-0 flex flex-col justify-between mx-auto font-sans border border-slate-200/90 print:border-none rounded-2xl print:rounded-none transition-all"
             style={{ boxSizing: 'border-box' }}
           >
             {/* Top Section */}
             <div className="flex-1 flex flex-col">
               
               {/* Header Letterhead: Brand Logo / Company Details (Left) & Document Meta (Right) */}
-              <div className="flex justify-between items-start gap-4 pb-5 border-b border-slate-200">
+              <div className="flex justify-between items-start gap-4 pb-4 print:pb-3 border-b border-slate-200">
                 
                 {/* Left: Brand Identity */}
                 <div className="max-w-[460px] space-y-1">
@@ -688,7 +729,7 @@ export default function ProformaDetailPage() {
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 mb-2">
-                      <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-base shadow-xs">
+                      <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-base">
                         {(company.name || 'V')[0]?.toUpperCase()}
                       </div>
                       <span className="text-[10px] font-bold tracking-widest text-slate-400 uppercase">ENTERPRISE QUOTATION</span>
@@ -743,7 +784,7 @@ export default function ProformaDetailPage() {
                 {/* Right: Document Identification & Validity */}
                 <div className="text-right space-y-2 shrink-0">
                   <div>
-                    <span className="inline-block px-3 py-1 rounded-lg text-xs font-black tracking-wider uppercase bg-slate-900 text-white shadow-2xs">
+                    <span className="inline-block px-3 py-1 rounded-lg text-xs font-black tracking-wider uppercase bg-slate-900 text-white">
                       {isPI ? 'PROFORMA INVOICE' : 'COMMERCIAL QUOTATION'}
                     </span>
                     <p className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider mt-1">
@@ -755,7 +796,7 @@ export default function ProformaDetailPage() {
                     {doc.proforma_number}
                   </div>
 
-                  <div className="text-[11px] text-slate-700 font-mono space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 inline-block text-left min-w-[210px] shadow-2xs">
+                  <div className="text-[11px] text-slate-700 font-mono space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 inline-block text-left min-w-[210px]">
                     <div className="flex justify-between gap-2 border-b border-slate-200/60 pb-1">
                       <span className="font-sans text-slate-500">Document Date:</span>
                       <strong className="text-slate-900">{doc.date}</strong>
@@ -776,10 +817,10 @@ export default function ProformaDetailPage() {
               </div>
 
               {/* Party Information Grid: Billed To / Recipient & Commercial Scope */}
-              <div className="grid grid-cols-2 gap-4 my-4 text-xs">
+              <div className="grid grid-cols-2 gap-4 my-3.5 print:my-2 text-xs">
                 
                 {/* Billed To Customer Card */}
-                <div className="p-3.5 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1.5">
+                <div className="p-3.5 print:p-2.5 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1.5">
                   <div className="flex justify-between items-center border-b border-slate-200/80 pb-1">
                     <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider">
                       Billed To / Customer:
@@ -809,7 +850,7 @@ export default function ProformaDetailPage() {
                 </div>
 
                 {/* Commercial Scope Card */}
-                <div className="p-3.5 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1.5 flex flex-col justify-between">
+                <div className="p-3.5 print:p-2.5 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1.5 flex flex-col justify-between">
                   <div>
                     <div className="border-b border-slate-200/80 pb-1 mb-1.5">
                       <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider">
@@ -846,7 +887,7 @@ export default function ProformaDetailPage() {
               </div>
 
               {/* Line Items Table */}
-              <div className="border border-slate-200 rounded-xl overflow-hidden my-3 shadow-2xs">
+              <div className="border border-slate-200 rounded-xl overflow-hidden my-3 print:my-2">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-100/80 text-slate-700 font-bold text-[10px] uppercase tracking-wider border-b border-slate-200">
@@ -912,13 +953,13 @@ export default function ProformaDetailPage() {
               </div>
 
               {/* Tax Transparency Breakdown (Left) & Financial Calculations (Right) */}
-              <div className="grid grid-cols-2 gap-4 my-3 text-xs">
+              <div className="grid grid-cols-2 gap-4 my-3 print:my-2 text-xs">
                 
                 {/* Left: HSN / SAC Tax Breakdown Table & Payment Notes */}
-                <div className="space-y-3 flex flex-col justify-between">
+                <div className="space-y-3 print:space-y-1.5 flex flex-col justify-between">
                   
                   {/* HSN Table */}
-                  <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
                     <div className="bg-slate-100/90 px-3 py-1 text-[9.5px] font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200">
                       HSN / SAC Tax Transparency Breakdown
                     </div>
@@ -959,7 +1000,7 @@ export default function ProformaDetailPage() {
                   </div>
 
                   {/* Amount in Words */}
-                  <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/80">
+                  <div className="p-2.5 print:p-1.5 bg-slate-50 rounded-xl border border-slate-200/80">
                     <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">
                       Total Amount in Words:
                     </span>
@@ -969,11 +1010,11 @@ export default function ProformaDetailPage() {
                   </div>
 
                   {/* Instant Advance UPI QR Code & Banking Block */}
-                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 flex items-center gap-3">
-                    <div className="p-1.5 bg-white rounded-lg border border-slate-200 shadow-2xs shrink-0">
+                  <div className="p-3 print:p-2 bg-slate-50 rounded-xl border border-slate-200/80 flex items-center gap-3">
+                    <div className="p-1.5 bg-white rounded-lg border border-slate-200 shrink-0">
                       <QRCode 
                         value={upiPayUrl}
-                        size={60}
+                        size={56}
                         level="M"
                       />
                     </div>
@@ -1010,9 +1051,9 @@ export default function ProformaDetailPage() {
                 </div>
 
                 {/* Right: Financial Summary Box */}
-                <div className="p-4 bg-slate-50/80 rounded-xl border border-slate-200/80 font-mono text-xs space-y-2 flex flex-col justify-between shadow-2xs">
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between py-1 border-b border-slate-200">
+                <div className="p-4 print:p-2.5 bg-slate-50/80 rounded-xl border border-slate-200/80 font-mono text-xs space-y-2 print:space-y-1 flex flex-col justify-between">
+                  <div className="space-y-1.5 print:space-y-0.5">
+                    <div className="flex justify-between py-1 print:py-0.5 border-b border-slate-200">
                       <span className="text-slate-600 font-sans">Taxable Value:</span>
                       <span className="font-semibold text-slate-900">
                         ₹{totalTaxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -1020,7 +1061,7 @@ export default function ProformaDetailPage() {
                     </div>
 
                     {totalCgst > 0 && (
-                      <div className="flex justify-between py-1 border-b border-slate-200">
+                      <div className="flex justify-between py-1 print:py-0.5 border-b border-slate-200">
                         <span className="text-slate-600 font-sans">Central Tax (CGST):</span>
                         <span className="font-semibold text-slate-900">
                           ₹{totalCgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -1029,7 +1070,7 @@ export default function ProformaDetailPage() {
                     )}
 
                     {totalSgst > 0 && (
-                      <div className="flex justify-between py-1 border-b border-slate-200">
+                      <div className="flex justify-between py-1 print:py-0.5 border-b border-slate-200">
                         <span className="text-slate-600 font-sans">State Tax (SGST):</span>
                         <span className="font-semibold text-slate-900">
                           ₹{totalSgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -1038,7 +1079,7 @@ export default function ProformaDetailPage() {
                     )}
 
                     {totalIgst > 0 && (
-                      <div className="flex justify-between py-1 border-b border-slate-200">
+                      <div className="flex justify-between py-1 print:py-0.5 border-b border-slate-200">
                         <span className="text-slate-600 font-sans">Integrated Tax (IGST):</span>
                         <span className="font-semibold text-slate-900">
                           ₹{totalIgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -1047,7 +1088,7 @@ export default function ProformaDetailPage() {
                     )}
 
                     {cartageAmount > 0 && (
-                      <div className="flex justify-between py-1 border-b border-slate-200">
+                      <div className="flex justify-between py-1 print:py-0.5 border-b border-slate-200">
                         <span className="text-slate-600 font-sans">Freight / Cartage:</span>
                         <span className="font-semibold text-slate-900">
                           ₹{cartageAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -1056,7 +1097,7 @@ export default function ProformaDetailPage() {
                     )}
 
                     {hasRoundOff && (
-                      <div className="flex justify-between py-1 border-b border-slate-200 text-slate-500">
+                      <div className="flex justify-between py-1 print:py-0.5 border-b border-slate-200 text-slate-500">
                         <span className="font-sans">Round Off Adjustment:</span>
                         <span>{roundOff > 0 ? `+${roundOff.toFixed(2)}` : roundOff.toFixed(2)}</span>
                       </div>
@@ -1064,7 +1105,7 @@ export default function ProformaDetailPage() {
                   </div>
 
                   {/* Grand Total Box */}
-                  <div className="mt-3 p-3 bg-slate-900 text-white rounded-xl flex justify-between items-center shadow-xs">
+                  <div className="mt-3 print:mt-1.5 p-3 print:p-2 bg-slate-900 text-white rounded-xl flex justify-between items-center">
                     <div>
                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block leading-tight">
                         Total Payable Amount
@@ -1073,7 +1114,7 @@ export default function ProformaDetailPage() {
                         (Inclusive of all Taxes)
                       </span>
                     </div>
-                    <div className="text-xl font-black font-mono tracking-tight text-white">
+                    <div className="text-xl print:text-lg font-black font-mono tracking-tight text-white">
                       ₹{finalGrandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </div>
                   </div>
@@ -1084,7 +1125,7 @@ export default function ProformaDetailPage() {
             </div>
 
             {/* Bottom Signature & Legal Notice Section (Pinned strictly to bottom of page) */}
-            <div className="pt-6 border-t border-slate-200 mt-4 space-y-3">
+            <div className="pt-4 print:pt-2 border-t border-slate-200 mt-3 print:mt-2 space-y-2.5 print:space-y-1">
               <div className="flex justify-between items-end text-xs">
                 
                 {/* Buyer Acceptance Signature */}
@@ -1095,7 +1136,7 @@ export default function ProformaDetailPage() {
                   <p className="text-[10px] text-slate-500">
                     Sign &amp; stamp to approve commercial quotation
                   </p>
-                  <div className="mt-10 border-b border-slate-400 w-44"></div>
+                  <div className="mt-8 print:mt-4 border-b border-slate-400 w-44"></div>
                   <div className="text-[10px] text-slate-400 font-sans">Authorized Buyer Signatory</div>
                 </div>
 
@@ -1106,20 +1147,20 @@ export default function ProformaDetailPage() {
                   </div>
                   
                   {/* Digital Signature Image with smooth fallback */}
-                  <div className="h-12 flex items-center justify-end my-0.5">
+                  <div className="h-10 print:h-7 flex items-center justify-end my-0.5">
                     {signatureSrc ? (
                       <img 
                         crossOrigin="anonymous"
                         src={signatureSrc} 
                         alt="Authorized Signature" 
-                        className="max-h-11 max-w-[150px] object-contain" 
+                        className="max-h-10 print:max-h-7 max-w-[150px] object-contain" 
                         loading="lazy"
                         onError={(e) => {
                           (e.target as HTMLElement).style.display = 'none';
                         }}
                       />
                     ) : (
-                      <div className="w-32 h-8 border border-dashed border-slate-300 rounded flex items-center justify-center text-[10px] text-slate-400">
+                      <div className="w-32 h-7 border border-dashed border-slate-300 rounded flex items-center justify-center text-[10px] text-slate-400">
                         Official Stamp / Seal
                       </div>
                     )}
@@ -1135,7 +1176,7 @@ export default function ProformaDetailPage() {
               </div>
 
               {/* Bottom Legal Disclaimer & Page Tracker */}
-              <div className="flex justify-between items-center text-[10px] text-slate-400 pt-2 border-t border-slate-100">
+              <div className="flex justify-between items-center text-[10px] text-slate-400 pt-2 print:pt-1 border-t border-slate-100">
                 <span>
                   <strong>Notice:</strong> This is a Commercial Proforma Invoice / Quotation and is <u>NOT</u> a GST Tax Invoice. Goods dispatched upon advance payment.
                 </span>
