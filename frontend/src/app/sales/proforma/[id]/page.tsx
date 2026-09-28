@@ -113,7 +113,7 @@ export default function ProformaDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [docId, toast]);
+  }, [docId]);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -284,7 +284,7 @@ export default function ProformaDetailPage() {
     return typeof window !== 'undefined' ? window.location.href : '';
   }, [upiId, company.legal_name, company.name, finalGrandTotal, doc?.proforma_number]);
 
-  // High-Resolution Vector PDF Generator (with full modern color normalization to prevent canvas parser crash)
+  // High-Resolution Direct Vector PDF Generator
   const handleDownloadPdf = async () => {
     const element = document.getElementById('proforma-sheet');
     if (!element) return;
@@ -292,6 +292,7 @@ export default function ProformaDetailPage() {
 
     try {
       const targetWidthPx = 794; // Standard A4 width at 96 DPI
+      const targetHeightPx = 1123; // Standard A4 height at 96 DPI (297mm)
       const sandbox = document.createElement('div');
       sandbox.className = 'light print-sandbox-root';
       sandbox.style.position = 'fixed';
@@ -309,10 +310,25 @@ export default function ProformaDetailPage() {
       clone.style.width = `${targetWidthPx}px`;
       clone.style.minWidth = `${targetWidthPx}px`;
       clone.style.maxWidth = `${targetWidthPx}px`;
+      if (!isMultiPageExpected) {
+        clone.style.height = `${targetHeightPx}px`;
+        clone.style.minHeight = `${targetHeightPx}px`;
+        clone.style.maxHeight = `${targetHeightPx}px`;
+        clone.style.overflow = 'hidden';
+      } else {
+        clone.style.height = 'auto';
+        clone.style.minHeight = 'auto';
+      }
       clone.style.backgroundColor = '#ffffff';
       clone.style.boxSizing = 'border-box';
-      clone.style.margin = '0 auto';
+      clone.style.margin = '0';
       clone.style.boxShadow = 'none';
+      clone.style.borderRadius = '0';
+      clone.style.border = 'none';
+      clone.style.padding = '30px 38px'; // Proportional A4 margins (approx 8mm 10mm)
+      clone.style.display = 'flex';
+      clone.style.flexDirection = 'column';
+      clone.style.justifyContent = 'space-between';
 
       sandbox.appendChild(clone);
       document.body.appendChild(sandbox);
@@ -348,7 +364,6 @@ export default function ProformaDetailPage() {
         const allElements = [root, ...Array.from(root.querySelectorAll('*'))] as HTMLElement[];
         allElements.forEach((el) => {
           try {
-            // Strip out shadow and filters that carry oklab values
             el.style.boxShadow = 'none';
             el.style.textShadow = 'none';
             el.style.filter = 'none';
@@ -368,7 +383,6 @@ export default function ProformaDetailPage() {
 
       sanitizeElements(clone);
 
-      // Temporarily normalize document root colors to standard hex
       const origHtmlBg = document.documentElement.style.backgroundColor;
       const origBodyBg = document.body.style.backgroundColor;
       document.documentElement.style.backgroundColor = '#ffffff';
@@ -381,6 +395,7 @@ export default function ProformaDetailPage() {
         logging: false,
         backgroundColor: '#ffffff',
         width: targetWidthPx,
+        windowWidth: targetWidthPx,
         onclone: (clonedDoc: Document, clonedEl: HTMLElement) => {
           if (clonedDoc.documentElement) {
             clonedDoc.documentElement.style.backgroundColor = '#ffffff';
@@ -414,12 +429,12 @@ export default function ProformaDetailPage() {
 
       const a4Width = 210;
       const a4Height = 297;
-      const imgHeight = (canvas.height * a4Width) / canvas.width;
 
-      if (imgHeight <= a4Height * 1.08) {
-        const renderHeight = Math.min(imgHeight, a4Height);
-        pdf.addImage(imgData, 'PNG', 0, 0, a4Width, renderHeight);
+      if (!isMultiPageExpected) {
+        // Strict single page A4
+        pdf.addImage(imgData, 'PNG', 0, 0, a4Width, a4Height);
       } else {
+        const imgHeight = (canvas.height * a4Width) / canvas.width;
         let heightLeft = imgHeight;
         let position = 0;
         pdf.addImage(imgData, 'PNG', 0, position, a4Width, imgHeight);
@@ -433,26 +448,12 @@ export default function ProformaDetailPage() {
         }
       }
 
-      const totalPages = (pdf as any).internal.getNumberOfPages();
-      for (let i = 1; i <= totalPages; i++) {
-        pdf.setPage(i);
-        pdf.setFontSize(8);
-        pdf.setTextColor(100, 116, 139);
-        pdf.text(
-          `Page ${i} of ${totalPages}`,
-          a4Width - 14,
-          a4Height - 5,
-          { align: 'right' }
-        );
-      }
-
       const cleanFilename = `${(doc.proforma_number || 'PROFORMA').replace(/[/\\:*?"<>|]/g, '-').trim()}.pdf`;
       pdf.save(cleanFilename);
       toast.success('PDF Downloaded', `Saved as ${cleanFilename}`);
     } catch (err: any) {
-      console.error(err);
-      toast.error('Direct PDF export error', 'Opening browser print dialog...');
-      window.print();
+      console.error('PDF Export Error:', err);
+      toast.error('Download Failed', err?.message || 'Could not generate PDF directly.');
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -529,37 +530,58 @@ export default function ProformaDetailPage() {
       {/* Strict Print CSS: Ensures Zero Header/Footer Chrome & Strict Single-Page A4 Geometry */}
       <style>{`
         @media print {
-          html, body {
+          @page {
+            size: A4 portrait;
+            margin: 0;
+          }
+          *, *::before, *::after {
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
+            color-adjust: exact !important;
+          }
+          html, body {
             margin: 0 !important;
             padding: 0 !important;
             background: #ffffff !important;
             color: #0f172a !important;
-            height: auto !important;
-            min-height: 100% !important;
+            width: 210mm !important;
+            height: ${isMultiPageExpected ? 'auto' : '297mm'} !important;
+            max-height: ${isMultiPageExpected ? 'none' : '297mm'} !important;
+            overflow: ${isMultiPageExpected ? 'visible' : 'hidden'} !important;
           }
           header, nav, aside, [role="navigation"], .print\\:hidden {
             display: none !important;
           }
-          @page {
-            size: A4 portrait;
-            margin: 6mm 8mm;
+          main, main > div, .max-w-5xl, .w-full {
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow: visible !important;
+            background: #ffffff !important;
           }
           #proforma-sheet {
-            width: 100% !important;
-            min-width: 100% !important;
-            max-width: 100% !important;
-            min-height: auto !important;
-            height: auto !important;
-            padding: 0 !important;
-            margin: 0 !important;
+            box-sizing: border-box !important;
+            width: 210mm !important;
+            min-width: 210mm !important;
+            max-width: 210mm !important;
+            height: ${isMultiPageExpected ? 'auto' : '297mm'} !important;
+            min-height: ${isMultiPageExpected ? 'auto' : '297mm'} !important;
+            max-height: ${isMultiPageExpected ? 'none' : '297mm'} !important;
+            padding: 8mm 10mm !important;
+            margin: 0 auto !important;
             box-shadow: none !important;
             border: none !important;
+            border-radius: 0 !important;
+            background-color: #ffffff !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: space-between !important;
             page-break-after: ${isMultiPageExpected ? 'auto' : 'avoid'} !important;
             break-after: ${isMultiPageExpected ? 'auto' : 'avoid'} !important;
             page-break-inside: avoid !important;
             break-inside: avoid !important;
+            overflow: hidden !important;
           }
         }
       `}</style>
@@ -714,10 +736,10 @@ export default function ProformaDetailPage() {
         {/* ULTRA-PREMIUM MODERN A4 PROFORMA INVOICE SHEET                            */}
         {/* Clean, Light, Professional Enterprise Standard (Selling Point Aesthetic)  */}
         {/* ========================================================================= */}
-        <div className="w-full overflow-x-auto p-2 sm:p-6 flex justify-center bg-slate-100/80 dark:bg-slate-950/40 print:bg-white print:p-0 print:m-0">
+        <div className="w-full overflow-x-auto p-2 sm:p-6 flex justify-center bg-slate-100/80 dark:bg-slate-950/40 print:bg-white print:p-0 print:m-0 print:overflow-visible">
           <div 
             id="proforma-sheet"
-            className="w-[210mm] max-w-[210mm] shrink-0 min-h-[260mm] print:min-h-0 print:h-auto print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-slate-900 p-8 sm:p-9 print:p-0 flex flex-col justify-between mx-auto font-sans border border-slate-200/90 print:border-none rounded-2xl print:rounded-none transition-all"
+            className="w-[210mm] max-w-[210mm] shrink-0 min-h-[297mm] bg-white text-slate-900 p-8 sm:p-9 flex flex-col justify-between mx-auto font-sans border border-slate-200/90 rounded-2xl shadow-xl transition-all"
             style={{ boxSizing: 'border-box' }}
           >
             {/* Top Section */}
@@ -1120,7 +1142,10 @@ export default function ProformaDetailPage() {
                   </div>
 
                   {/* Grand Total Box */}
-                  <div className="mt-3 print:mt-1.5 p-3 print:p-2 bg-slate-900 text-white rounded-xl flex justify-between items-center">
+                  <div 
+                    className="mt-3 print:mt-1.5 p-3 print:p-2 bg-slate-900 text-white rounded-xl flex justify-between items-center"
+                    style={{ backgroundColor: '#0f172a', color: '#ffffff' }}
+                  >
                     <div>
                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block leading-tight">
                         Total Payable Amount

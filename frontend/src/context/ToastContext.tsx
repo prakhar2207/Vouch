@@ -40,12 +40,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const toast = {
+  const toast = React.useMemo(() => ({
     success: (msg: string, desc?: string) => addToast("success", msg, desc),
     error: (msg: string, desc?: string) => addToast("error", msg, desc),
     warning: (msg: string, desc?: string) => addToast("warning", msg, desc),
     info: (msg: string, desc?: string) => addToast("info", msg, desc),
-  };
+  }), [addToast]);
 
   return (
     <ToastContext.Provider value={{ toast }}>

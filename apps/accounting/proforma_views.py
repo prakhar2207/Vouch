@@ -381,7 +381,7 @@ class ProformaDetailAPIView(APIView):
     def get(self, request, pk):
         qs = ProformaInvoice.objects.filter(id=pk).select_related(
             'company', 'party_ledger', 'converted_voucher', 'created_by'
-        )
+        ).prefetch_related('items')
         if not getattr(request.user, 'is_superuser', False):
             qs = qs.filter(company__users__user=request.user)
         proforma = qs.first()

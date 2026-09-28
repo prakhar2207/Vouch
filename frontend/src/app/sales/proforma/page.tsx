@@ -132,7 +132,7 @@ export default function ProformaQuotationListPage() {
         setLoading(false);
       }
     }
-  }, [activeCompanyId, statusFilter, typeFilter, searchQuery, activeFY?.start_date, activeFY?.end_date, toast]);
+  }, [activeCompanyId, statusFilter, typeFilter, searchQuery, activeFY?.start_date, activeFY?.end_date]);
 
   useEffect(() => {
     if (!isAuthenticated()) {
