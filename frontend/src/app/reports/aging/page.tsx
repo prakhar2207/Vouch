@@ -29,6 +29,7 @@ export default function AgingReportPage() {
   const [reconciling, setReconciling] = useState(false);
   const [reportData, setReportData] = useState<any>(null);
   const [notification, setNotification] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const companyId = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") || "" : "");
 
@@ -41,25 +42,30 @@ export default function AgingReportPage() {
   const loadAgingData = useCallback(async () => {
     if (!companyId) return;
     setLoading(true);
+    setError(null);
     try {
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers = { 
+        Authorization: `Bearer ${token}`,
+        'X-Company-ID': companyId,
+        'company-id': companyId,
+      };
       const params = new URLSearchParams();
       params.append('type', partyType);
       if (activeFY?.id) params.append('financial_year_id', activeFY.id);
-      if (activeFY?.start_date) params.append('start_date', activeFY.start_date);
       if (activeFY?.end_date) {
         params.append('end_date', activeFY.end_date);
         params.append('as_of_date', activeFY.end_date);
       }
       const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/reports/aging/${companyId}/?${params.toString()}`, { headers });
       setReportData(res.data.data);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setError(e.response?.data?.error || "Failed to load outstanding aging report.");
     } finally {
       setLoading(false);
     }
-  }, [companyId, partyType, activeFY?.id]);
+  }, [companyId, partyType, activeFY?.id, activeFY?.end_date]);
 
   useEffect(() => {
     if (companyId) {
@@ -72,7 +78,11 @@ export default function AgingReportPage() {
     setReconciling(true);
     try {
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers = { 
+        Authorization: `Bearer ${token}`,
+        'X-Company-ID': companyId,
+        'company-id': companyId,
+      };
       const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/allocation/auto-fifo/${companyId}/`, {}, { headers });
       setNotification(res.data.message || "Auto-reconciliation finished.");
       loadAgingData();
@@ -159,6 +169,16 @@ export default function AgingReportPage() {
             Showing all outstanding <span className="font-semibold text-foreground">{partyType === "CUSTOMER" ? "sales invoices" : "purchase bills"}</span>
           </div>
         </div>
+
+        {error && (
+          <div className="p-4 bg-red-50 border border-red-200 text-red-900 dark:bg-red-950/40 dark:border-red-800 dark:text-red-300 rounded-xl text-xs flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
+              <span>{error}</span>
+            </div>
+            <button onClick={() => loadAgingData()} className="font-bold underline hover:opacity-80 cursor-pointer">Retry</button>
+          </div>
+        )}
 
         {notification && (
           <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center justify-between">

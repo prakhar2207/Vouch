@@ -2668,13 +2668,11 @@ class AgingReportAPIView(APIView):
 
     def get(self, request, company_id=None):
         try:
+            import datetime
             from apps.accounting.services.allocation_service import PaymentAllocationService
-            if company_id:
-                company = Company.objects.get(id=company_id, users__user=request.user)
-            else:
-                company = Company.objects.filter(users__user=request.user).first()
-            if not company:
-                return Response({"success": False, "error": "Company not found."}, status=status.HTTP_404_NOT_FOUND)
+            from apps.accounts.permissions import get_authorized_company
+
+            company = get_authorized_company(request, company_id)
 
             party_type = request.query_params.get('type', 'CUSTOMER').upper()
 
@@ -2691,24 +2689,23 @@ class AgingReportAPIView(APIView):
             if fy_id:
                 fy = FinancialYear.objects.filter(id=fy_id, company=company).first()
                 if fy:
-                    start_date = fy.start_date
                     end_date = fy.end_date
                     as_of_date = fy.end_date
 
             if as_of_str:
                 try:
-                    as_of_date = datetime.strptime(as_of_str.strip(), '%Y-%m-%d').date()
-                except ValueError:
+                    as_of_date = datetime.datetime.strptime(as_of_str.strip(), '%Y-%m-%d').date()
+                except (ValueError, TypeError):
                     pass
             if start_str:
                 try:
-                    start_date = datetime.strptime(start_str.strip(), '%Y-%m-%d').date()
-                except ValueError:
+                    start_date = datetime.datetime.strptime(start_str.strip(), '%Y-%m-%d').date()
+                except (ValueError, TypeError):
                     pass
             if end_str:
                 try:
-                    end_date = datetime.strptime(end_str.strip(), '%Y-%m-%d').date()
-                except ValueError:
+                    end_date = datetime.datetime.strptime(end_str.strip(), '%Y-%m-%d').date()
+                except (ValueError, TypeError):
                     pass
 
             data = PaymentAllocationService.get_aging_analysis(
@@ -2729,12 +2726,9 @@ class AutoFIFOReconciliationAPIView(APIView):
     def post(self, request, company_id=None):
         try:
             from apps.accounting.services.allocation_service import PaymentAllocationService
-            if company_id:
-                company = Company.objects.get(id=company_id, users__user=request.user)
-            else:
-                company = Company.objects.filter(users__user=request.user).first()
-            if not company:
-                return Response({"success": False, "error": "Company not found."}, status=status.HTTP_404_NOT_FOUND)
+            from apps.accounts.permissions import get_authorized_company
+
+            company = get_authorized_company(request, company_id)
 
             party_id = request.data.get('party_id')
             party_ledger = Ledger.objects.filter(id=party_id, company=company).first() if party_id else None

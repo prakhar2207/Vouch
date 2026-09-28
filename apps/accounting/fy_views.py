@@ -21,11 +21,11 @@ class FinancialYearListCreateAPIView(APIView):
         List all Financial Years for the active company.
         Auto-provisions current Indian FY if none exists.
         """
-        company_id = request.query_params.get('company_id')
-        if not company_id:
-            company = Company.objects.filter(users__user=request.user).first()
-        else:
-            company = Company.objects.filter(id=company_id, users__user=request.user).first()
+        try:
+            from apps.accounts.permissions import get_authorized_company
+            company = get_authorized_company(request, request.query_params.get('company_id'))
+        except Exception:
+            company = None
 
         if not company:
             return Response({"success": False, "error": "Company not found"}, status=404)
@@ -54,11 +54,11 @@ class FinancialYearListCreateAPIView(APIView):
         """
         Create a new Financial Year explicitly or auto-generate next FY.
         """
-        company_id = request.data.get('company_id')
-        if not company_id:
-            company = Company.objects.filter(users__user=request.user).first()
-        else:
-            company = Company.objects.filter(id=company_id, users__user=request.user).first()
+        try:
+            from apps.accounts.permissions import get_authorized_company
+            company = get_authorized_company(request, request.data.get('company_id'))
+        except Exception:
+            company = None
 
         if not company:
             return Response({"success": False, "error": "Company not found"}, status=404)
