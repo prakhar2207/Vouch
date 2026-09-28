@@ -147,7 +147,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       />
 
       {/* TOP NAVIGATION BAR */}
-      <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-card/90 backdrop-blur-xl shadow-2xs">
+      <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-card/90 backdrop-blur-xl shadow-2xs print:hidden">
         <div className="w-full px-3 sm:px-4 lg:px-4 xl:px-6 h-14 flex items-center justify-between gap-2 xl:gap-3">
           
           {/* Left Section: Brand & Primary Nav */}
@@ -840,7 +840,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Read-Only Mode Banner for Closed Financial Year */}
       {isReadOnly && (
-        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-xs font-medium text-amber-400 flex items-center justify-between">
+        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-xs font-medium text-amber-400 flex items-center justify-between print:hidden">
           <div className="flex items-center gap-2 max-w-[1600px] mx-auto w-full">
             <Lock className="w-3.5 h-3.5 shrink-0" />
             <span>
@@ -852,7 +852,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Mobile Navigation Drawer */}
       {isMobileNavOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className="fixed inset-0 z-50 lg:hidden print:hidden">
           <div
             className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
             onClick={() => setIsMobileNavOpen(false)}
@@ -1169,8 +1169,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-auto">
-        <div className="p-4 sm:p-6 lg:p-8 max-w-[1600px] mx-auto">
+      <main className="flex-1 overflow-auto print:overflow-visible print:p-0 print:m-0 print:w-full print:block">
+        <div className="p-4 sm:p-6 lg:p-8 max-w-[1600px] mx-auto print:p-0 print:m-0 print:max-w-none print:w-full">
           {children}
         </div>
       </main>
