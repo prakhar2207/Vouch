@@ -1,6 +1,6 @@
 "use client";
 import { API_BASE_URL } from '@/utils/api';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -12,6 +12,7 @@ import { getStateName } from '@/utils/gstStates';
 import { useFinancialYear } from '@/context/FinancialYearContext';
 import { useAccountingPeriod } from '@/context/PeriodContext';
 import { useToast } from '@/context/ToastContext';
+import ProformaDocumentSheet from '@/components/documents/ProformaDocumentSheet';
 import {
   Users,
   ShieldCheck,
@@ -28,7 +29,17 @@ import {
   Upload,
   ArrowRight,
   X,
-  ImageIcon
+  ImageIcon,
+  Palette,
+  Stamp,
+  Globe,
+  Eye,
+  FileText,
+  Check,
+  Sparkles,
+  QrCode,
+  Smartphone,
+  Monitor
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -44,12 +55,15 @@ export default function SettingsPage() {
   const [gstin, setGstin] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [website, setWebsite] = useState('');
   const [address, setAddress] = useState('');
   const [stateCode, setStateCode] = useState('');
   const [proprietorName, setProprietorName] = useState('');
   const [proprietorPhone, setProprietorPhone] = useState('');
   const [signature, setSignature] = useState<File | null>(null);
   const [signaturePreview, setSignaturePreview] = useState<string | null>(null);
+  const [stamp, setStamp] = useState<File | null>(null);
+  const [stampPreview, setStampPreview] = useState<string | null>(null);
   const [logo, setLogo] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   
@@ -58,6 +72,33 @@ export default function SettingsPage() {
   const [bankAccountNumber, setBankAccountNumber] = useState('');
   const [bankIfsc, setBankIfsc] = useState('');
   const [bankBranch, setBankBranch] = useState('');
+  
+  // Document Branding & Invoicing Design State
+  const [accentColor, setAccentColor] = useState('#0f172a');
+  const [logoPosition, setLogoPosition] = useState<'left' | 'center'>('left');
+  const [logoHeight, setLogoHeight] = useState<number>(52);
+  const [watermarkEnabled, setWatermarkEnabled] = useState(true);
+  const [showBankDetails, setShowBankDetails] = useState(true);
+  const [showUpiQr, setShowUpiQr] = useState(true);
+  const [showTerms, setShowTerms] = useState(true);
+  const [showAmountInWords, setShowAmountInWords] = useState(true);
+  const [showHsnSummary, setShowHsnSummary] = useState(true);
+  const [defaultTermsConditions, setDefaultTermsConditions] = useState(
+    "1. Goods once sold will not be taken back or exchanged.\n2. Payment terms: 100% advance or as agreed.\n3. Quotation / Proforma valid for 30 days from date of issue."
+  );
+  const [defaultNotes, setDefaultNotes] = useState(
+    "Thank you for considering our commercial proposal. Please reach out for any clarifications."
+  );
+  const [showPromoFooter, setShowPromoFooter] = useState(false);
+  const [promoTagline, setPromoTagline] = useState('');
+  const [promoWebsite, setPromoWebsite] = useState('');
+  const [promoSocial, setPromoSocial] = useState('');
+  const [promoSupportPhone, setPromoSupportPhone] = useState('');
+  const [promoSupportEmail, setPromoSupportEmail] = useState('');
+  const [promoMessage, setPromoMessage] = useState('');
+  const [promoQrUrl, setPromoQrUrl] = useState('');
+  const [previewDevice, setPreviewDevice] = useState<'desktop' | 'mobile'>('desktop');
+
   
   // Settings State
   const [enableLedgerMapping, setEnableLedgerMapping] = useState(false);
@@ -136,6 +177,39 @@ export default function SettingsPage() {
         setBankAccountNumber(comp.bank_account_number || '');
         setBankIfsc(comp.bank_ifsc || '');
         setBankBranch(comp.bank_branch || '');
+        setWebsite(comp.website || '');
+
+        if (comp.stamp_data) {
+          setStampPreview(comp.stamp_data);
+        } else if (comp.stamp) {
+          const base = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+          const cleanPath = comp.stamp.startsWith('/') ? comp.stamp : `/${comp.stamp}`;
+          setStampPreview(`${base}${cleanPath}`);
+        } else {
+          setStampPreview(null);
+        }
+
+        // Populate document branding
+        const branding = comp.settings?.document_branding || {};
+        setAccentColor(branding.accent_color || '#0f172a');
+        setLogoPosition(branding.logo_position || 'left');
+        setLogoHeight(branding.logo_height || 52);
+        setWatermarkEnabled(branding.watermark_enabled !== false);
+        setShowBankDetails(branding.show_bank_details !== false);
+        setShowUpiQr(branding.show_upi_qr !== false);
+        setShowTerms(branding.show_terms !== false);
+        setShowAmountInWords(branding.show_amount_in_words !== false);
+        setShowHsnSummary(branding.show_hsn_summary !== false);
+        setDefaultTermsConditions(branding.default_terms_conditions || "1. Goods once sold will not be taken back or exchanged.\n2. Payment terms: 100% advance or as agreed.\n3. Quotation / Proforma valid for 30 days from date of issue.");
+        setDefaultNotes(branding.default_notes || "Thank you for considering our commercial proposal. Please reach out for any clarifications.");
+        setShowPromoFooter(Boolean(branding.show_promo_footer));
+        setPromoTagline(branding.promo_tagline || '');
+        setPromoWebsite(branding.promo_website || '');
+        setPromoSocial(branding.promo_social || '');
+        setPromoSupportPhone(branding.promo_support_phone || '');
+        setPromoSupportEmail(branding.promo_support_email || '');
+        setPromoMessage(branding.promo_message || '');
+        setPromoQrUrl(branding.promo_qr_url || '');
 
         // Populate settings
         setEnableLedgerMapping(comp.settings?.enable_ledger_mapping || false);
@@ -178,7 +252,7 @@ export default function SettingsPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       
-      // Update Settings
+      // Update Settings & Document Branding
       await axios.patch(`${API_BASE_URL}/api/v1/companies/${company.id}/update_settings/`, {
         enable_ledger_mapping: enableLedgerMapping,
         enable_manual_invoice_number: enableManualInvoice,
@@ -186,7 +260,28 @@ export default function SettingsPage() {
         complexity_level: complexityLevel,
         allow_negative_stock: allowNegativeStock,
         sales_invoice_prefix: salesInvoicePrefix,
-        purchase_invoice_prefix: purchaseInvoicePrefix
+        purchase_invoice_prefix: purchaseInvoicePrefix,
+        document_branding: {
+          accent_color: accentColor,
+          logo_position: logoPosition,
+          logo_height: Number(logoHeight),
+          watermark_enabled: watermarkEnabled,
+          show_bank_details: showBankDetails,
+          show_upi_qr: showUpiQr,
+          show_terms: showTerms,
+          show_amount_in_words: showAmountInWords,
+          show_hsn_summary: showHsnSummary,
+          default_terms_conditions: defaultTermsConditions,
+          default_notes: defaultNotes,
+          show_promo_footer: showPromoFooter,
+          promo_tagline: promoTagline,
+          promo_website: promoWebsite,
+          promo_social: promoSocial,
+          promo_support_phone: promoSupportPhone,
+          promo_support_email: promoSupportEmail,
+          promo_message: promoMessage,
+          promo_qr_url: promoQrUrl,
+        }
       }, { headers });
 
       // Update Profile
@@ -195,6 +290,7 @@ export default function SettingsPage() {
       formData.append('gstin', gstin);
       formData.append('email', email);
       formData.append('phone', phone);
+      formData.append('website', website);
       formData.append('address', address);
       formData.append('state_code', stateCode);
       const sName = getStateName(stateCode);
@@ -210,6 +306,16 @@ export default function SettingsPage() {
         formData.append('signature_data', signaturePreview);
       } else {
         formData.append('signature_data', '');
+      }
+
+      if (stamp) {
+        formData.append('stamp', stamp);
+      }
+      if (stampPreview) {
+        formData.append('stamp_data', stampPreview);
+      } else {
+        formData.append('remove_stamp', 'true');
+        formData.append('stamp_data', '');
       }
 
       if (logo) {
@@ -235,7 +341,7 @@ export default function SettingsPage() {
         }
       });
       
-      toast.success('Profile and Settings updated', 'Changes have been saved successfully.');
+      toast.success('Settings & Branding Saved', 'Your changes are now live across proforma invoices and exports.');
       fetchCompany();
     } catch (err: any) {
       console.error(err);
@@ -244,6 +350,21 @@ export default function SettingsPage() {
       setSaving(false);
     }
   };
+
+  const handleStampChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setStamp(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          setStampPreview(reader.result);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -424,7 +545,60 @@ export default function SettingsPage() {
     }
   };
 
+  const sampleDoc = useMemo(() => ({
+    id: 'preview-sample',
+    proforma_number: 'PI-26-27-0042',
+    date: new Date().toISOString().split('T')[0],
+    valid_until: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+    proforma_type: 'PROFORMA',
+    status: 'SENT',
+    buyer_name: 'Acme Technologies Pvt Ltd',
+    buyer_address: '402 Cyber City, DLF Phase 2, Gurugram, Haryana - 122002',
+    buyer_gstin: '06AAACA1234A1Z5',
+    buyer_state_code: '06',
+    buyer_phone: '+91 98765 43210',
+    buyer_email: 'accounts@acmetech.com',
+    subtotal: 125000,
+    taxable_amount: 125000,
+    cgst_amount: 11250,
+    sgst_amount: 11250,
+    igst_amount: 0,
+    total_tax: 22500,
+    cartage_amount: 500,
+    round_off: 0,
+    total_amount: 148000,
+    terms_and_conditions: defaultTermsConditions,
+    customer_notes: defaultNotes,
+    items: [
+      {
+        item_name: 'Enterprise Cloud ERP Subscription',
+        description: 'Annual enterprise license with multi-tenant accounting and GST compliance.',
+        hsn_code: '998313',
+        quantity: 1,
+        unit: 'YR',
+        rate: 100000,
+        discount_percent: 0,
+        taxable_amount: 100000,
+        gst_rate: 18,
+        total_amount: 118000,
+      },
+      {
+        item_name: 'Implementation & CA Setup Services',
+        description: 'Chart of accounts configuration, tax ledgers setup, and team onboarding.',
+        hsn_code: '998311',
+        quantity: 1,
+        unit: 'JOB',
+        rate: 25000,
+        discount_percent: 0,
+        taxable_amount: 25000,
+        gst_rate: 18,
+        total_amount: 29500,
+      }
+    ]
+  }), [defaultTermsConditions, defaultNotes]);
+
   return (
+
     <DashboardLayout>
       <div className="max-w-4xl mx-auto space-y-8 pb-16">
         <div>
@@ -495,6 +669,16 @@ export default function SettingsPage() {
                     onChange={(code) => setStateCode(code)}
                     label="State / Union Territory"
                     placeholder="Search state by name or code (e.g. 09 / Uttar Pradesh)"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground mb-1">Company Website</label>
+                  <input
+                    type="text"
+                    value={website}
+                    onChange={(e) => setWebsite(e.target.value)}
+                    placeholder="e.g. https://www.yourcompany.com"
+                    className="w-full bg-muted/40 border border-input text-foreground text-sm p-2.5 rounded-lg outline-none focus:ring-1 focus:ring-primary"
                   />
                 </div>
                 <div className="sm:col-span-2">
@@ -709,6 +893,82 @@ export default function SettingsPage() {
                 </div>
               </div>
 
+              {/* Official Stamp / Seal (Optional) */}
+              <div className="pt-4 border-t border-border/40 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                        Official Company Stamp / Seal
+                      </h3>
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                        OPTIONAL
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Upload an image of your round or rectangular company stamp to render alongside the signature block on proforma invoices.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-start gap-4 p-4 rounded-xl border border-border/40 bg-muted/20">
+                  {stampPreview ? (
+                    <div className="space-y-2">
+                      <div className="w-48 h-24 border border-border/60 rounded-lg bg-card p-2 flex items-center justify-center overflow-hidden">
+                        <img
+                          src={stampPreview}
+                          alt="Official Stamp Preview"
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-primary hover:underline cursor-pointer">
+                          <span>Change stamp</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleStampChange}
+                            className="hidden"
+                          />
+                        </label>
+                        <span className="text-muted-foreground">•</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStamp(null);
+                            setStampPreview(null);
+                          }}
+                          className="text-xs font-medium text-rose-400 hover:underline cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="flex flex-col items-center justify-center w-full sm:w-64 h-28 border-2 border-dashed border-border/60 hover:border-primary/50 rounded-xl cursor-pointer bg-muted/30 hover:bg-muted/50 transition-colors p-4 text-center">
+                      <Upload className="w-5 h-5 text-muted-foreground mb-1.5" />
+                      <span className="text-xs font-semibold text-foreground">Upload Stamp / Seal</span>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">PNG, JPG up to 2MB (Optional)</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleStampChange}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+                  <div className="text-xs text-muted-foreground flex-1">
+                    <p className="font-semibold text-foreground mb-1">Company stamp guidelines:</p>
+                    <ul className="list-disc list-inside space-y-0.5 text-[11px]">
+                      <li>Stamp onto clean white paper and crop closely</li>
+                      <li>Transparent PNG or high-contrast scan works best</li>
+                      <li>Prints in the bottom-right signature area</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+
               {/* Banking Details */}
               <div className="pt-4 border-t border-border/40">
                 <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
@@ -766,7 +1026,394 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            {/* 2. Invoicing, Prefixes & Stock Controls */}
+            {/* 2. Document Branding & Invoicing Design */}
+            <div className="bg-card border border-border/40 rounded-xl shadow-sm p-6 space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border/40 gap-2">
+                <div className="flex items-center gap-2.5">
+                  <Palette className="w-5 h-5 text-primary" />
+                  <div>
+                    <h2 className="text-base font-bold text-foreground">Document Branding & Invoicing Design</h2>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Configure company logo sizing, watermark, brand color, and printable document options for Proforma Invoices and Exports.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={saveSettings}
+                  disabled={saving}
+                  className="px-4 py-1.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg text-xs font-semibold shadow transition-colors cursor-pointer disabled:opacity-50 self-start sm:self-auto"
+                >
+                  {saving ? 'Saving...' : 'Save Branding'}
+                </button>
+              </div>
+
+              {/* Grid: Left Controls (7 cols) + Right Live Preview (5 cols) */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                
+                {/* Left 6 Columns: Form Controls */}
+                <div className="lg:col-span-6 space-y-6">
+                  
+                  {/* Brand Accent Color Picker */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-foreground uppercase tracking-wider">
+                      Brand Accent Color
+                    </label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Applied to document titles, totals, and table headers.
+                    </p>
+                    <div className="flex items-center gap-2 flex-wrap pt-1">
+                      {[
+                        { name: 'Navy', hex: '#0f172a' },
+                        { name: 'Royal Blue', hex: '#2563eb' },
+                        { name: 'Indigo', hex: '#4f46e5' },
+                        { name: 'Emerald', hex: '#059669' },
+                        { name: 'Crimson', hex: '#dc2626' },
+                        { name: 'Slate', hex: '#334155' },
+                        { name: 'Amber', hex: '#d97706' },
+                      ].map((c) => (
+                        <button
+                          key={c.hex}
+                          type="button"
+                          onClick={() => setAccentColor(c.hex)}
+                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all cursor-pointer ${
+                            accentColor.toLowerCase() === c.hex.toLowerCase()
+                              ? 'border-primary ring-2 ring-primary/20 bg-primary/10 text-foreground font-bold'
+                              : 'border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <span className="w-3.5 h-3.5 rounded-full border border-black/10 shrink-0" style={{ backgroundColor: c.hex }} />
+                          <span>{c.name}</span>
+                        </button>
+                      ))}
+
+                      {/* Custom Color Input */}
+                      <div className="flex items-center gap-1.5 px-2 py-1 bg-muted/40 border border-border/60 rounded-lg">
+                        <input
+                          type="color"
+                          value={accentColor}
+                          onChange={(e) => setAccentColor(e.target.value)}
+                          className="w-5 h-5 rounded cursor-pointer border-none bg-transparent"
+                          title="Custom Color Picker"
+                        />
+                        <input
+                          type="text"
+                          value={accentColor}
+                          onChange={(e) => setAccentColor(e.target.value)}
+                          placeholder="#0f172a"
+                          maxLength={7}
+                          className="w-16 bg-transparent text-xs font-mono outline-none uppercase"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Logo Positioning & Sizing */}
+                  <div className="space-y-3 pt-3 border-t border-border/40">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-foreground uppercase tracking-wider">
+                        Logo Position & Sizing
+                      </label>
+                      <span className="text-[11px] font-mono text-muted-foreground">
+                        {logoHeight}px height
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-muted-foreground mb-1">Position on Header</label>
+                        <div className="inline-flex bg-muted/80 p-0.5 rounded-lg border border-border/60 text-xs w-full">
+                          <button
+                            type="button"
+                            onClick={() => setLogoPosition('left')}
+                            className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer text-center ${
+                              logoPosition === 'left' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            Left-Aligned
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setLogoPosition('center')}
+                            className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer text-center ${
+                              logoPosition === 'center' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            Centered
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] text-muted-foreground mb-1">Logo Height</label>
+                        <input
+                          type="range"
+                          min={36}
+                          max={84}
+                          value={logoHeight}
+                          onChange={(e) => setLogoHeight(Number(e.target.value))}
+                          className="w-full cursor-pointer mt-2"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Document Elements Toggles */}
+                  <div className="space-y-2 pt-3 border-t border-border/40">
+                    <label className="block text-xs font-bold text-foreground uppercase tracking-wider mb-1">
+                      Document Visibility Controls
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      {[
+                        { label: 'Company Logo Watermark', state: watermarkEnabled, setter: setWatermarkEnabled, desc: 'Subtle logo centered on each sheet' },
+                        { label: 'Bank Details Block', state: showBankDetails, setter: setShowBankDetails, desc: 'A/C number, IFSC, Branch' },
+                        { label: 'UPI Payment QR Code', state: showUpiQr, setter: setShowUpiQr, desc: 'Instant mobile UPI scan & pay' },
+                        { label: 'Terms & Conditions', state: showTerms, setter: setShowTerms, desc: 'Commercial agreement clauses' },
+                        { label: 'Amount in Words', state: showAmountInWords, setter: setShowAmountInWords, desc: 'Indian currency word format' },
+                        { label: 'HSN Tax Summary Table', state: showHsnSummary, setter: setShowHsnSummary, desc: 'GST rate-wise tax breakdown' },
+                      ].map((item, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-2.5 rounded-lg border border-border/40 bg-muted/20">
+                          <div className="min-w-0 pr-2">
+                            <span className="font-semibold text-foreground text-xs block truncate">{item.label}</span>
+                            <span className="text-[10px] text-muted-foreground">{item.desc}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => item.setter(!item.state)}
+                            className={`w-9 h-5 rounded-full transition-all relative shrink-0 cursor-pointer ${
+                              item.state ? 'bg-primary' : 'bg-muted-foreground/30'
+                            }`}
+                          >
+                            <div className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.75 transition-all ${
+                              item.state ? 'left-4.5' : 'left-0.75'
+                            }`} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Default Terms & Notes */}
+                  <div className="space-y-3 pt-3 border-t border-border/40">
+                    <label className="block text-xs font-bold text-foreground uppercase tracking-wider">
+                      Default Terms & Conditions & Customer Notes
+                    </label>
+                    <div className="space-y-2">
+                      <div>
+                        <label className="block text-[11px] text-muted-foreground mb-1">Standard Terms & Conditions</label>
+                        <textarea
+                          rows={3}
+                          value={defaultTermsConditions}
+                          onChange={(e) => setDefaultTermsConditions(e.target.value)}
+                          className="w-full bg-muted/40 border border-input text-foreground text-xs p-2 rounded-lg outline-none font-mono focus:ring-1 focus:ring-primary"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-muted-foreground mb-1">Default Document Remarks / Customer Notes</label>
+                        <textarea
+                          rows={2}
+                          value={defaultNotes}
+                          onChange={(e) => setDefaultNotes(e.target.value)}
+                          className="w-full bg-muted/40 border border-input text-foreground text-xs p-2 rounded-lg outline-none focus:ring-1 focus:ring-primary"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Promotional Footer Strip (Step 4) */}
+                  <div className="space-y-3 pt-3 border-t border-border/40">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-2">
+                          <span>Promotional Footer Strip</span>
+                          <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${showPromoFooter ? 'bg-emerald-500/20 text-emerald-400' : 'bg-muted text-muted-foreground'}`}>
+                            {showPromoFooter ? 'ENABLED' : 'DISABLED'}
+                          </span>
+                        </h3>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          Adds an optional marketing and brand strip above page numbers on every exported sheet.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowPromoFooter(!showPromoFooter)}
+                        className={`w-11 h-6 rounded-full transition-all relative shrink-0 cursor-pointer ${
+                          showPromoFooter ? 'bg-primary' : 'bg-muted-foreground/30'
+                        }`}
+                      >
+                        <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${
+                          showPromoFooter ? 'left-6' : 'left-1'
+                        }`} />
+                      </button>
+                    </div>
+
+                    {showPromoFooter && (
+                      <div className="space-y-3 p-3.5 rounded-xl border border-primary/20 bg-primary/5 text-xs">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] text-muted-foreground mb-1">Promo Tagline</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. INDIA'S FASTEST GROWING B2B HUB"
+                              value={promoTagline}
+                              onChange={(e) => setPromoTagline(e.target.value)}
+                              className="w-full bg-background border border-input text-foreground text-xs p-2 rounded outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] text-muted-foreground mb-1">Promo Website URL</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. www.yourdomain.com"
+                              value={promoWebsite}
+                              onChange={(e) => setPromoWebsite(e.target.value)}
+                              className="w-full bg-background border border-input text-foreground text-xs p-2 rounded outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] text-muted-foreground mb-1">Social Handles</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. @yourcompany on LinkedIn / X"
+                              value={promoSocial}
+                              onChange={(e) => setPromoSocial(e.target.value)}
+                              className="w-full bg-background border border-input text-foreground text-xs p-2 rounded outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] text-muted-foreground mb-1">Support Phone</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. +91 80000 12345"
+                              value={promoSupportPhone}
+                              onChange={(e) => setPromoSupportPhone(e.target.value)}
+                              className="w-full bg-background border border-input text-foreground text-xs p-2 rounded outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] text-muted-foreground mb-1">Support Email</label>
+                            <input
+                              type="email"
+                              placeholder="e.g. care@yourcompany.com"
+                              value={promoSupportEmail}
+                              onChange={(e) => setPromoSupportEmail(e.target.value)}
+                              className="w-full bg-background border border-input text-foreground text-xs p-2 rounded outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] text-muted-foreground mb-1">Promo QR Code URL</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. https://yourdomain.com/offers"
+                              value={promoQrUrl}
+                              onChange={(e) => setPromoQrUrl(e.target.value)}
+                              className="w-full bg-background border border-input text-foreground text-xs p-2 rounded outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="text-[11px] text-muted-foreground">Short Promotional Pitch (max 200 chars)</label>
+                            <span className="text-[10px] text-muted-foreground">{promoMessage.length}/200</span>
+                          </div>
+                          <input
+                            type="text"
+                            maxLength={200}
+                            placeholder="e.g. Celebrating 10 years of reliable manufacturing. Ask your account manager about volume discounts!"
+                            value={promoMessage}
+                            onChange={(e) => setPromoMessage(e.target.value)}
+                            className="w-full bg-background border border-input text-foreground text-xs p-2 rounded outline-none"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right 6 Columns: Interactive Live Document Preview Card */}
+                <div className="lg:col-span-6 bg-slate-900/5 dark:bg-slate-900/50 border border-border/60 rounded-2xl p-4 flex flex-col items-center">
+                  <div className="w-full flex items-center justify-between pb-3 border-b border-border/40 mb-3">
+                    <div className="flex items-center gap-2">
+                      <Eye className="w-4 h-4 text-primary" />
+                      <span className="text-xs font-bold text-foreground">Live Document Preview</span>
+                    </div>
+                    <span className="text-[10.5px] font-mono text-muted-foreground">
+                      Real-time A4 rendering
+                    </span>
+                  </div>
+
+                  {/* Scaled Preview Frame */}
+                  <div className="w-full overflow-hidden flex justify-center bg-slate-200/50 dark:bg-slate-950/70 p-2 sm:p-4 rounded-xl border border-slate-300 dark:border-slate-800">
+                    <div className="scale-[0.52] sm:scale-[0.62] origin-top transition-transform duration-200 shadow-xl rounded-sm -mb-[260px] sm:-mb-[200px]">
+                      <ProformaDocumentSheet
+                        doc={sampleDoc}
+                        company={{
+                          name: name || 'Your Company Name',
+                          legal_name: name || 'Your Legal Entity Name',
+                          gstin: gstin || '07AAAAA0000A1Z5',
+                          pan: gstin && gstin.length >= 12 ? gstin.slice(2, 12) : 'AAAAA0000A',
+                          address: address || '123 Business Boulevard, Commercial District',
+                          city: 'New Delhi',
+                          state_code: stateCode || '07',
+                          state_name: getStateName(stateCode) || 'Delhi',
+                          email: email || 'contact@example.com',
+                          phone: phone || '+91 98765 00000',
+                          website: website || 'www.example.com',
+                          tagline: tagline,
+                          bank_name: bankName || 'HDFC Bank Ltd',
+                          bank_account_number: bankAccountNumber || '50200012345678',
+                          bank_ifsc: bankIfsc || 'HDFC0001234',
+                          bank_branch: bankBranch || 'Connaught Place',
+                          logo_data: logoPreview,
+                          signature_data: signaturePreview,
+                          stamp_data: stampPreview,
+                        }}
+                        branding={{
+                          accent_color: accentColor,
+                          logo_position: logoPosition,
+                          logo_height: Number(logoHeight),
+                          watermark_enabled: watermarkEnabled,
+                          show_bank_details: showBankDetails,
+                          show_upi_qr: showUpiQr,
+                          show_terms: showTerms,
+                          show_amount_in_words: showAmountInWords,
+                          show_hsn_summary: showHsnSummary,
+                          default_terms_conditions: defaultTermsConditions,
+                          default_notes: defaultNotes,
+                          show_promo_footer: showPromoFooter,
+                          promo_tagline: promoTagline,
+                          promo_website: promoWebsite,
+                          promo_social: promoSocial,
+                          promo_support_phone: promoSupportPhone,
+                          promo_support_email: promoSupportEmail,
+                          promo_message: promoMessage,
+                          promo_qr_url: promoQrUrl,
+                        }}
+                        isPreviewMode={true}
+                      />
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-muted-foreground text-center mt-4">
+                    This live preview reflects exactly how proforma invoices, quotations, and official vector PDFs are rendered.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-3 border-t border-border/40">
+                <button
+                  type="button"
+                  onClick={saveSettings}
+                  disabled={saving}
+                  className="px-6 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-bold shadow transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {saving ? 'Saving Branding...' : 'Save Document Branding'}
+                </button>
+              </div>
+            </div>
+
+            {/* 3. Invoicing, Prefixes & Stock Controls */}
             <div className="bg-card border border-border/40 rounded-xl shadow-sm p-6 space-y-6">
               <div className="flex items-center gap-2.5 border-b border-border/40 pb-3">
                 <Sliders className="w-5 h-5 text-primary" />

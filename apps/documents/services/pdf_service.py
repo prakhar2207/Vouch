@@ -31,8 +31,9 @@ class DocumentPDFService:
         cls,
         snapshot: DocumentSnapshot,
         bypass_cache: bool = False,
+        watermark: bool = False,
     ) -> bytes:
-        cache_key = f"vouch_pdf_{snapshot.id}_{snapshot.template_version}"
+        cache_key = f"vouch_pdf_{snapshot.id}_{snapshot.template_version}_wm{int(watermark)}"
 
         if not bypass_cache:
             cached_data = cache.get(cache_key)
@@ -43,7 +44,7 @@ class DocumentPDFService:
         doc_type = snapshot.document_type
 
         if doc_type in ['SALES_INVOICE', 'PURCHASE_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE', 'PROFORMA_INVOICE']:
-            pdf_bytes = InvoicePDFRenderer.render(dto)
+            pdf_bytes = InvoicePDFRenderer.render(dto, watermark=watermark)
         elif doc_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL']:
             pdf_bytes = VoucherPDFRenderer.render(dto)
         elif doc_type in ['CUSTOMER_STATEMENT', 'SUPPLIER_STATEMENT', 'LEDGER']:
@@ -52,7 +53,7 @@ class DocumentPDFService:
             pdf_bytes = ReportPDFRenderer.render(dto)
         else:
             # Fallback to invoice renderer
-            pdf_bytes = InvoicePDFRenderer.render(dto)
+            pdf_bytes = InvoicePDFRenderer.render(dto, watermark=watermark)
 
         # Store in ephemeral cache
         try:

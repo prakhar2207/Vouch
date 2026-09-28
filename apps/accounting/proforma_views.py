@@ -406,12 +406,25 @@ class ProformaDetailAPIView(APIView):
             except Exception:
                 logo_url = ''
 
+        stamp_url = getattr(comp, 'stamp_data', None) or ''
+        if not stamp_url and getattr(comp, 'stamp', None):
+            try:
+                stamp_url = comp.stamp.url
+            except Exception:
+                stamp_url = ''
+
+        comp_settings = getattr(comp, 'settings', None)
+        branding = getattr(comp_settings, 'document_branding', {}) if comp_settings else {}
+
         # Add company billing meta for print layout
         data["company_details"] = {
             "name": comp.name,
             "legal_name": getattr(comp, 'legal_name', '') or comp.name,
             "logo_url": logo_url,
             "logo_data": getattr(comp, 'logo_data', '') or '',
+            "stamp_url": stamp_url,
+            "stamp_data": getattr(comp, 'stamp_data', '') or '',
+            "website": getattr(comp, 'website', '') or '',
             "gstin": comp.gstin,
             "pan": getattr(comp, 'pan', ''),
             "state_code": getattr(comp, 'state_code', ''),
@@ -424,6 +437,10 @@ class ProformaDetailAPIView(APIView):
             "tagline": getattr(comp, 'tagline', ''),
             "proprietor_name": getattr(comp, 'proprietor_name', ''),
             "signature_url": sig_url,
+            "signature_data": getattr(comp, 'signature_data', '') or '',
+            "settings": {
+                "document_branding": branding,
+            },
             "bank_details": {
                 "bank_name": getattr(comp, 'bank_name', ''),
                 "account_number": getattr(comp, 'bank_account_number', ''),

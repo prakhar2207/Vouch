@@ -189,8 +189,8 @@ class PublicShareDownloadPDFAPIView(APIView):
         except PermissionDenied as e:
             return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
 
-        snapshot = share.document_snapshot
-        pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(snapshot)
+        watermark = request.query_params.get('watermark') != '0'
+        pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(snapshot, watermark=watermark)
 
         filename = f"{snapshot.document_number.replace('/', '_') or 'document'}.pdf"
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
@@ -318,4 +318,35 @@ class ProformaShareAPIView(APIView):
             })
         except PermissionDenied as e:
             return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+
+
+class ProformaPDFStreamAPIView(APIView):
+    """
+    Renders and streams deterministic, vector PDF for ProformaInvoice.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, proforma_id):
+        from apps.accounting.models_proforma import ProformaInvoice
+
+        proforma = ProformaInvoice.objects.filter(
+            id=proforma_id, company__users__user=request.user
+        ).select_related('company', 'party_ledger').prefetch_related('items').first()
+
+        if not proforma:
+            return Response({'error': 'Proforma invoice not found or access denied.'}, status=status.HTTP_404_NOT_FOUND)
+
+        snapshot = DocumentSnapshotService.get_or_create_proforma_snapshot(proforma, user=request.user)
+        bypass_cache = request.query_params.get('fresh') == '1'
+        watermark = request.query_params.get('watermark') != '0'
+        pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(snapshot, bypass_cache=bypass_cache, watermark=watermark)
+
+        disposition = 'attachment' if request.query_params.get('download') == '1' else 'inline'
+        filename = f"{proforma.proforma_number.replace('/', '_')}.pdf"
+
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'{disposition}; filename="{filename}"'
+        response['Content-Length'] = len(pdf_bytes)
+        return response
+
 

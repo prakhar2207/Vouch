@@ -74,7 +74,7 @@ class InvoicePDFRenderer:
     """
 
     @classmethod
-    def render(cls, dto: Dict[str, Any]) -> bytes:
+    def render(cls, dto: Dict[str, Any], watermark: bool = False) -> bytes:
         buffer = io.BytesIO()
 
         PAGE_WIDTH, PAGE_HEIGHT = A4  # 595.275 x 841.89 pt
@@ -652,13 +652,21 @@ class InvoicePDFRenderer:
         sig_img = None
         sig_url = seller.get('signature_url')
         if sig_url:
-            # Handle relative URL
-            sig_path = sig_url.lstrip('/')
-            if os.path.exists(sig_path):
+            if isinstance(sig_url, str) and sig_url.startswith('data:image'):
                 try:
-                    sig_img = RLImage(sig_path, width=32 * 2.83, height=12 * 2.83)
+                    import base64
+                    _, b64data = sig_url.split(',', 1)
+                    sig_buf = io.BytesIO(base64.b64decode(b64data))
+                    sig_img = RLImage(sig_buf, width=32 * 2.83, height=12 * 2.83)
                 except Exception:
                     sig_img = None
+            else:
+                sig_path = sig_url.lstrip('/')
+                if os.path.exists(sig_path):
+                    try:
+                        sig_img = RLImage(sig_path, width=32 * 2.83, height=12 * 2.83)
+                    except Exception:
+                        sig_img = None
 
         comp_name_str = seller.get('name', 'Vouch')
         sig_inner = [Paragraph(f"for {comp_name_str}", s_auth_top)]
@@ -703,9 +711,59 @@ class InvoicePDFRenderer:
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ]))
 
-        # Callback: Draws outer border and footer on EVERY page
+        # Watermark & Logo assets
+        logo_data = seller.get('logo_url') or seller.get('logo_data')
+        logo_img_path = None
+        if logo_data:
+            if isinstance(logo_data, str) and logo_data.startswith('data:image'):
+                try:
+                    import base64
+                    _, b64data = logo_data.split(',', 1)
+                    raw_b = base64.b64decode(b64data)
+                    logo_img_path = io.BytesIO(raw_b)
+                except Exception:
+                    logo_img_path = None
+            elif isinstance(logo_data, str) and logo_data.strip():
+                clean_p = logo_data.lstrip('/')
+                if os.path.exists(clean_p):
+                    logo_img_path = clean_p
+                else:
+                    from django.conf import settings
+                    med = os.path.join(getattr(settings, 'MEDIA_ROOT', ''), clean_p)
+                    if os.path.exists(med):
+                        logo_img_path = med
+
+        # Callback: Draws outer border, watermark, and footer on EVERY page
         def draw_decorations(canv, doc):
             canv.saveState()
+
+            # Watermark layer (centered, subtle opacity)
+            if watermark:
+                canv.saveState()
+                if logo_img_path:
+                    try:
+                        canv.setFillAlpha(0.045)
+                        wm_dim = 260
+                        canv.drawImage(
+                            logo_img_path,
+                            (PAGE_WIDTH - wm_dim) / 2,
+                            (PAGE_HEIGHT - wm_dim) / 2,
+                            width=wm_dim,
+                            height=wm_dim,
+                            preserveAspectRatio=True,
+                            mask='auto'
+                        )
+                    except Exception as e:
+                        logger.warning(f"Could not draw logo watermark: {e}")
+                else:
+                    canv.setFont(f_bold, 36)
+                    canv.setFillColor(colors.HexColor('#0f172a'))
+                    canv.setFillAlpha(0.035)
+                    canv.translate(PAGE_WIDTH / 2, PAGE_HEIGHT / 2)
+                    canv.rotate(35)
+                    canv.drawCentredString(0, 0, (seller.get('name') or "PROFORMA INVOICE").upper())
+                canv.restoreState()
+
             canv.setLineWidth(1.5)
             canv.setStrokeColor(colors.black)
             # Continuous outer rectangle

@@ -142,6 +142,25 @@ class CompanyViewSet(viewsets.ModelViewSet):
             instance.signature_data = self.request.data['signature_data']
             instance.save(update_fields=['signature_data'])
 
+        # Handle Stamp: Upload, update or deletion
+        stamp_file = self.request.FILES.get('stamp')
+        if stamp_file:
+            try:
+                instance.stamp_data = process_and_compress_image(stamp_file, max_width=300, max_height=300)
+                instance.save(update_fields=['stamp_data'])
+            except Exception as e:
+                print(f"Error encoding stamp: {e}")
+        elif self.request.data.get('remove_stamp') in [True, 'true', '1'] or (
+            'stamp_data' in self.request.data and not self.request.data.get('stamp_data')
+        ):
+            instance.stamp = None
+            instance.stamp_data = None
+            instance.save(update_fields=['stamp', 'stamp_data'])
+        elif 'stamp_data' in self.request.data and self.request.data['stamp_data']:
+            instance.stamp_data = self.request.data['stamp_data']
+            instance.save(update_fields=['stamp_data'])
+
+
     def destroy(self, request, *args, **kwargs):
         company = self.get_object()
         
@@ -226,6 +245,20 @@ class CompanyViewSet(viewsets.ModelViewSet):
             settings.sales_invoice_prefix = str(request.data['sales_invoice_prefix']).strip()[:10]
         if 'purchase_invoice_prefix' in request.data:
             settings.purchase_invoice_prefix = str(request.data['purchase_invoice_prefix']).strip()[:10]
+        if 'document_branding' in request.data:
+            incoming_branding = request.data['document_branding']
+            if isinstance(incoming_branding, dict):
+                current_branding = dict(settings.document_branding or {})
+                current_branding.update(incoming_branding)
+                settings.document_branding = current_branding
+            elif isinstance(incoming_branding, str):
+                import json
+                try:
+                    current_branding = dict(settings.document_branding or {})
+                    current_branding.update(json.loads(incoming_branding))
+                    settings.document_branding = current_branding
+                except Exception:
+                    pass
             
         settings.save()
         return Response({"success": True, "message": "Settings updated"})

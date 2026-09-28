@@ -27,6 +27,11 @@ class Company(models.Model):
     logo = models.ImageField(upload_to='logos/', null=True, blank=True)
     logo_data = models.TextField(null=True, blank=True)
     
+    # Official Stamp / Seal
+    stamp = models.ImageField(upload_to='stamps/', null=True, blank=True)
+    stamp_data = models.TextField(null=True, blank=True)
+    website = models.CharField(max_length=255, blank=True, default="")
+    
     # Optional Details
     tagline = models.CharField(max_length=255, null=True, blank=True)
     bank_name = models.CharField(max_length=255, null=True, blank=True)
@@ -75,7 +80,9 @@ class CompanySettings(models.Model):
     enable_manual_invoice_number = models.BooleanField(default=False)
     enable_advanced_item_creation = models.BooleanField(default=False)
     enforce_credit_limit = models.BooleanField(default=False, help_text="If True, blocks sales when credit limit exceeded; if False, only warns")
+    document_branding = models.JSONField(default=dict, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"Settings for {self.company.name}"
+

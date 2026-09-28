@@ -48,6 +48,16 @@ def build_proforma_dto(proforma) -> Dict[str, Any]:
         except Exception:
             logo_url = ''
 
+    stamp_url = getattr(company, 'stamp_data', None) or ''
+    if not stamp_url and getattr(company, 'stamp', None):
+        try:
+            stamp_url = company.stamp.url
+        except Exception:
+            stamp_url = ''
+
+    website = getattr(company, 'website', '') or ''
+    branding = getattr(getattr(company, 'settings', None), 'document_branding', {}) or {}
+
     # Inter-state
     is_inter_state = False
     if company.state_code and buyer_state:
@@ -122,8 +132,10 @@ def build_proforma_dto(proforma) -> Dict[str, Any]:
             'phone': getattr(company, 'phone', '') or '',
             'email': getattr(company, 'email', '') or '',
             'pan': getattr(company, 'pan', '') or '',
+            'website': website,
             'logo_url': logo_url,
             'signature_url': sig_url,
+            'stamp_url': stamp_url,
             'tagline': getattr(company, 'tagline', '') or '',
             'proprietor_name': getattr(company, 'proprietor_name', '') or '',
             'bank': {
@@ -167,4 +179,6 @@ def build_proforma_dto(proforma) -> Dict[str, Any]:
         },
         'amount_in_words': number_to_words(Decimal(str(total_amount))),
         'is_proforma': True,
+        'branding': branding,
     }
+
