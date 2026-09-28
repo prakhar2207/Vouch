@@ -110,5 +110,6 @@ urlpatterns = [
     path('sync/bootstrap/', apps.accounting.sync_views.SyncBootstrapAPIView.as_view(), name='accounting_sync_bootstrap'),
     path('sync/pull/', apps.accounting.sync_views.SyncPullAPIView.as_view(), name='accounting_sync_pull'),
     path('sync/push/', apps.accounting.sync_views.SyncPushAPIView.as_view(), name='accounting_sync_push'),
+    path('sync/stream/', apps.accounting.sync_views.SyncStreamAPIView.as_view(), name='accounting_sync_stream'),
 ]
 

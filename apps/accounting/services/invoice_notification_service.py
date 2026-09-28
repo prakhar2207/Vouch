@@ -266,8 +266,20 @@ class InvoiceNotificationService:
     def dispatch_invoice_on_post(cls, voucher: Voucher, async_mode: bool = True):
         """
         Dispatches invoice PDF via email and generates sharing payloads.
-        Executes in background thread by default to guarantee sub-second voucher posting.
+        Attempts Celery background task offload first; if Celery broker is unavailable
+        or in local non-worker development, falls back seamlessly to a daemon thread.
         """
+        voucher_id_str = str(voucher.id)
+
+        if async_mode:
+            try:
+                from apps.accounting.tasks import dispatch_invoice_notification_task
+                dispatch_invoice_notification_task.delay(voucher_id_str)
+                logger.info(f"Offloaded invoice notification to Celery worker for {voucher.voucher_number}")
+                return
+            except Exception as e:
+                logger.info(f"Celery offload bypassed ({e}); falling back to background thread.")
+
         def _dispatch():
             try:
                 pdf_bytes = InvoicePDFService.generate_invoice_pdf(voucher)
@@ -280,3 +292,4 @@ class InvoiceNotificationService:
             thread.start()
         else:
             _dispatch()
+

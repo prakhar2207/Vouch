@@ -87,6 +87,10 @@ class Product(models.Model):
 
     class Meta:
         unique_together = ('company', 'sku')
+        indexes = [
+            models.Index(fields=['company', 'is_active', 'name']),
+            models.Index(fields=['company', 'updated_at']),
+        ]
 
     def __str__(self):
         return f"{self.name} - {self.sku}"
@@ -117,6 +121,12 @@ class InventoryEntry(models.Model):
     serial_number = models.CharField(max_length=100, null=True, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['company', 'product', 'created_at']),
+            models.Index(fields=['company', 'voucher_id']),
+        ]
 
     def __str__(self):
         return f"{self.product.name} | {self.movement_type} {self.quantity}"

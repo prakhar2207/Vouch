@@ -131,5 +131,12 @@ class Ledger(models.Model):
     def initial_opening_type(self):
         return 'DR' if self.opening_balance_type == 'DEBIT' else 'CR'
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['company', 'is_active', 'name']),
+            models.Index(fields=['company', 'updated_at']),
+            models.Index(fields=['company', 'ledger_type']),
+        ]
+
     def __str__(self):
         return f"{self.name} ({self.company.name})"

@@ -1,20 +1,28 @@
 import uuid
 import datetime
+import time
+import json
+import logging
 from decimal import Decimal
 from django.utils import timezone
+from django.http import StreamingHttpResponse
+from django.db import close_old_connections
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
+from rest_framework_simplejwt.tokens import AccessToken
 from django.db import transaction
 
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
 from apps.inventory.models import Product
-from apps.accounting.models import Voucher, VoucherItem, LedgerEntry, FinancialYear, OfflineCommand
+from apps.accounting.models import Voucher, VoucherItem, LedgerEntry, FinancialYear, OfflineCommand, SyncEvent
 from apps.common.tenant import get_company_product, get_company_ledger
 from apps.common.money import to_decimal, quantize_money
 from apps.accounts.permissions import get_authorized_company
+
+logger = logging.getLogger(__name__)
 
 class SyncPullAPIView(APIView):
     """
@@ -25,6 +33,8 @@ class SyncPullAPIView(APIView):
     into created, updated, and deleted.
     """
     permission_classes = [IsAuthenticated]
+    throttle_scope = 'sync'
+
 
     def post(self, request):
         company = get_authorized_company(request, request.data.get('company_id'))
@@ -346,6 +356,7 @@ class SyncPushAPIView(APIView):
     Enforces idempotency via command_id.
     """
     permission_classes = [IsAuthenticated]
+    throttle_scope = 'sync'
 
     def post(self, request):
         company_id = request.data.get('company_id')
@@ -608,6 +619,7 @@ class SyncBootstrapAPIView(APIView):
     - Server monotonic SyncEvent cursor for seamless delta-sync handoff
     """
     permission_classes = [IsAuthenticated]
+    throttle_scope = 'sync'
 
     def post(self, request):
         company_id = request.data.get('company_id') or request.META.get('HTTP_X_COMPANY_ID')
@@ -746,4 +758,114 @@ class SyncBootstrapAPIView(APIView):
                 }
             }
         }, status=status.HTTP_200_OK)
+
+
+class SyncStreamAPIView(APIView):
+    """
+    GET /api/v1/sync/stream/
+    Server-Sent Events (SSE) real-time streaming endpoint.
+    Pushes incremental SyncEvents (vouchers, ledgers, products, payments)
+    to connected Desktop (Tauri/Electron), Mobile (React Native/Flutter), and Web clients.
+    
+    Accepts:
+      - company_id: query parameter or X-Company-ID header
+      - cursor / Last-Event-ID: starting sync cursor (monotonically increasing integer)
+      - token: optional query param for native browser EventSource authorization
+    """
+    permission_classes = [AllowAny]
+    throttle_scope = 'sync'
+
+    def get(self, request, *args, **kwargs):
+        # 1. Resolve Authentication (Supports standard Bearer header OR query param 'token' for EventSource)
+        user = request.user
+        if not user or not user.is_authenticated:
+            token_str = request.query_params.get('token')
+            if token_str:
+                try:
+                    access = AccessToken(token_str)
+                    from apps.accounts.models import User
+                    user = User.objects.get(id=access['user_id'])
+                    request.user = user
+                except Exception:
+                    return Response({"error": "Invalid or expired authentication token."}, status=status.HTTP_401_UNAUTHORIZED)
+            else:
+                return Response({"error": "Authentication credentials were not provided."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        # 2. Authorize Company Access
+        try:
+            company = get_authorized_company(request, request.query_params.get('company_id'))
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
+
+        # 3. Resolve starting cursor (supports 'cursor' query param or standard 'Last-Event-ID' header)
+        last_event_header = request.headers.get('Last-Event-ID') or request.META.get('HTTP_LAST_EVENT_ID')
+        cursor_input = request.query_params.get('cursor') or last_event_header or 0
+        try:
+            current_cursor = int(cursor_input)
+        except (ValueError, TypeError):
+            current_cursor = 0
+
+        def sse_event_stream():
+            nonlocal current_cursor
+            # Initial connection acknowledgement with server snapshot cursor
+            latest_ev = SyncEvent.objects.filter(company=company).order_by('-id').first()
+            snapshot_cursor = latest_ev.id if latest_ev else 0
+
+            init_payload = json.dumps({
+                "status": "connected",
+                "company_id": str(company.id),
+                "server_time": int(timezone.now().timestamp() * 1000),
+                "snapshot_cursor": snapshot_cursor,
+                "listening_from_cursor": current_cursor
+            })
+            yield f"event: connected\ndata: {init_payload}\n\n"
+
+            # Stream loop: max 50 seconds to prevent proxy timeouts and encourage clean reconnection
+            start_time = time.time()
+            heartbeat_interval = 15.0
+            last_heartbeat = start_time
+
+            try:
+                while time.time() - start_time < 50.0:
+                    close_old_connections()
+
+                    # Fetch new sync events strictly greater than current cursor
+                    new_events = list(SyncEvent.objects.filter(
+                        company=company,
+                        id__gt=current_cursor
+                    ).order_by('id')[:50])
+
+                    if new_events:
+                        for ev in new_events:
+                            ev_data = json.dumps({
+                                "id": ev.id,
+                                "entity_type": ev.entity_type,
+                                "entity_id": str(ev.entity_id),
+                                "operation": ev.operation,
+                                "occurred_at": ev.occurred_at.isoformat() if hasattr(ev.occurred_at, 'isoformat') else str(ev.occurred_at),
+                                "metadata": ev.metadata or {}
+                            })
+                            yield f"id: {ev.id}\nevent: sync\ndata: {ev_data}\n\n"
+                            current_cursor = ev.id
+
+                    # Periodic heartbeat comment to keep HTTP connection alive across reverse proxies
+                    now = time.time()
+                    if now - last_heartbeat >= heartbeat_interval:
+                        yield ": ping\n\n"
+                        last_heartbeat = now
+
+                    time.sleep(1.5)
+            except GeneratorExit:
+                logger.info(f"SSE client disconnected cleanly for company {company.id}")
+            except Exception as loop_err:
+                logger.warning(f"SSE streaming loop error: {loop_err}")
+            finally:
+                close_old_connections()
+
+        response = StreamingHttpResponse(sse_event_stream(), content_type='text/event-stream')
+        response['Cache-Control'] = 'no-cache, no-transform'
+        response['X-Accel-Buffering'] = 'no'
+        response['Connection'] = 'keep-alive'
+        return response
+
 

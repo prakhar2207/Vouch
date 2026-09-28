@@ -72,8 +72,29 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '60/minute',
+        'user': '1200/minute',
+        'sync': '180/minute',
+        'auth': '30/minute',
+    },
     'EXCEPTION_HANDLER': 'config.exception_handler.custom_exception_handler',
 }
+
+import sys
+if 'test' in sys.argv:
+    REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
+        'anon': '100000/day',
+        'user': '100000/day',
+        'sync': '100000/day',
+        'auth': '100000/day',
+    }
+
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
@@ -234,7 +255,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'x-device-id',
     'x-sync-cursor',
 ]
-CORS_EXPOSE_HEADERS = ['*', 'X-Idempotent-Replay', 'X-Idempotency-Key', 'X-Server-Version', 'X-API-Contract']
+CORS_EXPOSE_HEADERS = ['*', 'X-Idempotent-Replay', 'X-Idempotency-Key', 'X-Server-Version', 'X-API-Contract', 'Retry-After']
 
 CSRF_TRUSTED_ORIGINS = [
     'https://vouch-pi-one.vercel.app',

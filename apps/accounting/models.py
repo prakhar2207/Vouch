@@ -180,6 +180,8 @@ class Voucher(models.Model):
         indexes = [
             models.Index(fields=['company', 'financial_year', 'voucher_number']),
             models.Index(fields=['company', 'voucher_date']),
+            models.Index(fields=['company', 'status', 'voucher_date']),
+            models.Index(fields=['company', 'updated_at']),
         ]
 
     def clean(self):

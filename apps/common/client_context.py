@@ -4,6 +4,18 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+class ClientContext(dict):
+    """Context container supporting both dictionary and attribute-style access."""
+    def __getattr__(self, item):
+        try:
+            return self[item]
+        except KeyError:
+            raise AttributeError(f"'ClientContext' object has no attribute '{item}'")
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+
 class ClientContextMiddleware(MiddlewareMixin):
     """
     Identifies and attaches client context (platform, version, device)
@@ -36,14 +48,15 @@ class ClientContextMiddleware(MiddlewareMixin):
             'browser'
         ).strip()
 
-        request.client_context = {
+        request.client_context = ClientContext({
             'client_type': client_type,
             'app_version': app_version,
             'device_id': device_id,
             'is_mobile': client_type in ('mobile_android', 'mobile_ios', 'mobile'),
             'is_desktop': client_type.startswith('desktop_') or client_type in ('desktop', 'pos'),
             'is_web': client_type == 'web',
-        }
+        })
+
 
     def process_response(self, request, response):
         # Expose server version and supported API level
