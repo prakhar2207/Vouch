@@ -8,6 +8,42 @@ from .models import Company, UserCompany
 from .serializers import CompanySerializer
 from apps.accounts.permissions import user_has_company_roles, get_user_company_role
 
+def process_and_compress_image(file_obj, max_width=600, max_height=300, quality=85):
+    """
+    Compresses and normalizes an uploaded image using PIL/Pillow.
+    Resizes proportionally if dimensions exceed max_width/max_height.
+    Returns compressed base64 data URI for instant DB storage and offline rendering.
+    """
+    from PIL import Image
+    import io
+    import base64
+
+    file_obj.seek(0)
+    img = Image.open(file_obj)
+
+    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+        img = img.convert('RGBA')
+        save_format = 'PNG'
+        mime = 'image/png'
+    else:
+        img = img.convert('RGB')
+        save_format = 'WEBP'
+        mime = 'image/webp'
+
+    img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+
+    buf = io.BytesIO()
+    if save_format == 'WEBP':
+        img.save(buf, format='WEBP', quality=quality, method=6)
+    else:
+        img.save(buf, format='PNG', optimize=True)
+
+    buf.seek(0)
+    raw = buf.read()
+    b64 = base64.b64encode(raw).decode('utf-8')
+    return f"data:{mime};base64,{b64}"
+
+
 class CompanyViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = CompanySerializer
@@ -21,13 +57,24 @@ class CompanyViewSet(viewsets.ModelViewSet):
         import base64
         # Create the company
         company = serializer.save()
+
+        # Handle Logo compression and storage
+        logo_file = self.request.FILES.get('logo')
+        if logo_file:
+            try:
+                company.logo_data = process_and_compress_image(logo_file, max_width=600, max_height=300)
+                company.save(update_fields=['logo_data'])
+            except Exception as e:
+                print(f"Error compressing company logo: {e}")
+        elif 'logo_data' in self.request.data and self.request.data['logo_data']:
+            company.logo_data = self.request.data['logo_data']
+            company.save(update_fields=['logo_data'])
+
+        # Handle Signature
         sig_file = self.request.FILES.get('proprietor_signature')
         if sig_file:
             try:
-                sig_file.seek(0)
-                raw = sig_file.read()
-                mime = getattr(sig_file, 'content_type', 'image/png')
-                company.signature_data = f"data:{mime};base64,{base64.b64encode(raw).decode('utf-8')}"
+                company.signature_data = process_and_compress_image(sig_file, max_width=400, max_height=180)
                 company.save(update_fields=['signature_data'])
             except Exception as e:
                 print(f"Error encoding signature: {e}")
@@ -58,16 +105,39 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
         import base64
         instance = serializer.save()
+
+        # Handle Logo: Upload, update or deletion
+        logo_file = self.request.FILES.get('logo')
+        if logo_file:
+            try:
+                instance.logo_data = process_and_compress_image(logo_file, max_width=600, max_height=300)
+                instance.save(update_fields=['logo_data'])
+            except Exception as e:
+                print(f"Error compressing company logo: {e}")
+        elif self.request.data.get('remove_logo') in [True, 'true', '1'] or (
+            'logo_data' in self.request.data and not self.request.data.get('logo_data')
+        ):
+            instance.logo = None
+            instance.logo_data = None
+            instance.save(update_fields=['logo', 'logo_data'])
+        elif 'logo_data' in self.request.data and self.request.data['logo_data']:
+            instance.logo_data = self.request.data['logo_data']
+            instance.save(update_fields=['logo_data'])
+
+        # Handle Signature: Upload, update or deletion
         sig_file = self.request.FILES.get('proprietor_signature')
         if sig_file:
             try:
-                sig_file.seek(0)
-                raw = sig_file.read()
-                mime = getattr(sig_file, 'content_type', 'image/png')
-                instance.signature_data = f"data:{mime};base64,{base64.b64encode(raw).decode('utf-8')}"
+                instance.signature_data = process_and_compress_image(sig_file, max_width=400, max_height=180)
                 instance.save(update_fields=['signature_data'])
             except Exception as e:
                 print(f"Error encoding signature: {e}")
+        elif self.request.data.get('remove_signature') in [True, 'true', '1'] or (
+            'signature_data' in self.request.data and not self.request.data.get('signature_data')
+        ):
+            instance.proprietor_signature = None
+            instance.signature_data = None
+            instance.save(update_fields=['proprietor_signature', 'signature_data'])
         elif 'signature_data' in self.request.data and self.request.data['signature_data']:
             instance.signature_data = self.request.data['signature_data']
             instance.save(update_fields=['signature_data'])

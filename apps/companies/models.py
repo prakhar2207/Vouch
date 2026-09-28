@@ -23,6 +23,10 @@ class Company(models.Model):
     proprietor_signature = models.ImageField(upload_to='signatures/', null=True, blank=True)
     signature_data = models.TextField(null=True, blank=True)
     
+    # Branding & Logo
+    logo = models.ImageField(upload_to='logos/', null=True, blank=True)
+    logo_data = models.TextField(null=True, blank=True)
+    
     # Optional Details
     tagline = models.CharField(max_length=255, null=True, blank=True)
     bank_name = models.CharField(max_length=255, null=True, blank=True)

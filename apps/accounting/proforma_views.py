@@ -387,10 +387,21 @@ class ProformaDetailAPIView(APIView):
         if not sig_url and getattr(comp, 'signature_data', None):
             sig_url = comp.signature_data
 
+        logo_url = ''
+        if getattr(comp, 'logo', None):
+            try:
+                logo_url = comp.logo.url
+            except Exception:
+                logo_url = ''
+        if not logo_url and getattr(comp, 'logo_data', None):
+            logo_url = comp.logo_data
+
         # Add company billing meta for print layout
         data["company_details"] = {
             "name": comp.name,
             "legal_name": getattr(comp, 'legal_name', '') or comp.name,
+            "logo_url": logo_url,
+            "logo_data": getattr(comp, 'logo_data', '') or '',
             "gstin": comp.gstin,
             "pan": getattr(comp, 'pan', ''),
             "state_code": getattr(comp, 'state_code', ''),

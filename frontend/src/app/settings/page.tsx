@@ -27,7 +27,8 @@ import {
   Database,
   Upload,
   ArrowRight,
-  X
+  X,
+  ImageIcon
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -49,6 +50,8 @@ export default function SettingsPage() {
   const [proprietorPhone, setProprietorPhone] = useState('');
   const [signature, setSignature] = useState<File | null>(null);
   const [signaturePreview, setSignaturePreview] = useState<string | null>(null);
+  const [logo, setLogo] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
   
   const [tagline, setTagline] = useState('');
   const [bankName, setBankName] = useState('');
@@ -117,6 +120,16 @@ export default function SettingsPage() {
           setSignaturePreview(`${base}${cleanPath}`);
         } else {
           setSignaturePreview(null);
+        }
+
+        if (comp.logo_data) {
+          setLogoPreview(comp.logo_data);
+        } else if (comp.logo) {
+          const base = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+          const cleanPath = comp.logo.startsWith('/') ? comp.logo : `/${comp.logo}`;
+          setLogoPreview(`${base}${cleanPath}`);
+        } else {
+          setLogoPreview(null);
         }
         setTagline(comp.tagline || '');
         setBankName(comp.bank_name || '');
@@ -198,6 +211,17 @@ export default function SettingsPage() {
       } else {
         formData.append('signature_data', '');
       }
+
+      if (logo) {
+        formData.append('logo', logo);
+      }
+      if (logoPreview) {
+        formData.append('logo_data', logoPreview);
+      } else {
+        formData.append('remove_logo', 'true');
+        formData.append('logo_data', '');
+      }
+
       formData.append('tagline', tagline);
       formData.append('bank_name', bankName);
       formData.append('bank_account_number', bankAccountNumber);
@@ -218,6 +242,20 @@ export default function SettingsPage() {
       toast.error('Failed to update profile/settings', err.response?.data?.error || err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setLogo(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          setLogoPreview(reader.result);
+        }
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -517,6 +555,81 @@ export default function SettingsPage() {
                     <p className="text-[11px] text-muted-foreground mt-1">
                       Seller contact number displayed on invoice header.
                     </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Company Brand Logo (Compressed & Stored in DB) */}
+              <div className="pt-4 border-t border-border/40 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                        Company Brand Logo
+                      </h3>
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                        OPTIONAL
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Upload your brand logo for official proforma invoices, quotations, and tax invoices. Auto-compressed and stored in the database.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-start gap-4 p-4 rounded-xl border border-border/40 bg-muted/20">
+                  {logoPreview ? (
+                    <div className="space-y-2">
+                      <div className="w-56 h-24 border border-border/60 rounded-lg bg-card p-2 flex items-center justify-center overflow-hidden">
+                        <img
+                          src={logoPreview}
+                          alt="Company Logo Preview"
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-primary hover:underline cursor-pointer">
+                          <span>Change logo</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleLogoChange}
+                            className="hidden"
+                          />
+                        </label>
+                        <span className="text-muted-foreground">•</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLogo(null);
+                            setLogoPreview(null);
+                          }}
+                          className="text-xs font-medium text-rose-400 hover:underline cursor-pointer"
+                        >
+                          Delete logo
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="flex flex-col items-center justify-center w-full sm:w-64 h-28 border-2 border-dashed border-border/60 hover:border-primary/50 rounded-xl cursor-pointer bg-muted/30 hover:bg-muted/50 transition-colors p-4 text-center">
+                      <Upload className="w-5 h-5 text-muted-foreground mb-1.5" />
+                      <span className="text-xs font-semibold text-foreground">Upload Company Logo</span>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">PNG, JPG, WebP up to 3MB</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleLogoChange}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+                  <div className="text-xs text-muted-foreground flex-1">
+                    <p className="font-semibold text-foreground mb-1">Company logo guidelines:</p>
+                    <ul className="list-disc list-inside space-y-0.5 text-[11px]">
+                      <li>A landscape aspect ratio logo with transparent background works best (e.g. 2:1 or 3:1)</li>
+                      <li>Image is compressed automatically and saved in the database</li>
+                      <li>Loads dynamically on proforma invoices, sales bills, and PDF downloads</li>
+                    </ul>
                   </div>
                 </div>
               </div>
