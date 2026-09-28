@@ -148,7 +148,7 @@ class ListCreateProformaAPIView(APIView):
         all_qs = ProformaInvoice.objects.filter(company=company)
         metrics_agg = all_qs.aggregate(
             total_count=Count('id'),
-            total_amount=Sum('total_amount'),
+            sum_total_amount=Sum('total_amount'),
             active_count=Count('id', filter=~Q(status__in=['CONVERTED', 'CANCELLED'])),
             active_amount=Sum('total_amount', filter=~Q(status__in=['CONVERTED', 'CANCELLED'])),
             converted_count=Count('id', filter=Q(status='CONVERTED')),
@@ -156,7 +156,7 @@ class ListCreateProformaAPIView(APIView):
         )
 
         total_count = metrics_agg.get('total_count') or 0
-        total_amount = metrics_agg.get('total_amount') or Decimal('0.00')
+        total_amount = metrics_agg.get('sum_total_amount') or Decimal('0.00')
         active_count = metrics_agg.get('active_count') or 0
         active_amount = metrics_agg.get('active_amount') or Decimal('0.00')
         converted_count = metrics_agg.get('converted_count') or 0
