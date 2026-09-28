@@ -77,6 +77,7 @@ export default function SettingsPage() {
   const [accentColor, setAccentColor] = useState('#0f172a');
   const [logoPosition, setLogoPosition] = useState<'left' | 'center'>('left');
   const [logoHeight, setLogoHeight] = useState<number>(52);
+  const [showLogo, setShowLogo] = useState(true);
   const [watermarkEnabled, setWatermarkEnabled] = useState(true);
   const [showBankDetails, setShowBankDetails] = useState(true);
   const [showUpiQr, setShowUpiQr] = useState(true);
@@ -194,6 +195,7 @@ export default function SettingsPage() {
         setAccentColor(branding.accent_color || '#0f172a');
         setLogoPosition(branding.logo_position || 'left');
         setLogoHeight(branding.logo_height || 52);
+        setShowLogo(branding.show_logo !== false);
         setWatermarkEnabled(branding.watermark_enabled !== false);
         setShowBankDetails(branding.show_bank_details !== false);
         setShowUpiQr(branding.show_upi_qr !== false);
@@ -265,6 +267,7 @@ export default function SettingsPage() {
           accent_color: accentColor,
           logo_position: logoPosition,
           logo_height: Number(logoHeight),
+          show_logo: showLogo,
           watermark_enabled: watermarkEnabled,
           show_bank_details: showBankDetails,
           show_upi_qr: showUpiQr,
@@ -1165,6 +1168,7 @@ export default function SettingsPage() {
                     </label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                       {[
+                        { label: 'Display Company Logo', state: showLogo, setter: setShowLogo, desc: 'Show company logo on document headers' },
                         { label: 'Company Logo Watermark', state: watermarkEnabled, setter: setWatermarkEnabled, desc: 'Subtle logo centered on each sheet' },
                         { label: 'Bank Details Block', state: showBankDetails, setter: setShowBankDetails, desc: 'A/C number, IFSC, Branch' },
                         { label: 'UPI Payment QR Code', state: showUpiQr, setter: setShowUpiQr, desc: 'Instant mobile UPI scan & pay' },
@@ -1373,6 +1377,7 @@ export default function SettingsPage() {
                           accent_color: accentColor,
                           logo_position: logoPosition,
                           logo_height: Number(logoHeight),
+                          show_logo: showLogo,
                           watermark_enabled: watermarkEnabled,
                           show_bank_details: showBankDetails,
                           show_upi_qr: showUpiQr,

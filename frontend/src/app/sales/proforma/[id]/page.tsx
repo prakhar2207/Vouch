@@ -21,6 +21,7 @@ import {
   Copy,
   Check,
   ShieldCheck,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 export default function ProformaDetailPage() {
@@ -38,6 +39,7 @@ export default function ProformaDetailPage() {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [isGeneratingShareLink, setIsGeneratingShareLink] = useState(false);
   const [includeWatermark, setIncludeWatermark] = useState<boolean>(true);
+  const [includeLogo, setIncludeLogo] = useState<boolean>(true);
 
   const fetchDoc = useCallback(async () => {
     if (!docId) return;
@@ -115,8 +117,9 @@ export default function ProformaDetailPage() {
 
     try {
       const wmParam = includeWatermark ? '1' : '0';
+      const logoParam = includeLogo ? '1' : '0';
       const response = await api.get(
-        `/api/v1/documents/proforma/${doc.id}/pdf/?download=1&watermark=${wmParam}&fresh=1`,
+        `/api/v1/documents/proforma/${doc.id}/pdf/?download=1&watermark=${wmParam}&logo=${logoParam}&fresh=1`,
         { responseType: 'blob' }
       );
 
@@ -417,6 +420,21 @@ export default function ProformaDetailPage() {
               <span>Watermark: {includeWatermark ? 'ON' : 'OFF'}</span>
             </button>
 
+            {/* Logo Display Toggle Button */}
+            <button
+              type="button"
+              onClick={() => setIncludeLogo(!includeLogo)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                includeLogo
+                  ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30'
+                  : 'bg-card text-muted-foreground hover:text-foreground border-border'
+              }`}
+              title="Toggle company logo display on header"
+            >
+              <ImageIcon className="w-3.5 h-3.5" />
+              <span>Logo: {includeLogo ? 'ON' : 'OFF'}</span>
+            </button>
+
             {/* Download Vector PDF Button */}
             <button
               type="button"
@@ -454,6 +472,7 @@ export default function ProformaDetailPage() {
             doc={doc}
             company={company}
             watermarkOverride={includeWatermark}
+            logoOverride={includeLogo}
           />
         </div>
       </div>

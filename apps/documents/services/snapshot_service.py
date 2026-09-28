@@ -162,7 +162,7 @@ class DocumentSnapshotService:
         """
         from apps.documents.dto.proforma_dto import build_proforma_dto
 
-        CURRENT_TEMPLATE_VERSION = '1.0'
+        CURRENT_TEMPLATE_VERSION = '2.0'
         source_id = str(proforma.id)
 
         if not force_refresh:

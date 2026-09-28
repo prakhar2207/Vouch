@@ -8,6 +8,7 @@ from apps.ledgers.models import Ledger
 from apps.documents.models import DocumentSnapshot
 from apps.documents.renderers import (
     InvoicePDFRenderer,
+    ModernProformaPDFRenderer,
     VoucherPDFRenderer,
     StatementPDFRenderer,
     ReportPDFRenderer,
@@ -32,8 +33,9 @@ class DocumentPDFService:
         snapshot: DocumentSnapshot,
         bypass_cache: bool = False,
         watermark: bool = False,
+        show_logo: bool = True,
     ) -> bytes:
-        cache_key = f"vouch_pdf_{snapshot.id}_{snapshot.template_version}_wm{int(watermark)}"
+        cache_key = f"vouch_pdf_{snapshot.id}_{snapshot.template_version}_wm{int(watermark)}_lg{int(show_logo)}"
 
         if not bypass_cache:
             cached_data = cache.get(cache_key)
@@ -43,7 +45,17 @@ class DocumentPDFService:
         dto = snapshot.snapshot_json
         doc_type = snapshot.document_type
 
-        if doc_type in ['SALES_INVOICE', 'PURCHASE_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE', 'PROFORMA_INVOICE']:
+        # Check document-level branding preference for logo if default True
+        if show_logo is True:
+            branding = dto.get('branding') or {}
+            if branding.get('show_logo') is False:
+                show_logo = False
+
+        if doc_type == 'PROFORMA_INVOICE' or dto.get('is_proforma'):
+            pdf_bytes = ModernProformaPDFRenderer.render(
+                dto, watermark=watermark, show_logo=show_logo
+            )
+        elif doc_type in ['SALES_INVOICE', 'PURCHASE_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE']:
             pdf_bytes = InvoicePDFRenderer.render(dto, watermark=watermark)
         elif doc_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL']:
             pdf_bytes = VoucherPDFRenderer.render(dto)

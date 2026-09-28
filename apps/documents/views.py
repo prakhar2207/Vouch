@@ -336,10 +336,16 @@ class ProformaPDFStreamAPIView(APIView):
         if not proforma:
             return Response({'error': 'Proforma invoice not found or access denied.'}, status=status.HTTP_404_NOT_FOUND)
 
-        snapshot = DocumentSnapshotService.get_or_create_proforma_snapshot(proforma, user=request.user)
         bypass_cache = request.query_params.get('fresh') == '1'
         watermark = request.query_params.get('watermark') != '0'
-        pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(snapshot, bypass_cache=bypass_cache, watermark=watermark)
+        show_logo = request.query_params.get('logo') != '0'
+
+        snapshot = DocumentSnapshotService.get_or_create_proforma_snapshot(
+            proforma, user=request.user, force_refresh=bypass_cache
+        )
+        pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(
+            snapshot, bypass_cache=bypass_cache, watermark=watermark, show_logo=show_logo
+        )
 
         disposition = 'attachment' if request.query_params.get('download') == '1' else 'inline'
         filename = f"{proforma.proforma_number.replace('/', '_')}.pdf"

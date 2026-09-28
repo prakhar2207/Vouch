@@ -21,6 +21,7 @@ export interface DocumentBrandingConfig {
   accent_color?: string; // e.g. '#0f172a', '#2563eb', '#4f46e5'
   logo_position?: 'left' | 'center';
   logo_height?: number; // e.g. 36 to 80, default 52
+  show_logo?: boolean; // default true
   watermark_enabled?: boolean; // default true
   show_bank_details?: boolean; // default true
   show_upi_qr?: boolean; // default true
@@ -44,6 +45,7 @@ export interface ProformaDocumentSheetProps {
   company: any;
   branding?: DocumentBrandingConfig;
   watermarkOverride?: boolean;
+  logoOverride?: boolean;
   titleOverride?: string;
   legalNoteOverride?: string;
   isPreviewMode?: boolean;
@@ -125,6 +127,7 @@ export default function ProformaDocumentSheet({
   company,
   branding: propBranding,
   watermarkOverride,
+  logoOverride,
   titleOverride,
   legalNoteOverride,
   isPreviewMode = false,
@@ -136,6 +139,7 @@ export default function ProformaDocumentSheet({
       accent_color: '#0f172a',
       logo_position: 'left',
       logo_height: 52,
+      show_logo: true,
       watermark_enabled: true,
       show_bank_details: true,
       show_upi_qr: true,
@@ -151,6 +155,7 @@ export default function ProformaDocumentSheet({
   }, [company?.settings?.document_branding, propBranding]);
 
   const accentColor = branding.accent_color || '#0f172a';
+  const showLogo = logoOverride !== undefined ? logoOverride : (branding.show_logo !== false);
   const showWatermark = watermarkOverride !== undefined ? watermarkOverride : (branding.watermark_enabled !== false);
   const showBankDetails = branding.show_bank_details !== false;
   const showUpiQr = branding.show_upi_qr !== false;
@@ -398,14 +403,14 @@ export default function ProformaDocumentSheet({
             }}
           >
             {/* ═══════════════════════════════════════════════════════════════════ */}
-            {/* WATERMARK LAYER (Centered Company Logo or Emblem Fallback)         */}
+            {/* WATERMARK LAYER (Centered Company Logo or Subtle Angled Text)      */}
             {/* ═══════════════════════════════════════════════════════════════════ */}
             {showWatermark && (
               <div
                 className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden z-0"
                 aria-hidden="true"
               >
-                {logoSrc ? (
+                {showLogo && logoSrc ? (
                   <img
                     crossOrigin="anonymous"
                     src={logoSrc}
@@ -414,8 +419,7 @@ export default function ProformaDocumentSheet({
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center opacity-[0.035] -rotate-12 transform">
-                    <Building2 className="w-44 h-44 text-slate-800 stroke-[1]" />
-                    <span className="text-2xl font-black uppercase tracking-[0.25em] text-slate-800 mt-2 text-center max-w-md">
+                    <span className="text-3xl font-black uppercase tracking-[0.25em] text-slate-800 text-center max-w-md">
                       {company?.name || 'PROFORMA INVOICE'}
                     </span>
                   </div>
@@ -437,30 +441,23 @@ export default function ProformaDocumentSheet({
                       {/* Left: Brand Logo & Seller Identity */}
                       <div className="flex-1 min-w-0">
                         <div className={`flex items-start gap-4 mb-2.5 ${branding.logo_position === 'center' ? 'flex-col items-center text-center' : ''}`}>
-                          {/* Dedicated Logo Container */}
-                          <div 
-                            className="flex items-center justify-start shrink-0"
-                            style={{ 
-                              height: `${branding.logo_height || 52}px`,
-                              maxWidth: '220px' 
-                            }}
-                          >
-                            {logoSrc ? (
+                          {/* Dedicated Logo Container (Only rendered when logo is enabled & available) */}
+                          {showLogo && logoSrc && (
+                            <div 
+                              className="flex items-center justify-start shrink-0"
+                              style={{ 
+                                height: `${branding.logo_height || 52}px`,
+                                maxWidth: '220px' 
+                              }}
+                            >
                               <img
                                 crossOrigin="anonymous"
                                 src={logoSrc}
                                 alt={company?.name || 'Company Logo'}
                                 className="max-h-full max-w-full object-contain"
                               />
-                            ) : (
-                              <div className="h-full px-3 bg-slate-50 border border-slate-200 rounded flex items-center gap-2 text-slate-700">
-                                <Building2 className="w-5 h-5 text-slate-500" />
-                                <span className="text-xs font-bold tracking-tight uppercase">
-                                  {company?.name || 'VOUCH'}
-                                </span>
-                              </div>
-                            )}
-                          </div>
+                            </div>
+                          )}
 
                           <div className="min-w-0">
                             <h2 
