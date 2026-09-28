@@ -98,12 +98,12 @@ class ListCreateProformaAPIView(APIView):
 
     def get(self, request, company_id=None):
         cid = company_id or request.query_params.get('company_id')
-        if not cid:
-            return Response({"error": "company_id is required."}, status=400)
+        try:
+            from apps.accounts.permissions import get_authorized_company
+            company = get_authorized_company(request, cid)
+        except Exception as e:
+            return Response({"error": str(e)}, status=403)
 
-        company = Company.objects.filter(id=cid, users__user=request.user).first()
-        if not company:
-            return Response({"error": "Company not found or unauthorized."}, status=404)
 
         qs = ProformaInvoice.objects.filter(company=company).select_related(
             'party_ledger', 'converted_voucher', 'created_by'
@@ -365,34 +365,59 @@ class ProformaDetailAPIView(APIView):
     permission_classes = [IsAuthenticated, CanCreateSales]
 
     def get(self, request, pk):
-        proforma = ProformaInvoice.objects.filter(
-            id=pk, company__users__user=request.user
-        ).select_related('company', 'party_ledger', 'converted_voucher', 'created_by').first()
+        qs = ProformaInvoice.objects.filter(id=pk).select_related(
+            'company', 'party_ledger', 'converted_voucher', 'created_by'
+        )
+        if not getattr(request.user, 'is_superuser', False):
+            qs = qs.filter(company__users__user=request.user)
+        proforma = qs.first()
+
         if not proforma:
             return Response({"error": "Proforma invoice not found."}, status=404)
 
         data = serialize_proforma(proforma, include_items=True)
+        comp = proforma.company
+
+        sig_url = ''
+        if getattr(comp, 'proprietor_signature', None):
+            try:
+                sig_url = comp.proprietor_signature.url
+            except Exception:
+                sig_url = ''
+        if not sig_url and getattr(comp, 'signature_data', None):
+            sig_url = comp.signature_data
+
         # Add company billing meta for print layout
         data["company_details"] = {
-            "name": proforma.company.name,
-            "gstin": proforma.company.gstin,
-            "pan": getattr(proforma.company, 'pan', ''),
-            "email": getattr(proforma.company, 'email', ''),
-            "phone": getattr(proforma.company, 'phone', ''),
-            "address": getattr(proforma.company, 'address', ''),
+            "name": comp.name,
+            "legal_name": getattr(comp, 'legal_name', '') or comp.name,
+            "gstin": comp.gstin,
+            "pan": getattr(comp, 'pan', ''),
+            "state_code": getattr(comp, 'state_code', ''),
+            "state_name": getattr(comp, 'state_name', ''),
+            "email": getattr(comp, 'email', ''),
+            "phone": getattr(comp, 'phone', ''),
+            "address": getattr(comp, 'address', ''),
+            "city": getattr(comp, 'city', ''),
+            "pincode": getattr(comp, 'pincode', ''),
+            "tagline": getattr(comp, 'tagline', ''),
+            "proprietor_name": getattr(comp, 'proprietor_name', ''),
+            "signature_url": sig_url,
             "bank_details": {
-                "bank_name": getattr(proforma.company, 'bank_name', ''),
-                "account_number": getattr(proforma.company, 'bank_account_number', ''),
-                "ifsc": getattr(proforma.company, 'bank_ifsc', ''),
-                "branch": getattr(proforma.company, 'bank_branch', ''),
+                "bank_name": getattr(comp, 'bank_name', ''),
+                "account_number": getattr(comp, 'bank_account_number', ''),
+                "ifsc": getattr(comp, 'bank_ifsc', ''),
+                "branch": getattr(comp, 'bank_branch', ''),
+                "upi_id": getattr(comp, 'upi_id', '') or getattr(proforma.party_ledger, 'upi_id', ''),
             }
         }
         return Response({"success": True, "data": data})
 
     def put(self, request, pk):
-        proforma = ProformaInvoice.objects.filter(
-            id=pk, company__users__user=request.user
-        ).first()
+        qs = ProformaInvoice.objects.filter(id=pk)
+        if not getattr(request.user, 'is_superuser', False):
+            qs = qs.filter(company__users__user=request.user)
+        proforma = qs.first()
         if not proforma:
             return Response({"error": "Proforma invoice not found."}, status=404)
 
@@ -414,9 +439,10 @@ class ProformaDetailAPIView(APIView):
         return Response({"success": True, "message": "Updated successfully.", "data": serialize_proforma(proforma, include_items=True)})
 
     def delete(self, request, pk):
-        proforma = ProformaInvoice.objects.filter(
-            id=pk, company__users__user=request.user
-        ).first()
+        qs = ProformaInvoice.objects.filter(id=pk)
+        if not getattr(request.user, 'is_superuser', False):
+            qs = qs.filter(company__users__user=request.user)
+        proforma = qs.first()
         if not proforma:
             return Response({"error": "Proforma invoice not found."}, status=404)
 
@@ -426,6 +452,7 @@ class ProformaDetailAPIView(APIView):
         p_num = proforma.proforma_number
         proforma.delete()
         return Response({"success": True, "message": f"Proforma {p_num} deleted."})
+
 
 
 class ConvertProformaToInvoiceAPIView(APIView):
