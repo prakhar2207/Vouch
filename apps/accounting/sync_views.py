@@ -590,3 +590,160 @@ class SyncPushAPIView(APIView):
             'results': processed_commands,
             'errors': errors
         }, status=status.HTTP_200_OK if len(errors) == 0 else status.HTTP_207_MULTI_STATUS)
+
+
+class SyncBootstrapAPIView(APIView):
+    """
+    POST /api/v1/sync/bootstrap/
+    Single-roundtrip initialization payload for Mobile (React Native/Flutter)
+    and Desktop (Tauri/Electron) clients initializing local SQLite / offline storage.
+    
+    Bundles:
+    - Company metadata and tax profile
+    - Active Financial Years
+    - Active Sequence Numbering rules
+    - Full Active Chart of Accounts (Ledgers)
+    - Full Active Inventory Catalog (Products)
+    - Recent vouchers snapshot (last 50)
+    - Server monotonic SyncEvent cursor for seamless delta-sync handoff
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        company_id = request.data.get('company_id') or request.META.get('HTTP_X_COMPANY_ID')
+        if not company_id:
+            return Response({'error': 'company_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        company = get_authorized_company(request, company_id)
+        from apps.accounting.models import SyncEvent, VoucherSequence, FinancialYear
+
+        now_ts = int(timezone.now().timestamp() * 1000)
+
+        # 1. Monotonic Snapshot Cursor
+        latest_event = SyncEvent.objects.filter(company=company).order_by('-id').first()
+        snapshot_cursor = latest_event.id if latest_event else 0
+
+        # 2. Company Profile
+        comp_data = {
+            'id': str(company.id),
+            'name': company.name,
+            'gstin': company.gstin or '',
+            'pan': company.pan or '',
+            'state_code': company.state_code or '',
+            'phone': getattr(company, 'phone', '') or '',
+            'email': getattr(company, 'email', '') or '',
+            'address': getattr(company, 'address', '') or '',
+            'bank_account_number': getattr(company, 'bank_account_number', '') or '',
+            'bank_ifsc': getattr(company, 'bank_ifsc', '') or '',
+            'upi_id': getattr(company, 'upi_id', '') or '',
+            'currency': 'INR',
+            'country': 'IN',
+        }
+
+        # 3. Financial Years
+        fys = FinancialYear.objects.filter(company=company).order_by('start_date')
+        fy_list = [
+            {
+                'id': str(fy.id),
+                'name': fy.name,
+                'code': fy.code,
+                'start_date': str(fy.start_date),
+                'end_date': str(fy.end_date),
+                'is_closed': fy.is_closed,
+            }
+            for fy in fys
+        ]
+
+        # 4. Sequences
+        seqs = VoucherSequence.objects.filter(company=company).select_related('financial_year')
+        seq_list = [
+            {
+                'id': str(s.id),
+                'financial_year_id': str(s.financial_year_id),
+                'voucher_type': s.voucher_type,
+                'method': s.method,
+                'prefix': s.prefix,
+                'suffix': s.suffix,
+                'starting_number': s.starting_number,
+                'last_number': s.last_number,
+                'width': s.width,
+            }
+            for s in seqs
+        ]
+
+        # 5. Ledgers (Active Chart of Accounts)
+        ledgers = Ledger.objects.filter(company=company, is_active=True).select_related('group')
+        ledger_list = [
+            {
+                'id': str(l.id),
+                'name': l.name,
+                'group_id': str(l.group_id) if l.group_id else None,
+                'group_name': l.group.name if l.group else '',
+                'group_nature': l.group.nature if l.group else 'ASSET',
+                'ledger_type': l.ledger_type or 'GENERAL',
+                'gstin': l.gstin or '',
+                'state_code': l.state_code or '',
+                'current_balance': str(l.current_balance or '0.00'),
+                'normal_balance': l.normal_balance,
+                'phone': l.phone or '',
+                'email': l.email or '',
+                'address': l.address or '',
+                'credit_limit': str(l.credit_limit or '0.00') if l.credit_limit else None,
+                'credit_period_days': l.credit_period_days or 0,
+            }
+            for l in ledgers
+        ]
+
+        # 6. Products (Active Catalog)
+        products = Product.objects.filter(company=company, is_active=True)
+        product_list = [
+            {
+                'id': str(p.id),
+                'name': p.name,
+                'sku': p.sku or '',
+                'hsn_code': getattr(p, 'hsn_code', '') or '',
+                'unit': getattr(p, 'unit', 'PCS') or 'PCS',
+                'purchase_price': str(getattr(p, 'purchase_price', '0.00') or '0.00'),
+                'selling_price': str(getattr(p, 'selling_price', '0.00') or '0.00'),
+                'gst_rate': str(getattr(p, 'gst_rate', '0.00') or '0.00'),
+                'current_stock': str(getattr(p, 'stock_quantity', '0.00') or '0.00'),
+                'reorder_level': str(getattr(p, 'reorder_level', '0.00') or '0.00'),
+            }
+            for p in products
+        ]
+
+        # 7. Recent Vouchers (last 50 for quick offline search & history)
+        recent_vchs = Voucher.objects.filter(company=company).select_related('party_ledger').defer('attachment_data', 'attachment_mime').order_by('-voucher_date', '-created_at')[:50]
+        vch_list = [
+            {
+                'id': str(v.id),
+                'voucher_type': v.voucher_type,
+                'voucher_number': v.voucher_number,
+                'voucher_date': str(v.voucher_date),
+                'total_amount': str(v.total_amount or '0.00'),
+                'status': v.status,
+                'party_ledger_id': str(v.party_ledger_id) if v.party_ledger_id else None,
+                'party_name': v.party_ledger.name if v.party_ledger else (v.buyer_name or ''),
+            }
+            for v in recent_vchs
+        ]
+
+        return Response({
+            'success': True,
+            'data': {
+                'server_timestamp': now_ts,
+                'snapshot_cursor': snapshot_cursor,
+                'company': comp_data,
+                'financial_years': fy_list,
+                'sequences': seq_list,
+                'ledgers': ledger_list,
+                'products': product_list,
+                'recent_vouchers': vch_list,
+                'stats': {
+                    'total_ledgers': len(ledger_list),
+                    'total_products': len(product_list),
+                    'total_sequences': len(seq_list),
+                }
+            }
+        }, status=status.HTTP_200_OK)
+

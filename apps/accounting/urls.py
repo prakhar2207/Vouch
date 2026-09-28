@@ -107,6 +107,7 @@ urlpatterns = [
     path('health/findings/<uuid:pk>/fix/', apps.accounting.health_views.FindingFixExecuteAPIView.as_view(), name='finding_fix_execute'),
 
     # Offline-First Batch Sync (Accounting Namespace)
+    path('sync/bootstrap/', apps.accounting.sync_views.SyncBootstrapAPIView.as_view(), name='accounting_sync_bootstrap'),
     path('sync/pull/', apps.accounting.sync_views.SyncPullAPIView.as_view(), name='accounting_sync_pull'),
     path('sync/push/', apps.accounting.sync_views.SyncPushAPIView.as_view(), name='accounting_sync_push'),
 ]

@@ -100,6 +100,7 @@ urlpatterns = [
     path('api/v1/superadmin/', include('apps.superadmin.urls')),
 
     # Offline-First Batch Sync Endpoints
+    path('api/v1/sync/bootstrap/', apps.accounting.sync_views.SyncBootstrapAPIView.as_view(), name='api_sync_bootstrap'),
     path('api/v1/sync/pull/', apps.accounting.sync_views.SyncPullAPIView.as_view(), name='api_sync_pull'),
     path('api/v1/sync/push/', apps.accounting.sync_views.SyncPushAPIView.as_view(), name='api_sync_push'),
 

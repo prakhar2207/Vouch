@@ -114,7 +114,43 @@ class PeriodBalanceService:
         d_from = PeriodBalanceService.parse_date(from_date) or datetime.date(2000, 1, 1)
         d_to = PeriodBalanceService.parse_date(to_date) or datetime.date(2099, 12, 31)
 
-        ledgers = Ledger.objects.filter(company=company, is_active=True).select_related('group').order_by('group__nature', 'name')
+        ledgers = list(Ledger.objects.filter(company=company, is_active=True).select_related('group').order_by('group__nature', 'name'))
+
+        # Batch 1: Identify which ledgers have posted OPENING vouchers
+        ledgers_with_opening = set(
+            LedgerEntry.objects.filter(
+                voucher__company=company,
+                voucher__status='POSTED',
+                voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
+            ).values_list('ledger_id', flat=True).distinct()
+        )
+
+        # Batch 2: Single-pass group-by for prior movements (t < d_from)
+        prior_aggs = {
+            row['ledger_id']: (row['prior_dr'] or Decimal('0.00'), row['prior_cr'] or Decimal('0.00'))
+            for row in LedgerEntry.objects.filter(
+                voucher__company=company,
+                voucher__voucher_date__lt=d_from,
+                voucher__status='POSTED'
+            ).values('ledger_id').annotate(
+                prior_dr=Sum('debit_amount'),
+                prior_cr=Sum('credit_amount')
+            )
+        }
+
+        # Batch 3: Single-pass group-by for period movements (d_from <= t <= d_to)
+        period_aggs = {
+            row['ledger_id']: (row['period_dr'] or Decimal('0.00'), row['period_cr'] or Decimal('0.00'))
+            for row in LedgerEntry.objects.filter(
+                voucher__company=company,
+                voucher__voucher_date__gte=d_from,
+                voucher__voucher_date__lte=d_to,
+                voucher__status='POSTED'
+            ).values('ledger_id').annotate(
+                period_dr=Sum('debit_amount'),
+                period_cr=Sum('credit_amount')
+            )
+        }
 
         rows = []
         tot_op_dr = Decimal('0.00')
@@ -125,26 +161,55 @@ class PeriodBalanceService:
         tot_cl_cr = Decimal('0.00')
 
         for ledger in ledgers:
-            data = PeriodBalanceService.calculate_ledger_period_balance(ledger, d_from, d_to)
-            op_val = Decimal(data['opening_balance'])
-            cl_val = Decimal(data['closing_balance'])
-            p_dr = Decimal(data['period_debit'])
-            p_cr = Decimal(data['period_credit'])
+            has_op = ledger.id in ledgers_with_opening
+            initial_net = Decimal('0.00')
+            if not has_op and (not ledger.opening_date or ledger.opening_date <= d_from):
+                if ledger.opening_balance_type == 'DEBIT':
+                    initial_net = ledger.opening_balance or Decimal('0.00')
+                else:
+                    initial_net = -(ledger.opening_balance or Decimal('0.00'))
 
-            if data['opening_type'] == 'DR':
-                tot_op_dr += op_val
+            p_dr, p_cr = prior_aggs.get(ledger.id, (Decimal('0.00'), Decimal('0.00')))
+            net_opening = initial_net + (p_dr - p_cr)
+
+            if net_opening >= Decimal('0.00'):
+                opening_bal = net_opening
+                opening_type = 'DR'
+                tot_op_dr += opening_bal
             else:
-                tot_op_cr += op_val
+                opening_bal = abs(net_opening)
+                opening_type = 'CR'
+                tot_op_cr += opening_bal
 
-            tot_period_dr += p_dr
-            tot_period_cr += p_cr
+            per_dr, per_cr = period_aggs.get(ledger.id, (Decimal('0.00'), Decimal('0.00')))
+            tot_period_dr += per_dr
+            tot_period_cr += per_cr
 
-            if data['closing_type'] == 'DR':
-                tot_cl_dr += cl_val
+            net_closing = net_opening + (per_dr - per_cr)
+            if net_closing >= Decimal('0.00'):
+                closing_bal = net_closing
+                closing_type = 'DR'
+                tot_cl_dr += closing_bal
             else:
-                tot_cl_cr += cl_val
+                closing_bal = abs(net_closing)
+                closing_type = 'CR'
+                tot_cl_cr += closing_bal
 
-            rows.append(data)
+            rows.append({
+                "ledger_id": str(ledger.id),
+                "ledger_name": ledger.name,
+                "group_name": ledger.group.name if ledger.group else "",
+                "group_nature": ledger.group.nature if ledger.group else "ASSET",
+                "from_date": d_from.strftime('%Y-%m-%d') if d_from else "",
+                "to_date": d_to.strftime('%Y-%m-%d') if d_to else "",
+                "opening_balance": str(opening_bal),
+                "opening_type": opening_type,
+                "period_debit": str(per_dr),
+                "period_credit": str(per_cr),
+                "closing_balance": str(closing_bal),
+                "closing_type": closing_type,
+                "raw_net_closing": net_closing
+            })
 
         return {
             "company_id": str(company.id),

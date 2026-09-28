@@ -81,6 +81,8 @@ MIDDLEWARE = [
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'apps.common.client_context.ClientContextMiddleware',
+    'apps.common.idempotency.IdempotencyMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -225,8 +227,14 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'dnt',
     'cache-control',
     'x-confirmation-password',
+    'x-idempotency-key',
+    'idempotency-key',
+    'x-client-type',
+    'x-app-version',
+    'x-device-id',
+    'x-sync-cursor',
 ]
-CORS_EXPOSE_HEADERS = ['*']
+CORS_EXPOSE_HEADERS = ['*', 'X-Idempotent-Replay', 'X-Idempotency-Key', 'X-Server-Version', 'X-API-Contract']
 
 CSRF_TRUSTED_ORIGINS = [
     'https://vouch-pi-one.vercel.app',
