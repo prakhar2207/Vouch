@@ -153,3 +153,44 @@ class DocumentSnapshotService:
             created_by=user,
         )
         return snapshot
+
+    @classmethod
+    def get_or_create_proforma_snapshot(cls, proforma, user=None, force_refresh: bool = False) -> DocumentSnapshot:
+        """
+        Retrieves or creates an immutable DocumentSnapshot for a ProformaInvoice.
+        This enables the standard share token infrastructure to work for proformas.
+        """
+        from apps.documents.dto.proforma_dto import build_proforma_dto
+
+        CURRENT_TEMPLATE_VERSION = '1.0'
+        source_id = str(proforma.id)
+
+        if not force_refresh:
+            existing = DocumentSnapshot.objects.filter(
+                company=proforma.company,
+                source_type='ProformaInvoice',
+                source_id=source_id,
+            ).first()
+            if existing and existing.template_version == CURRENT_TEMPLATE_VERSION:
+                return existing
+
+        dto = build_proforma_dto(proforma)
+
+        with transaction.atomic():
+            snapshot, _ = DocumentSnapshot.objects.update_or_create(
+                company=proforma.company,
+                source_type='ProformaInvoice',
+                source_id=source_id,
+                defaults={
+                    'document_type': 'PROFORMA_INVOICE',
+                    'document_number': proforma.proforma_number,
+                    'document_date': proforma.date,
+                    'total_amount': proforma.total_amount,
+                    'snapshot_json': dto,
+                    'template_code': 'proforma_invoice',
+                    'template_version': CURRENT_TEMPLATE_VERSION,
+                    'created_by': user or proforma.created_by,
+                }
+            )
+        return snapshot
+

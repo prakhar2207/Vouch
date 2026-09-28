@@ -278,3 +278,44 @@ class LedgerStatementPDFExportAPIView(APIView):
         response['Content-Disposition'] = f'inline; filename="{filename}"'
         response['Content-Length'] = len(pdf_bytes)
         return response
+
+
+class ProformaShareAPIView(APIView):
+    """
+    Generates a public, tokenized share link for a ProformaInvoice.
+    The resulting share URL is accessible without authentication via
+    PublicShareResolveAPIView + PublicShareDownloadPDFAPIView.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, proforma_id):
+        from apps.accounting.models_proforma import ProformaInvoice
+
+        proforma = ProformaInvoice.objects.filter(
+            id=proforma_id, company__users__user=request.user
+        ).select_related('company', 'party_ledger').prefetch_related('items').first()
+
+        if not proforma:
+            return Response({'error': 'Proforma invoice not found or access denied.'}, status=status.HTTP_404_NOT_FOUND)
+
+        expires_in_days = int(request.data.get('expires_in_days', 30))
+
+        snapshot = DocumentSnapshotService.get_or_create_proforma_snapshot(proforma, user=request.user)
+
+        try:
+            raw_token, share = DocumentShareService.create_share(
+                snapshot, user=request.user, expires_in_days=expires_in_days
+            )
+            share_url = DocumentShareService.build_share_url(raw_token, share.share_type)
+
+            return Response({
+                'success': True,
+                'share_id': str(share.id),
+                'share_type': share.share_type,
+                'raw_token': raw_token,
+                'share_url': share_url,
+                'expires_at': share.expires_at,
+            })
+        except PermissionDenied as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+

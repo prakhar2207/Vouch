@@ -30,6 +30,8 @@ class NumberedCanvas(canvas.Canvas):
     Two-pass canvas that counts total pages and writes
     'This is a Computer Generated Invoice' and 'Page X of Y' on every page.
     """
+    footer_text = "This is a Computer Generated Invoice"
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._saved_page_states = []
@@ -52,7 +54,8 @@ class NumberedCanvas(canvas.Canvas):
         self.setFont(fnt, 7.5)
         self.setFillColor(colors.HexColor('#64748b'))
         # Margin X = 18.8, Width = 558.0 -> Right X = 576.8
-        self.drawString(18.8, 18, "This is a Computer Generated Invoice")
+        footer_msg = getattr(self, 'footer_text', self.__class__.footer_text)
+        self.drawString(18.8, 18, footer_msg)
         self.drawRightString(576.8, 18, f"Page {self._pageNumber} of {total_pages}")
         self.restoreState()
 
@@ -118,6 +121,23 @@ class InvoicePDFRenderer:
             f_semi = 'Helvetica-Bold'
             f_black = 'Helvetica-Bold'
 
+        # Document Type & Mode Detection
+        is_proforma = bool(dto.get('is_proforma') or dto.get('document_type') == 'PROFORMA_INVOICE' or doc_meta.get('document_type') in ['PROFORMA INVOICE', 'QUOTATION'])
+        doc_type_label = dto.get('document_type_label') or doc_meta.get('document_type') or ('PROFORMA INVOICE' if is_proforma else 'TAX INVOICE')
+
+        if is_proforma:
+            header_title_text = f"<u>{doc_type_label.upper()}</u>"
+            sub_copy_text = "Commercial Quotation" if 'QUOT' in doc_type_label.upper() else "Commercial Proforma"
+            inv_no_label = "Quotation No." if 'QUOT' in doc_type_label.upper() else "Proforma No."
+            canvas_footer_text = f"This is a {doc_type_label} — Not a GST Tax Invoice"
+            rcvr_sig_text = "Customer Acceptance :"
+        else:
+            header_title_text = "<u>TAX INVOICE</u>"
+            sub_copy_text = "Original For Recipient"
+            inv_no_label = "Invoice No."
+            canvas_footer_text = "This is a Computer Generated Invoice"
+            rcvr_sig_text = "Receiver's Signature :"
+
         # Typography Styles
         s_gstin = ParagraphStyle('GSTIN', fontName=f_bold, fontSize=9.0, leading=11, textColor=colors.black)
         s_orig = ParagraphStyle('Orig', fontName=f_bold_italic, fontSize=9.0, leading=11, alignment=TA_RIGHT, textColor=colors.black)
@@ -132,9 +152,9 @@ class InvoicePDFRenderer:
         header_rows = [
             [
                 Paragraph(f"GSTIN : <b>{gstin_str}</b>", s_gstin),
-                Paragraph("Original For Recipient", s_orig)
+                Paragraph(sub_copy_text, s_orig)
             ],
-            [Paragraph("<u>TAX INVOICE</u>", s_inv_title), ""],
+            [Paragraph(header_title_text, s_inv_title), ""],
             [Paragraph(seller.get('name', ''), s_comp_name), ""],
             [Paragraph(seller.get('address', ''), s_comp_addr), ""],
             [Paragraph(f"Ph: {seller.get('phone', 'N/A')} | Email: {seller.get('email', 'N/A')}", s_comp_contact), ""],
@@ -173,10 +193,11 @@ class InvoicePDFRenderer:
         transport = doc_meta.get('transport', 'Road')
         vehicle_no = doc_meta.get('vehicle_no', 'N/A')
         ewb_no = doc_meta.get('eway_bill_no', 'N/A')
+        valid_until = doc_meta.get('valid_until')
 
         meta_rows = [
             [
-                Paragraph("Invoice No.", s_meta_lbl),
+                Paragraph(inv_no_label, s_meta_lbl),
                 Paragraph(f": <b>{inv_no}</b>", s_meta_val_b),
                 Paragraph("GR/RR No.", s_meta_lbl),
                 Paragraph(f": {gr_rr}", s_meta_val),
@@ -194,8 +215,8 @@ class InvoicePDFRenderer:
                 Paragraph(f": <b>{vehicle_no}</b>", s_meta_val_b),
             ],
             [
-                Paragraph("Reverse Charge", s_meta_lbl),
-                Paragraph(": N", s_meta_val),
+                Paragraph("Valid Until" if (is_proforma and valid_until) else "Reverse Charge", s_meta_lbl),
+                Paragraph(f": <b>{valid_until}</b>" if (is_proforma and valid_until) else ": N", s_meta_val_b if (is_proforma and valid_until) else s_meta_val),
                 Paragraph("E-Way Bill No.", s_meta_lbl),
                 Paragraph(f": <b>{ewb_no}</b>", s_meta_val_b),
             ],
@@ -576,6 +597,17 @@ class InvoicePDFRenderer:
             f"Subject to '{city}' Jurisdiction only."
         ])
 
+        if is_proforma:
+            custom_terms = doc_meta.get('terms_and_conditions') or dto.get('terms_and_conditions') or doc_meta.get('narration')
+            if custom_terms and isinstance(custom_terms, str) and custom_terms.strip():
+                terms_list = [t.strip() for t in custom_terms.split('\n') if t.strip()][:4]
+            else:
+                terms_list = [
+                    "Prices valid for 15 days from date of issue.",
+                    "100% advance payment required prior to dispatch.",
+                    f"Subject to '{city}' Jurisdiction only."
+                ]
+
         s_terms_title = ParagraphStyle('TermsT', fontName=f_bold, fontSize=8.2, leading=10.5, textColor=colors.black)
         s_terms_eoe = ParagraphStyle('TermsEOE', fontName=f_bold, fontSize=9.0, leading=11.5, textColor=colors.black)
         s_terms_item = ParagraphStyle('TermsItem', fontName=f_norm, fontSize=9.0, leading=12.0, textColor=colors.black)
@@ -591,7 +623,7 @@ class InvoicePDFRenderer:
         # QR Code
         qr_img = None
         try:
-            upi_url = dto.get('upi_url', '')
+            upi_url = dto.get('upi_url') or seller.get('bank', {}).get('upi_url') or ''
             if upi_url:
                 qr = qrcode.QRCode(version=1, box_size=3, border=0)
                 qr.add_data(upi_url)
@@ -605,8 +637,9 @@ class InvoicePDFRenderer:
             logger.warning(f"Could not generate QR code: {e}")
 
         s_qr_lbl = ParagraphStyle('QRLbl', fontName=f_bold, fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
+        qr_title = "UPI Payment QR" if (is_proforma or upi_url) else "E-Invoice QR Code"
         qr_cell = [
-            Paragraph("E-Invoice QR Code", s_qr_lbl),
+            Paragraph(qr_title, s_qr_lbl),
             Spacer(1, 6),
             qr_img if qr_img else Paragraph("", s_terms_item),
         ]
@@ -638,7 +671,7 @@ class InvoicePDFRenderer:
         sig_inner.append(Paragraph("Authorised Signatory", s_auth_bot))
 
         sig_subtable = Table([
-            [Paragraph("Receiver's Signature :", s_rcvr)],
+            [Paragraph(rcvr_sig_text, s_rcvr)],
             [sig_inner]
         ], colWidths=[196.6], rowHeights=[34.5, 98.3])
         sig_subtable.setStyle(TableStyle([
@@ -715,6 +748,9 @@ class InvoicePDFRenderer:
             bank_table,
         ]
 
-        doc.build(elements, canvasmaker=NumberedCanvas)
+        class DocumentNumberedCanvas(NumberedCanvas):
+            footer_text = canvas_footer_text
+
+        doc.build(elements, canvasmaker=DocumentNumberedCanvas)
         buffer.seek(0)
         return buffer.getvalue()

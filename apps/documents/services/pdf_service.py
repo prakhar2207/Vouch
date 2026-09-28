@@ -42,7 +42,7 @@ class DocumentPDFService:
         dto = snapshot.snapshot_json
         doc_type = snapshot.document_type
 
-        if doc_type in ['SALES_INVOICE', 'PURCHASE_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE']:
+        if doc_type in ['SALES_INVOICE', 'PURCHASE_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE', 'PROFORMA_INVOICE']:
             pdf_bytes = InvoicePDFRenderer.render(dto)
         elif doc_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL']:
             pdf_bytes = VoucherPDFRenderer.render(dto)

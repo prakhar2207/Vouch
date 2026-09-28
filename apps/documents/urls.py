@@ -14,8 +14,12 @@ urlpatterns = [
     # Financial Reports PDF Export
     path('reports/<str:report_type>/pdf/', views.ReportPDFExportAPIView.as_view(), name='doc_report_pdf'),
 
+    # Proforma Invoice Share
+    path('proforma/<uuid:proforma_id>/share/', views.ProformaShareAPIView.as_view(), name='doc_proforma_share'),
+
     # Public Secure Tokenized Sharing & EDI Handshake Endpoints
     path('share/resolve/<str:token>/', views.PublicShareResolveAPIView.as_view(), name='doc_share_resolve'),
     path('share/download/<str:token>/', views.PublicShareDownloadPDFAPIView.as_view(), name='doc_share_download'),
     path('share/import/<str:token>/', views.ShareEDIImportAPIView.as_view(), name='doc_share_edi_import'),
 ]
+

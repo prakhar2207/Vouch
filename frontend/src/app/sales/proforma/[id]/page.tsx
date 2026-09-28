@@ -22,9 +22,7 @@ import {
   MessageCircle,
   Copy,
   Check,
-  Building2,
   QrCode,
-  ShieldCheck
 } from 'lucide-react';
 
 const STATE_NAMES: Record<string, string> = {
@@ -96,6 +94,8 @@ export default function ProformaDetailPage() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [isGeneratingShareLink, setIsGeneratingShareLink] = useState(false);
 
   const fetchDoc = useCallback(async () => {
     if (!docId) return;
@@ -325,7 +325,7 @@ export default function ProformaDetailPage() {
       clone.style.boxShadow = 'none';
       clone.style.borderRadius = '0';
       clone.style.border = 'none';
-      clone.style.padding = '30px 38px'; // Proportional A4 margins (approx 8mm 10mm)
+      clone.style.padding = '30px 38px';
       clone.style.display = 'flex';
       clone.style.flexDirection = 'column';
       clone.style.justifyContent = 'space-between';
@@ -333,7 +333,7 @@ export default function ProformaDetailPage() {
       sandbox.appendChild(clone);
       document.body.appendChild(sandbox);
 
-      // Normalizes any Tailwind v4 OKLAB / OKLCH / color-mix colors to standard RGB/HEX using canvas context
+      // Normalizes any Tailwind v4 OKLAB / OKLCH / color-mix colors to standard RGB/HEX
       const canvasHelper = document.createElement('canvas');
       canvasHelper.width = 1;
       canvasHelper.height = 1;
@@ -347,7 +347,7 @@ export default function ProformaDetailPage() {
           try {
             ctx.fillStyle = '#000000';
             ctx.fillStyle = match;
-            return ctx.fillStyle; // Converts to #rrggbb or rgb(...) in browser
+            return ctx.fillStyle;
           } catch {
             return '#0f172a';
           }
@@ -431,7 +431,6 @@ export default function ProformaDetailPage() {
       const a4Height = 297;
 
       if (!isMultiPageExpected) {
-        // Strict single page A4
         pdf.addImage(imgData, 'PNG', 0, 0, a4Width, a4Height);
       } else {
         const imgHeight = (canvas.height * a4Width) / canvas.width;
@@ -459,7 +458,7 @@ export default function ProformaDetailPage() {
     }
   };
 
-  const handleShareWhatsApp = () => {
+  const handleShareWhatsApp = async () => {
     if (!doc) return;
     const docTitle = isPI ? 'Proforma Invoice' : 'Commercial Quotation';
     const partyName = doc.buyer_name || doc.party_name || 'Valued Customer';
@@ -467,6 +466,10 @@ export default function ProformaDetailPage() {
     
     let rawPhone = (doc.buyer_phone || '').replace(/[^0-9]/g, '');
     if (rawPhone.length === 10) rawPhone = '91' + rawPhone;
+
+    // Get public share URL (generates if needed)
+    const publicUrl = await handleGenerateShareLink();
+    const shareLink = publicUrl || (typeof window !== 'undefined' ? window.location.href : '');
 
     const message = 
       `*${docTitle.toUpperCase()} - ${company.name || 'Our Company'}*\n\n` +
@@ -476,7 +479,7 @@ export default function ProformaDetailPage() {
       `📅 *Date:* ${doc.date}\n` +
       (doc.valid_until ? `⏳ *Valid Until:* ${doc.valid_until}\n` : '') +
       `💰 *Total Amount:* ₹${amountStr}\n\n` +
-      `View and verify document:\n${typeof window !== 'undefined' ? window.location.href : ''}\n\n` +
+      `View & Download Document (public link):\n${shareLink}\n\n` +
       `*Note:* This is a Proforma Invoice / Commercial Quotation and NOT a GST Tax Invoice.`;
 
     const waUrl = rawPhone
@@ -486,13 +489,36 @@ export default function ProformaDetailPage() {
     window.open(waUrl, '_blank');
   };
 
-  const handleCopyLink = () => {
-    if (typeof window !== 'undefined') {
-      navigator.clipboard.writeText(window.location.href);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2000);
-      toast.success('Link Copied', 'Quotation link copied to clipboard');
+  const handleGenerateShareLink = async (): Promise<string> => {
+    if (shareUrl) return shareUrl;
+    setIsGeneratingShareLink(true);
+    try {
+      const token = getAccessToken();
+      const headers = { Authorization: `Bearer ${token}` };
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/documents/proforma/${doc!.id}/share/`,
+        { expires_in_days: 30 },
+        { headers }
+      );
+      const url: string = res.data.share_url || '';
+      setShareUrl(url);
+      return url;
+    } catch (err: any) {
+      console.error('Share link error:', err);
+      toast.error('Share Link Failed', err.response?.data?.error || 'Could not generate a public share link.');
+      return '';
+    } finally {
+      setIsGeneratingShareLink(false);
     }
+  };
+
+  const handleCopyLink = async () => {
+    const url = await handleGenerateShareLink();
+    if (!url) return;
+    navigator.clipboard.writeText(url);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+    toast.success('Public Link Copied', 'Anyone with this link can view the document (valid 30 days)');
   };
 
   if (loading) {
@@ -527,7 +553,7 @@ export default function ProformaDetailPage() {
 
   return (
     <DashboardLayout>
-      {/* Strict Print CSS: Ensures Zero Header/Footer Chrome & Strict Single-Page A4 Geometry */}
+      {/* Strict Print CSS */}
       <style>{`
         @media print {
           @page {
@@ -543,7 +569,7 @@ export default function ProformaDetailPage() {
             margin: 0 !important;
             padding: 0 !important;
             background: #ffffff !important;
-            color: #0f172a !important;
+            color: #1a1a2e !important;
             width: 210mm !important;
             height: ${isMultiPageExpected ? 'auto' : '297mm'} !important;
             max-height: ${isMultiPageExpected ? 'none' : '297mm'} !important;
@@ -588,10 +614,9 @@ export default function ProformaDetailPage() {
 
       <div className="max-w-5xl mx-auto space-y-4 pb-20 print:p-0 print:m-0 print:pb-0 print:space-y-0">
         
-        {/* Action Header (Completely Hidden in Print Mode) */}
+        {/* Action Header (Hidden in Print) */}
         <div className="print:hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-card/70 backdrop-blur-md border border-border p-3.5 rounded-2xl shadow-xs">
           
-          {/* Left: Navigation and Document Badge */}
           <div className="flex items-center gap-3">
             <Link
               href="/sales/proforma"
@@ -628,10 +653,7 @@ export default function ProformaDetailPage() {
             </div>
           </div>
 
-          {/* Right: Actions (Convert, Share, Download, Print) */}
           <div className="flex items-center gap-2 flex-wrap w-full md:w-auto justify-end">
-            
-            {/* Convert to GST Tax Invoice */}
             {!isConverted ? (
               <button
                 type="button"
@@ -657,7 +679,6 @@ export default function ProformaDetailPage() {
               </Link>
             )}
 
-            {/* Quick Status Mark */}
             {!isConverted && doc.status !== 'SENT' && (
               <button
                 type="button"
@@ -682,17 +703,22 @@ export default function ProformaDetailPage() {
               </button>
             )}
 
-            {/* Copy Link */}
             <button
               type="button"
               onClick={handleCopyLink}
-              className="p-1.5 bg-card hover:bg-muted border border-border text-foreground rounded-xl transition-colors cursor-pointer"
-              title="Copy Quotation Link"
+              disabled={isGeneratingShareLink}
+              className="p-1.5 bg-card hover:bg-muted border border-border text-foreground rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+              title={shareUrl ? 'Copy Public Link' : 'Generate & Copy Public Share Link'}
             >
-              {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
+              {isGeneratingShareLink ? (
+                <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" />
+              ) : copiedLink ? (
+                <Check className="w-3.5 h-3.5 text-emerald-500" />
+              ) : (
+                <Copy className="w-3.5 h-3.5 text-muted-foreground" />
+              )}
             </button>
 
-            {/* WhatsApp Share */}
             <button
               type="button"
               onClick={handleShareWhatsApp}
@@ -703,7 +729,6 @@ export default function ProformaDetailPage() {
               <span>WhatsApp</span>
             </button>
 
-            {/* Direct PDF Download */}
             <button
               type="button"
               onClick={handleDownloadPdf}
@@ -719,7 +744,6 @@ export default function ProformaDetailPage() {
               <span>Download PDF</span>
             </button>
 
-            {/* Browser Print / Clean Print */}
             <button
               type="button"
               onClick={() => window.print()}
@@ -732,304 +756,220 @@ export default function ProformaDetailPage() {
           </div>
         </div>
 
-        {/* ========================================================================= */}
-        {/* ULTRA-PREMIUM MODERN A4 PROFORMA INVOICE SHEET                            */}
-        {/* Clean, Light, Professional Enterprise Standard (Selling Point Aesthetic)  */}
-        {/* ========================================================================= */}
+        {/* ═══════════════════════════════════════════════════════════════════ */}
+        {/* PREMIUM A4 PROFORMA INVOICE — Dark header, elegant tables        */}
+        {/* ═══════════════════════════════════════════════════════════════════ */}
         <div className="w-full overflow-x-auto p-2 sm:p-6 flex justify-center bg-slate-100/80 dark:bg-slate-950/40 print:bg-white print:p-0 print:m-0 print:overflow-visible">
-          <div 
+          <div
             id="proforma-sheet"
-            className="w-[210mm] max-w-[210mm] shrink-0 min-h-[297mm] bg-white text-slate-900 p-8 sm:p-9 flex flex-col justify-between mx-auto font-sans border border-slate-200/90 rounded-2xl shadow-xl transition-all"
+            className="w-[210mm] max-w-[210mm] shrink-0 min-h-[297mm] bg-white text-slate-800 flex flex-col mx-auto font-sans shadow-2xl print:shadow-none print:border-none"
             style={{ boxSizing: 'border-box' }}
           >
-            {/* Top Section */}
+            {/* Top Content */}
             <div className="flex-1 flex flex-col">
-              
-              {/* Header Letterhead: Brand Logo / Company Details (Left) & Document Meta (Right) */}
-              <div className="flex justify-between items-start gap-4 pb-4 print:pb-3 border-b border-slate-200">
-                
-                {/* Left: Brand Identity */}
-                <div className="max-w-[460px] space-y-1">
-                  {/* Dynamic Brand Logo (Saved in DB, auto-compressed, sharp on print/PDF) */}
-                  {logoSrc ? (
-                    <div className="mb-2.5">
-                      <img 
-                        crossOrigin="anonymous"
-                        src={logoSrc} 
-                        alt="Company Logo" 
-                        className="max-h-14 max-w-[220px] object-contain object-left"
-                        loading="lazy"
-                        onError={(e) => {
-                          (e.target as HTMLElement).style.display = 'none';
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-base">
-                        {(company.name || 'V')[0]?.toUpperCase()}
+
+              {/* ── HEADER BAND ── */}
+              <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 60%, #0f172a 100%)', padding: '28px 36px 22px 36px', position: 'relative', overflow: 'hidden' }}>
+                <div style={{ position: 'absolute', top: -40, right: -40, width: 160, height: 160, borderRadius: '50%', background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
+                <div style={{ position: 'absolute', bottom: -20, left: '42%', width: 80, height: 80, borderRadius: '50%', background: 'rgba(255,255,255,0.03)', pointerEvents: 'none' }} />
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', position: 'relative' }}>
+                  {/* Left: Logo + Company */}
+                  <div style={{ maxWidth: '58%' }}>
+                    {logoSrc ? (
+                      <div style={{ marginBottom: 10 }}>
+                        <img crossOrigin="anonymous" src={logoSrc} alt="Logo" style={{ maxHeight: 40, maxWidth: 160, objectFit: 'contain', objectPosition: 'left', filter: 'brightness(0) invert(1)', opacity: 0.92 }} onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }} />
                       </div>
-                      <span className="text-[10px] font-bold tracking-widest text-slate-400 uppercase">ENTERPRISE QUOTATION</span>
+                    ) : null}
+                    <div style={{ fontSize: 20, fontWeight: 800, color: '#ffffff', letterSpacing: '-0.02em', lineHeight: 1.15 }}>
+                      {company.name || 'Company Name'}
                     </div>
-                  )}
-
-                  <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight leading-snug">
-                    {company.name || 'Company Name'}
-                  </h1>
-                  {company.legal_name && company.legal_name !== company.name && (
-                    <p className="text-[11px] text-slate-500 font-medium leading-none">
-                      Legal Name: {company.legal_name}
-                    </p>
-                  )}
-                  {company.tagline && (
-                    <p className="text-[10.5px] text-slate-500 italic font-medium">
-                      {company.tagline}
-                    </p>
-                  )}
-
-                  {company.address && (
-                    <p className="text-[10.5px] text-slate-600 leading-relaxed pt-0.5">
-                      {company.address}{company.city ? `, ${company.city}` : ''}{company.state_name ? `, ${company.state_name}` : ''}{company.pincode ? ` - ${company.pincode}` : ''}
-                    </p>
-                  )}
-
-                  {/* Tax & Contact Pills */}
-                  <div className="pt-1.5 flex flex-wrap gap-1.5 text-[10px] font-mono text-slate-700">
-                    {company.gstin && (
-                      <span className="px-2 py-0.5 bg-slate-100 rounded border border-slate-200/80 font-bold">
-                        GSTIN: <strong className="text-slate-900">{company.gstin}</strong>
-                      </span>
+                    {company.legal_name && company.legal_name !== company.name && (
+                      <div style={{ fontSize: 9, color: '#94a3b8', fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase' as const, marginTop: 2 }}>{company.legal_name}</div>
                     )}
-                    {company.pan && (
-                      <span className="px-2 py-0.5 bg-slate-100 rounded border border-slate-200/80">
-                        PAN: <strong>{company.pan}</strong>
-                      </span>
-                    )}
-                    {company.phone && (
-                      <span className="px-2 py-0.5 bg-slate-50 rounded border border-slate-200/80 font-sans">
-                        Tel: {company.phone}
-                      </span>
-                    )}
-                    {company.email && (
-                      <span className="px-2 py-0.5 bg-slate-50 rounded border border-slate-200/80 font-sans">
-                        Email: {company.email}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Right: Document Identification & Validity */}
-                <div className="text-right space-y-2 shrink-0">
-                  <div>
-                    <span className="inline-block px-3 py-1 rounded-lg text-xs font-black tracking-wider uppercase bg-slate-900 text-white">
-                      {isPI ? 'PROFORMA INVOICE' : 'COMMERCIAL QUOTATION'}
-                    </span>
-                    <p className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider mt-1">
-                      Pre-GST Commercial Estimate
-                    </p>
-                  </div>
-
-                  <div className="text-lg font-black font-mono text-slate-900 tracking-tight">
-                    {doc.proforma_number}
-                  </div>
-
-                  <div className="text-[11px] text-slate-700 font-mono space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 inline-block text-left min-w-[210px]">
-                    <div className="flex justify-between gap-2 border-b border-slate-200/60 pb-1">
-                      <span className="font-sans text-slate-500">Document Date:</span>
-                      <strong className="text-slate-900">{doc.date}</strong>
-                    </div>
-                    {doc.valid_until && (
-                      <div className="flex justify-between gap-2 border-b border-slate-200/60 pb-1 text-amber-800">
-                        <span className="font-sans">Valid Until:</span>
-                        <strong className="font-bold">{doc.valid_until}</strong>
+                    {company.address && (
+                      <div style={{ fontSize: 9.5, color: '#94a3b8', marginTop: 5, lineHeight: 1.5 }}>
+                        {company.address}{company.city ? `, ${company.city}` : ''}{company.state_name ? `, ${company.state_name}` : ''}{company.pincode ? ` – ${company.pincode}` : ''}
                       </div>
                     )}
-                    <div className="flex justify-between gap-2">
-                      <span className="font-sans text-slate-500">Place of Supply:</span>
-                      <strong className="text-slate-800 font-sans">{placeOfSupply}</strong>
+                    <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: '0 20px', marginTop: 5, fontSize: 9, color: '#64748b' }}>
+                      {company.gstin && <span>GSTIN: <strong style={{ color: '#94a3b8', fontFamily: 'monospace' }}>{company.gstin}</strong></span>}
+                      {company.pan && <span>PAN: <strong style={{ color: '#94a3b8', fontFamily: 'monospace' }}>{company.pan}</strong></span>}
+                      {company.phone && <span>{company.phone}</span>}
+                      {company.email && <span>{company.email}</span>}
                     </div>
                   </div>
-                </div>
 
-              </div>
-
-              {/* Party Information Grid: Billed To / Recipient & Commercial Scope */}
-              <div className="grid grid-cols-2 gap-4 my-3.5 print:my-2 text-xs">
-                
-                {/* Billed To Customer Card */}
-                <div className="p-3.5 print:p-2.5 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1.5">
-                  <div className="flex justify-between items-center border-b border-slate-200/80 pb-1">
-                    <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider">
-                      Billed To / Customer:
-                    </span>
-                    <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-200/60 text-slate-600">
-                      {doc.buyer_gstin ? 'REGISTERED TAXPAYER' : 'CONSUMER / UNREGISTERED'}
-                    </span>
-                  </div>
-                  
-                  <div className="font-black text-sm text-slate-900 leading-snug">
-                    {doc.party_name || doc.buyer_name || 'Valued Customer'}
-                  </div>
-                  
-                  {doc.buyer_address && (
-                    <div className="text-slate-600 leading-relaxed text-[11px] line-clamp-2">
-                      {doc.buyer_address}
-                    </div>
-                  )}
-
-                  <div className="text-slate-700 font-mono space-y-0.5 pt-1 text-[11px]">
-                    <div>GSTIN / UIN: <strong className="text-slate-900">{doc.buyer_gstin || 'Unregistered'}</strong></div>
-                    {doc.buyer_state_code && (
-                      <div>State: {STATE_NAMES[doc.buyer_state_code] || doc.buyer_state_code} ({doc.buyer_state_code})</div>
-                    )}
-                    {doc.buyer_phone && <div className="font-sans text-slate-600">Phone: {doc.buyer_phone}</div>}
-                  </div>
-                </div>
-
-                {/* Commercial Scope Card */}
-                <div className="p-3.5 print:p-2.5 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1.5 flex flex-col justify-between">
-                  <div>
-                    <div className="border-b border-slate-200/80 pb-1 mb-1.5">
-                      <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider">
-                        Commercial Terms &amp; Scope:
-                      </span>
-                    </div>
-
-                    <div className="space-y-1 text-[11px] text-slate-700">
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Tax Type:</span>
-                        <strong className="text-slate-900">{isInterState ? 'Inter-State (IGST)' : 'Intra-State (CGST + SGST)'}</strong>
+                  {/* Right: Document Badge */}
+                  <div style={{ textAlign: 'right' as const, flexShrink: 0 }}>
+                    <div style={{ display: 'inline-block', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '6px 14px', marginBottom: 10 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.18em', textTransform: 'uppercase' as const }}>
+                        {isPI ? 'Proforma Invoice' : 'Quotation'}
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Payment Terms:</span>
-                        <strong className="text-slate-900">100% Advance Prior to Dispatch</strong>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: '#f1f5f9', letterSpacing: '-0.02em', marginTop: 2, fontFamily: 'monospace' }}>
+                        {doc.proforma_number}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 4, alignItems: 'flex-end' }}>
+                      <div style={{ display: 'flex', gap: 16, fontSize: 9.5, color: '#94a3b8' }}>
+                        <span>Date</span>
+                        <span style={{ color: '#e2e8f0', fontWeight: 600, minWidth: 80 }}>{doc.date}</span>
                       </div>
                       {doc.valid_until && (
-                        <div className="flex justify-between text-amber-800">
-                          <span>Quotation Validity:</span>
-                          <strong className="font-mono">{doc.valid_until}</strong>
+                        <div style={{ display: 'flex', gap: 16, fontSize: 9.5, color: '#94a3b8' }}>
+                          <span>Valid Until</span>
+                          <span style={{ color: '#fde68a', fontWeight: 700, minWidth: 80, fontFamily: 'monospace' }}>{doc.valid_until}</span>
                         </div>
                       )}
+                      <div style={{ display: 'flex', gap: 16, fontSize: 9.5, color: '#94a3b8' }}>
+                        <span>Supply</span>
+                        <span style={{ color: '#e2e8f0', fontWeight: 600, minWidth: 80 }}>{placeOfSupply}</span>
+                      </div>
                     </div>
                   </div>
+                </div>
 
+                {/* Tri-color accent */}
+                <div style={{ marginTop: 18, display: 'flex', gap: 0, height: 2 }}>
+                  <div style={{ flex: 2, background: '#3b82f6' }} />
+                  <div style={{ flex: 1, background: '#f59e0b' }} />
+                  <div style={{ flex: 3, background: '#1e40af' }} />
+                </div>
+              </div>
+
+              {/* ── BILL TO + SUPPLY DETAILS ── */}
+              <div style={{ padding: '18px 36px 14px 36px', borderBottom: '1px solid #f1f5f9', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 }}>
+                <div>
+                  <div style={{ fontSize: 8.5, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.18em', textTransform: 'uppercase' as const, marginBottom: 6 }}>Bill To</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2, marginBottom: 4 }}>
+                    {doc.party_name || doc.buyer_name || 'Valued Customer'}
+                  </div>
+                  {doc.buyer_address && <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.55, marginBottom: 4 }}>{doc.buyer_address}</div>}
+                  <div style={{ fontSize: 9.5, color: '#64748b', display: 'flex', flexDirection: 'column' as const, gap: 2 }}>
+                    <span>GSTIN: <strong style={{ color: '#334155', fontFamily: 'monospace', letterSpacing: '0.04em' }}>{doc.buyer_gstin || 'Unregistered'}</strong></span>
+                    {doc.buyer_state_code && <span>State: {STATE_NAMES[doc.buyer_state_code] || doc.buyer_state_code} ({doc.buyer_state_code})</span>}
+                    {doc.buyer_phone && <span>Ph: {doc.buyer_phone}</span>}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 8.5, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.18em', textTransform: 'uppercase' as const, marginBottom: 6 }}>Supply Details</div>
+                  <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 5, fontSize: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: '#94a3b8' }}>Tax Regime</span>
+                      <span style={{ fontWeight: 700, color: '#1e293b' }}>{isInterState ? 'IGST (Inter-State)' : 'CGST + SGST'}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: '#94a3b8' }}>Payment</span>
+                      <span style={{ fontWeight: 700, color: '#1e293b' }}>100% Advance</span>
+                    </div>
+                    {doc.valid_until && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#94a3b8' }}>Valid Till</span>
+                        <span style={{ fontWeight: 700, color: '#b45309', fontFamily: 'monospace' }}>{doc.valid_until}</span>
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: '#94a3b8' }}>Status</span>
+                      <span style={{ fontWeight: 700, color: isConverted ? '#059669' : doc.status === 'ACCEPTED' ? '#2563eb' : doc.status === 'SENT' ? '#d97706' : '#64748b', textTransform: 'uppercase' as const, letterSpacing: '0.06em', fontSize: 9 }}>{doc.status}</span>
+                    </div>
+                  </div>
                   {isConverted && doc.converted_voucher_number && (
-                    <div className="text-[10.5px] text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 font-semibold flex items-center gap-1.5">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>Formal GST Tax Invoice Generated: <strong>{doc.converted_voucher_number}</strong></span>
+                    <div style={{ marginTop: 8, background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 6, padding: '5px 10px', fontSize: 9, color: '#065f46', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5 }}>
+                      ✓ Converted → GST Invoice <strong style={{ fontFamily: 'monospace' }}>{doc.converted_voucher_number}</strong>
                     </div>
                   )}
                 </div>
-
               </div>
 
-              {/* Line Items Table */}
-              <div className="border border-slate-200 rounded-xl overflow-hidden my-3 print:my-2">
-                <table className="w-full text-left text-xs border-collapse">
+              {/* ── ITEMS TABLE ── */}
+              <div style={{ padding: '0 36px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' as const, fontSize: 10 }}>
                   <thead>
-                    <tr className="bg-slate-100/80 text-slate-700 font-bold text-[10px] uppercase tracking-wider border-b border-slate-200">
-                      <th className="py-2 px-2.5 w-8 text-center">#</th>
-                      <th className="py-2 px-2.5">Description of Goods / Services</th>
-                      <th className="py-2 px-2.5 text-center w-24">HSN/SAC</th>
-                      <th className="py-2 px-2.5 text-right w-20">Qty</th>
-                      <th className="py-2 px-2.5 text-right w-24">Unit Rate (₹)</th>
-                      <th className="py-2 px-2.5 text-right w-16">Disc %</th>
-                      <th className="py-2 px-2.5 text-right w-24">Taxable (₹)</th>
-                      <th className="py-2 px-2.5 text-center w-14">GST</th>
-                      <th className="py-2 px-2.5 text-right w-28">Amount (₹)</th>
+                    <tr style={{ background: '#0f172a' }}>
+                      <th style={{ padding: '8px 6px 8px 8px', textAlign: 'center' as const, width: 24, fontSize: 8, fontWeight: 700, color: '#64748b', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>#</th>
+                      <th style={{ padding: '8px 6px', textAlign: 'left' as const, fontSize: 8, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>Item Description</th>
+                      <th style={{ padding: '8px 6px', textAlign: 'center' as const, width: 64, fontSize: 8, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>HSN/SAC</th>
+                      <th style={{ padding: '8px 6px', textAlign: 'right' as const, width: 52, fontSize: 8, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>Qty</th>
+                      <th style={{ padding: '8px 6px', textAlign: 'right' as const, width: 64, fontSize: 8, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>Rate</th>
+                      <th style={{ padding: '8px 6px', textAlign: 'right' as const, width: 44, fontSize: 8, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>Disc</th>
+                      <th style={{ padding: '8px 6px', textAlign: 'right' as const, width: 72, fontSize: 8, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>Taxable</th>
+                      <th style={{ padding: '8px 6px', textAlign: 'center' as const, width: 40, fontSize: 8, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>GST</th>
+                      <th style={{ padding: '8px 8px 8px 6px', textAlign: 'right' as const, width: 76, fontSize: 8, fontWeight: 700, color: '#f1f5f9', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>Amount</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+                  <tbody>
                     {doc.items?.map((item: any, idx: number) => (
-                      <tr key={item.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}>
-                        <td className="py-2 px-2.5 text-center text-slate-400 font-sans">{idx + 1}</td>
-                        <td className="py-2 px-2.5 font-sans font-medium text-slate-900">
-                          {item.item_name}
+                      <tr key={item.id || idx} style={{ background: idx % 2 === 0 ? '#ffffff' : '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '7px 6px 7px 8px', textAlign: 'center' as const, color: '#94a3b8', fontSize: 9 }}>{idx + 1}</td>
+                        <td style={{ padding: '7px 6px', fontWeight: 600, color: '#0f172a' }}>{item.item_name}</td>
+                        <td style={{ padding: '7px 6px', textAlign: 'center' as const, color: '#64748b', fontFamily: 'monospace', fontSize: 9 }}>{item.hsn_code || '—'}</td>
+                        <td style={{ padding: '7px 6px', textAlign: 'right' as const, fontFamily: 'monospace', color: '#475569' }}>
+                          {Number(item.quantity).toFixed(2)} <span style={{ fontSize: 8, color: '#94a3b8' }}>{item.unit || 'Pcs'}</span>
                         </td>
-                        <td className="py-2 px-2.5 text-center text-slate-600">{item.hsn_code || '-'}</td>
-                        <td className="py-2 px-2.5 text-right text-slate-900 font-semibold">
-                          {Number(item.quantity).toFixed(2)} <span className="text-[9.5px] text-slate-500 font-sans">{item.unit || 'Pcs'}</span>
+                        <td style={{ padding: '7px 6px', textAlign: 'right' as const, fontFamily: 'monospace', color: '#475569' }}>{Number(item.rate).toFixed(2)}</td>
+                        <td style={{ padding: '7px 6px', textAlign: 'right' as const, fontFamily: 'monospace', color: '#94a3b8', fontSize: 9 }}>
+                          {item.discount_percent > 0 ? `${Number(item.discount_percent).toFixed(1)}%` : '—'}
                         </td>
-                        <td className="py-2 px-2.5 text-right text-slate-800">
-                          {Number(item.rate).toFixed(2)}
-                        </td>
-                        <td className="py-2 px-2.5 text-right text-slate-500">
-                          {item.discount_percent > 0 ? `${Number(item.discount_percent).toFixed(2)}%` : '-'}
-                        </td>
-                        <td className="py-2 px-2.5 text-right text-slate-900 font-semibold">
+                        <td style={{ padding: '7px 6px', textAlign: 'right' as const, fontFamily: 'monospace', fontWeight: 600, color: '#334155' }}>
                           {Number(item.taxable_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </td>
-                        <td className="py-2 px-2.5 text-center text-slate-600">
-                          {item.gst_rate}%
-                        </td>
-                        <td className="py-2 px-2.5 text-right font-bold text-slate-900">
+                        <td style={{ padding: '7px 6px', textAlign: 'center' as const, fontFamily: 'monospace', fontSize: 9, color: '#64748b' }}>{item.gst_rate}%</td>
+                        <td style={{ padding: '7px 8px 7px 6px', textAlign: 'right' as const, fontFamily: 'monospace', fontWeight: 700, color: '#0f172a' }}>
                           {Number(item.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
-                    <tr className="bg-slate-100/90 border-t-2 border-slate-200 font-mono text-xs font-bold text-slate-900">
-                      <td colSpan={3} className="py-2 px-2.5 font-sans uppercase text-[10px] text-slate-600">
-                        Subtotals:
-                      </td>
-                      <td className="py-2 px-2.5 text-right">
-                        {totalQty.toFixed(2)}
-                      </td>
-                      <td colSpan={2}></td>
-                      <td className="py-2 px-2.5 text-right">
-                        ₹{totalTaxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                      </td>
-                      <td></td>
-                      <td className="py-2 px-2.5 text-right text-slate-900">
-                        ₹{finalGrandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                      </td>
+                    <tr style={{ background: '#f1f5f9', borderTop: '2px solid #1e293b' }}>
+                      <td colSpan={3} style={{ padding: '7px 6px 7px 8px', fontSize: 8.5, fontWeight: 700, color: '#475569', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>Total</td>
+                      <td style={{ padding: '7px 6px', textAlign: 'right' as const, fontFamily: 'monospace', fontWeight: 700, color: '#0f172a' }}>{totalQty.toFixed(2)}</td>
+                      <td colSpan={2} />
+                      <td style={{ padding: '7px 6px', textAlign: 'right' as const, fontFamily: 'monospace', fontWeight: 700, color: '#0f172a' }}>₹{totalTaxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                      <td />
+                      <td style={{ padding: '7px 8px 7px 6px', textAlign: 'right' as const, fontFamily: 'monospace', fontWeight: 800, color: '#0f172a', fontSize: 11 }}>₹{finalGrandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
 
-              {/* Tax Transparency Breakdown (Left) & Financial Calculations (Right) */}
-              <div className="grid grid-cols-2 gap-4 my-3 print:my-2 text-xs">
-                
-                {/* Left: HSN / SAC Tax Breakdown Table & Payment Notes */}
-                <div className="space-y-3 print:space-y-1.5 flex flex-col justify-between">
-                  
-                  {/* HSN Table */}
-                  <div className="border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="bg-slate-100/90 px-3 py-1 text-[9.5px] font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200">
-                      HSN / SAC Tax Transparency Breakdown
-                    </div>
-                    <table className="w-full text-left text-[10.5px] font-mono border-collapse">
+              {/* ── TAX + FINANCIAL SUMMARY ── */}
+              <div style={{ padding: '14px 36px 10px 36px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28 }}>
+                {/* Left column */}
+                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 12 }}>
+                  {/* Tax Breakdown */}
+                  <div>
+                    <div style={{ fontSize: 8, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.15em', textTransform: 'uppercase' as const, marginBottom: 6 }}>Tax Breakdown</div>
+                    <table style={{ width: '100%', fontSize: 9.5, borderCollapse: 'collapse' as const }}>
                       <thead>
-                        <tr className="bg-slate-50 text-slate-500 border-b border-slate-200 font-semibold">
-                          <th className="py-1.5 px-2.5">Tax Rate</th>
-                          <th className="py-1.5 px-2.5 text-right">Taxable Amt (₹)</th>
+                        <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                          <th style={{ padding: '3px 4px 3px 0', textAlign: 'left' as const, fontWeight: 600, color: '#64748b' }}>Rate</th>
+                          <th style={{ padding: '3px 4px', textAlign: 'right' as const, fontWeight: 600, color: '#64748b' }}>Taxable</th>
                           {!isInterState ? (
                             <>
-                              <th className="py-1.5 px-2.5 text-right">CGST (₹)</th>
-                              <th className="py-1.5 px-2.5 text-right">SGST (₹)</th>
+                              <th style={{ padding: '3px 4px', textAlign: 'right' as const, fontWeight: 600, color: '#64748b' }}>CGST</th>
+                              <th style={{ padding: '3px 4px', textAlign: 'right' as const, fontWeight: 600, color: '#64748b' }}>SGST</th>
                             </>
                           ) : (
-                            <th className="py-1.5 px-2.5 text-right">IGST (₹)</th>
+                            <th style={{ padding: '3px 4px', textAlign: 'right' as const, fontWeight: 600, color: '#64748b' }}>IGST</th>
                           )}
-                          <th className="py-1.5 px-2.5 text-right font-bold text-slate-900">Total Tax (₹)</th>
+                          <th style={{ padding: '3px 0 3px 4px', textAlign: 'right' as const, fontWeight: 700, color: '#1e293b' }}>Tax</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody>
                         {hsnSummary.map((hs, idx) => (
-                          <tr key={idx}>
-                            <td className="py-1 px-2.5 font-medium text-slate-800">{hs.gst_rate}%</td>
-                            <td className="py-1 px-2.5 text-right text-slate-700">{hs.taxable_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                          <tr key={idx} style={{ borderBottom: '1px solid #f8fafc' }}>
+                            <td style={{ padding: '3px 4px 3px 0', fontFamily: 'monospace', color: '#475569', fontWeight: 600 }}>{hs.gst_rate}%</td>
+                            <td style={{ padding: '3px 4px', textAlign: 'right' as const, fontFamily: 'monospace', color: '#475569' }}>{hs.taxable_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                             {!isInterState ? (
                               <>
-                                <td className="py-1 px-2.5 text-right text-slate-700">{hs.cgst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                                <td className="py-1 px-2.5 text-right text-slate-700">{hs.sgst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                                <td style={{ padding: '3px 4px', textAlign: 'right' as const, fontFamily: 'monospace', color: '#475569' }}>{hs.cgst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                                <td style={{ padding: '3px 4px', textAlign: 'right' as const, fontFamily: 'monospace', color: '#475569' }}>{hs.sgst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                               </>
                             ) : (
-                              <td className="py-1 px-2.5 text-right text-slate-700">{hs.igst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td style={{ padding: '3px 4px', textAlign: 'right' as const, fontFamily: 'monospace', color: '#475569' }}>{hs.igst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                             )}
-                            <td className="py-1 px-2.5 text-right font-bold text-slate-900">{hs.total_tax.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                            <td style={{ padding: '3px 0 3px 4px', textAlign: 'right' as const, fontFamily: 'monospace', fontWeight: 700, color: '#0f172a' }}>{hs.total_tax.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1037,198 +977,117 @@ export default function ProformaDetailPage() {
                   </div>
 
                   {/* Amount in Words */}
-                  <div className="p-2.5 print:p-1.5 bg-slate-50 rounded-xl border border-slate-200/80">
-                    <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">
-                      Total Amount in Words:
-                    </span>
-                    <span className="font-semibold text-slate-900 font-sans leading-tight block text-[11px]">
+                  <div style={{ background: '#f8fafc', borderRadius: 6, padding: '7px 10px', borderLeft: '3px solid #3b82f6' }}>
+                    <div style={{ fontSize: 7.5, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.15em', textTransform: 'uppercase' as const, marginBottom: 3 }}>Amount in Words</div>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: '#1e293b', fontStyle: 'italic', lineHeight: 1.45 }}>
                       {numberToWords(finalGrandTotal)}
-                    </span>
+                    </div>
                   </div>
 
-                  {/* Instant Advance UPI QR Code & Banking Block */}
-                  <div className="p-3 print:p-2 bg-slate-50 rounded-xl border border-slate-200/80 flex items-center gap-3">
-                    <div className="p-1.5 bg-white rounded-lg border border-slate-200 shrink-0">
-                      <QRCode 
-                        value={upiPayUrl}
-                        size={56}
-                        level="M"
-                      />
+                  {/* QR + Bank */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ padding: 4, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, flexShrink: 0 }}>
+                      <QRCode value={upiPayUrl} size={46} level="M" />
                     </div>
-                    <div className="space-y-0.5 leading-tight flex-1 text-[10.5px]">
-                      <div className="font-bold text-slate-900 flex items-center gap-1">
-                        <QrCode className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>{upiId ? 'Scan & Pay Advance via UPI' : 'Digital Verification QR'}</span>
+                    <div style={{ fontSize: 9, color: '#64748b', lineHeight: 1.6 }}>
+                      <div style={{ fontWeight: 700, color: '#334155', marginBottom: 2 }}>
+                        {upiId ? '⚡ Scan to Pay via UPI' : '🔒 Digital Verification'}
                       </div>
-                      {upiId ? (
-                        <div className="font-mono text-emerald-700 font-bold">
-                          UPI ID: {upiId}
-                        </div>
-                      ) : null}
+                      {upiId && <div style={{ fontFamily: 'monospace', color: '#475569' }}>UPI: {upiId}</div>}
                       {company.bank_details?.account_number && (
-                        <div className="font-mono text-slate-600 pt-0.5 text-[10px]">
-                          <div>A/C: <strong className="text-slate-900">{company.bank_details.account_number}</strong> | IFSC: <strong className="text-slate-900">{company.bank_details.ifsc}</strong></div>
-                          <div>Bank: {company.bank_details.bank_name}{company.bank_details.branch ? ` (${company.bank_details.branch})` : ''}</div>
+                        <div style={{ fontFamily: 'monospace', fontSize: 8.5, color: '#94a3b8' }}>
+                          A/C: {company.bank_details.account_number} · IFSC: {company.bank_details.ifsc}
                         </div>
                       )}
                     </div>
                   </div>
-
-                  {/* Terms & Conditions */}
-                  <div className="text-[10px] text-slate-500 leading-relaxed">
-                    <span className="font-bold uppercase tracking-wider text-slate-600 block mb-0.5">
-                      Commercial Terms:
-                    </span>
-                    <p className="whitespace-pre-line">
-                      {doc.terms_and_conditions || 
-                        `1. Prices valid for 15 days from issue date. 2. 100% advance required before dispatch. 3. Subject to '${company.city || 'Kanpur'}' jurisdiction.`
-                      }
-                    </p>
-                  </div>
                 </div>
 
-                {/* Right: Financial Summary Box */}
-                <div className="p-4 print:p-2.5 bg-slate-50/80 rounded-xl border border-slate-200/80 font-mono text-xs space-y-2 print:space-y-1 flex flex-col justify-between">
-                  <div className="space-y-1.5 print:space-y-0.5">
-                    <div className="flex justify-between py-1 print:py-0.5 border-b border-slate-200">
-                      <span className="text-slate-600 font-sans">Taxable Value:</span>
-                      <span className="font-semibold text-slate-900">
-                        ₹{totalTaxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-
-                    {totalCgst > 0 && (
-                      <div className="flex justify-between py-1 print:py-0.5 border-b border-slate-200">
-                        <span className="text-slate-600 font-sans">Central Tax (CGST):</span>
-                        <span className="font-semibold text-slate-900">
-                          ₹{totalCgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </span>
+                {/* Right column: Financial Summary */}
+                <div style={{ display: 'flex', flexDirection: 'column' as const, justifyContent: 'space-between' }}>
+                  <div>
+                    {[
+                      { label: 'Taxable Value', val: `₹${totalTaxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` },
+                      ...(totalCgst > 0 ? [{ label: 'CGST', val: `₹${totalCgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` }] : []),
+                      ...(totalSgst > 0 ? [{ label: 'SGST', val: `₹${totalSgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` }] : []),
+                      ...(totalIgst > 0 ? [{ label: 'IGST', val: `₹${totalIgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` }] : []),
+                      ...(cartageAmount > 0 ? [{ label: 'Freight / Cartage', val: `₹${cartageAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` }] : []),
+                      ...(hasRoundOff ? [{ label: 'Round Off', val: roundOff > 0 ? `+${roundOff.toFixed(2)}` : roundOff.toFixed(2) }] : []),
+                    ].map((row, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f1f5f9', fontSize: 10.5 }}>
+                        <span style={{ color: '#64748b' }}>{row.label}</span>
+                        <span style={{ fontFamily: 'monospace', fontWeight: 600, color: '#334155' }}>{row.val}</span>
                       </div>
-                    )}
-
-                    {totalSgst > 0 && (
-                      <div className="flex justify-between py-1 print:py-0.5 border-b border-slate-200">
-                        <span className="text-slate-600 font-sans">State Tax (SGST):</span>
-                        <span className="font-semibold text-slate-900">
-                          ₹{totalSgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    )}
-
-                    {totalIgst > 0 && (
-                      <div className="flex justify-between py-1 print:py-0.5 border-b border-slate-200">
-                        <span className="text-slate-600 font-sans">Integrated Tax (IGST):</span>
-                        <span className="font-semibold text-slate-900">
-                          ₹{totalIgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    )}
-
-                    {cartageAmount > 0 && (
-                      <div className="flex justify-between py-1 print:py-0.5 border-b border-slate-200">
-                        <span className="text-slate-600 font-sans">Freight / Cartage:</span>
-                        <span className="font-semibold text-slate-900">
-                          ₹{cartageAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    )}
-
-                    {hasRoundOff && (
-                      <div className="flex justify-between py-1 print:py-0.5 border-b border-slate-200 text-slate-500">
-                        <span className="font-sans">Round Off Adjustment:</span>
-                        <span>{roundOff > 0 ? `+${roundOff.toFixed(2)}` : roundOff.toFixed(2)}</span>
-                      </div>
-                    )}
+                    ))}
                   </div>
 
-                  {/* Grand Total Box */}
-                  <div 
-                    className="mt-3 print:mt-1.5 p-3 print:p-2 bg-slate-900 text-white rounded-xl flex justify-between items-center"
-                    style={{ backgroundColor: '#0f172a', color: '#ffffff' }}
-                  >
-                    <div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block leading-tight">
-                        Total Payable Amount
-                      </span>
-                      <span className="text-[10.5px] text-slate-300 font-sans">
-                        (Inclusive of all Taxes)
-                      </span>
+                  {/* Grand Total */}
+                  <div style={{ marginTop: 12, borderRadius: 8, overflow: 'hidden', boxShadow: '0 2px 12px rgba(15,23,42,0.18)' }}>
+                    <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', padding: '12px 16px 10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: 8, fontWeight: 700, color: '#64748b', letterSpacing: '0.18em', textTransform: 'uppercase' as const }}>Total Amount Due</div>
+                        <div style={{ fontSize: 8.5, color: '#475569', marginTop: 1 }}>Inclusive of all taxes</div>
+                      </div>
+                      <div style={{ fontSize: 22, fontWeight: 900, fontFamily: 'monospace', color: '#ffffff', letterSpacing: '-0.02em' }}>
+                        ₹{finalGrandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </div>
                     </div>
-                    <div className="text-xl print:text-lg font-black font-mono tracking-tight text-white">
-                      ₹{finalGrandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                    </div>
+                    <div style={{ background: 'linear-gradient(90deg, #3b82f6, #f59e0b, #1e40af)', height: 3 }} />
                   </div>
                 </div>
+              </div>
 
+              {/* ── TERMS ── */}
+              <div style={{ padding: '6px 36px 4px 36px', borderTop: '1px solid #f1f5f9' }}>
+                <span style={{ fontSize: 8, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.15em', textTransform: 'uppercase' as const }}>Terms: </span>
+                <span style={{ fontSize: 9, color: '#64748b', lineHeight: 1.5 }}>
+                  {doc.terms_and_conditions || doc.customer_notes || `Prices valid for 15 days. 100% advance required before dispatch. Subject to ${company.city || 'local'} jurisdiction.`}
+                </span>
               </div>
 
             </div>
 
-            {/* Bottom Signature & Legal Notice Section (Pinned strictly to bottom of page) */}
-            <div className="pt-4 print:pt-2 border-t border-slate-200 mt-3 print:mt-2 space-y-2.5 print:space-y-1">
-              <div className="flex justify-between items-end text-xs">
-                
-                {/* Buyer Acceptance Signature */}
-                <div className="w-1/2 pr-6 space-y-1">
-                  <div className="font-bold text-slate-800 text-[11px] uppercase tracking-wider">
-                    Customer Acceptance Signature:
-                  </div>
-                  <p className="text-[10px] text-slate-500">
-                    Sign &amp; stamp to approve commercial quotation
-                  </p>
-                  <div className="mt-8 print:mt-4 border-b border-slate-400 w-44"></div>
-                  <div className="text-[10px] text-slate-400 font-sans">Authorized Buyer Signatory</div>
+            {/* ── FOOTER: SIGNATURES + LEGAL ── */}
+            <div style={{ padding: '14px 36px 16px 36px', borderTop: '2px solid #e2e8f0', marginTop: 4 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 14 }}>
+                {/* Buyer */}
+                <div style={{ width: '38%' }}>
+                  <div style={{ fontSize: 8, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.15em', textTransform: 'uppercase' as const, marginBottom: 4 }}>Customer Acceptance</div>
+                  <div style={{ fontSize: 8.5, color: '#94a3b8', marginBottom: 28 }}>Sign &amp; stamp to confirm</div>
+                  <div style={{ borderBottom: '1px solid #94a3b8', width: 140, marginBottom: 4 }} />
+                  <div style={{ fontSize: 8.5, color: '#64748b' }}>Authorised Signatory</div>
                 </div>
-
-                {/* Seller Signatory */}
-                <div className="w-1/2 pl-6 text-right flex flex-col items-end space-y-1">
-                  <div className="font-bold text-slate-900 text-[11px] uppercase tracking-wider">
-                    For {company.legal_name || company.name || 'Seller'}:
+                {/* Seller */}
+                <div style={{ textAlign: 'right' as const, width: '40%', display: 'flex', flexDirection: 'column' as const, alignItems: 'flex-end' }}>
+                  <div style={{ fontSize: 8, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.15em', textTransform: 'uppercase' as const, marginBottom: 6 }}>
+                    For {company.legal_name || company.name || 'Seller'}
                   </div>
-                  
-                  {/* Digital Signature Image with smooth fallback */}
-                  <div className="h-10 print:h-7 flex items-center justify-end my-0.5">
+                  <div style={{ height: 32, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 4 }}>
                     {signatureSrc ? (
-                      <img 
-                        crossOrigin="anonymous"
-                        src={signatureSrc} 
-                        alt="Authorized Signature" 
-                        className="max-h-10 print:max-h-7 max-w-[150px] object-contain" 
-                        loading="lazy"
-                        onError={(e) => {
-                          (e.target as HTMLElement).style.display = 'none';
-                        }}
-                      />
+                      <img crossOrigin="anonymous" src={signatureSrc} alt="Signature" style={{ maxHeight: 32, maxWidth: 130, objectFit: 'contain' }} onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }} />
                     ) : (
-                      <div className="w-32 h-7 border border-dashed border-slate-300 rounded flex items-center justify-center text-[10px] text-slate-400">
-                        Official Stamp / Seal
-                      </div>
+                      <div style={{ width: 120, height: 28, border: '1px dashed #cbd5e1', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8.5, color: '#94a3b8' }}>Seal / Stamp</div>
                     )}
                   </div>
-
-                  <div className="border-b border-slate-400 w-48"></div>
-                  <div className="font-bold text-slate-800 text-xs">
-                    {company.proprietor_name ? company.proprietor_name : 'Authorized Signatory'}
-                  </div>
-                  <div className="text-[10px] text-slate-400">Authorised Signatory</div>
+                  <div style={{ borderBottom: '1px solid #94a3b8', width: 160, marginBottom: 4 }} />
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#1e293b' }}>{company.proprietor_name || 'Authorised Signatory'}</div>
                 </div>
-
               </div>
 
-              {/* Bottom Legal Disclaimer & Page Tracker */}
-              <div className="flex justify-between items-center text-[10px] text-slate-400 pt-2 print:pt-1 border-t border-slate-100">
-                <span>
-                  <strong>Notice:</strong> This is a Commercial Proforma Invoice / Quotation and is <u>NOT</u> a GST Tax Invoice. Goods dispatched upon advance payment.
-                </span>
-                <span className="font-mono font-semibold text-slate-500 shrink-0 ml-2">
-                  {isMultiPageExpected ? 'Page 1 of 2' : 'Page 1 of 1'}
-                </span>
+              {/* Bottom bar + legal */}
+              <div style={{ display: 'flex', gap: 0, height: 2, marginBottom: 6 }}>
+                <div style={{ flex: 3, background: '#0f172a' }} />
+                <div style={{ flex: 1, background: '#3b82f6' }} />
+                <div style={{ flex: 1, background: '#f59e0b' }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 8, color: '#94a3b8' }}>
+                <span>This is a <strong style={{ color: '#64748b' }}>{isPI ? 'Proforma Invoice' : 'Quotation'}</strong> — <em>not</em> a GST Tax Invoice. Goods dispatched upon advance payment.</span>
+                <span style={{ fontFamily: 'monospace', color: '#64748b', flexShrink: 0, marginLeft: 12 }}>{isMultiPageExpected ? 'Page 1 of 2+' : 'Page 1 of 1'}</span>
               </div>
             </div>
 
           </div>
         </div>
-
       </div>
     </DashboardLayout>
   );

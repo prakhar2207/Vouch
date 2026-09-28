@@ -37,6 +37,9 @@ DOCUMENT_CAPABILITIES: Dict[str, DocumentCapabilities] = {
     'JOURNAL': DocumentCapabilities(
         pdf=True, preview=True, share=True, email=True, whatsapp=True, edi=False
     ),
+    'PROFORMA_INVOICE': DocumentCapabilities(
+        pdf=True, preview=True, share=True, email=True, whatsapp=True, edi=False
+    ),
     'CUSTOMER_STATEMENT': DocumentCapabilities(
         pdf=True, preview=True, share=True, email=True, whatsapp=True, edi=False
     ),
