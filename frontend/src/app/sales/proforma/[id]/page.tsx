@@ -368,6 +368,12 @@ export default function ProformaDetailPage() {
 
       sanitizeElements(clone);
 
+      // Temporarily normalize document root colors to standard hex
+      const origHtmlBg = document.documentElement.style.backgroundColor;
+      const origBodyBg = document.body.style.backgroundColor;
+      document.documentElement.style.backgroundColor = '#ffffff';
+      document.body.style.backgroundColor = '#ffffff';
+
       const canvas = await (html2canvas as any)(clone, {
         scale: 2,
         useCORS: true,
@@ -376,6 +382,12 @@ export default function ProformaDetailPage() {
         backgroundColor: '#ffffff',
         width: targetWidthPx,
         onclone: (clonedDoc: Document, clonedEl: HTMLElement) => {
+          if (clonedDoc.documentElement) {
+            clonedDoc.documentElement.style.backgroundColor = '#ffffff';
+          }
+          if (clonedDoc.body) {
+            clonedDoc.body.style.backgroundColor = '#ffffff';
+          }
           const style = clonedDoc.createElement('style');
           style.innerHTML = `
             * {
@@ -390,6 +402,8 @@ export default function ProformaDetailPage() {
       });
 
       document.body.removeChild(sandbox);
+      document.documentElement.style.backgroundColor = origHtmlBg;
+      document.body.style.backgroundColor = origBodyBg;
 
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({
@@ -437,7 +451,8 @@ export default function ProformaDetailPage() {
       toast.success('PDF Downloaded', `Saved as ${cleanFilename}`);
     } catch (err: any) {
       console.error(err);
-      toast.error('PDF Generation Failed', err.message || 'Could not export PDF');
+      toast.error('Direct PDF export error', 'Opening browser print dialog...');
+      window.print();
     } finally {
       setIsGeneratingPdf(false);
     }

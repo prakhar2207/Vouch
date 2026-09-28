@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build --webpack",
+    "dev": "node scripts/patch-html2canvas.js && next dev",
+    "build": "node scripts/patch-html2canvas.js && next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "node scripts/patch-html2canvas.js"
   },
   "dependencies": {
     "@ag-grid-community/client-side-row-model": "^32.3.9",
