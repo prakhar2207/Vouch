@@ -41,7 +41,7 @@ def get_authorized_company(request, company_id=None):
     if cached_map is not None and cache_key in cached_map:
         return cached_map[cache_key]
 
-    company = Company.objects.filter(id=target_id).defer('signature_data').first()
+    company = Company.objects.filter(id=target_id).defer('signature_data', 'logo_data').first()
     if not company:
         raise NotFound(f"Company with ID '{target_id}' not found.")
 

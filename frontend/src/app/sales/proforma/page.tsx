@@ -56,25 +56,50 @@ export default function ProformaQuotationListPage() {
   const [deleteConfirmDoc, setDeleteConfirmDoc] = useState<any | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    if (!isAuthenticated()) {
-      router.push('/login');
-      return;
-    }
-    fetchProformas(1);
-  }, [router, activeCompanyId, statusFilter, typeFilter, activeFY?.id]);
+  const abortControllerRef = React.useRef<AbortController | null>(null);
 
-  const fetchProformas = useCallback(async (targetPage: number = page) => {
+  const fetchProformas = useCallback(async (targetPage: number = 1) => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setLoading(true);
     try {
       let companyId = activeCompanyId;
       if (!companyId && typeof window !== 'undefined') {
-        companyId = localStorage.getItem('vouch_active_company_id') || '';
+        companyId = localStorage.getItem('vouch_active_company_id') || localStorage.getItem('active_company_id') || '';
       }
-      if (!companyId) return;
 
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      if (!token) return;
+
+      if (!companyId) {
+        try {
+          const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal
+          });
+          const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+          companyId = list[0]?.id;
+          if (companyId && typeof window !== 'undefined') {
+            localStorage.setItem('vouch_active_company_id', companyId);
+          }
+        } catch {
+          // ignore cancellation
+        }
+      }
+
+      if (!companyId) {
+        setLoading(false);
+        return;
+      }
+
+      const headers: Record<string, string> = { 
+        Authorization: `Bearer ${token}`,
+        'X-Company-ID': companyId
+      };
 
       const params = new URLSearchParams();
       params.append('limit', String(pageSize));
@@ -85,7 +110,11 @@ export default function ProformaQuotationListPage() {
       if (activeFY?.start_date) params.append('start_date', activeFY.start_date);
       if (activeFY?.end_date) params.append('end_date', activeFY.end_date);
 
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/proforma/${companyId}/?${params.toString()}`, { headers });
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/proforma/${companyId}/?${params.toString()}`, { 
+        headers,
+        signal: controller.signal
+      });
+
       if (res.data?.success) {
         setProformas(res.data.data || []);
         setTotalCount(res.data.total_count || 0);
@@ -93,12 +122,25 @@ export default function ProformaQuotationListPage() {
         setPage(targetPage);
       }
     } catch (err: any) {
+      if (axios.isCancel(err) || err.name === 'CanceledError') {
+        return;
+      }
       console.error(err);
       toast.error('Failed to load documents', err.response?.data?.error || err.message);
     } finally {
-      setLoading(false);
+      if (abortControllerRef.current === controller) {
+        setLoading(false);
+      }
     }
-  }, [activeCompanyId, statusFilter, typeFilter, searchQuery, activeFY, page, toast]);
+  }, [activeCompanyId, statusFilter, typeFilter, searchQuery, activeFY?.start_date, activeFY?.end_date, toast]);
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      router.push('/login');
+      return;
+    }
+    fetchProformas(1);
+  }, [router, activeCompanyId, statusFilter, typeFilter, activeFY?.id]);
 
   const handleConvert = async (doc: any) => {
     if (doc.status === 'CONVERTED') {

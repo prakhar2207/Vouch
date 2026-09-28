@@ -31,6 +31,16 @@ def get_user_display_name(usr):
 
 
 def serialize_proforma(p: ProformaInvoice, include_items: bool = True) -> dict:
+    annotated_count = getattr(p, 'annotated_items_count', None)
+    if annotated_count is not None:
+        items_cnt = annotated_count
+    elif hasattr(p, '_prefetched_objects_cache') and 'items' in p._prefetched_objects_cache:
+        items_cnt = len(p.items.all())
+    elif hasattr(p, 'items'):
+        items_cnt = p.items.count()
+    else:
+        items_cnt = 0
+
     data = {
         "id": str(p.id),
         "company_id": str(p.company_id),
@@ -64,7 +74,7 @@ def serialize_proforma(p: ProformaInvoice, include_items: bool = True) -> dict:
         "converted_at": p.converted_at.isoformat() if p.converted_at else None,
         "created_by": get_user_display_name(p.created_by),
         "created_at": p.created_at.isoformat() if p.created_at else None,
-        "items_count": p.items.count() if hasattr(p, 'items') else 0,
+        "items_count": items_cnt,
     }
 
     if include_items:
@@ -104,10 +114,9 @@ class ListCreateProformaAPIView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=403)
 
-
         qs = ProformaInvoice.objects.filter(company=company).select_related(
             'party_ledger', 'converted_voucher', 'created_by'
-        ).prefetch_related('items')
+        ).annotate(annotated_items_count=Count('items'))
 
         # Filters
         status_filter = request.query_params.get('status', 'ALL').strip().upper()
@@ -135,18 +144,23 @@ class ListCreateProformaAPIView(APIView):
         if end_date:
             qs = qs.filter(date__lte=end_date)
 
-        # Summary KPIs across the filtered or full scope
+        # Single combined aggregate query for KPIs
         all_qs = ProformaInvoice.objects.filter(company=company)
-        total_count = all_qs.count()
-        total_amount = all_qs.aggregate(s=Sum('total_amount'))['s'] or Decimal('0.00')
+        metrics_agg = all_qs.aggregate(
+            total_count=Count('id'),
+            total_amount=Sum('total_amount'),
+            active_count=Count('id', filter=~Q(status__in=['CONVERTED', 'CANCELLED'])),
+            active_amount=Sum('total_amount', filter=~Q(status__in=['CONVERTED', 'CANCELLED'])),
+            converted_count=Count('id', filter=Q(status='CONVERTED')),
+            converted_amount=Sum('total_amount', filter=Q(status='CONVERTED')),
+        )
 
-        active_qs = all_qs.exclude(status__in=['CONVERTED', 'CANCELLED'])
-        active_count = active_qs.count()
-        active_amount = active_qs.aggregate(s=Sum('total_amount'))['s'] or Decimal('0.00')
-
-        converted_qs = all_qs.filter(status='CONVERTED')
-        converted_count = converted_qs.count()
-        converted_amount = converted_qs.aggregate(s=Sum('total_amount'))['s'] or Decimal('0.00')
+        total_count = metrics_agg.get('total_count') or 0
+        total_amount = metrics_agg.get('total_amount') or Decimal('0.00')
+        active_count = metrics_agg.get('active_count') or 0
+        active_amount = metrics_agg.get('active_amount') or Decimal('0.00')
+        converted_count = metrics_agg.get('converted_count') or 0
+        converted_amount = metrics_agg.get('converted_amount') or Decimal('0.00')
 
         # Pagination
         limit = int(request.query_params.get('limit', 50))
