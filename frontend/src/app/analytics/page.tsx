@@ -18,6 +18,9 @@ import {
   Tooltip,
   CartesianGrid,
   Legend,
+  PieChart as RechartsPieChart,
+  Pie,
+  Cell,
 } from "recharts";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
@@ -66,8 +69,14 @@ import {
   Award,
   ArrowUpRight,
   ArrowDownRight,
-  Target,
   Receipt,
+  ArrowUpDown,
+  Flame,
+  Zap,
+  CheckCircle2,
+  DollarSign,
+  Phone,
+  MessageCircle,
 } from "lucide-react";
 
 function formatCurrencyShort(val: number): string {
@@ -137,6 +146,28 @@ function AnalyticsHubContent() {
   const [churnDaysThreshold, setChurnDaysThreshold] = useState<number>(60);
   const [customChurnInput, setCustomChurnInput] = useState<string>("60");
   const [isEditingCustomDays, setIsEditingCustomDays] = useState<boolean>(false);
+
+  // Dynamic Groww-Style Sales Trajectory Hover State
+  const [hoveredTrajectoryPoint, setHoveredTrajectoryPoint] = useState<any | null>(null);
+
+  // Dynamic Groww-Style Sales vs Purchases vs Profit Chart State
+  const [financeTimeframe, setFinanceTimeframe] = useState<"7d" | "30d" | "90d" | "all">("30d");
+  const [hoveredFinancePoint, setHoveredFinancePoint] = useState<any | null>(null);
+  const [financeVisibleSeries, setFinanceVisibleSeries] = useState<{
+    sales: boolean;
+    purchases: boolean;
+    profit: boolean;
+  }>({
+    sales: true,
+    purchases: true,
+    profit: true,
+  });
+
+  // Customer RFM Tiers Search, Filter & Multi-Sort State
+  const [rfmSearch, setRfmSearch] = useState<string>("");
+  const [rfmSortKey, setRfmSortKey] = useState<"monetary" | "recency" | "frequency" | "name" | "segment">("monetary");
+  const [rfmSortDir, setRfmSortDir] = useState<"asc" | "desc">("desc");
+  const [rfmSegmentFilter, setRfmSegmentFilter] = useState<string>("ALL");
 
   const fetchInventoryAnalytics = async (cid?: string, catId?: string) => {
     const targetCid = cid || effectiveCompanyId || activeCompanyId;
@@ -374,6 +405,31 @@ function AnalyticsHubContent() {
       .slice(0, 10);
   }, [forecast?.customer_pareto]);
 
+  // Customer Pareto Donut / Pie Chart Data
+  const paretoPieChartData = useMemo(() => {
+    if (!paretoCustomers || paretoCustomers.length === 0) return [];
+
+    const colors = [
+      "#6366f1", // Indigo
+      "#10b981", // Emerald
+      "#8b5cf6", // Violet
+      "#f59e0b", // Amber
+      "#06b6d4", // Cyan
+      "#ec4899", // Pink
+      "#3b82f6", // Blue
+      "#14b8a6", // Teal
+      "#f97316", // Orange
+      "#64748b", // Slate
+    ];
+
+    return paretoCustomers.map((c: any, idx: number) => ({
+      name: c.party_name || c.name || `Party #${idx + 1}`,
+      value: Math.round(Number(c.total_billed ?? c.total_revenue ?? 0)),
+      share_pct: Number(c.percentage_of_total ?? c.share_pct ?? 0),
+      color: colors[idx % colors.length],
+    }));
+  }, [paretoCustomers]);
+
   // Churn Radar Accounts dynamically filtered by user-selected inactivity threshold days
   const churnFilteredAccounts = useMemo(() => {
     // Prefer the complete churn_accounts list from backend, fallback to customer_pareto
@@ -399,6 +455,165 @@ function AnalyticsHubContent() {
       return acc + (c.total_billed ?? c.total_revenue ?? 0);
     }, 0);
   }, [churnFilteredAccounts]);
+
+  // Business Growth & Trajectory Verdict Indicator
+  const businessGrowthVerdict = useMemo(() => {
+    const growthPct = forecast?.trend_details?.growth_rate_pct ?? 0;
+    const momPct = forecast?.monthly_comparison?.mom_comparison?.percentage_change ?? 0;
+    const status = forecast?.financial_momentum_summary?.growth_status || forecast?.trend_status;
+    const avgDaily = forecast?.historical_daily_average || forecast?.trend_details?.average_daily_sales || 0;
+    const runRate7d = forecast?.historical_summary?.current_7d_run_rate || avgDaily;
+
+    if (growthPct > 8 || status === "RAPID_EXPANSION" || momPct > 15) {
+      return {
+        level: "EXPANSION",
+        badge: "🚀 RAPID BUSINESS EXPANSION",
+        badgeColor: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+        pillColor: "text-emerald-600 dark:text-emerald-400",
+        title: `Business is Expanding Rapidly (+${Math.max(growthPct, momPct).toFixed(1)}%)`,
+        description: `Daily order volume is significantly outpacing historical baselines with a 7-day average run rate of ₹${runRate7d.toLocaleString("en-IN", { maximumFractionDigits: 0 })}/day. Working capital velocity is strong.`,
+        isGrowing: true,
+      };
+    } else if (growthPct > 1.5 || status === "STEADY_GROWTH" || momPct > 3) {
+      return {
+        level: "GROWING",
+        badge: "📈 STEADY REVENUE GROWTH",
+        badgeColor: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
+        pillColor: "text-blue-600 dark:text-blue-400",
+        title: `Steady Revenue Growth (+${Math.abs(growthPct > 0 ? growthPct : momPct).toFixed(1)}%)`,
+        description: `Order inflow shows solid upward momentum above 30-day baseline with reliable customer replenishment cycles.`,
+        isGrowing: true,
+      };
+    } else if (growthPct < -5 || status === "SLOWDOWN" || momPct < -10) {
+      return {
+        level: "DECLINING",
+        badge: "📉 BUSINESS SLOWDOWN DETECTED",
+        badgeColor: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
+        pillColor: "text-rose-600 dark:text-rose-400",
+        title: `Sales Velocity Lagging Baseline (${Math.min(growthPct, momPct).toFixed(1)}%)`,
+        description: `Order run rate is below trailing averages. Immediate customer follow-ups and trade promotion incentives recommended to restore momentum.`,
+        isGrowing: false,
+      };
+    } else if (growthPct < 0 || status === "MILD_CONTRACTION" || momPct < 0) {
+      return {
+        level: "MILD_CONTRACTION",
+        badge: "⚠️ MILD CONTRACTION",
+        badgeColor: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+        pillColor: "text-amber-600 dark:text-amber-400",
+        title: `Slight Volume Contraction (${Math.min(growthPct, momPct).toFixed(1)}%)`,
+        description: `Sales are tracking slightly behind previous month peak, but within normal inventory replenishment variance.`,
+        isGrowing: false,
+      };
+    } else {
+      return {
+        level: "STABLE",
+        badge: "⚖️ STABLE SALES PACE",
+        badgeColor: "bg-slate-500/15 text-slate-700 dark:text-slate-300 border-slate-500/30",
+        pillColor: "text-slate-600 dark:text-slate-400",
+        title: `Consistent Operational Turnover (~0% variance)`,
+        description: `Billing velocity is stable and predictable with balanced day-to-day transaction pacing.`,
+        isGrowing: true,
+      };
+    }
+  }, [forecast]);
+
+  // Groww-Style Sales vs Purchases vs Profit Series
+  const growwChartData = useMemo(() => {
+    const series: any[] = forecast?.historical_daily_series || [];
+    if (!series || series.length === 0) return [];
+
+    let filtered = [...series];
+    if (financeTimeframe === "7d") {
+      filtered = filtered.slice(-7);
+    } else if (financeTimeframe === "30d") {
+      filtered = filtered.slice(-30);
+    } else if (financeTimeframe === "90d") {
+      filtered = filtered.slice(-90);
+    }
+
+    return filtered.map((item: any) => {
+      const s = Number(item.actual_sales || 0);
+      const p = Number(item.actual_purchases || 0);
+      const profit = Number(item.gross_profit !== undefined ? item.gross_profit : (s - p));
+      const margin = s > 0 ? Math.round((profit / s) * 1000) / 10 : 0;
+      return {
+        date: item.date,
+        sales: s,
+        purchases: p,
+        profit: profit,
+        margin_pct: margin,
+        is_positive: profit >= 0,
+      };
+    });
+  }, [forecast?.historical_daily_series, financeTimeframe]);
+
+  const growwSummary = useMemo(() => {
+    if (!growwChartData || growwChartData.length === 0) {
+      return {
+        totalSales: forecast?.financial_momentum_summary?.total_sales || 0,
+        totalPurchases: forecast?.financial_momentum_summary?.total_purchases || 0,
+        grossProfit: forecast?.financial_momentum_summary?.gross_profit || 0,
+        marginPct: forecast?.financial_momentum_summary?.profit_margin_pct || 0,
+        growthStatus: forecast?.financial_momentum_summary?.growth_status || "STABLE",
+      };
+    }
+    const totalSales = growwChartData.reduce((acc, it) => acc + it.sales, 0);
+    const totalPurchases = growwChartData.reduce((acc, it) => acc + it.purchases, 0);
+    const grossProfit = totalSales - totalPurchases;
+    const marginPct = totalSales > 0 ? Math.round((grossProfit / totalSales) * 1000) / 10 : 0;
+    return {
+      totalSales,
+      totalPurchases,
+      grossProfit,
+      marginPct,
+      growthStatus: forecast?.financial_momentum_summary?.growth_status || (grossProfit > 0 ? "EXPANDING" : "CONTRACTION"),
+    };
+  }, [growwChartData, forecast?.financial_momentum_summary]);
+
+  // Sorted and filtered RFM Data for Tab 3 Customer RFM Tiers
+  const sortedRfmData = useMemo(() => {
+    if (!rfmData || rfmData.length === 0) return [];
+    let list = [...rfmData];
+    if (rfmSearch.trim()) {
+      const q = rfmSearch.toLowerCase();
+      list = list.filter((c: any) =>
+        (c.party_ledger__name || c.name || "").toLowerCase().includes(q)
+      );
+    }
+    if (rfmSegmentFilter !== "ALL") {
+      list = list.filter((c: any) => {
+        const seg = (c.segment || "").toLowerCase();
+        if (rfmSegmentFilter === "VIP") return seg.includes("high") || seg.includes("vip");
+        if (rfmSegmentFilter === "MEDIUM") return seg.includes("medium");
+        if (rfmSegmentFilter === "STANDARD") return !seg.includes("high") && !seg.includes("vip") && !seg.includes("medium");
+        return true;
+      });
+    }
+    list.sort((a: any, b: any) => {
+      let valA: any = 0;
+      let valB: any = 0;
+      if (rfmSortKey === "monetary") {
+        valA = Number(a.monetary || 0);
+        valB = Number(b.monetary || 0);
+      } else if (rfmSortKey === "recency") {
+        valA = Number(a.recency || 0);
+        valB = Number(b.recency || 0);
+      } else if (rfmSortKey === "frequency") {
+        valA = Number(a.frequency || 0);
+        valB = Number(b.frequency || 0);
+      } else if (rfmSortKey === "name") {
+        valA = (a.party_ledger__name || a.name || "").toLowerCase();
+        valB = (b.party_ledger__name || b.name || "").toLowerCase();
+        return rfmSortDir === "asc" ? valA.localeCompare(valB) : valB.localeCompare(valA);
+      } else if (rfmSortKey === "segment") {
+        valA = (a.segment || "").toLowerCase();
+        valB = (b.segment || "").toLowerCase();
+        return rfmSortDir === "asc" ? valA.localeCompare(valB) : valB.localeCompare(valA);
+      }
+      return rfmSortDir === "asc" ? valA - valB : valB - valA;
+    });
+    return list;
+  }, [rfmData, rfmSearch, rfmSegmentFilter, rfmSortKey, rfmSortDir]);
 
   // Category & Reorder Hub Filters
   const handleCategoryFilterChange = (newCatId: string) => {
@@ -1000,6 +1215,57 @@ function AnalyticsHubContent() {
               </div>
             </div>
 
+            {/* Prominent Business Growth Verdict Banner */}
+            <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+              businessGrowthVerdict.isGrowing 
+                ? "bg-emerald-500/5 dark:bg-emerald-500/10 border-emerald-500/30" 
+                : "bg-rose-500/5 dark:bg-rose-500/10 border-rose-500/30"
+            }`}>
+              <div className="flex items-start sm:items-center gap-3">
+                <div className={`p-2.5 rounded-xl shrink-0 ${
+                  businessGrowthVerdict.isGrowing 
+                    ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400" 
+                    : "bg-rose-500/20 text-rose-600 dark:text-rose-400"
+                }`}>
+                  {businessGrowthVerdict.isGrowing ? (
+                    <TrendingUp className="w-5 h-5" />
+                  ) : (
+                    <TrendingDown className="w-5 h-5" />
+                  )}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-bold text-foreground">
+                      {businessGrowthVerdict.title}
+                    </span>
+                    <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold border ${businessGrowthVerdict.badgeColor}`}>
+                      {businessGrowthVerdict.badge}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5 max-w-2xl">
+                    {businessGrowthVerdict.description}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 shrink-0 sm:border-l sm:border-border/40 sm:pl-4">
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-muted-foreground">7D Moving Avg</div>
+                  <div className="text-sm sm:text-base font-extrabold font-mono text-foreground">
+                    ₹{(forecast?.historical_summary?.current_7d_run_rate || forecast?.historical_daily_average || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/d
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] uppercase font-bold text-muted-foreground">Daily Velocity</div>
+                  <div className={`text-sm sm:text-base font-extrabold font-mono ${
+                    (forecast?.trend_details?.growth_rate_pct ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+                  }`}>
+                    {(forecast?.trend_details?.growth_rate_pct ?? 0) >= 0 ? "+" : ""}{(forecast?.trend_details?.growth_rate_pct ?? 0).toFixed(1)}%/d
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Sales Trajectory & Forecast Timeline */}
             <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
               {/* Header with Simplified View Switcher & Range Controls */}
@@ -1014,13 +1280,45 @@ function AnalyticsHubContent() {
                       {lineChartMode === "smoothed" ? "7D SMOOTHED TREND" : lineChartMode === "daily" ? "DAILY INVOICED" : "CUMULATIVE PACE"}
                     </span>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {lineChartMode === "smoothed"
-                      ? "Silky 7-day rolling sales run-rate smoothing out erratic daily zero-invoicing noise."
-                      : lineChartMode === "daily"
-                      ? "Exact day-by-day invoiced actuals and forward-looking daily momentum."
-                      : "Cumulative revenue progression building up toward projected month/quarter targets."}
-                  </p>
+                  
+                  {/* Dynamic Groww-Style Live Hover Display */}
+                  <div className="mt-2 flex items-baseline gap-3 flex-wrap">
+                    <div className="text-xl sm:text-2xl font-extrabold font-mono text-foreground tracking-tight">
+                      {hoveredTrajectoryPoint
+                        ? `₹${Number(hoveredTrajectoryPoint.daily_val || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : `₹${Number(forecast?.historical_summary?.current_7d_run_rate || forecast?.historical_daily_average || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {hoveredTrajectoryPoint ? (
+                        (() => {
+                          const runRate = forecast?.historical_summary?.current_7d_run_rate || forecast?.historical_daily_average || 1;
+                          const diffPct = Math.round(((hoveredTrajectoryPoint.daily_val - runRate) / Math.max(1, runRate)) * 1000) / 10;
+                          return (
+                            <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-bold ${
+                              diffPct >= 0
+                                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                                : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                            }`}>
+                              {diffPct >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                              <span>{diffPct >= 0 ? `+${diffPct}%` : `${diffPct}%`} vs 7D Baseline</span>
+                            </span>
+                          );
+                        })()
+                      ) : (
+                        <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-bold ${
+                          (forecast?.trend_details?.growth_rate_pct ?? 0) >= 0
+                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                            : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                        }`}>
+                          {(forecast?.trend_details?.growth_rate_pct ?? 0) >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                          <span>{(forecast?.trend_details?.growth_rate_pct ?? 0) >= 0 ? "+" : ""}{(forecast?.trend_details?.growth_rate_pct ?? 0).toFixed(1)}% Daily Momentum</span>
+                        </span>
+                      )}
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {hoveredTrajectoryPoint ? formatChartDate(hoveredTrajectoryPoint.date) : "7-Day Moving Baseline"}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
@@ -1144,7 +1442,16 @@ function AnalyticsHubContent() {
               <div className="h-72 sm:h-80 w-full pt-1">
                 {chartTimelineData && chartTimelineData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={chartTimelineData} margin={{ top: 15, right: 15, left: -10, bottom: 0 }}>
+                    <ComposedChart
+                      data={chartTimelineData}
+                      margin={{ top: 15, right: 15, left: -10, bottom: 0 }}
+                      onMouseMove={(e: any) => {
+                        if (e?.activePayload?.[0]?.payload) {
+                          setHoveredTrajectoryPoint(e.activePayload[0].payload);
+                        }
+                      }}
+                      onMouseLeave={() => setHoveredTrajectoryPoint(null)}
+                    >
                       <defs>
                         <linearGradient id="forecastHubGrad" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.25} />
@@ -1391,318 +1698,321 @@ function AnalyticsHubContent() {
               </div>
             </div>
 
-            {/* Customer Pareto 80/20 Distribution & Churn Radar Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-              {/* Pareto Table (2 cols) */}
-              <div className="lg:col-span-2 bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/40 pb-3">
-                  <div>
+            {/* Dynamic Groww-Style Sales vs Purchases vs Profit Chart */}
+            <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
+              {/* Groww Dynamic Live Header */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-border/40 pb-4">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
-                      <Users className="w-4 h-4 text-primary" />
-                      <span>Customer Pareto Concentration (80/20 Rule)</span>
+                      <Activity className="w-4 h-4 text-primary" />
+                      <span>Sales vs Purchases vs Gross Profit</span>
                     </h3>
-                    <p className="text-xs text-muted-foreground">
-                      Key account concentration driving core turnover. Excludes walk-in counter sales to show true client retention.
-                    </p>
-                  </div>
-                  <span className="text-xs font-mono text-muted-foreground bg-muted/60 px-2.5 py-1 rounded-md border border-border/40">
-                    Top {paretoCustomers.length} Parties
-                  </span>
-                </div>
-
-                {/* Cash & Counter Sales Summary Notice */}
-                {forecast?.cash_sales_summary && Number(forecast.cash_sales_summary.total_billed || 0) > 0 && (
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/30 border border-border/40 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground font-medium flex items-center gap-1.5">
-                        <Receipt className="w-3.5 h-3.5 text-primary" />
-                        <span>Walk-in / Cash Counter Bills:</span>
-                      </span>
-                      <span className="font-semibold text-foreground font-mono">
-                        ₹{Number(forecast.cash_sales_summary.total_billed || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </span>
-                      <span className="text-muted-foreground text-[11px]">
-                        ({forecast.cash_sales_summary.invoice_count || 0} bills · {forecast.cash_sales_summary.share_pct || 0}% turnover)
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-muted-foreground italic">
-                      *Walk-in retail counter memos; excluded from client account ranking
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-primary/10 text-primary border border-primary/20 uppercase tracking-wider">
+                      GROWW-STYLE FINANCIAL RADAR
                     </span>
                   </div>
-                )}
+                  
+                  {/* Dynamic Hover Stat Display */}
+                  <div className="mt-2 flex items-baseline gap-3 flex-wrap">
+                    <div className="text-2xl sm:text-3xl font-extrabold font-mono text-foreground tracking-tight">
+                      ₹{(hoveredFinancePoint ? hoveredFinancePoint.profit : growwSummary.grossProfit).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                        (hoveredFinancePoint ? hoveredFinancePoint.profit : growwSummary.grossProfit) >= 0
+                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                          : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                      }`}>
+                        {(hoveredFinancePoint ? hoveredFinancePoint.profit : growwSummary.grossProfit) >= 0 ? (
+                          <ArrowUpRight className="w-3.5 h-3.5" />
+                        ) : (
+                          <ArrowDownRight className="w-3.5 h-3.5" />
+                        )}
+                        <span>
+                          {hoveredFinancePoint ? hoveredFinancePoint.margin_pct : growwSummary.marginPct}% Gross Margin
+                        </span>
+                      </span>
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {hoveredFinancePoint ? formatChartDate(hoveredFinancePoint.date) : `${financeTimeframe.toUpperCase()} Aggregate`}
+                      </span>
+                    </div>
+                  </div>
 
-                {paretoCustomers && paretoCustomers.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
-                          <th className="py-2.5 px-3">Rank & Party</th>
-                          <th className="py-2.5 px-3 text-right">Revenue</th>
-                          <th className="py-2.5 px-3 text-right">Share (%)</th>
-                          <th className="py-2.5 px-3 text-right">Cumulative</th>
-                          <th className="py-2.5 px-3 text-center">Last Order</th>
-                          <th className="py-2.5 px-3 text-center">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border/30">
-                        {paretoCustomers.map((c: any, idx: number) => {
-                          const partyName = c.party_name || c.name || "Customer";
-                          const billedAmount = c.total_billed ?? c.total_revenue ?? 0;
-                          const sharePct = c.share_pct ?? c.percentage_of_total ?? 0;
-                          const cumPct = c.cumulative_pct ?? c.cumulative_percentage ?? 0;
-                          const idleDays = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
-                          
-                          let badgeBg = "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20";
-                          let badgeLabel = c.risk_label || "Active Buyer";
-                          if (idleDays >= 90) {
-                            badgeBg = "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20";
-                            badgeLabel = `Dormant (${idleDays}d)`;
-                          } else if (idleDays >= 60) {
-                            badgeBg = "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20";
-                            badgeLabel = `Inactive (${idleDays}d)`;
-                          } else if (idleDays >= 30) {
-                            badgeBg = "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20";
-                            badgeLabel = `Cooling (${idleDays}d)`;
-                          }
+                  {/* Dynamic Multi-Series In-Header Breakdown */}
+                  <div className="flex items-center gap-4 mt-2 text-xs flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
+                      <span className="text-muted-foreground">Sales:</span>
+                      <span className="font-mono font-bold text-foreground">
+                        ₹{(hoveredFinancePoint ? hoveredFinancePoint.sales : growwSummary.totalSales).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                      <span className="text-muted-foreground">Purchases:</span>
+                      <span className="font-mono font-bold text-foreground">
+                        ₹{(hoveredFinancePoint ? hoveredFinancePoint.purchases : growwSummary.totalPurchases).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                      <span className="text-muted-foreground">Net Margin:</span>
+                      <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                        ₹{(hoveredFinancePoint ? hoveredFinancePoint.profit : growwSummary.grossProfit).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Controls: Timeframe Filter + Series Toggles */}
+                <div className="flex flex-col sm:flex-row lg:flex-col items-start sm:items-center lg:items-end gap-2.5">
+                  {/* Timeframe Tabs (Groww 7D, 30D, 90D, ALL) */}
+                  <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-xs">
+                    {[
+                      { label: "7D", val: "7d" },
+                      { label: "30D", val: "30d" },
+                      { label: "90D", val: "90d" },
+                      { label: "All FY", val: "all" },
+                    ].map((t) => (
+                      <button
+                        key={t.val}
+                        type="button"
+                        onClick={() => setFinanceTimeframe(t.val as any)}
+                        className={`px-3 py-1 rounded font-medium transition-colors cursor-pointer ${
+                          financeTimeframe === t.val
+                            ? "bg-card text-foreground font-bold shadow-2xs"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Series Toggle Chips */}
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setFinanceVisibleSeries((prev) => ({ ...prev, sales: !prev.sales }))}
+                      className={`px-2.5 py-1 rounded-md border text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        financeVisibleSeries.sales
+                          ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-600 dark:text-indigo-400 font-bold"
+                          : "bg-muted/40 border-border/40 text-muted-foreground opacity-50"
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                      <span>Sales</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setFinanceVisibleSeries((prev) => ({ ...prev, purchases: !prev.purchases }))}
+                      className={`px-2.5 py-1 rounded-md border text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        financeVisibleSeries.purchases
+                          ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold"
+                          : "bg-muted/40 border-border/40 text-muted-foreground opacity-50"
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                      <span>Purchases</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setFinanceVisibleSeries((prev) => ({ ...prev, profit: !prev.profit }))}
+                      className={`px-2.5 py-1 rounded-md border text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        financeVisibleSeries.profit
+                          ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold"
+                          : "bg-muted/40 border-border/40 text-muted-foreground opacity-50"
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                      <span>Gross Profit</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Groww Chart Canvas */}
+              <div className="h-72 sm:h-80 w-full pt-1">
+                {growwChartData && growwChartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart
+                      data={growwChartData}
+                      margin={{ top: 15, right: 15, left: -10, bottom: 0 }}
+                      onMouseMove={(e: any) => {
+                        if (e?.activePayload?.[0]?.payload) {
+                          setHoveredFinancePoint(e.activePayload[0].payload);
+                        }
+                      }}
+                      onMouseLeave={() => setHoveredFinancePoint(null)}
+                    >
+                      <defs>
+                        <linearGradient id="growwSalesGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.28} />
+                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
+                        </linearGradient>
+                        <linearGradient id="growwPurchasesGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.24} />
+                          <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
+                        </linearGradient>
+                        <linearGradient id="growwProfitGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.32} />
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/30" vertical={false} />
+                      <XAxis
+                        dataKey="date"
+                        stroke="currentColor"
+                        className="text-muted-foreground font-medium"
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                        minTickGap={45}
+                        tickFormatter={formatChartDate}
+                      />
+                      <YAxis
+                        stroke="currentColor"
+                        className="text-muted-foreground"
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={formatCurrencyShort}
+                      />
+                      <Tooltip
+                        content={({ active, payload }: any) => {
+                          if (!active || !payload || !payload.length) return null;
+                          const item = payload[0]?.payload || {};
+                          let dateLabel = item.date;
+                          try {
+                            const d = new Date(item.date);
+                            if (!isNaN(d.getTime())) {
+                              dateLabel = d.toLocaleDateString("en-IN", {
+                                weekday: "short",
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                              });
+                            }
+                          } catch {}
 
                           return (
-                            <tr key={idx} className="hover:bg-muted/40 transition-colors">
-                              <td className="py-2.5 px-3">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-mono text-[10px] text-muted-foreground w-4">#{idx + 1}</span>
-                                  {c.party_id ? (
-                                    <Link
-                                      href={`/parties/${c.party_id}/statement`}
-                                      className="font-semibold text-foreground truncate max-w-[160px] sm:max-w-[220px] hover:text-primary hover:underline transition-colors"
-                                      title={partyName}
-                                    >
-                                      {partyName}
-                                    </Link>
-                                  ) : (
-                                    <span className="font-semibold text-foreground truncate max-w-[160px] sm:max-w-[220px]">
-                                      {partyName}
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
-                                ₹{Number(billedAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono text-primary font-semibold">
-                                {sharePct}%
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono text-muted-foreground text-[11px]">
-                                {cumPct}%
-                              </td>
-                              <td className="py-2.5 px-3 text-center font-mono text-muted-foreground">
-                                {idleDays}d ago
-                              </td>
-                              <td className="py-2.5 px-3 text-center">
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeBg}`}>
-                                  {badgeLabel}
+                            <div className="bg-card/95 backdrop-blur-md border border-border rounded-xl p-3 shadow-xl text-xs space-y-2 min-w-[210px]">
+                              <div className="font-bold text-foreground text-xs border-b border-border/50 pb-1 flex items-center justify-between">
+                                <span>{dateLabel}</span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                                  item.profit >= 0 ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                                }`}>
+                                  {item.margin_pct}% Margin
                                 </span>
-                              </td>
-                            </tr>
+                              </div>
+                              <div className="space-y-1.5">
+                                <div className="flex justify-between items-center text-muted-foreground">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                                    <span>Sales:</span>
+                                  </span>
+                                  <span className="font-mono font-bold text-foreground">
+                                    ₹{Number(item.sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center text-muted-foreground">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                                    <span>Purchases:</span>
+                                  </span>
+                                  <span className="font-mono font-bold text-foreground">
+                                    ₹{Number(item.purchases || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center pt-1 border-t border-border/40">
+                                  <span className="flex items-center gap-1.5 font-semibold text-foreground">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                    <span>Gross Profit:</span>
+                                  </span>
+                                  <span className={`font-mono font-bold ${item.profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+                                    ₹{Number(item.profit || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
                           );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                        }}
+                      />
+                      {financeVisibleSeries.sales && (
+                        <Area
+                          type="monotone"
+                          dataKey="sales"
+                          name="Sales Billed"
+                          stroke="#6366f1"
+                          strokeWidth={2.5}
+                          fillOpacity={1}
+                          fill="url(#growwSalesGrad)"
+                          activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2, fill: "#6366f1" }}
+                        />
+                      )}
+                      {financeVisibleSeries.purchases && (
+                        <Area
+                          type="monotone"
+                          dataKey="purchases"
+                          name="Procurement / Purchases"
+                          stroke="#f59e0b"
+                          strokeWidth={2.2}
+                          fillOpacity={1}
+                          fill="url(#growwPurchasesGrad)"
+                          activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2, fill: "#f59e0b" }}
+                        />
+                      )}
+                      {financeVisibleSeries.profit && (
+                        <Area
+                          type="monotone"
+                          dataKey="profit"
+                          name="Gross Profit"
+                          stroke="#10b981"
+                          strokeWidth={2.5}
+                          fillOpacity={1}
+                          fill="url(#growwProfitGrad)"
+                          activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2, fill: "#10b981" }}
+                        />
+                      )}
+                    </AreaChart>
+                  </ResponsiveContainer>
                 ) : (
-                  <div className="py-8 text-center text-xs text-muted-foreground">
-                    No customer revenue data available for Pareto analysis.
+                  <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                    No sales or purchase vouchers recorded for financial curve plotting.
                   </div>
                 )}
               </div>
+            </div>
 
-              {/* Churn Radar & Inactive Accounts (1 col) */}
-              <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-3.5 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between border-b border-border/40 pb-3">
-                    <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                      <ShieldAlert className="w-4 h-4 text-amber-500" />
-                      <span>Customer Churn Radar</span>
-                    </h3>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/10 text-amber-600 border border-amber-500/20">
-                      {churnFilteredAccounts.length} Inactive
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Key accounts that have not placed an order within your selected timeframe.
-                  </p>
-
-                  {/* Interactive Threshold Selector & Editable Custom Input */}
-                  <div className="pt-2 space-y-1.5">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-muted-foreground font-medium">Inactivity Filter:</span>
-                      <span className="font-semibold text-foreground font-mono text-[11px]">
-                        &gt; {churnDaysThreshold} Days Idle
-                      </span>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-1">
-                      {[30, 60, 90, 120, 240, 360].map((days) => {
-                        const isActive = churnDaysThreshold === days && !isEditingCustomDays;
-                        return (
-                          <button
-                            key={days}
-                            type="button"
-                            onClick={() => {
-                              setChurnDaysThreshold(days);
-                              setCustomChurnInput(String(days));
-                              setIsEditingCustomDays(false);
-                            }}
-                            className={`px-2 py-1 rounded text-[10px] font-semibold transition-all cursor-pointer ${
-                              isActive
-                                ? "bg-amber-500 text-white shadow-xs font-bold"
-                                : "bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                            }`}
-                          >
-                            {days}d
-                          </button>
-                        );
-                      })}
-
-                      {/* Custom Days Input */}
-                      <div className="flex items-center gap-1 bg-muted/60 border border-border/50 rounded px-1.5 py-0.5 ml-auto">
-                        <span className="text-[10px] text-muted-foreground">Custom:</span>
-                        <input
-                          type="number"
-                          min="1"
-                          max="999"
-                          value={customChurnInput}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setCustomChurnInput(val);
-                            const num = parseInt(val, 10);
-                            if (!isNaN(num) && num > 0) {
-                              setChurnDaysThreshold(num);
-                              setIsEditingCustomDays(true);
-                            }
-                          }}
-                          className="w-11 bg-background border border-border/60 rounded px-1 py-0.5 text-[10px] font-mono text-center text-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
-                        />
-                        <span className="text-[10px] text-muted-foreground">d</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Summary Metric Ribbon */}
-                  <div className="grid grid-cols-2 gap-2 p-2 rounded-lg bg-amber-500/5 border border-amber-500/15 text-xs mt-3">
-                    <div>
-                      <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground block">
-                        Idle Accounts
-                      </span>
-                      <span className="text-base font-bold font-mono text-amber-600 dark:text-amber-400">
-                        {churnFilteredAccounts.length}
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground block">
-                        Revenue At Risk
-                      </span>
-                      <span className="text-base font-bold font-mono text-foreground">
-                        ₹{formatCurrencyShort(totalAtRiskRevenue)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Scrollable List of Churned Accounts */}
-                  <div className="space-y-2 mt-3 max-h-[300px] overflow-y-auto pr-1 scrollbar-thin">
-                    {churnFilteredAccounts.length > 0 ? (
-                      churnFilteredAccounts.map((c: any, idx: number) => {
-                        const partyName = c.party_name || c.name || "Customer";
-                        const billedAmount = c.total_billed ?? c.total_revenue ?? 0;
-                        const idleDays = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
-                        const ordersCount = c.invoice_count ?? 1;
-                        const lastDate = c.last_sale_date ? formatChartDate(c.last_sale_date) : null;
-                        
-                        const isCritical = idleDays >= 120;
-                        const isHigh = idleDays >= 90;
-
-                        return (
-                          <div
-                            key={idx}
-                            className={`p-2.5 rounded-lg border transition-all text-xs space-y-1.5 ${
-                              isCritical
-                                ? "border-rose-500/30 bg-rose-500/5 hover:border-rose-500/50"
-                                : isHigh
-                                ? "border-amber-500/30 bg-amber-500/5 hover:border-amber-500/50"
-                                : "border-border/60 bg-muted/30 hover:border-border"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-1">
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                <span className="font-mono text-[10px] text-muted-foreground">#{idx + 1}</span>
-                                {c.party_id ? (
-                                  <Link
-                                    href={`/parties/${c.party_id}/statement`}
-                                    className="font-semibold text-foreground truncate max-w-[150px] sm:max-w-[180px] hover:text-primary hover:underline transition-colors"
-                                    title={partyName}
-                                  >
-                                    {partyName}
-                                  </Link>
-                                ) : (
-                                  <span className="font-semibold text-foreground truncate max-w-[150px] sm:max-w-[180px]">
-                                    {partyName}
-                                  </span>
-                                )}
-                              </div>
-                              <span
-                                className={`font-mono font-bold text-[10px] px-1.5 py-0.5 rounded shrink-0 ${
-                                  isCritical
-                                    ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30"
-                                    : isHigh
-                                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
-                                    : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20"
-                                }`}
-                              >
-                                {idleDays}d idle
-                              </span>
-                            </div>
-
-                            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                              <span>
-                                Revenue: <strong className="text-foreground font-mono">₹{Number(billedAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
-                              </span>
-                              <div className="flex items-center gap-1.5">
-                                <span>{ordersCount} {ordersCount === 1 ? "order" : "orders"}</span>
-                                {lastDate && <span className="text-[10px]">· Last: {lastDate}</span>}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="py-6 text-center text-xs text-muted-foreground border border-dashed border-border/60 rounded-lg p-3 space-y-1">
-                        <ShieldCheck className="w-5 h-5 text-emerald-500 mx-auto" />
-                        <p className="font-medium text-foreground">Zero Accounts Idle &gt; {churnDaysThreshold} Days</p>
-                        <p className="text-[11px]">All active customers have ordered within this window.</p>
-                      </div>
-                    )}
-                  </div>
+            {/* Customer Intelligence & Pareto Shortcut Banner */}
+            <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 shrink-0">
+                  <Users className="w-5 h-5" />
                 </div>
-
-                {/* AI Retention Recommendation */}
-                <div className="p-3 rounded-lg bg-muted/40 border border-border/40 text-xs space-y-1 mt-3">
-                  <div className="font-semibold text-foreground flex items-center gap-1">
-                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                    <span>Retention Recommendation</span>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">
-                    {churnFilteredAccounts.length > 0 ? (
-                      <>
-                        {churnFilteredAccounts.length} customer {churnFilteredAccounts.length === 1 ? "account is" : "accounts are"} idle for &gt;{churnDaysThreshold} days (₹{formatCurrencyShort(totalAtRiskRevenue)} historical demand). Prioritize follow-up with <strong className="text-foreground">{churnFilteredAccounts[0].party_name}</strong> ({churnFilteredAccounts[0].days_since_last_sale ?? churnFilteredAccounts[0].days_since_last_order}d idle) to protect recurring cash flows.
-                      </>
-                    ) : (
-                      <>
-                        Customer reordering pace is healthy within your {churnDaysThreshold}-day threshold. You can lower the window to 30 days to check early slowing accounts.
-                      </>
-                    )}
+                <div>
+                  <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                    <span>Customer 80/20 Pareto & Churn Radar Intelligence</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                      Customer Section
+                    </span>
+                  </h4>
+                  <p className="text-xs text-muted-foreground mt-0.5 max-w-2xl">
+                    Detailed account concentration, Pareto revenue share donut distribution, RFM tier analysis, and customer churn recovery workflows are integrated into the Customer Section.
                   </p>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("rfm")}
+                className="px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs transition-colors flex items-center gap-1.5 shrink-0 self-start sm:self-auto cursor-pointer"
+              >
+                <span>View Customer Pareto & Churn</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
             </div>
 
             {/* Brand & Category Revenue Contribution Mix */}
@@ -2000,74 +2310,616 @@ function AnalyticsHubContent() {
           </div>
         )}
 
-        {/* Tab 3: Customer RFM Segmentation */}
+        {/* Tab 3: Customer RFM Segmentation & Customer Churn Radar */}
         {activeTab === "rfm" && (
           <div className="space-y-5 animate-in fade-in duration-200">
-            <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/40 pb-3">
-                <div>
-                  <h3 className="text-base font-semibold text-foreground">
-                    Customer Recency, Frequency & Monetary (RFM) Segmentation
-                  </h3>
-                  <p className="text-xs text-muted-foreground">
-                    Clustered via scikit-learn machine learning based on purchase frequency, invoice spend, and recency of last order.
-                  </p>
+            {/* Customer Pareto Concentration (80/20 Rule) & Revenue Share Donut Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+              {/* Pareto Table (7 cols) */}
+              <div className="lg:col-span-7 bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/40 pb-3">
+                  <div>
+                    <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
+                      <Users className="w-4 h-4 text-primary" />
+                      <span>Customer Pareto Concentration (80/20 Rule)</span>
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      Key account concentration driving core turnover. Excludes walk-in counter sales to show true client retention.
+                    </p>
+                  </div>
+                  <span className="text-xs font-mono text-muted-foreground bg-muted/60 px-2.5 py-1 rounded-md border border-border/40">
+                    Top {paretoCustomers.length} Parties
+                  </span>
                 </div>
-                <span className="text-xs text-muted-foreground font-mono">
-                  {rfmData.length} Active Customers Analyzed
-                </span>
+
+                {/* Cash & Counter Sales Summary Notice */}
+                {forecast?.cash_sales_summary && Number(forecast.cash_sales_summary.total_billed || 0) > 0 && (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/30 border border-border/40 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground font-medium flex items-center gap-1.5">
+                        <Receipt className="w-3.5 h-3.5 text-primary" />
+                        <span>Walk-in / Cash Counter Bills:</span>
+                      </span>
+                      <span className="font-semibold text-foreground font-mono">
+                        ₹{Number(forecast.cash_sales_summary.total_billed || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-muted-foreground text-[11px]">
+                        ({forecast.cash_sales_summary.invoice_count || 0} bills · {forecast.cash_sales_summary.share_pct || 0}% turnover)
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground italic">
+                      *Walk-in retail counter memos; excluded from client account ranking
+                    </span>
+                  </div>
+                )}
+
+                {paretoCustomers && paretoCustomers.length > 0 ? (
+                  <div className="overflow-x-auto max-h-[380px] overflow-y-auto scrollbar-thin">
+                    <table className="w-full text-left text-xs">
+                      <thead className="sticky top-0 bg-card z-10">
+                        <tr className="border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
+                          <th className="py-2.5 px-3">Rank & Party</th>
+                          <th className="py-2.5 px-3 text-right">Revenue</th>
+                          <th className="py-2.5 px-3 text-right">Share (%)</th>
+                          <th className="py-2.5 px-3 text-right">Cumulative</th>
+                          <th className="py-2.5 px-3 text-center">Last Order</th>
+                          <th className="py-2.5 px-3 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/30">
+                        {paretoCustomers.map((c: any, idx: number) => {
+                          const partyName = c.party_name || c.name || "Customer";
+                          const billedAmount = c.total_billed ?? c.total_revenue ?? 0;
+                          const sharePct = c.share_pct ?? c.percentage_of_total ?? 0;
+                          const cumPct = c.cumulative_pct ?? c.cumulative_percentage ?? 0;
+                          const idleDays = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
+                          
+                          let badgeBg = "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20";
+                          let badgeLabel = c.risk_label || "Active Buyer";
+                          if (idleDays >= 90) {
+                            badgeBg = "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20";
+                            badgeLabel = `Dormant (${idleDays}d)`;
+                          } else if (idleDays >= 60) {
+                            badgeBg = "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20";
+                            badgeLabel = `Inactive (${idleDays}d)`;
+                          } else if (idleDays >= 30) {
+                            badgeBg = "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20";
+                            badgeLabel = `Cooling (${idleDays}d)`;
+                          }
+
+                          return (
+                            <tr key={idx} className="hover:bg-muted/40 transition-colors">
+                              <td className="py-2.5 px-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-[10px] text-muted-foreground w-4">#{idx + 1}</span>
+                                  {c.party_id ? (
+                                    <Link
+                                      href={`/parties/${c.party_id}/statement`}
+                                      className="font-semibold text-foreground truncate max-w-[150px] sm:max-w-[200px] hover:text-primary hover:underline transition-colors"
+                                      title={partyName}
+                                    >
+                                      {partyName}
+                                    </Link>
+                                  ) : (
+                                    <span className="font-semibold text-foreground truncate max-w-[150px] sm:max-w-[200px]">
+                                      {partyName}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
+                                ₹{Number(billedAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono text-primary font-semibold">
+                                {sharePct}%
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono text-muted-foreground text-[11px]">
+                                {cumPct}%
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-mono text-muted-foreground">
+                                {idleDays}d ago
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeBg}`}>
+                                  {badgeLabel}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="py-12 text-center text-xs text-muted-foreground">
+                    No debtor sales transactions found to generate Pareto ranking.
+                  </div>
+                )}
               </div>
 
-              {rfmData.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
-                        <th className="py-2.5 px-3">Customer Party</th>
-                        <th className="py-2.5 px-3 text-center">Tier Segment</th>
-                        <th className="py-2.5 px-3 text-right">Recency (Days)</th>
-                        <th className="py-2.5 px-3 text-right">Frequency (Orders)</th>
-                        <th className="py-2.5 px-3 text-right">Total Revenue</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/30">
-                      {rfmData.slice(0, 30).map((c: any, idx: number) => (
-                        <tr key={idx} className="hover:bg-muted/40 transition-colors">
-                          <td className="py-2.5 px-3 font-medium text-foreground">
-                            {c.party_ledger__name || "Unknown Customer"}
-                          </td>
-                          <td className="py-2.5 px-3 text-center">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                c.segment?.includes("High Value") || c.segment?.includes("VIP")
-                                  ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
-                                  : c.segment?.includes("Medium")
-                                  ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20"
-                                  : "bg-muted text-muted-foreground border border-border/40"
-                              }`}
-                            >
-                              {c.segment || "Standard"}
+              {/* Pareto Pie / Donut Chart (5 cols) */}
+              <div className="lg:col-span-5 bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between border-b border-border/40 pb-3">
+                    <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                      <PieChart className="w-4 h-4 text-purple-500" />
+                      <span>Customer Pareto Revenue Share</span>
+                    </h4>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                      {paretoPieChartData.reduce((acc: number, cur: any) => acc + (cur.share_pct || 0), 0).toFixed(1)}% Core Share
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Visual proportion of total company turnover generated by your top accounts.
+                  </p>
+
+                  {/* Donut Chart with Centered KPI */}
+                  {paretoPieChartData.length > 0 ? (
+                    <div className="relative h-60 w-full flex items-center justify-center mt-2">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <RechartsPieChart>
+                          <Tooltip
+                            content={({ active, payload }) => {
+                              if (!active || !payload || !payload.length) return null;
+                              const d = payload[0].payload;
+                              return (
+                                <div className="bg-card/95 backdrop-blur-md border border-border rounded-xl p-2.5 shadow-xl text-xs space-y-1">
+                                  <div className="font-bold text-foreground flex items-center gap-1.5">
+                                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: d.color }}></span>
+                                    <span>{d.name}</span>
+                                  </div>
+                                  <div className="text-muted-foreground">
+                                    Revenue: <strong className="text-foreground font-mono">₹{Number(d.value).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                                  </div>
+                                  <div className="text-purple-600 dark:text-purple-400 font-semibold">
+                                    Turnover Share: {d.share_pct}%
+                                  </div>
+                                </div>
+                              );
+                            }}
+                          />
+                          <Pie
+                            data={paretoPieChartData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={55}
+                            outerRadius={85}
+                            paddingAngle={3}
+                            dataKey="value"
+                          >
+                            {paretoPieChartData.map((entry: any, index: number) => (
+                              <Cell key={`cell-${index}`} fill={entry.color} stroke="var(--card)" strokeWidth={2} />
+                            ))}
+                          </Pie>
+                        </RechartsPieChart>
+                      </ResponsiveContainer>
+
+                      {/* Donut Hollow Center Metric */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground">
+                          Top Accounts
+                        </span>
+                        <span className="text-xl font-bold font-mono text-foreground">
+                          {paretoPieChartData.reduce((acc: number, cur: any) => acc + (cur.share_pct || 0), 0).toFixed(0)}%
+                        </span>
+                        <span className="text-[10px] text-purple-600 dark:text-purple-400 font-medium">
+                          Turnover Share
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="h-56 flex items-center justify-center text-xs text-muted-foreground">
+                      No sales data to plot revenue distribution.
+                    </div>
+                  )}
+                </div>
+
+                {/* Slices legend / breakdown list */}
+                {paretoPieChartData.length > 0 && (
+                  <div className="pt-2 border-t border-border/40">
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 max-h-[140px] overflow-y-auto scrollbar-thin text-xs">
+                      {paretoPieChartData.map((item: any, idx: number) => (
+                        <div key={idx} className="flex items-center justify-between text-[11px] gap-1 hover:bg-muted/40 p-1 rounded transition-colors">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                            <span className="truncate text-foreground font-medium" title={item.name}>
+                              {item.name}
                             </span>
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono text-muted-foreground">
-                            {c.recency}d ago
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-medium text-foreground">
-                            {c.frequency} orders
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
-                            ₹{(c.monetary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                          </td>
-                        </tr>
+                          </div>
+                          <span className="font-mono text-muted-foreground shrink-0 font-semibold">
+                            {item.share_pct}%
+                          </span>
+                        </div>
                       ))}
-                    </tbody>
-                  </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Header with Search, Segment Filter & Multi-Sort Controls */}
+            <div className="bg-card border border-border/50 rounded-xl p-4 sm:p-5 shadow-2xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-3">
+                <div>
+                  <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
+                    <Users className="w-5 h-5 text-primary" />
+                    <span>Customer RFM Tiers & Inactivity Churn Radar</span>
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Machine learning segmentation (Recency, Frequency, Monetary) paired with automated Churn Inactivity monitoring.
+                  </p>
                 </div>
-              ) : (
-                <div className="py-12 text-center text-xs text-muted-foreground">
-                  No sales invoices recorded yet for customer clustering.
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono text-muted-foreground bg-muted/60 px-2.5 py-1 rounded-md border border-border/40">
+                    {rfmData.length} Total Customers
+                  </span>
                 </div>
-              )}
+              </div>
+
+              {/* Controls Toolbar: Search, Segment Pills, Sort Selector */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-1">
+                {/* Search Customer Input */}
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="text"
+                    value={rfmSearch}
+                    onChange={(e) => setRfmSearch(e.target.value)}
+                    placeholder="Search party name..."
+                    className="w-full bg-muted/50 border border-border/60 rounded-lg pl-8 pr-3 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/40"
+                  />
+                  {rfmSearch && (
+                    <button
+                      onClick={() => setRfmSearch("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Segment Filter Pills */}
+                  <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-xs">
+                    {[
+                      { label: "All Segments", val: "ALL" },
+                      { label: "VIP / High", val: "VIP" },
+                      { label: "Medium", val: "MEDIUM" },
+                      { label: "Standard", val: "STANDARD" },
+                    ].map((s) => (
+                      <button
+                        key={s.val}
+                        type="button"
+                        onClick={() => setRfmSegmentFilter(s.val)}
+                        className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
+                          rfmSegmentFilter === s.val
+                            ? "bg-card text-foreground font-bold shadow-2xs"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Sort By Dropdown */}
+                  <div className="flex items-center gap-1.5 bg-muted/60 border border-border/50 rounded-lg px-2.5 py-1 text-xs">
+                    <span className="text-muted-foreground font-medium flex items-center gap-1">
+                      <Sliders className="w-3 h-3 text-muted-foreground" />
+                      <span>Sort:</span>
+                    </span>
+                    <select
+                      value={rfmSortKey}
+                      onChange={(e) => setRfmSortKey(e.target.value as any)}
+                      className="bg-transparent font-semibold text-foreground outline-none cursor-pointer text-xs"
+                    >
+                      <option value="monetary">Total Revenue (₹)</option>
+                      <option value="recency">Recency (Days Inactive)</option>
+                      <option value="frequency">Order Frequency (Count)</option>
+                      <option value="name">Customer Name</option>
+                      <option value="segment">Tier Segment</option>
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={() => setRfmSortDir((prev) => (prev === "asc" ? "desc" : "asc"))}
+                      className="p-1 hover:bg-card rounded cursor-pointer transition-colors text-foreground"
+                      title={rfmSortDir === "asc" ? "Ascending order" : "Descending order"}
+                    >
+                      <ArrowUpDown className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Split Grid: Left Column = RFM Tiers Table (7 cols), Right Column = Customer Churn Radar (5 cols) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+              {/* RFM Tiers Table */}
+              <div className="lg:col-span-7 bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
+                <div className="flex items-center justify-between border-b border-border/40 pb-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                      <Award className="w-4 h-4 text-purple-500" />
+                      <span>Customer RFM Tiers</span>
+                    </h4>
+                    <span className="text-[11px] text-muted-foreground">
+                      Showing {sortedRfmData.length} of {rfmData.length} customers
+                    </span>
+                  </div>
+                  <span className="text-xs font-mono font-bold text-foreground">
+                    Sorted by {rfmSortKey.toUpperCase()} ({rfmSortDir.toUpperCase()})
+                  </span>
+                </div>
+
+                {sortedRfmData.length > 0 ? (
+                  <div className="overflow-x-auto max-h-[520px] overflow-y-auto scrollbar-thin">
+                    <table className="w-full text-left text-xs">
+                      <thead className="sticky top-0 bg-card z-10">
+                        <tr className="border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
+                          <th
+                            className="py-2.5 px-3 cursor-pointer hover:text-foreground"
+                            onClick={() => {
+                              if (rfmSortKey === "name") setRfmSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                              else { setRfmSortKey("name"); setRfmSortDir("asc"); }
+                            }}
+                          >
+                            <span className="flex items-center gap-1">
+                              Customer Party {rfmSortKey === "name" && (rfmSortDir === "asc" ? "▲" : "▼")}
+                            </span>
+                          </th>
+                          <th
+                            className="py-2.5 px-3 text-center cursor-pointer hover:text-foreground"
+                            onClick={() => {
+                              if (rfmSortKey === "segment") setRfmSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                              else { setRfmSortKey("segment"); setRfmSortDir("asc"); }
+                            }}
+                          >
+                            <span className="flex items-center justify-center gap-1">
+                              Tier {rfmSortKey === "segment" && (rfmSortDir === "asc" ? "▲" : "▼")}
+                            </span>
+                          </th>
+                          <th
+                            className="py-2.5 px-3 text-right cursor-pointer hover:text-foreground"
+                            onClick={() => {
+                              if (rfmSortKey === "recency") setRfmSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                              else { setRfmSortKey("recency"); setRfmSortDir("asc"); }
+                            }}
+                          >
+                            <span className="flex items-center justify-end gap-1">
+                              Recency {rfmSortKey === "recency" && (rfmSortDir === "asc" ? "▲" : "▼")}
+                            </span>
+                          </th>
+                          <th
+                            className="py-2.5 px-3 text-right cursor-pointer hover:text-foreground"
+                            onClick={() => {
+                              if (rfmSortKey === "frequency") setRfmSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                              else { setRfmSortKey("frequency"); setRfmSortDir("desc"); }
+                            }}
+                          >
+                            <span className="flex items-center justify-end gap-1">
+                              Orders {rfmSortKey === "frequency" && (rfmSortDir === "asc" ? "▲" : "▼")}
+                            </span>
+                          </th>
+                          <th
+                            className="py-2.5 px-3 text-right cursor-pointer hover:text-foreground"
+                            onClick={() => {
+                              if (rfmSortKey === "monetary") setRfmSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                              else { setRfmSortKey("monetary"); setRfmSortDir("desc"); }
+                            }}
+                          >
+                            <span className="flex items-center justify-end gap-1">
+                              Revenue {rfmSortKey === "monetary" && (rfmSortDir === "asc" ? "▲" : "▼")}
+                            </span>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/30">
+                        {sortedRfmData.map((c: any, idx: number) => {
+                          const isVip = c.segment?.includes("High Value") || c.segment?.includes("VIP");
+                          const isMed = c.segment?.includes("Medium");
+                          const rec = Number(c.recency || 0);
+
+                          return (
+                            <tr key={idx} className="hover:bg-muted/40 transition-colors">
+                              <td className="py-2.5 px-3 font-semibold text-foreground">
+                                {c.party_ledger__name || c.name || "Unknown Customer"}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    isVip
+                                      ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
+                                      : isMed
+                                      ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20"
+                                      : "bg-muted text-muted-foreground border border-border/40"
+                                  }`}
+                                >
+                                  {isVip ? "VIP / High" : isMed ? "Medium" : "Standard"}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono">
+                                <span className={`${
+                                  rec <= 15 ? "text-emerald-600 dark:text-emerald-400 font-semibold" : rec <= 45 ? "text-blue-600 dark:text-blue-400" : "text-amber-600 dark:text-amber-400"
+                                }`}>
+                                  {rec}d ago
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono font-medium text-foreground">
+                                {c.frequency} orders
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
+                                ₹{(c.monetary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="py-12 text-center text-xs text-muted-foreground">
+                    No customers match the current filter or search criteria.
+                  </div>
+                )}
+              </div>
+
+              {/* Customer Churn Radar */}
+              <div className="lg:col-span-5 bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between border-b border-border/40 pb-3">
+                    <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                      <ShieldAlert className="w-4 h-4 text-amber-500" />
+                      <span>Customer Churn Radar</span>
+                    </h4>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                      {churnFilteredAccounts.length} Inactive Accounts
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Accounts that have stopped placing regular orders. Reach out before they defect to competing distributors.
+                  </p>
+
+                  {/* Inactivity Threshold Filter Buttons */}
+                  <div className="pt-2 space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-muted-foreground font-medium">Inactivity Filter:</span>
+                      <span className="font-semibold text-foreground font-mono text-[11px]">
+                        &gt; {churnDaysThreshold} Days Idle
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1">
+                      {[30, 60, 90, 120, 240, 360].map((days) => {
+                        const isActive = churnDaysThreshold === days && !isEditingCustomDays;
+                        return (
+                          <button
+                            key={days}
+                            type="button"
+                            onClick={() => {
+                              setChurnDaysThreshold(days);
+                              setCustomChurnInput(String(days));
+                              setIsEditingCustomDays(false);
+                            }}
+                            className={`px-2.5 py-1 rounded text-[10px] font-semibold transition-all cursor-pointer ${
+                              isActive
+                                ? "bg-amber-500 text-white shadow-xs font-bold"
+                                : "bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            {days}d
+                          </button>
+                        );
+                      })}
+
+                      {/* Custom Days Input */}
+                      <div className="flex items-center gap-1 bg-muted/60 border border-border/50 rounded px-1.5 py-0.5 ml-auto">
+                        <span className="text-[10px] text-muted-foreground">Custom:</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="999"
+                          value={customChurnInput}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCustomChurnInput(val);
+                            const num = parseInt(val, 10);
+                            if (!isNaN(num) && num > 0) {
+                              setChurnDaysThreshold(num);
+                              setIsEditingCustomDays(true);
+                            }
+                          }}
+                          className="w-11 bg-background border border-border/60 rounded px-1 py-0.5 text-[10px] font-mono text-center text-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
+                        />
+                        <span className="text-[10px] text-muted-foreground">d</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Summary Metric Ribbon */}
+                  <div className="grid grid-cols-2 gap-2 p-3 rounded-lg bg-amber-500/5 border border-amber-500/15 text-xs mt-3">
+                    <div>
+                      <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground block">
+                        Idle Parties
+                      </span>
+                      <span className="text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
+                        {churnFilteredAccounts.length}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground block">
+                        Revenue At Risk
+                      </span>
+                      <span className="text-lg font-bold font-mono text-foreground">
+                        ₹{formatCurrencyShort(totalAtRiskRevenue)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Scrollable List of At-Risk Accounts */}
+                  <div className="space-y-2 mt-3 max-h-[340px] overflow-y-auto pr-1 scrollbar-thin">
+                    {churnFilteredAccounts.length > 0 ? (
+                      churnFilteredAccounts.map((c: any, idx: number) => {
+                        const partyName = c.party_name || c.name || "Customer";
+                        const billedAmount = c.total_billed ?? c.total_revenue ?? 0;
+                        const idleDays = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
+                        const isCritical = idleDays >= 120;
+                        const isHigh = idleDays >= 90;
+
+                        return (
+                          <div
+                            key={idx}
+                            className={`p-2.5 rounded-lg border transition-all text-xs space-y-1.5 ${
+                              isCritical
+                                ? "border-rose-500/30 bg-rose-500/5 hover:border-rose-500/50"
+                                : isHigh
+                                ? "border-amber-500/30 bg-amber-500/5 hover:border-amber-500/50"
+                                : "border-border/60 bg-muted/30 hover:border-border"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-semibold text-foreground truncate max-w-[170px]" title={partyName}>
+                                {partyName}
+                              </span>
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-bold shrink-0 ${
+                                isCritical
+                                  ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                                  : isHigh
+                                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                                  : "bg-blue-500/15 text-blue-600 dark:text-blue-400"
+                              }`}>
+                                {idleDays}d inactive
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t border-border/30">
+                              <span>Historical: <strong className="text-foreground font-mono">₹{billedAmount.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong></span>
+                              <div className="flex items-center gap-1.5">
+                                <a
+                                  href={`https://wa.me/?text=${encodeURIComponent(`Hello ${partyName}, following up regarding your regular replenishment order with us.`)}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold text-[10px] hover:bg-emerald-500/20 transition-colors flex items-center gap-1"
+                                >
+                                  <MessageCircle className="w-3 h-3" />
+                                  <span>WhatsApp</span>
+                                </a>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="py-8 text-center text-xs text-muted-foreground">
+                        <CheckCircle2 className="w-6 h-6 mx-auto text-emerald-500 mb-1" />
+                        <span>No churned customers beyond {churnDaysThreshold} days inactivity!</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -2190,6 +3042,93 @@ function AnalyticsHubContent() {
                   <div className="text-[11px] text-muted-foreground">
                     Returns per ₹1 invested in stock
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Depletion Stockout Radar Hero Section ("Never lose a customer to the shop next door") */}
+            <div className="bg-gradient-to-br from-card via-card to-rose-500/5 border border-rose-500/30 rounded-2xl p-5 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="p-1.5 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                      <Zap className="w-4 h-4" />
+                    </div>
+                    <h3 className="text-base sm:text-lg font-bold text-foreground tracking-tight">
+                      Depletion Stockout Radar
+                    </h3>
+                    <span className="text-[10px] px-2.5 py-0.5 rounded-full font-extrabold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 uppercase tracking-wider">
+                      Never Lose a Customer to the Shop Next Door
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Velocity-driven predictive radar detecting runouts before shelves go bare. B2B clients who find an item out-of-stock buy next door—and 40% never return.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-mono text-muted-foreground bg-muted/70 px-2.5 py-1 rounded-md border border-border/40">
+                    Lead Time: 3 Days Modeled
+                  </span>
+                </div>
+              </div>
+
+              {/* 4 Stockout Radar KPI Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                {/* 1. Imminent Stockouts (<3d) */}
+                <div className="p-3.5 rounded-xl border border-rose-500/30 bg-rose-500/5 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider">
+                    <span>🚨 Imminent Stockouts</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-500/15">&lt; 3 Days</span>
+                  </div>
+                  <div className="text-2xl font-black font-mono text-rose-600 dark:text-rose-400">
+                    {inventoryAnalytics?.depletion_radar_summary?.imminent_stockouts_count ?? 0} Items
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    Running dry before supplier lead time. Immediate reorder required.
+                  </p>
+                </div>
+
+                {/* 2. Reorders Approaching (<7d) */}
+                <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
+                    <span>⚠️ Approaching (&lt; 7d)</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/15">Reorder Window</span>
+                  </div>
+                  <div className="text-2xl font-black font-mono text-amber-600 dark:text-amber-400">
+                    {inventoryAnalytics?.depletion_radar_summary?.reorder_approaching_count ?? 0} Items
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    3 to 7 days runway. Issue purchase orders today to maintain buffer.
+                  </p>
+                </div>
+
+                {/* 3. 7-Day Revenue At Risk */}
+                <div className="p-3.5 rounded-xl border border-purple-500/30 bg-purple-500/5 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider">
+                    <span>💸 Revenue At Risk / Wk</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-500/15">Weekly Loss</span>
+                  </div>
+                  <div className="text-2xl font-black font-mono text-purple-600 dark:text-purple-400">
+                    ₹{Number(inventoryAnalytics?.depletion_radar_summary?.total_revenue_at_risk_weekly ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    Estimated gross turnover lost if these SKUs deplete completely.
+                  </p>
+                </div>
+
+                {/* 4. Stockout Protection Index */}
+                <div className="p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-500/5 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+                    <span>🛡️ Protection Rate</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/15">Catalog Health</span>
+                  </div>
+                  <div className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400">
+                    {inventoryAnalytics?.depletion_radar_summary?.stockout_protection_pct ?? 100}%
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    Catalog proportion with safe stock buffers &gt; 7 days sales pace.
+                  </p>
                 </div>
               </div>
             </div>
@@ -2423,6 +3362,8 @@ function AnalyticsHubContent() {
                               <th className="py-2.5 px-3">Item / Size</th>
                               <th className="py-2.5 px-3">Brand</th>
                               <th className="py-2.5 px-3">Category</th>
+                              <th className="py-2.5 px-3 text-right">Depletion Runway</th>
+                              <th className="py-2.5 px-3 text-right">7D Loss Risk</th>
                               <th className="py-2.5 px-3 text-right">Min Req</th>
                               <th className="py-2.5 px-3 text-right">Current Stock</th>
                               <th className="py-2.5 px-3 text-right">Sales Demand</th>
@@ -2501,6 +3442,40 @@ function AnalyticsHubContent() {
                                   {/* Category */}
                                   <td className="py-2.5 px-3 text-muted-foreground">
                                     {it.category_name || "General"}
+                                  </td>
+
+                                  {/* Depletion Countdown */}
+                                  <td className="py-2.5 px-3 text-right font-mono">
+                                    {it.days_until_stockout !== undefined && it.days_until_stockout !== null ? (
+                                      <span
+                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
+                                          it.days_until_stockout <= 0
+                                            ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30"
+                                            : it.days_until_stockout <= 3
+                                            ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                                            : it.days_until_stockout <= 7
+                                            ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                                            : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20"
+                                        }`}
+                                      >
+                                        <span>{it.days_until_stockout <= 3 ? "🚨" : it.days_until_stockout <= 7 ? "⚠️" : "⚡"}</span>
+                                        <span>{it.days_until_stockout <= 0 ? "Depleted" : `${it.days_until_stockout}d runway`}</span>
+                                      </span>
+                                    ) : (
+                                      <span className="text-muted-foreground text-[10px]">—</span>
+                                    )}
+                                  </td>
+
+                                  {/* 7D Weekly Revenue at Risk */}
+                                  <td className="py-2.5 px-3 text-right font-mono">
+                                    {Number(it.revenue_at_risk_7d || 0) > 0 ? (
+                                      <div className="font-bold text-rose-600 dark:text-rose-400">
+                                        ₹{Number(it.revenue_at_risk_7d).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                                        <span className="text-[9px] text-muted-foreground block font-normal">/wk at risk</span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-muted-foreground/60 text-[11px]">—</span>
+                                    )}
                                   </td>
 
                                   {/* Minimum Required Stock (Threshold) */}

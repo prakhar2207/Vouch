@@ -213,6 +213,7 @@ class ItemAnalyticsService:
             'product__category_id',
             'product__stock_quantity',
             'product__purchase_price',
+            'product__selling_price',
             'product__reorder_level'
         ).annotate(
             total_sold_qty=Sum('quantity'),
@@ -236,6 +237,37 @@ class ItemAnalyticsService:
             if stock <= thresh:
                 sold_qty = float(r['total_sold_qty'] or 0)
                 inv_cnt = r['invoices_count']
+                pp = float(r['product__purchase_price'] or 0)
+                sp = float(r['product__selling_price'] or 0)
+
+                # Depletion Stockout Velocity & Days Runout (Never lose a customer to the shop next door)
+                daily_velocity = round(sold_qty / 30.0, 2)
+                if daily_velocity <= 0:
+                    daily_velocity = round(sold_qty / 60.0, 2) if sold_qty > 0 else 0.1
+
+                if stock <= 0:
+                    days_until_stockout = 0.0
+                    depletion_status = 'OUT_OF_STOCK'
+                    depletion_label = 'Stock Exhausted (Losing Sales)'
+                elif daily_velocity > 0:
+                    days_until_stockout = round(stock / daily_velocity, 1)
+                    if days_until_stockout <= 2.5:
+                        depletion_status = 'CRITICAL_DEPLETION'
+                        depletion_label = f'Runout in {days_until_stockout}d (Walkout Danger)'
+                    elif days_until_stockout <= 6.0:
+                        depletion_status = 'REORDER_APPROACHING'
+                        depletion_label = f'Reorder Window Closing ({days_until_stockout}d Left)'
+                    else:
+                        depletion_status = 'BUFFER_ADEQUATE'
+                        depletion_label = f'Buffer Safe ({days_until_stockout}d)'
+                else:
+                    days_until_stockout = 99.0
+                    depletion_status = 'BUFFER_ADEQUATE'
+                    depletion_label = 'Buffer Safe'
+
+                price_for_risk = sp if sp > 0 else (pp * 1.25 if pp > 0 else 100.0)
+                revenue_at_risk_7d = round(daily_velocity * price_for_risk * 7.0, 2)
+
                 if stock <= 0:
                     urgency = 'OUT_OF_STOCK'
                     urgency_score = 100 + inv_cnt * 10
@@ -269,7 +301,14 @@ class ItemAnalyticsService:
                     'has_custom_reorder': has_custom_reorder,
                     'total_sold_qty': sold_qty,
                     'invoices_count': inv_cnt,
-                    'purchase_price': float(r['product__purchase_price'] or 0),
+                    'purchase_price': pp,
+                    'selling_price': sp,
+                    'daily_velocity': daily_velocity,
+                    'days_until_stockout': days_until_stockout,
+                    'lead_time_days': 3.0,
+                    'revenue_at_risk_7d': revenue_at_risk_7d,
+                    'depletion_status': depletion_status,
+                    'depletion_label': depletion_label,
                     'suggested_qty': suggested_qty,
                     'urgency': urgency,
                     'urgency_score': urgency_score,
@@ -458,10 +497,26 @@ class ItemAnalyticsService:
             'by_brand': top_deadstock_brands
         }
 
+        # Depletion Stockout Radar summary calculation (Never lose a customer to the shop next door)
+        imminent_stockouts_count = sum(1 for item in top_reorder if item.get('days_until_stockout', 99) <= 3.0)
+        reorder_approaching_count = sum(1 for item in top_reorder if 3.0 < item.get('days_until_stockout', 99) <= 7.0)
+        total_risk_weekly = sum(item.get('revenue_at_risk_7d', 0.0) for item in top_reorder if item.get('days_until_stockout', 99) <= 7.0)
+        total_monitored = len(top_reorder)
+        protection_pct = round(max(0.0, (1.0 - (imminent_stockouts_count / max(1, total_monitored)))) * 100.0, 1) if total_monitored > 0 else 100.0
+
+        depletion_radar_summary = {
+            'imminent_stockouts_count': imminent_stockouts_count,
+            'reorder_approaching_count': reorder_approaching_count,
+            'total_revenue_at_risk_weekly': round(total_risk_weekly, 2),
+            'stockout_protection_pct': protection_pct,
+            'total_monitored_items': total_monitored
+        }
+
         return {
             "top_purchased": top_purchased,
             "top_sold": top_sold,
             "reorder_items": top_reorder,
+            "depletion_radar_summary": depletion_radar_summary,
             "deadstock_items": deadstock_candidates,
             "deadstock_summary": deadstock_summary,
             "categories": categories_data,

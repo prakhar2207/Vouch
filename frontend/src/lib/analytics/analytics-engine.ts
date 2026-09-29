@@ -129,22 +129,37 @@ export interface SalesForecastResult {
   historical_daily_series?: Array<{
     date: string;
     actual_sales: number;
+    actual_purchases?: number;
+    gross_profit?: number;
     moving_avg_7d: number;
     cumulative_sales: number;
+    cumulative_purchases?: number;
+    cumulative_profit?: number;
     invoice_count: number;
     is_historical: boolean;
   }>;
   combined_series?: Array<{
     date: string;
     actual_sales: number | null;
+    actual_purchases?: number | null;
+    gross_profit?: number | null;
     moving_avg_7d: number | null;
     cumulative_sales: number | null;
+    cumulative_purchases?: number | null;
+    cumulative_profit?: number | null;
     projected_sales: number | null;
     lower_bound?: number | null;
     upper_bound?: number | null;
     is_historical: boolean;
     is_today?: boolean;
   }>;
+  financial_momentum_summary?: {
+    total_sales: number;
+    total_purchases: number;
+    gross_profit: number;
+    profit_margin_pct: number;
+    growth_status: string;
+  };
   historical_summary?: {
     total_historical_sales: number;
     historical_invoices_count: number;
@@ -396,6 +411,7 @@ export class LocalAnalyticsEngine {
 
     const salesByParty: Record<string, { name: string; count: number; total: number; lastDate: string }> = {};
     const salesByDate: Record<string, number> = {};
+    const purchasesByDate: Record<string, number> = {};
     const overdueInvoices: SyncedVoucher[] = [];
 
     let oldestDate: string | null = null;
@@ -408,6 +424,7 @@ export class LocalAnalyticsEngine {
         salesCount += d.salesCount;
         purchaseCount += d.purchaseCount;
         salesByDate[d.date] = d.sales;
+        purchasesByDate[d.date] = d.purchases;
 
         if (!oldestDate || d.date < oldestDate) oldestDate = d.date;
         if (!newestDate || d.date > newestDate) newestDate = d.date;
@@ -502,6 +519,7 @@ export class LocalAnalyticsEngine {
         } else if (v.voucherType === "PURCHASE") {
           totalPurchases += amt;
           purchaseCount++;
+          purchasesByDate[vDate] = (purchasesByDate[vDate] || 0) + amt;
         } else if (v.voucherType === "RECEIPT") {
           if (vDate === todayStr) {
             todayCollections += amt;
@@ -594,7 +612,42 @@ export class LocalAnalyticsEngine {
     const trendDetails = this.calculateSalesTrend(salesByDate, todayStr);
 
     // --- E2. Sales Forecast Projection ---
-    const forecastData = this.calculateForecast(salesByDate, trendDetails, todayStr, 30);
+    const forecastData = this.calculateForecast(salesByDate, trendDetails, todayStr, 30, purchasesByDate);
+
+    // Populate local Pareto & Churn accounts for offline resilience
+    const partyEntries = Object.entries(salesByParty).map(([id, info]) => {
+      const lastD = new Date(info.lastDate);
+      const diffDays = Math.max(0, Math.floor((new Date(todayStr).getTime() - lastD.getTime()) / (24 * 60 * 60 * 1000)));
+      return {
+        party_id: id,
+        party_name: info.name || id,
+        name: info.name || id,
+        total_billed: Math.round(info.total * 100) / 100,
+        total_revenue: Math.round(info.total * 100) / 100,
+        invoice_count: info.count,
+        last_sale_date: info.lastDate,
+        last_order_date: info.lastDate,
+        days_since_last_sale: diffDays,
+        days_since_last_order: diffDays,
+        percentage_of_total: totalSales > 0 ? Math.round((info.total / totalSales) * 1000) / 10 : 0,
+        share_pct: totalSales > 0 ? Math.round((info.total / totalSales) * 1000) / 10 : 0,
+        risk_status: (diffDays >= 90 ? "DORMANT" : diffDays >= 60 ? "AT_RISK" : diffDays >= 30 ? "COOLING" : "HEALTHY") as "HEALTHY" | "COOLING" | "AT_RISK" | "DORMANT",
+        risk_label: diffDays >= 90 ? "Dormant (90d+)" : diffDays >= 60 ? "High Risk (60d+)" : diffDays >= 30 ? "Cooling Off (30d+)" : "Active & Healthy",
+        is_at_risk: diffDays >= 60,
+      };
+    });
+    partyEntries.sort((a, b) => b.total_billed - a.total_billed);
+    let cumPct = 0;
+    const paretoWithTiers = partyEntries.map((p) => {
+      cumPct += p.percentage_of_total;
+      return {
+        ...p,
+        cumulative_percentage: Math.min(100, Math.round(cumPct * 10) / 10),
+        pareto_tier: (cumPct <= 80 ? "TOP_80_PERCENT" : "LONG_TAIL_20_PERCENT") as "TOP_80_PERCENT" | "LONG_TAIL_20_PERCENT",
+      };
+    });
+    forecastData.customer_pareto = paretoWithTiers;
+    forecastData.churn_accounts = partyEntries;
 
     // --- F. RFM Segmentation ---
     const rfmClusters = this.calculateRfmClusters(salesByParty, todayStr);
@@ -776,7 +829,8 @@ export class LocalAnalyticsEngine {
     salesByDate: Record<string, number>,
     trend: TrendDetails,
     referenceDateStr: string,
-    days: number = 30
+    days: number = 30,
+    purchasesByDate?: Record<string, number>
   ): SalesForecastResult {
     const positiveDates = Object.keys(salesByDate)
       .filter((d) => (salesByDate[d] || 0) > 0)
@@ -1017,15 +1071,22 @@ export class LocalAnalyticsEngine {
     const historicalDailySeries: Array<{
       date: string;
       actual_sales: number;
+      actual_purchases?: number;
+      gross_profit?: number;
       moving_avg_7d: number;
       cumulative_sales: number;
+      cumulative_purchases?: number;
+      cumulative_profit?: number;
       invoice_count: number;
       is_historical: boolean;
     }> = [];
 
     let runningCumulative = 0;
+    let runningCumulativePurchases = 0;
+    let runningCumulativeProfit = 0;
     let peakDay = { date: positiveDates[0] || "", amount: 0 };
     const tempSalesHistory: number[] = [];
+    const pByDate = purchasesByDate || {};
 
     const startHistTime = new Date(positiveDates[0]).getTime();
     const anchorTime = anchorDate.getTime();
@@ -1036,7 +1097,12 @@ export class LocalAnalyticsEngine {
       const curDate = new Date(startHistTime + dIdx * dayMs);
       const curDateStr = curDate.toISOString().slice(0, 10);
       const val = Math.round((salesByDate[curDateStr] || 0) * 100) / 100;
+      const pVal = Math.round((pByDate[curDateStr] || 0) * 100) / 100;
+      const profitVal = Math.round((val - pVal) * 100) / 100;
+
       runningCumulative += val;
+      runningCumulativePurchases += pVal;
+      runningCumulativeProfit += profitVal;
       tempSalesHistory.push(val);
 
       if (val > peakDay.amount) {
@@ -1051,8 +1117,12 @@ export class LocalAnalyticsEngine {
       historicalDailySeries.push({
         date: curDateStr,
         actual_sales: val,
+        actual_purchases: pVal,
+        gross_profit: profitVal,
         moving_avg_7d: sma7,
         cumulative_sales: Math.round(runningCumulative * 100) / 100,
+        cumulative_purchases: Math.round(runningCumulativePurchases * 100) / 100,
+        cumulative_profit: Math.round(runningCumulativeProfit * 100) / 100,
         invoice_count: val > 0 ? 1 : 0,
         is_historical: true,
       });
@@ -1062,8 +1132,12 @@ export class LocalAnalyticsEngine {
     const combinedSeries: Array<{
       date: string;
       actual_sales: number | null;
+      actual_purchases?: number | null;
+      gross_profit?: number | null;
       moving_avg_7d: number | null;
       cumulative_sales: number | null;
+      cumulative_purchases?: number | null;
+      cumulative_profit?: number | null;
       projected_sales: number | null;
       lower_bound?: number | null;
       upper_bound?: number | null;
@@ -1075,8 +1149,12 @@ export class LocalAnalyticsEngine {
       combinedSeries.push({
         date: h.date,
         actual_sales: h.actual_sales,
+        actual_purchases: h.actual_purchases ?? 0,
+        gross_profit: h.gross_profit ?? 0,
         moving_avg_7d: h.moving_avg_7d,
         cumulative_sales: h.cumulative_sales,
+        cumulative_purchases: h.cumulative_purchases ?? 0,
+        cumulative_profit: h.cumulative_profit ?? 0,
         projected_sales: null,
         lower_bound: null,
         upper_bound: null,
@@ -1089,8 +1167,12 @@ export class LocalAnalyticsEngine {
       combinedSeries.push({
         date: f.date,
         actual_sales: null,
+        actual_purchases: null,
+        gross_profit: null,
         moving_avg_7d: null,
         cumulative_sales: null,
+        cumulative_purchases: null,
+        cumulative_profit: null,
         projected_sales: f.projected_sales,
         lower_bound: f.lower_bound,
         upper_bound: f.upper_bound,
@@ -1103,8 +1185,32 @@ export class LocalAnalyticsEngine {
     const recent7Sum = recent7Days.reduce((acc, it) => acc + it.actual_sales, 0);
     const current7dRunRate = recent7Days.length > 0 ? Math.round((recent7Sum / recent7Days.length) * 100) / 100 : avgSales;
 
+    const totalSalesNum = Math.round(runningCumulative * 100) / 100;
+    const totalPurchasesNum = Math.round(runningCumulativePurchases * 100) / 100;
+    const totalGrossProfitNum = Math.round((totalSalesNum - totalPurchasesNum) * 100) / 100;
+    const marginPct = totalSalesNum > 0 ? Math.round((totalGrossProfitNum / totalSalesNum) * 1000) / 10 : 0;
+
+    let growthStatus = "STABLE";
+    if (trend.growth_rate_pct > 10 || trend.status === "Booming") {
+      growthStatus = "RAPID_EXPANSION";
+    } else if (trend.growth_rate_pct > 2) {
+      growthStatus = "STEADY_GROWTH";
+    } else if (trend.growth_rate_pct < -5 || trend.status === "Declining") {
+      growthStatus = "SLOWDOWN";
+    } else if (trend.growth_rate_pct < 0) {
+      growthStatus = "MILD_CONTRACTION";
+    }
+
+    const financialMomentumSummary = {
+      total_sales: totalSalesNum,
+      total_purchases: totalPurchasesNum,
+      gross_profit: totalGrossProfitNum,
+      profit_margin_pct: marginPct,
+      growth_status: growthStatus,
+    };
+
     const historicalSummary = {
-      total_historical_sales: Math.round(runningCumulative * 100) / 100,
+      total_historical_sales: totalSalesNum,
       historical_invoices_count: sampleSize,
       distinct_selling_days: sampleSize,
       historical_daily_average: avgSales,
@@ -1128,6 +1234,7 @@ export class LocalAnalyticsEngine {
       historical_daily_series: historicalDailySeries,
       combined_series: combinedSeries,
       historical_summary: historicalSummary,
+      financial_momentum_summary: financialMomentumSummary,
       historical_daily_average: avgSales,
       factors_analyzed: {
         yoy_seasonality_applied: hasYoyHistory,

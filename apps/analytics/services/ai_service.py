@@ -549,7 +549,25 @@ class AnalyticsEngine:
             history_span_days=history_span_days
         )
 
-        # 8. Historical Daily Series & Combined Seamless Timeline
+        # 8. Historical Daily Series & Combined Seamless Timeline (Sales vs Purchases vs Profit)
+        purch_qs = Voucher.objects.filter(
+            company=company, voucher_type='PURCHASE', status='POSTED'
+        )
+        if min_date:
+            purch_qs = purch_qs.filter(voucher_date__gte=min_date)
+        if anchor_date:
+            purch_qs = purch_qs.filter(voucher_date__lte=anchor_date)
+
+        purch_by_date = {
+            p['voucher_date'].strftime('%Y-%m-%d'): float(p['total'] or 0.0)
+            for p in purch_qs.values('voucher_date').annotate(total=Sum('total_amount'))
+        }
+
+        df['daily_purchases'] = [purch_by_date.get(idx.strftime('%Y-%m-%d'), 0.0) for idx in df.index]
+        df['cumulative_purchases'] = df['daily_purchases'].cumsum().round(2)
+        df['daily_profit'] = (df['daily_sales'] - df['daily_purchases']).round(2)
+        df['cumulative_profit'] = df['daily_profit'].cumsum().round(2)
+
         df['moving_avg_7d'] = df['daily_sales'].rolling(window=7, min_periods=1).mean().round(2)
         df['cumulative_sales'] = df['daily_sales'].cumsum().round(2)
 
@@ -557,8 +575,12 @@ class AnalyticsEngine:
             {
                 "date": idx.strftime('%Y-%m-%d'),
                 "actual_sales": round(float(row['daily_sales']), 2),
+                "actual_purchases": round(float(row['daily_purchases']), 2),
+                "gross_profit": round(float(row['daily_profit']), 2),
                 "moving_avg_7d": round(float(row['moving_avg_7d']), 2),
                 "cumulative_sales": round(float(row['cumulative_sales']), 2),
+                "cumulative_purchases": round(float(row['cumulative_purchases']), 2),
+                "cumulative_profit": round(float(row['cumulative_profit']), 2),
             }
             for idx, row in df.iterrows()
         ]
@@ -571,8 +593,12 @@ class AnalyticsEngine:
             combined_series.append({
                 "date": h["date"],
                 "actual_sales": h["actual_sales"],
+                "actual_purchases": h["actual_purchases"],
+                "gross_profit": h["gross_profit"],
                 "moving_avg_7d": h["moving_avg_7d"],
                 "cumulative_sales": h["cumulative_sales"],
+                "cumulative_purchases": h["cumulative_purchases"],
+                "cumulative_profit": h["cumulative_profit"],
                 "projected_sales": h["actual_sales"] if is_anchor else None,
                 "is_historical": True,
             })
@@ -580,8 +606,12 @@ class AnalyticsEngine:
             combined_series.append({
                 "date": f["date"],
                 "actual_sales": None,
+                "actual_purchases": None,
+                "gross_profit": None,
                 "moving_avg_7d": None,
                 "cumulative_sales": None,
+                "cumulative_purchases": None,
+                "cumulative_profit": None,
                 "projected_sales": f["projected_sales"],
                 "lower_bound": f["lower_bound"],
                 "upper_bound": f["upper_bound"],
@@ -797,6 +827,13 @@ class AnalyticsEngine:
             "brand_contribution": brand_contribution,
             "working_capital_cycle": working_capital_cycle,
             "historical_daily_average": round(overall_avg_daily_sales, 2),
+            "financial_momentum_summary": {
+                "total_sales": round(float(df['daily_sales'].sum()), 2),
+                "total_purchases": round(float(df['daily_purchases'].sum()), 2),
+                "gross_profit": round(float(df['daily_sales'].sum() - df['daily_purchases'].sum()), 2),
+                "profit_margin_pct": round(((float(df['daily_sales'].sum() - df['daily_purchases'].sum())) / max(0.01, float(df['daily_sales'].sum()))) * 100.0, 1),
+                "growth_status": "EXPANDING" if float(df['daily_sales'].sum() - df['daily_purchases'].sum()) > 0 else "CONTRACTION"
+            },
             "factors_analyzed": {
                 "yoy_seasonality_applied": has_yoy_history,
                 "yoy_summary": yoy_summary,
