@@ -1,4 +1,4 @@
-﻿import json
+import json
 import hashlib
 from typing import Optional, Dict, Any
 from decimal import Decimal
@@ -73,7 +73,7 @@ class EDIService:
         }
 
         # Avoid duplicate PENDING requests for the exact same source voucher
-        inward_req, _ = InwardVoucherRequest.objects.update_or_create(
+        inward_req, created = InwardVoucherRequest.objects.update_or_create(
             source_voucher=voucher,
             target_company=target_company,
             defaults={
@@ -82,6 +82,20 @@ class EDIService:
                 "status": "PENDING",
             }
         )
+
+        if created:
+            try:
+                from apps.notifications.services import NotificationService
+                for uc in target_company.users.all():
+                    NotificationService.send_notification(
+                        user=uc.user,
+                        title="New Inward EDI Request",
+                        message=f"{voucher.company.name} sent you a purchase bill request (#{voucher.voucher_number}) for ₹{voucher.total_amount:,.2f}.",
+                        link="/network/inbox"
+                    )
+            except Exception as e:
+                import traceback
+                logger.error(f"Failed to send EDI notification: {e} \n {traceback.format_exc()}")
 
         return inward_req
 
@@ -282,4 +296,4 @@ class EDIService:
         inward_req.status = 'REJECTED'
         inward_req.rejection_reason = reason.strip() or "Rejected by recipient."
         inward_req.save(update_fields=['status', 'rejection_reason', 'updated_at'])
-        return inward_req
+        return inward_req

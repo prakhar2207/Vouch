@@ -98,6 +98,7 @@ urlpatterns = [
     path('api/v1/gst/', include('apps.gst.urls')),
     path('api/v1/documents/', include('apps.documents.urls')),
     path('api/v1/superadmin/', include('apps.superadmin.urls')),
+    path('api/v1/notifications/', include('apps.notifications.urls')),
 
     # Offline-First Batch Sync Endpoints
     path('api/v1/sync/bootstrap/', apps.accounting.sync_views.SyncBootstrapAPIView.as_view(), name='api_sync_bootstrap'),

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useHotkeys } from "react-hotkeys-hook";
 import { ThemeToggle } from "./ThemeToggle";
+import { NotificationBell } from "./NotificationBell";
 import { removeTokens } from "@/utils/auth";
 import CommandPalette from "./CommandPalette";
 import { VouchLogo } from "./VouchLogo";
@@ -765,6 +766,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             >
               <HelpCircle className="w-4 h-4" />
             </button>
+
+            {/* Notifications */}
+            <NotificationBell />
 
             {/* Theme Toggle */}
             <ThemeToggle />

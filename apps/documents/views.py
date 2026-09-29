@@ -190,6 +190,7 @@ class PublicShareDownloadPDFAPIView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
 
         watermark = request.query_params.get('watermark') != '0'
+        snapshot = share.document_snapshot
         pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(snapshot, watermark=watermark)
 
         filename = f"{snapshot.document_number.replace('/', '_') or 'document'}.pdf"
