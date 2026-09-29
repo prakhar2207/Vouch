@@ -320,6 +320,13 @@ class AnalyticsEngine:
 
         # 1. Historical Daily Aggregation
         data = list(vouchers.values('voucher_date').annotate(daily_sales=Sum('total_amount')).order_by('voucher_date'))
+        
+        # Ensure timeline begins from earliest transaction (sale or purchase) so early inventory purchases are not clipped
+        first_purch_obj = Voucher.objects.filter(company=company, voucher_type='PURCHASE', status='POSTED').order_by('voucher_date').first()
+        if first_purch_obj and data:
+            if first_purch_obj.voucher_date < data[0]['voucher_date']:
+                data.insert(0, {'voucher_date': first_purch_obj.voucher_date, 'daily_sales': 0.0})
+
         df = pd.DataFrame(data)
         df['voucher_date'] = pd.to_datetime(df['voucher_date'])
         df['daily_sales'] = df['daily_sales'].astype(float)

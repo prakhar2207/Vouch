@@ -2872,7 +2872,7 @@ function AnalyticsHubContent() {
                                 onMouseEnter={() => setHoveredParetoIdx(idx)}
                                 onMouseLeave={() => setHoveredParetoIdx(null)}
                                 className={`transition-colors cursor-pointer ${
-                                  isHovered ? "bg-primary/10 ring-1 ring-primary/25" : "hover:bg-muted/40"
+                                  isHovered ? "bg-primary/15" : "hover:bg-muted/40"
                                 }`}
                               >
                                 <td className="py-2.5 px-3">
@@ -3067,68 +3067,70 @@ function AnalyticsHubContent() {
                     </div>
                   </div>
 
-                  {/* Active Account Focus Bar (Stationary outside canvas - completely prevents tooltip obstruction) */}
-                  {(() => {
-                    const activeParty = hoveredParetoIdx !== null ? paretoPieChartData[hoveredParetoIdx] : null;
-                    if (hoveredParetoIdx !== null && activeParty) {
-                      return (
-                        <div className="p-2.5 rounded-lg bg-primary/10 border border-primary/25 flex items-center justify-between transition-all duration-150">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span
-                              className="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs ring-1 ring-primary/40"
-                              style={{ backgroundColor: activeParty.color }}
-                            />
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-primary/20 text-primary font-bold">
-                                  #{hoveredParetoIdx + 1}
-                                </span>
-                                <span className="text-xs font-bold text-foreground truncate max-w-[150px] sm:max-w-[200px]" title={activeParty.name}>
-                                  {activeParty.name}
+                  {/* Active Account Focus Bar (Fixed 56px height to prevent any layout reflow or hover jitter) */}
+                  <div className="h-14 min-h-[56px] max-h-[56px] overflow-hidden w-full">
+                    {(() => {
+                      const activeParty = hoveredParetoIdx !== null ? paretoPieChartData[hoveredParetoIdx] : null;
+                      if (hoveredParetoIdx !== null && activeParty) {
+                        return (
+                          <div className="h-full px-3 py-2 rounded-lg bg-primary/10 border border-primary/30 flex items-center justify-between transition-colors duration-150 select-none">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span
+                                className="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs ring-1 ring-primary/40"
+                                style={{ backgroundColor: activeParty.color }}
+                              />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 leading-tight">
+                                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-primary/20 text-primary font-bold">
+                                    #{hoveredParetoIdx + 1}
+                                  </span>
+                                  <span className="text-xs font-bold text-foreground truncate max-w-[150px] sm:max-w-[200px]" title={activeParty.name}>
+                                    {activeParty.name}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] text-muted-foreground leading-tight">
+                                  {activeParty.invoice_count ? `${activeParty.invoice_count} orders billed` : "Debtor account"}
+                                  {activeParty.days_since !== undefined ? ` · ${activeParty.days_since}d ago` : ""}
                                 </span>
                               </div>
-                              <span className="text-[10px] text-muted-foreground">
-                                {activeParty.invoice_count ? `${activeParty.invoice_count} orders billed` : "Debtor account"}
-                                {activeParty.days_since !== undefined ? ` · ${activeParty.days_since}d ago` : ""}
-                              </span>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <div className="text-xs font-bold font-mono text-foreground leading-tight">
+                                ₹{Number(activeParty.value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                              </div>
+                              <div className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 leading-tight">
+                                {activeParty.share_pct}% turnover
+                              </div>
                             </div>
                           </div>
-                          <div className="text-right shrink-0">
-                            <div className="text-xs font-bold font-mono text-foreground">
-                              ₹{Number(activeParty.value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                            </div>
-                            <div className="text-[11px] font-semibold text-purple-600 dark:text-purple-400">
-                              {activeParty.share_pct}% turnover
-                            </div>
+                        );
+                      }
+                      return (
+                        <div className="h-full px-3 py-2 rounded-lg bg-muted/40 border border-border/40 flex items-center justify-between text-xs text-muted-foreground transition-colors duration-150 select-none">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Users className="w-4 h-4 text-primary shrink-0" />
+                            <span className="text-[11px] truncate">
+                              {paretoDonutMode === "all_parties"
+                                ? `Plotting all ${allCustomerParties.length} client accounts`
+                                : paretoDonutMode === "top_10"
+                                ? "Plotting top 10 key debtor accounts"
+                                : "80/20 Rule: Top 10 vs remaining base"}
+                            </span>
                           </div>
-                        </div>
-                      );
-                    }
-                    return (
-                      <div className="p-2.5 rounded-lg bg-muted/40 border border-border/40 flex items-center justify-between text-xs text-muted-foreground transition-all duration-150">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Users className="w-3.5 h-3.5 text-primary shrink-0" />
-                          <span className="text-[11px] truncate">
-                            {paretoDonutMode === "all_parties"
-                              ? `Plotting all ${allCustomerParties.length} client accounts`
-                              : paretoDonutMode === "top_10"
-                              ? "Plotting top 10 key debtor accounts"
-                              : "80/20 Rule: Top 10 vs remaining base"}
+                          <span className="text-[10px] font-mono font-medium text-foreground bg-card px-2 py-0.5 rounded border border-border/40 shrink-0">
+                            Hover slice to inspect
                           </span>
                         </div>
-                        <span className="text-[10px] font-mono font-medium text-foreground bg-card px-2 py-0.5 rounded border border-border/40 shrink-0">
-                          Hover slice to inspect
-                        </span>
-                      </div>
-                    );
-                  })()}
+                      );
+                    })()}
+                  </div>
 
-                  {/* Large, Beautiful Pie / Donut Chart (Enlarged diameter, NO intrusive floating tooltip) */}
+                  {/* Large, Beautiful Pie / Donut Chart (Enlarged diameter, constant stroke geometry to avoid cursor bounce) */}
                   {paretoPieChartData.length > 0 ? (
                     <div className="relative h-[380px] sm:h-[410px] w-full flex items-center justify-center my-1">
                       <ResponsiveContainer width="100%" height="100%">
                         <RechartsPieChart>
-                          {/* NOTE: Tooltip is purposefully omitted from inside SVG to completely prevent floating card from covering the left or right of the pie chart! The Focus Bar above and Donut Center provide instant metrics without obstruction. */}
+                          {/* Tooltip omitted from inside SVG to prevent popover collision. Stationary Focus Bar above and Donut Center provide instant metrics without obstruction. */}
                           <Pie
                             data={paretoPieChartData}
                             cx="50%"
@@ -3147,9 +3149,9 @@ function AnalyticsHubContent() {
                                   key={`cell-${index}`}
                                   fill={entry.color}
                                   stroke={isHighlighted ? "#ffffff" : "var(--card)"}
-                                  strokeWidth={isHighlighted ? 3 : 1.5}
+                                  strokeWidth={2}
                                   opacity={hoveredParetoIdx === null || isHighlighted ? 1 : 0.35}
-                                  style={{ transition: "opacity 0.2s, stroke 0.2s", cursor: "pointer", outline: "none" }}
+                                  style={{ cursor: "pointer", outline: "none" }}
                                 />
                               );
                             })}
@@ -3159,7 +3161,7 @@ function AnalyticsHubContent() {
 
                       {/* Donut Hollow Center Metric (Dynamic Linkage - only rendered in Donut mode) */}
                       {pieChartStyle === "donut" && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none p-3 text-center">
+                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none p-3 text-center select-none">
                           {hoveredParetoIdx !== null && paretoPieChartData[hoveredParetoIdx] ? (
                             <>
                               <span className="text-[10px] uppercase font-bold tracking-wider text-primary truncate max-w-[125px]">
@@ -3236,7 +3238,7 @@ function AnalyticsHubContent() {
                             onMouseLeave={() => setHoveredParetoIdx(null)}
                             className={`flex items-center justify-between text-[11px] gap-1 p-1.5 rounded-md transition-colors cursor-pointer border ${
                               isHovered
-                                ? "bg-primary/10 border-primary/30 font-bold shadow-2xs"
+                                ? "bg-primary/15 border-primary/40 shadow-xs"
                                 : "border-border/30 bg-muted/20 hover:bg-muted/50"
                             }`}
                           >

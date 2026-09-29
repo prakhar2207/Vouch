@@ -1166,8 +1166,11 @@ export class LocalAnalyticsEngine {
     let peakDay = { date: positiveDates[0] || "", amount: 0 };
     const tempSalesHistory: number[] = [];
     const pByDate = purchasesByDate || {};
+    const positivePurchDates = Object.keys(pByDate).filter((d) => (pByDate[d] || 0) > 0);
+    const combinedPositiveDates = Array.from(new Set([...positiveDates, ...positivePurchDates])).sort();
+    const timelineStartDateStr = combinedPositiveDates.length > 0 ? combinedPositiveDates[0] : (positiveDates[0] || "");
 
-    const startHistTime = new Date(positiveDates[0]).getTime();
+    const startHistTime = new Date(timelineStartDateStr).getTime();
     const anchorTime = anchorDate.getTime();
     const dayMs = 24 * 60 * 60 * 1000;
     const totalHistDays = Math.max(1, Math.round((anchorTime - startHistTime) / dayMs) + 1);
