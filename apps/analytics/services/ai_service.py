@@ -669,12 +669,15 @@ class AnalyticsEngine:
             "amount": round(float(df.loc[peak_idx, 'daily_sales']), 2) if peak_idx is not None else 0.0
         }
 
+        total_invoices_count = vouchers.count()
         historical_summary = {
             "total_sales": round(float(df['daily_sales'].sum()), 2),
             "daily_average": round(float(df['daily_sales'].mean()), 2) if len(df) > 0 else 0.0,
             "current_7d_run_rate": round(recent_7d_mean, 2),
             "current_30d_run_rate": round(recent_30d_mean, 2),
             "peak_day": peak_day_info,
+            "historical_invoices_count": total_invoices_count,
+            "distinct_selling_days": distinct_days,
             "selling_days_count": distinct_days,
             "first_date": min_date.strftime('%Y-%m-%d') if min_date else None,
             "last_date": max_date.strftime('%Y-%m-%d') if max_date else None,

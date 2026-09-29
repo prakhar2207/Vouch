@@ -631,7 +631,7 @@ export class LocalAnalyticsEngine {
     const trendDetails = this.calculateSalesTrend(salesByDate, todayStr);
 
     // --- E2. Sales Forecast Projection ---
-    const forecastData = this.calculateForecast(salesByDate, trendDetails, todayStr, 30, purchasesByDate, salesCountByDate);
+    const forecastData = this.calculateForecast(salesByDate, trendDetails, todayStr, 30, purchasesByDate, salesCountByDate, salesCount);
 
     // Populate local Pareto & Churn accounts for offline resilience (real customer accounts with positive sales only)
     const partyEntries = Object.entries(salesByParty)
@@ -875,7 +875,8 @@ export class LocalAnalyticsEngine {
     referenceDateStr: string,
     days: number = 30,
     purchasesByDate?: Record<string, number>,
-    salesCountByDate?: Record<string, number>
+    salesCountByDate?: Record<string, number>,
+    totalSalesCount?: number
   ): SalesForecastResult {
     const positiveDates = Object.keys(salesByDate)
       .filter((d) => (salesByDate[d] || 0) > 0)
@@ -1291,11 +1292,13 @@ export class LocalAnalyticsEngine {
       growth_status: growthStatus,
     };
 
+    const calculatedInvoicesCount = totalSalesCount || Object.values(salesCountByDate || {}).reduce((a, b) => a + b, 0) || sampleSize;
     const historicalSummary = {
       total_historical_sales: totalSalesNum,
       total_sales: totalSalesNum,
-      historical_invoices_count: sampleSize,
+      historical_invoices_count: calculatedInvoicesCount,
       distinct_selling_days: sampleSize,
+      selling_days_count: sampleSize,
       historical_daily_average: avgSales,
       daily_average: avgSales,
       peak_day: peakDay,
