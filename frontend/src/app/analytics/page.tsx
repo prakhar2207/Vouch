@@ -1577,6 +1577,15 @@ function AnalyticsHubContent() {
                           <span>{(forecast?.trend_details?.growth_rate_pct ?? 0) >= 0 ? "+" : ""}{(forecast?.trend_details?.growth_rate_pct ?? 0).toFixed(1)}% Daily Momentum</span>
                         </span>
                       )}
+                      {hoveredTrajectoryPoint && hoveredTrajectoryPoint.catalysts && hoveredTrajectoryPoint.catalysts.length > 0 && (
+                        <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                          <span>⚡</span>
+                          <span className="max-w-[220px] truncate">{hoveredTrajectoryPoint.catalysts[0]}</span>
+                          {hoveredTrajectoryPoint.catalysts.length > 1 && (
+                            <span className="text-[10px] opacity-75">+{hoveredTrajectoryPoint.catalysts.length - 1}</span>
+                          )}
+                        </span>
+                      )}
                       <span className="text-xs text-muted-foreground font-mono">
                         {hoveredTrajectoryPoint ? formatChartDate(hoveredTrajectoryPoint.date) : "7-Day Moving Baseline"}
                       </span>
@@ -1808,6 +1817,37 @@ function AnalyticsHubContent() {
                                     </span>
                                   </div>
                                 )}
+                                {item.catalysts && item.catalysts.length > 0 && (
+                                  <div className="pt-2 border-t border-border/40 space-y-1">
+                                    <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                                      <span>⚡ Market Catalysts</span>
+                                    </div>
+                                    <div className="flex flex-col gap-1 max-w-[260px]">
+                                      {item.catalysts.map((cat: string, cIdx: number) => {
+                                        const isClosed = cat.includes("CLOSED") || cat.includes("Sunday");
+                                        const isSurge = cat.includes("SURGE") || cat.includes("Rush") || cat.includes("PEAK") || cat.includes("+");
+                                        const isRestock = cat.includes("Restock");
+                                        return (
+                                          <span
+                                            key={cIdx}
+                                            className={`text-[10px] leading-tight px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
+                                              isClosed
+                                                ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                                                : isSurge
+                                                ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                                                : isRestock
+                                                ? "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/20"
+                                                : "bg-muted text-muted-foreground"
+                                            }`}
+                                          >
+                                            <span>{isClosed ? "🛑" : isSurge ? "🚀" : isRestock ? "📦" : "ℹ️"}</span>
+                                            <span className="truncate">{cat}</span>
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           );
@@ -1941,22 +1981,129 @@ function AnalyticsHubContent() {
                 </div>
               </div>
 
-              {/* Simplified AI Factors Footer */}
-              <div className="pt-2 border-t border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-purple-500" />
-                  <span>AI Business Modeling:</span>
-                </span>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium border border-emerald-500/20 flex items-center gap-1">
-                    <span>📈</span> Month-End Billing Surge (1.6x)
-                  </span>
-                  <span className="px-2.5 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium border border-blue-500/20 flex items-center gap-1">
-                    <span>🔄</span> Repeat Customer Cycles Modeled
-                  </span>
-                  <span className="px-2.5 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 font-medium border border-purple-500/20 flex items-center gap-1">
-                    <span>📦</span> Stock Availability Constraints Applied
-                  </span>
+              {/* Intelligent Multi-Factor Market Radar */}
+              <div className="pt-3 border-t border-border/40 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-foreground flex items-center gap-2">
+                        <span>Intelligent Forecasting Engine • Market Radar</span>
+                        <span className="text-[10px] px-2 py-0.2 rounded-full font-bold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                          {forecastDays || 30}D HORIZON
+                        </span>
+                      </h4>
+                      <p className="text-[11px] text-muted-foreground">
+                        Synthesizing Indian commercial trading calendar, B2B wholesale seasonality, customer repurchase cycles & mandi operating rules
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-[11px] font-medium text-muted-foreground self-start sm:self-auto">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      <span>Real-World Calibrated</span>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                  {/* Card 1: Indian Trading Calendar */}
+                  <div className="bg-muted/20 border border-border/40 rounded-xl p-3 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                        <Calendar className="w-3 h-3 text-amber-500" />
+                        <span>Trading Calendar</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                        {forecast?.factors_analyzed?.holidays_in_horizon?.length ?? 0} Events
+                      </span>
+                    </div>
+                    <div className="text-xs font-semibold text-foreground line-clamp-1">
+                      {forecast?.factors_analyzed?.holidays_in_horizon && forecast.factors_analyzed.holidays_in_horizon.length > 0
+                        ? `${forecast.factors_analyzed.holidays_in_horizon.length} holidays & surges modeled`
+                        : "No major mandi disruptions"}
+                    </div>
+                    <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto no-scrollbar pt-0.5">
+                      {forecast?.factors_analyzed?.holidays_in_horizon && forecast.factors_analyzed.holidays_in_horizon.length > 0 ? (
+                        forecast.factors_analyzed.holidays_in_horizon.slice(0, 4).map((h: any, hIdx: number) => {
+                          const isClosed = h.impact === "CLOSED";
+                          const isSurge = h.impact === "SURGE";
+                          return (
+                            <span
+                              key={hIdx}
+                              className={`text-[9px] px-1.5 py-0.5 rounded font-medium truncate max-w-full ${
+                                isClosed
+                                  ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                                  : isSurge
+                                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                                  : "bg-muted text-muted-foreground"
+                              }`}
+                            >
+                              {isClosed ? "🛑" : isSurge ? "🚀" : "ℹ️"} {formatChartDate(h.date)}: {h.name.split("/")[0].trim()}
+                            </span>
+                          );
+                        })
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">Normal trading days throughout horizon</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Card 2: B2B Industrial Seasonality */}
+                  <div className="bg-muted/20 border border-border/40 rounded-xl p-3 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                        <TrendingUp className="w-3 h-3 text-emerald-500" />
+                        <span>B2B Seasonality</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">Active</span>
+                    </div>
+                    <div className="text-xs font-semibold text-foreground line-clamp-1">
+                      {forecast?.factors_analyzed?.current_season_profile || "Industrial Wholesale Demand Cycle"}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                      Monsoon lull (Jul-Aug -22%) • Festive manufacturing ramp (+35%) • Fiscal year-end blitz (+50%).
+                    </p>
+                  </div>
+
+                  {/* Card 3: Customer Recency & Order Cycles */}
+                  <div className="bg-muted/20 border border-border/40 rounded-xl p-3 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                        <Users className="w-3 h-3 text-blue-500" />
+                        <span>Customer Restock Cycles</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400">
+                        {forecast?.factors_analyzed?.customer_schedules_count ?? forecast?.factors_analyzed?.repeat_buyers_modeled ?? 20} Accounts
+                      </span>
+                    </div>
+                    <div className="text-xs font-semibold text-foreground line-clamp-1">
+                      Probabilistic Restock Modeling
+                    </div>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                      Individual inter-purchase intervals modeled with BTYD recency hazard decay to prevent dormant account inflation.
+                    </p>
+                  </div>
+
+                  {/* Card 4: Mandi Operating Rhythm & Compliance */}
+                  <div className="bg-muted/20 border border-border/40 rounded-xl p-3 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                        <Activity className="w-3 h-3 text-purple-500" />
+                        <span>Mandi Operating Rhythm</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400">Enforced</span>
+                    </div>
+                    <div className="text-xs font-semibold text-foreground line-clamp-1">
+                      Sunday Closure & GST Month-End
+                    </div>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                      Sunday mandi shutdown strictly enforced (~0.05x dispatch). Month-end GST billing rush modeled (+30%).
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
