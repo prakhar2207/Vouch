@@ -1,4 +1,40 @@
 import io
+
+from reportlab.platypus.flowables import Flowable
+
+class PushToBottomAndDraw(Flowable):
+    def __init__(self, elements):
+        Flowable.__init__(self)
+        self.elements = elements
+        self.width = 0
+        self.height = 0
+        self.req_h = 0
+
+    def wrap(self, availWidth, availHeight):
+        self.width = availWidth
+        req_h = 0
+        for el in self.elements:
+            _, h = el.wrap(availWidth, availHeight)
+            req_h += h
+        self.req_h = req_h
+        
+        if req_h > availHeight:
+            return availWidth, availHeight + 1
+            
+        self.height = availHeight
+        return availWidth, self.height
+
+    def split(self, availWidth, availHeight):
+        return []
+
+    def draw(self):
+        canv = self.canv
+        current_y = self.req_h
+        for el in self.elements:
+            _, h = el.wrap(self.width, self.req_h)
+            current_y -= h
+            el.drawOn(canv, 0, current_y)
+
 import logging
 import os
 import base64
@@ -1035,7 +1071,7 @@ class ModernProformaPDFRenderer:
             ('TOPPADDING', (0, 0), (-1, -1), 0),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
         ]))
-        story.append(KeepTogether(bottom_table))
+        story.append(PushToBottomAndDraw([bottom_table]))
 
         # ═══════════════════════════════════════════════════════════════════
         # 5. WATERMARK CALLBACK

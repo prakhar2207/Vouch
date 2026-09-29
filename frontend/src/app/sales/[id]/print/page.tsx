@@ -448,8 +448,8 @@ export default function PrintInvoicePage() {
     clone.style.boxSizing = 'border-box';
 
     if (!isThermal) {
-      // Remove min-height override and adjust padding so standard invoices fit cleanly on 1 page
-      clone.style.minHeight = 'unset';
+      // Retain minimum height to ensure footer sits at the bottom of the page
+      clone.style.minHeight = '270mm';
       clone.style.padding = '18px 24px';
       clone.style.margin = '0 auto';
     }
@@ -1220,7 +1220,7 @@ export default function PrintInvoicePage() {
       ) : (
         /* ================= A4 STANDARD TAX INVOICE LAYOUT ================= */
         <div className="w-full overflow-x-auto p-4 sm:p-8 flex justify-center bg-slate-200 print:bg-white print:p-0">
-          <div id="invoice-sheet" className="w-[210mm] max-w-[210mm] shrink-0 min-h-[265mm] print:min-h-0 print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none flex flex-col mx-auto">
+          <div id="invoice-sheet" className="w-[210mm] max-w-[210mm] shrink-0 min-h-[270mm] print:min-h-[270mm] print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none flex flex-col mx-auto">
           
           {/* Main Border Box */}
           <div className="border-2 border-black flex-1 flex flex-col justify-between">
