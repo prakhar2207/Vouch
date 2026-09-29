@@ -169,6 +169,11 @@ function AnalyticsHubContent() {
   const [rfmSortDir, setRfmSortDir] = useState<"asc" | "desc">("desc");
   const [rfmSegmentFilter, setRfmSegmentFilter] = useState<string>("ALL");
 
+  // Customer Pareto & Interactive Donut State
+  const [hoveredParetoIdx, setHoveredParetoIdx] = useState<number | null>(null);
+  const [paretoDonutMode, setParetoDonutMode] = useState<"full_80_20" | "top_10">("full_80_20");
+  const [paretoSearch, setParetoSearch] = useState<string>("");
+
   const fetchInventoryAnalytics = async (cid?: string, catId?: string) => {
     const targetCid = cid || effectiveCompanyId || activeCompanyId;
     if (!targetCid) return;
@@ -394,16 +399,109 @@ function AnalyticsHubContent() {
     return [];
   }, [forecast]);
 
-  // Pareto Customers (Sundry Debtors only, excluding Cash counter bills placeholder)
+  // Pareto Customers (Sundry Debtors only, excluding Cash counter bills placeholder, banks, suppliers)
   const paretoCustomers = useMemo(() => {
     const list: any[] = forecast?.customer_pareto || [];
     return list
       .filter((c: any) => {
         const name = (c.party_name || c.name || "").trim().toLowerCase();
-        return !name.startsWith("cash") && name !== "counter sale";
+        const billed = Number(c.total_billed ?? c.total_revenue ?? 0);
+        const isExcluded =
+          name.startsWith("cash") ||
+          name.includes("counter sale") ||
+          name.includes("cash sale") ||
+          name.includes("cash a/c") ||
+          name.includes("cash in hand") ||
+          name.includes("bank") ||
+          name.includes("supplier") ||
+          name.includes("creditor") ||
+          name.includes("purchase") ||
+          name.includes("tax") ||
+          name.includes("round off") ||
+          name.includes("expense");
+        return billed > 0 && !isExcluded;
       })
       .slice(0, 10);
   }, [forecast?.customer_pareto]);
+
+  // Executive Customer Health Metrics for Top-Level Ribbon
+  const customerExecutiveMetrics = useMemo(() => {
+    const totalCompanySales = Number(
+      forecast?.financial_momentum_summary?.total_sales ??
+      forecast?.historical_summary?.total_historical_sales ??
+      insights?.kpis?.total_sales ??
+      1
+    );
+
+    const top10Sum = paretoCustomers.reduce((acc: number, c: any) => {
+      return acc + Number(c.total_billed ?? c.total_revenue ?? 0);
+    }, 0);
+
+    const top10Share = totalCompanySales > 0 ? (top10Sum / totalCompanySales) * 100 : 0;
+
+    // Single account dominance (Max exposure)
+    const top1 = paretoCustomers[0];
+    const top1Name = top1?.party_name || top1?.name || "Top Account";
+    const top1Val = Number(top1?.total_billed ?? top1?.total_revenue ?? 0);
+    const top1Share = totalCompanySales > 0 ? (top1Val / totalCompanySales) * 100 : 0;
+
+    let exposureRisk = {
+      label: "Healthy Diversification",
+      badgeColor: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
+      description: "No single customer exceeds 20% of revenue.",
+    };
+    if (top1Share > 35) {
+      exposureRisk = {
+        label: "High Key-Account Risk",
+        badgeColor: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20",
+        description: `Top client accounts for ${top1Share.toFixed(1)}% of total sales.`,
+      };
+    } else if (top1Share > 20) {
+      exposureRisk = {
+        label: "Moderate Dependency",
+        badgeColor: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
+        description: `Top client accounts for ${top1Share.toFixed(1)}% of total sales.`,
+      };
+    }
+
+    // Health breakdown among top 10
+    let activeCount = 0;
+    let coolingCount = 0;
+    let atRiskCount = 0;
+    paretoCustomers.forEach((c: any) => {
+      const idle = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
+      if (idle < 30) activeCount++;
+      else if (idle < 60) coolingCount++;
+      else atRiskCount++;
+    });
+
+    const otherAccountsSales = Math.max(0, totalCompanySales - top10Sum);
+    const otherAccountsShare = Math.max(0, 100 - top10Share);
+
+    return {
+      totalCompanySales,
+      top10Sum,
+      top10Share: Math.round(top10Share * 10) / 10,
+      top1Name,
+      top1Val,
+      top1Share: Math.round(top1Share * 10) / 10,
+      exposureRisk,
+      activeCount,
+      coolingCount,
+      atRiskCount,
+      otherAccountsSales: Math.round(otherAccountsSales * 100) / 100,
+      otherAccountsShare: Math.round(otherAccountsShare * 10) / 10,
+    };
+  }, [paretoCustomers, forecast, insights?.kpis]);
+
+  // Filtered Pareto Customers for Table Display based on Search
+  const filteredParetoCustomers = useMemo(() => {
+    if (!paretoSearch.trim()) return paretoCustomers;
+    const q = paretoSearch.toLowerCase().trim();
+    return paretoCustomers.filter((c: any) =>
+      (c.party_name || c.name || "").toLowerCase().includes(q)
+    );
+  }, [paretoCustomers, paretoSearch]);
 
   // Customer Pareto Donut / Pie Chart Data
   const paretoPieChartData = useMemo(() => {
@@ -419,16 +517,36 @@ function AnalyticsHubContent() {
       "#3b82f6", // Blue
       "#14b8a6", // Teal
       "#f97316", // Orange
-      "#64748b", // Slate
+      "#a855f7", // Purple
     ];
 
-    return paretoCustomers.map((c: any, idx: number) => ({
+    const top10Items = paretoCustomers.map((c: any, idx: number) => ({
       name: c.party_name || c.name || `Party #${idx + 1}`,
       value: Math.round(Number(c.total_billed ?? c.total_revenue ?? 0)),
       share_pct: Number(c.percentage_of_total ?? c.share_pct ?? 0),
       color: colors[idx % colors.length],
+      party_id: c.party_id,
+      days_since: c.days_since_last_sale ?? c.days_since_last_order ?? 0,
+      original_idx: idx,
     }));
-  }, [paretoCustomers]);
+
+    if (paretoDonutMode === "full_80_20" && customerExecutiveMetrics.otherAccountsSales > 0) {
+      return [
+        ...top10Items,
+        {
+          name: "All Other Accounts",
+          value: Math.round(customerExecutiveMetrics.otherAccountsSales),
+          share_pct: customerExecutiveMetrics.otherAccountsShare,
+          color: "#94a3b8", // Slate neutral
+          party_id: null,
+          days_since: 0,
+          original_idx: 10,
+        },
+      ];
+    }
+
+    return top10Items;
+  }, [paretoCustomers, paretoDonutMode, customerExecutiveMetrics]);
 
   // Churn Radar Accounts dynamically filtered by user-selected inactivity threshold days
   const churnFilteredAccounts = useMemo(() => {
@@ -570,12 +688,33 @@ function AnalyticsHubContent() {
     };
   }, [growwChartData, forecast?.financial_momentum_summary]);
 
-  // Sorted and filtered RFM Data for Tab 3 Customer RFM Tiers
+  // Sorted and filtered RFM Data for Tab 3 Customer RFM Tiers (Strict Genuine Customer Filter)
   const sortedRfmData = useMemo(() => {
     if (!rfmData || rfmData.length === 0) return [];
-    let list = [...rfmData];
+
+    // Strictly filter to real customer accounts only (no suppliers, banks, cash, non-sales zero entries)
+    let list = rfmData.filter((c: any) => {
+      const freq = Number(c.frequency || 0);
+      const mon = Number(c.monetary || 0);
+      const name = (c.party_ledger__name || c.name || "").trim().toLowerCase();
+      const isExcluded =
+        name.startsWith("cash") ||
+        name.includes("counter sale") ||
+        name.includes("cash sale") ||
+        name.includes("cash a/c") ||
+        name.includes("cash in hand") ||
+        name.includes("bank") ||
+        name.includes("supplier") ||
+        name.includes("creditor") ||
+        name.includes("purchase") ||
+        name.includes("tax") ||
+        name.includes("round off") ||
+        name.includes("expense");
+      return freq > 0 && mon > 0 && !isExcluded;
+    });
+
     if (rfmSearch.trim()) {
-      const q = rfmSearch.toLowerCase();
+      const q = rfmSearch.toLowerCase().trim();
       list = list.filter((c: any) =>
         (c.party_ledger__name || c.name || "").toLowerCase().includes(q)
       );
@@ -2312,129 +2451,367 @@ function AnalyticsHubContent() {
 
         {/* Tab 3: Customer RFM Segmentation & Customer Churn Radar */}
         {activeTab === "rfm" && (
-          <div className="space-y-5 animate-in fade-in duration-200">
-            {/* Customer Pareto Concentration (80/20 Rule) & Revenue Share Donut Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-              {/* Pareto Table (7 cols) */}
-              <div className="lg:col-span-7 bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/40 pb-3">
-                  <div>
-                    <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
-                      <Users className="w-4 h-4 text-primary" />
-                      <span>Customer Pareto Concentration (80/20 Rule)</span>
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      Key account concentration driving core turnover. Excludes walk-in counter sales to show true client retention.
-                    </p>
-                  </div>
-                  <span className="text-xs font-mono text-muted-foreground bg-muted/60 px-2.5 py-1 rounded-md border border-border/40">
-                    Top {paretoCustomers.length} Parties
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Top Executive Customer Health KPI Ribbon */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Card 1: Top 10 Core Turnover Concentration */}
+              <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs relative overflow-hidden group hover:border-primary/40 transition-all">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Award className="w-3.5 h-3.5 text-indigo-500" />
+                    Top 10 Core Turnover
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+                    {customerExecutiveMetrics.top10Share}% Core Share
                   </span>
                 </div>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold font-mono text-foreground">
+                    ₹{formatCurrencyShort(customerExecutiveMetrics.top10Sum)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">of total billing</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Primary turnover engine generated by your 10 key debtor accounts.
+                </p>
+                <div className="w-full bg-muted/60 h-1.5 rounded-full mt-3 overflow-hidden">
+                  <div
+                    className="h-full bg-indigo-500 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min(100, customerExecutiveMetrics.top10Share)}%` }}
+                  />
+                </div>
+              </div>
 
-                {/* Cash & Counter Sales Summary Notice */}
-                {forecast?.cash_sales_summary && Number(forecast.cash_sales_summary.total_billed || 0) > 0 && (
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/30 border border-border/40 text-xs">
+              {/* Card 2: Single-Account Exposure Risk */}
+              <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs relative overflow-hidden group hover:border-primary/40 transition-all">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
+                    Max Account Exposure
+                  </span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${customerExecutiveMetrics.exposureRisk.badgeColor}`}>
+                    {customerExecutiveMetrics.exposureRisk.label}
+                  </span>
+                </div>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold font-mono text-foreground">
+                    {customerExecutiveMetrics.top1Share}%
+                  </span>
+                  <span className="text-xs text-muted-foreground truncate max-w-[120px]" title={customerExecutiveMetrics.top1Name}>
+                    {customerExecutiveMetrics.top1Name}
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  {customerExecutiveMetrics.exposureRisk.description}
+                </p>
+                <div className="w-full bg-muted/60 h-1.5 rounded-full mt-3 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      customerExecutiveMetrics.top1Share > 35 ? "bg-rose-500" : customerExecutiveMetrics.top1Share > 20 ? "bg-amber-500" : "bg-emerald-500"
+                    }`}
+                    style={{ width: `${Math.min(100, customerExecutiveMetrics.top1Share * 2)}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Card 3: 80/20 Pareto Dispersion */}
+              <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs relative overflow-hidden group hover:border-primary/40 transition-all">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+                    80/20 Dispersion Ratio
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                    Pareto Index
+                  </span>
+                </div>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold font-mono text-foreground">
+                    {paretoCustomers.length} : {customerExecutiveMetrics.otherAccountsShare.toFixed(0)}%
+                  </span>
+                  <span className="text-xs text-muted-foreground">Core vs Long-Tail</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Top {paretoCustomers.length} clients yield {customerExecutiveMetrics.top10Share}% of revenue across {sortedRfmData.length} active customer accounts.
+                </p>
+                <div className="w-full bg-muted/60 h-1.5 rounded-full mt-3 overflow-hidden flex">
+                  <div
+                    className="h-full bg-purple-500 transition-all duration-500"
+                    style={{ width: `${customerExecutiveMetrics.top10Share}%` }}
+                    title={`Top 10: ${customerExecutiveMetrics.top10Share}%`}
+                  />
+                  <div
+                    className="h-full bg-slate-400 dark:bg-slate-600 transition-all duration-500"
+                    style={{ width: `${customerExecutiveMetrics.otherAccountsShare}%` }}
+                    title={`Other Accounts: ${customerExecutiveMetrics.otherAccountsShare}%`}
+                  />
+                </div>
+              </div>
+
+              {/* Card 4: Top Accounts Retention Health */}
+              <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs relative overflow-hidden group hover:border-primary/40 transition-all">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5 text-emerald-500" />
+                    Top 10 Retention Health
+                  </span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    customerExecutiveMetrics.activeCount >= 7
+                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                  }`}>
+                    {customerExecutiveMetrics.activeCount}/10 Active
+                  </span>
+                </div>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold font-mono text-foreground">
+                    {customerExecutiveMetrics.activeCount} <span className="text-xs font-normal text-muted-foreground">Active</span>
+                  </span>
+                  <span className="text-xs font-mono text-muted-foreground">·</span>
+                  <span className="text-sm font-bold font-mono text-amber-600 dark:text-amber-400">
+                    {customerExecutiveMetrics.coolingCount} <span className="text-xs font-normal text-muted-foreground">Cooling</span>
+                  </span>
+                  <span className="text-xs font-mono text-muted-foreground">·</span>
+                  <span className="text-sm font-bold font-mono text-rose-600 dark:text-rose-400">
+                    {customerExecutiveMetrics.atRiskCount} <span className="text-xs font-normal text-muted-foreground">At Risk</span>
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Active accounts placed an order in the last 30 days.
+                </p>
+                <div className="w-full bg-muted/60 h-1.5 rounded-full mt-3 overflow-hidden flex">
+                  <div
+                    className="h-full bg-emerald-500 transition-all"
+                    style={{ width: `${(customerExecutiveMetrics.activeCount / 10) * 100}%` }}
+                  />
+                  <div
+                    className="h-full bg-amber-500 transition-all"
+                    style={{ width: `${(customerExecutiveMetrics.coolingCount / 10) * 100}%` }}
+                  />
+                  <div
+                    className="h-full bg-rose-500 transition-all"
+                    style={{ width: `${(customerExecutiveMetrics.atRiskCount / 10) * 100}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Customer Pareto Concentration (80/20 Rule) & Revenue Share Donut Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+              {/* Pareto Table (7 cols) */}
+              <div className="lg:col-span-7 bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4 flex flex-col justify-between">
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/40 pb-3">
+                    <div>
+                      <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
+                        <Users className="w-4 h-4 text-primary" />
+                        <span>Customer Pareto Concentration (80/20 Rule)</span>
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Key debtor accounts driving core business volume. Excludes suppliers, banks, and walk-in counter sales.
+                      </p>
+                    </div>
+
                     <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground font-medium flex items-center gap-1.5">
-                        <Receipt className="w-3.5 h-3.5 text-primary" />
-                        <span>Walk-in / Cash Counter Bills:</span>
-                      </span>
-                      <span className="font-semibold text-foreground font-mono">
-                        ₹{Number(forecast.cash_sales_summary.total_billed || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </span>
-                      <span className="text-muted-foreground text-[11px]">
-                        ({forecast.cash_sales_summary.invoice_count || 0} bills · {forecast.cash_sales_summary.share_pct || 0}% turnover)
+                      <div className="relative">
+                        <Search className="w-3 h-3 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                        <input
+                          type="text"
+                          value={paretoSearch}
+                          onChange={(e) => setParetoSearch(e.target.value)}
+                          placeholder="Filter top accounts..."
+                          className="bg-muted/50 border border-border/60 rounded-md pl-7 pr-2 py-1 text-[11px] text-foreground outline-none focus:border-primary w-36"
+                        />
+                        {paretoSearch && (
+                          <button
+                            onClick={() => setParetoSearch("")}
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-[10px]"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                      <span className="text-[11px] font-mono text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-md border border-border/40 shrink-0">
+                        Top {paretoCustomers.length} Parties
                       </span>
                     </div>
-                    <span className="text-[10px] text-muted-foreground italic">
-                      *Walk-in retail counter memos; excluded from client account ranking
-                    </span>
                   </div>
-                )}
 
-                {paretoCustomers && paretoCustomers.length > 0 ? (
-                  <div className="overflow-x-auto max-h-[380px] overflow-y-auto scrollbar-thin">
-                    <table className="w-full text-left text-xs">
-                      <thead className="sticky top-0 bg-card z-10">
-                        <tr className="border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
-                          <th className="py-2.5 px-3">Rank & Party</th>
-                          <th className="py-2.5 px-3 text-right">Revenue</th>
-                          <th className="py-2.5 px-3 text-right">Share (%)</th>
-                          <th className="py-2.5 px-3 text-right">Cumulative</th>
-                          <th className="py-2.5 px-3 text-center">Last Order</th>
-                          <th className="py-2.5 px-3 text-center">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border/30">
-                        {paretoCustomers.map((c: any, idx: number) => {
-                          const partyName = c.party_name || c.name || "Customer";
-                          const billedAmount = c.total_billed ?? c.total_revenue ?? 0;
-                          const sharePct = c.share_pct ?? c.percentage_of_total ?? 0;
-                          const cumPct = c.cumulative_pct ?? c.cumulative_percentage ?? 0;
-                          const idleDays = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
-                          
-                          let badgeBg = "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20";
-                          let badgeLabel = c.risk_label || "Active Buyer";
-                          if (idleDays >= 90) {
-                            badgeBg = "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20";
-                            badgeLabel = `Dormant (${idleDays}d)`;
-                          } else if (idleDays >= 60) {
-                            badgeBg = "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20";
-                            badgeLabel = `Inactive (${idleDays}d)`;
-                          } else if (idleDays >= 30) {
-                            badgeBg = "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20";
-                            badgeLabel = `Cooling (${idleDays}d)`;
-                          }
+                  {/* Cash & Counter Sales Summary Notice */}
+                  {forecast?.cash_sales_summary && Number(forecast.cash_sales_summary.total_billed || 0) > 0 && (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/30 border border-border/40 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground font-medium flex items-center gap-1.5">
+                          <Receipt className="w-3.5 h-3.5 text-primary" />
+                          <span>Walk-in / Cash Counter Bills:</span>
+                        </span>
+                        <span className="font-semibold text-foreground font-mono">
+                          ₹{Number(forecast.cash_sales_summary.total_billed || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </span>
+                        <span className="text-muted-foreground text-[11px]">
+                          ({forecast.cash_sales_summary.invoice_count || 0} bills · {forecast.cash_sales_summary.share_pct || 0}% turnover)
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground italic">
+                        *Walk-in retail counter memos; excluded from client account ranking
+                      </span>
+                    </div>
+                  )}
 
-                          return (
-                            <tr key={idx} className="hover:bg-muted/40 transition-colors">
-                              <td className="py-2.5 px-3">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-mono text-[10px] text-muted-foreground w-4">#{idx + 1}</span>
-                                  {c.party_id ? (
-                                    <Link
-                                      href={`/parties/${c.party_id}/statement`}
-                                      className="font-semibold text-foreground truncate max-w-[150px] sm:max-w-[200px] hover:text-primary hover:underline transition-colors"
-                                      title={partyName}
-                                    >
-                                      {partyName}
-                                    </Link>
-                                  ) : (
-                                    <span className="font-semibold text-foreground truncate max-w-[150px] sm:max-w-[200px]">
-                                      {partyName}
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
-                                ₹{Number(billedAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono text-primary font-semibold">
-                                {sharePct}%
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono text-muted-foreground text-[11px]">
-                                {cumPct}%
-                              </td>
-                              <td className="py-2.5 px-3 text-center font-mono text-muted-foreground">
-                                {idleDays}d ago
-                              </td>
-                              <td className="py-2.5 px-3 text-center">
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeBg}`}>
-                                  {badgeLabel}
+                  {filteredParetoCustomers && filteredParetoCustomers.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
+                            <th className="py-2.5 px-3">Rank & Customer</th>
+                            <th className="py-2.5 px-3 text-right">Revenue (₹)</th>
+                            <th className="py-2.5 px-3 text-right">Turnover Share</th>
+                            <th className="py-2.5 px-3 text-right">Cumulative</th>
+                            <th className="py-2.5 px-3 text-center">Last Active</th>
+                            <th className="py-2.5 px-3 text-center">Status</th>
+                            <th className="py-2.5 px-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border/30">
+                          {filteredParetoCustomers.map((c: any, idx: number) => {
+                            const partyName = c.party_name || c.name || "Customer";
+                            const billedAmount = c.total_billed ?? c.total_revenue ?? 0;
+                            const sharePct = c.share_pct ?? c.percentage_of_total ?? 0;
+                            const cumPct = c.cumulative_pct ?? c.cumulative_percentage ?? 0;
+                            const idleDays = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
+                            const isHovered = hoveredParetoIdx === idx;
+                            
+                            let badgeBg = "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20";
+                            let badgeLabel = c.risk_label || "Active Buyer";
+                            if (idleDays >= 90) {
+                              badgeBg = "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20";
+                              badgeLabel = `Dormant (${idleDays}d)`;
+                            } else if (idleDays >= 60) {
+                              badgeBg = "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20";
+                              badgeLabel = `Inactive (${idleDays}d)`;
+                            } else if (idleDays >= 30) {
+                              badgeBg = "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20";
+                              badgeLabel = `Cooling (${idleDays}d)`;
+                            }
+
+                            // Rank medal styling
+                            const rankBadge =
+                              idx === 0 ? (
+                                <span className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                                  🥇
                                 </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="py-12 text-center text-xs text-muted-foreground">
-                    No debtor sales transactions found to generate Pareto ranking.
-                  </div>
-                )}
+                              ) : idx === 1 ? (
+                                <span className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] bg-slate-400/20 text-slate-600 dark:text-slate-300 border border-slate-400/30">
+                                  🥈
+                                </span>
+                              ) : idx === 2 ? (
+                                <span className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] bg-amber-700/20 text-amber-700 dark:text-amber-500 border border-amber-700/30">
+                                  🥉
+                                </span>
+                              ) : (
+                                <span className="font-mono text-[10px] text-muted-foreground w-5 text-center">
+                                  #{idx + 1}
+                                </span>
+                              );
+
+                            return (
+                              <tr
+                                key={idx}
+                                onMouseEnter={() => setHoveredParetoIdx(idx)}
+                                onMouseLeave={() => setHoveredParetoIdx(null)}
+                                className={`transition-colors cursor-pointer ${
+                                  isHovered ? "bg-primary/8 ring-1 ring-primary/20" : "hover:bg-muted/40"
+                                }`}
+                              >
+                                <td className="py-2.5 px-3">
+                                  <div className="flex items-center gap-2">
+                                    {rankBadge}
+                                    <div className="flex flex-col min-w-0">
+                                      {c.party_id ? (
+                                        <Link
+                                          href={`/parties/${c.party_id}/statement`}
+                                          className="font-semibold text-foreground truncate max-w-[140px] sm:max-w-[180px] hover:text-primary hover:underline transition-colors"
+                                          title={partyName}
+                                        >
+                                          {partyName}
+                                        </Link>
+                                      ) : (
+                                        <span className="font-semibold text-foreground truncate max-w-[140px] sm:max-w-[180px]" title={partyName}>
+                                          {partyName}
+                                        </span>
+                                      )}
+                                      <span className="text-[10px] text-muted-foreground font-mono">
+                                        {c.invoice_count || 1} orders billed
+                                      </span>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
+                                  ₹{Number(billedAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-mono">
+                                  <div className="flex flex-col items-end gap-1">
+                                    <span className="text-primary font-bold text-xs">{sharePct}%</span>
+                                    <div className="w-16 h-1 bg-muted rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full bg-primary rounded-full transition-all duration-300"
+                                        style={{ width: `${Math.min(100, (sharePct / (paretoCustomers[0]?.share_pct || 20)) * 100)}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-mono text-muted-foreground text-[11px]">
+                                  {cumPct}%
+                                </td>
+                                <td className="py-2.5 px-3 text-center font-mono text-muted-foreground">
+                                  {idleDays}d ago
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeBg}`}>
+                                    {badgeLabel}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <a
+                                      href={`https://wa.me/?text=${encodeURIComponent(`Hello ${partyName}, greetings from our billing desk! Thank you for your continued partnership with us.`)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="p-1 rounded hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-600 transition-colors"
+                                      title="WhatsApp Greeting"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <MessageCircle className="w-3.5 h-3.5" />
+                                    </a>
+                                    {c.party_id && (
+                                      <Link
+                                        href={`/parties/${c.party_id}/statement`}
+                                        className="p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                                        title="View Account Statement"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <ExternalLink className="w-3.5 h-3.5" />
+                                      </Link>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="py-12 text-center text-xs text-muted-foreground">
+                      No customer accounts match the current Pareto search.
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-3 border-t border-border/40 flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>💡 Tip: Hover on any row to highlight their share in the Donut Chart.</span>
+                  <span className="font-mono">Top 10 = ₹{formatCurrencyShort(customerExecutiveMetrics.top10Sum)}</span>
+                </div>
               </div>
 
               {/* Pareto Pie / Donut Chart (5 cols) */}
@@ -2445,18 +2822,44 @@ function AnalyticsHubContent() {
                       <PieChart className="w-4 h-4 text-purple-500" />
                       <span>Customer Pareto Revenue Share</span>
                     </h4>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
-                      {paretoPieChartData.reduce((acc: number, cur: any) => acc + (cur.share_pct || 0), 0).toFixed(1)}% Core Share
-                    </span>
+                    {/* View Mode Toggle: Full 80/20 vs Top 10 Breakdown */}
+                    <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => setParetoDonutMode("full_80_20")}
+                        className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                          paretoDonutMode === "full_80_20"
+                            ? "bg-card text-foreground font-bold shadow-2xs"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                        title="Show full 100% donut with Top 10 plus remaining accounts"
+                      >
+                        Full 80/20 View
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setParetoDonutMode("top_10")}
+                        className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                          paretoDonutMode === "top_10"
+                            ? "bg-card text-foreground font-bold shadow-2xs"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                        title="Show breakdown of Top 10 only"
+                      >
+                        Top 10 Breakdown
+                      </button>
+                    </div>
                   </div>
 
                   <p className="text-xs text-muted-foreground mt-2">
-                    Visual proportion of total company turnover generated by your top accounts.
+                    {paretoDonutMode === "full_80_20"
+                      ? "Full company turnover distribution: Top 10 accounts vs remaining customer base."
+                      : "Relative revenue proportions among your top 10 key debtor accounts."}
                   </p>
 
-                  {/* Donut Chart with Centered KPI */}
+                  {/* Donut Chart with Centered Dynamic KPI */}
                   {paretoPieChartData.length > 0 ? (
-                    <div className="relative h-60 w-full flex items-center justify-center mt-2">
+                    <div className="relative h-64 w-full flex items-center justify-center mt-2">
                       <ResponsiveContainer width="100%" height="100%">
                         <RechartsPieChart>
                           <Tooltip
@@ -2483,29 +2886,57 @@ function AnalyticsHubContent() {
                             data={paretoPieChartData}
                             cx="50%"
                             cy="50%"
-                            innerRadius={55}
-                            outerRadius={85}
-                            paddingAngle={3}
+                            innerRadius={60}
+                            outerRadius={92}
+                            paddingAngle={2}
                             dataKey="value"
+                            onMouseEnter={(_, index) => setHoveredParetoIdx(index)}
+                            onMouseLeave={() => setHoveredParetoIdx(null)}
                           >
-                            {paretoPieChartData.map((entry: any, index: number) => (
-                              <Cell key={`cell-${index}`} fill={entry.color} stroke="var(--card)" strokeWidth={2} />
-                            ))}
+                            {paretoPieChartData.map((entry: any, index: number) => {
+                              const isHighlighted = hoveredParetoIdx === index;
+                              return (
+                                <Cell
+                                  key={`cell-${index}`}
+                                  fill={entry.color}
+                                  stroke={isHighlighted ? "#ffffff" : "var(--card)"}
+                                  strokeWidth={isHighlighted ? 3 : 2}
+                                  opacity={hoveredParetoIdx === null || isHighlighted ? 1 : 0.45}
+                                  style={{ transition: "opacity 0.2s, stroke 0.2s" }}
+                                />
+                              );
+                            })}
                           </Pie>
                         </RechartsPieChart>
                       </ResponsiveContainer>
 
-                      {/* Donut Hollow Center Metric */}
-                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                        <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground">
-                          Top Accounts
-                        </span>
-                        <span className="text-xl font-bold font-mono text-foreground">
-                          {paretoPieChartData.reduce((acc: number, cur: any) => acc + (cur.share_pct || 0), 0).toFixed(0)}%
-                        </span>
-                        <span className="text-[10px] text-purple-600 dark:text-purple-400 font-medium">
-                          Turnover Share
-                        </span>
+                      {/* Donut Hollow Center Metric (Dynamic Hover Linkage) */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none p-4 text-center">
+                        {hoveredParetoIdx !== null && paretoPieChartData[hoveredParetoIdx] ? (
+                          <>
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-primary truncate max-w-[120px]">
+                              {paretoPieChartData[hoveredParetoIdx].name}
+                            </span>
+                            <span className="text-base font-bold font-mono text-foreground">
+                              ₹{formatCurrencyShort(paretoPieChartData[hoveredParetoIdx].value)}
+                            </span>
+                            <span className="text-[10px] text-purple-600 dark:text-purple-400 font-semibold">
+                              {paretoPieChartData[hoveredParetoIdx].share_pct}% Share
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground">
+                              Top 10 Share
+                            </span>
+                            <span className="text-2xl font-bold font-mono text-foreground">
+                              {customerExecutiveMetrics.top10Share}%
+                            </span>
+                            <span className="text-[10px] text-purple-600 dark:text-purple-400 font-medium">
+                              ₹{formatCurrencyShort(customerExecutiveMetrics.top10Sum)}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
                   ) : (
@@ -2519,19 +2950,29 @@ function AnalyticsHubContent() {
                 {paretoPieChartData.length > 0 && (
                   <div className="pt-2 border-t border-border/40">
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 max-h-[140px] overflow-y-auto scrollbar-thin text-xs">
-                      {paretoPieChartData.map((item: any, idx: number) => (
-                        <div key={idx} className="flex items-center justify-between text-[11px] gap-1 hover:bg-muted/40 p-1 rounded transition-colors">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
-                            <span className="truncate text-foreground font-medium" title={item.name}>
-                              {item.name}
+                      {paretoPieChartData.map((item: any, idx: number) => {
+                        const isHovered = hoveredParetoIdx === idx;
+                        return (
+                          <div
+                            key={idx}
+                            onMouseEnter={() => setHoveredParetoIdx(idx)}
+                            onMouseLeave={() => setHoveredParetoIdx(null)}
+                            className={`flex items-center justify-between text-[11px] gap-1 p-1 rounded transition-colors cursor-pointer ${
+                              isHovered ? "bg-muted font-bold" : "hover:bg-muted/40"
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                              <span className="truncate text-foreground" title={item.name}>
+                                {item.name}
+                              </span>
+                            </div>
+                            <span className="font-mono text-muted-foreground shrink-0 font-semibold">
+                              {item.share_pct}%
                             </span>
                           </div>
-                          <span className="font-mono text-muted-foreground shrink-0 font-semibold">
-                            {item.share_pct}%
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -2547,12 +2988,12 @@ function AnalyticsHubContent() {
                     <span>Customer RFM Tiers & Inactivity Churn Radar</span>
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Machine learning segmentation (Recency, Frequency, Monetary) paired with automated Churn Inactivity monitoring.
+                    Machine learning segmentation (Recency, Frequency, Monetary) applied strictly to genuine customer accounts.
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-muted-foreground bg-muted/60 px-2.5 py-1 rounded-md border border-border/40">
-                    {rfmData.length} Total Customers
+                  <span className="text-xs font-mono text-primary font-bold bg-primary/10 px-2.5 py-1 rounded-md border border-primary/20">
+                    {sortedRfmData.length} Verified Customer Accounts
                   </span>
                 </div>
               </div>
@@ -2645,7 +3086,7 @@ function AnalyticsHubContent() {
                       <span>Customer RFM Tiers</span>
                     </h4>
                     <span className="text-[11px] text-muted-foreground">
-                      Showing {sortedRfmData.length} of {rfmData.length} customers
+                      Showing {sortedRfmData.length} genuine customer debtor accounts (suppliers & banks excluded)
                     </span>
                   </div>
                   <span className="text-xs font-mono font-bold text-foreground">

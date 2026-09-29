@@ -436,16 +436,24 @@ export class LocalAnalyticsEngine {
       }
 
       for (const p of partyAggregates) {
+        // ONLY include if it has positive sales AND invoiceCount > 0
+        if ((p.sales || 0) <= 0 || (p.invoiceCount || 0) <= 0) continue;
+
         const pNameLower = (p.partyName || "").toLowerCase().trim();
-        const isCashParty = (
+        const isExcluded = (
           pNameLower === "cash" ||
           pNameLower.includes("counter sale") ||
           pNameLower.includes("cash sale") ||
           pNameLower === "cash a/c" ||
           pNameLower === "cash in hand" ||
-          pNameLower === "cash account"
+          pNameLower === "cash account" ||
+          pNameLower.includes("bank") ||
+          pNameLower.includes("supplier") ||
+          pNameLower.includes("creditor") ||
+          pNameLower.includes("expense") ||
+          pNameLower.includes("round off")
         );
-        if (isCashParty) continue;
+        if (isExcluded) continue;
 
         salesByParty[p.partyId] = {
           name: p.partyName,
@@ -614,8 +622,10 @@ export class LocalAnalyticsEngine {
     // --- E2. Sales Forecast Projection ---
     const forecastData = this.calculateForecast(salesByDate, trendDetails, todayStr, 30, purchasesByDate);
 
-    // Populate local Pareto & Churn accounts for offline resilience
-    const partyEntries = Object.entries(salesByParty).map(([id, info]) => {
+    // Populate local Pareto & Churn accounts for offline resilience (real customer accounts with positive sales only)
+    const partyEntries = Object.entries(salesByParty)
+      .filter(([_, info]) => (info.total || 0) > 0 && (info.count || 0) > 0)
+      .map(([id, info]) => {
       const lastD = new Date(info.lastDate);
       const diffDays = Math.max(0, Math.floor((new Date(todayStr).getTime() - lastD.getTime()) / (24 * 60 * 60 * 1000)));
       return {
@@ -1258,7 +1268,10 @@ export class LocalAnalyticsEngine {
     todayStr: string
   ): RfmCluster[] {
     const today = new Date(todayStr);
-    const parties = Object.keys(salesByParty);
+    const parties = Object.keys(salesByParty).filter((pKey) => {
+      const info = salesByParty[pKey];
+      return info && (info.total || 0) > 0 && (info.count || 0) > 0;
+    });
 
     if (parties.length === 0) return [];
 

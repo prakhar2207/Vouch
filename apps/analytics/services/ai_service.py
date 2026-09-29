@@ -44,7 +44,18 @@ class AnalyticsEngine:
         today = timezone.now().date()
         
         party_stats = list(
-            Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
+            Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED', total_amount__gt=0)
+            .filter(
+                Q(party_ledger__ledger_type='CUSTOMER') |
+                Q(party_ledger__group__nature='ASSET', party_ledger__group__name__icontains='Debtor') |
+                Q(party_ledger__ledger_type__isnull=True)
+            )
+            .exclude(
+                Q(party_ledger__ledger_type__in=['SUPPLIER', 'BANK', 'CASH', 'EXPENSE', 'ROUND_OFF', 'TAX', 'PURCHASE']) |
+                Q(party_ledger__group__name__icontains='Creditor') |
+                Q(party_ledger__group__name__icontains='Bank') |
+                Q(party_ledger__group__name__icontains='Cash')
+            )
             .exclude(AnalyticsEngine.is_cash_voucher_filter())
             .values('party_ledger__name')
             .annotate(
@@ -52,6 +63,7 @@ class AnalyticsEngine:
                 frequency=Count('id'),
                 monetary=Sum('total_amount'),
             )
+            .filter(frequency__gt=0, monetary__gt=0)
         )
         
         if not party_stats:
@@ -654,9 +666,20 @@ class AnalyticsEngine:
             "share_pct": cash_share_pct,
         }
 
-        # Query all real customer party accounts (excluding Cash placeholder / counter sales)
+        # Query all real customer party accounts (excluding Cash placeholder / counter sales, suppliers, banks)
         cust_agg = list(
-            Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
+            Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED', total_amount__gt=0)
+            .filter(
+                Q(party_ledger__ledger_type='CUSTOMER') |
+                Q(party_ledger__group__nature='ASSET', party_ledger__group__name__icontains='Debtor') |
+                Q(party_ledger__ledger_type__isnull=True)
+            )
+            .exclude(
+                Q(party_ledger__ledger_type__in=['SUPPLIER', 'BANK', 'CASH', 'EXPENSE', 'ROUND_OFF', 'TAX', 'PURCHASE']) |
+                Q(party_ledger__group__name__icontains='Creditor') |
+                Q(party_ledger__group__name__icontains='Bank') |
+                Q(party_ledger__group__name__icontains='Cash')
+            )
             .exclude(cash_filter)
             .values('party_ledger__name', 'party_ledger_id')
             .annotate(
@@ -664,6 +687,7 @@ class AnalyticsEngine:
                 inv_count=Count('id'),
                 last_sale=Max('voucher_date')
             )
+            .filter(inv_count__gt=0, total_billed__gt=0)
             .order_by('-total_billed')
         )
         total_party_sales = sum(float(ca['total_billed'] or 0.0) for ca in cust_agg) or 1.0
