@@ -169,9 +169,11 @@ function AnalyticsHubContent() {
   const [rfmSortDir, setRfmSortDir] = useState<"asc" | "desc">("desc");
   const [rfmSegmentFilter, setRfmSegmentFilter] = useState<string>("ALL");
 
-  // Customer Pareto & Interactive Donut State
+  // Customer Pareto & Interactive Pie/Donut Chart State
   const [hoveredParetoIdx, setHoveredParetoIdx] = useState<number | null>(null);
-  const [paretoDonutMode, setParetoDonutMode] = useState<"full_80_20" | "top_10">("full_80_20");
+  const [paretoDonutMode, setParetoDonutMode] = useState<"all_parties" | "top_10" | "full_80_20">("all_parties");
+  const [pieChartStyle, setPieChartStyle] = useState<"donut" | "pie">("donut");
+  const [paretoTableScope, setParetoTableScope] = useState<"all" | "top_10">("all");
   const [paretoSearch, setParetoSearch] = useState<string>("");
 
   const fetchInventoryAnalytics = async (cid?: string, catId?: string) => {
@@ -399,30 +401,78 @@ function AnalyticsHubContent() {
     return [];
   }, [forecast]);
 
-  // Pareto Customers (Sundry Debtors only, excluding Cash counter bills placeholder, banks, suppliers)
+  // All Genuine Customer Accounts (Sundry Debtors only, excluding Cash counter bills placeholder, banks, suppliers)
+  const allCustomerParties = useMemo(() => {
+    const pool: any[] = forecast?.customer_pareto?.length
+      ? forecast.customer_pareto
+      : forecast?.churn_accounts?.length
+      ? forecast.churn_accounts
+      : rfmData || [];
+
+    const map = new Map<string, any>();
+    pool.forEach((c: any) => {
+      const name = (c.party_name || c.name || c.party_ledger__name || "").trim();
+      const nameLower = name.toLowerCase();
+      const billed = Number(c.total_billed ?? c.total_revenue ?? c.monetary ?? 0);
+      const isExcluded =
+        nameLower.startsWith("cash") ||
+        nameLower.includes("counter sale") ||
+        nameLower.includes("cash sale") ||
+        nameLower.includes("cash a/c") ||
+        nameLower.includes("cash in hand") ||
+        nameLower.includes("bank") ||
+        nameLower.includes("supplier") ||
+        nameLower.includes("creditor") ||
+        nameLower.includes("purchase") ||
+        nameLower.includes("tax") ||
+        nameLower.includes("round off") ||
+        nameLower.includes("expense");
+
+      if (billed > 0 && !isExcluded && name) {
+        const key = c.party_id || name;
+        if (!map.has(key) || (Number(map.get(key).total_billed) < billed)) {
+          const daysSince = Number(c.days_since_last_sale ?? c.days_since_last_order ?? c.recency ?? 0);
+          map.set(key, {
+            party_id: c.party_id || null,
+            party_name: name,
+            name: name,
+            total_billed: billed,
+            total_revenue: billed,
+            invoice_count: Number(c.invoice_count ?? c.frequency ?? 1),
+            last_sale_date: c.last_sale_date || c.last_order_date || null,
+            last_order_date: c.last_sale_date || c.last_order_date || null,
+            days_since_last_sale: daysSince,
+            days_since_last_order: daysSince,
+            risk_status: c.risk_status || (daysSince >= 90 ? "DORMANT" : daysSince >= 60 ? "AT_RISK" : daysSince >= 30 ? "COOLING" : "HEALTHY"),
+            risk_label: c.risk_label || (daysSince >= 90 ? `Dormant (${daysSince}d)` : daysSince >= 60 ? `Inactive (${daysSince}d)` : daysSince >= 30 ? `Cooling (${daysSince}d)` : "Active Buyer"),
+          });
+        }
+      }
+    });
+
+    const list = Array.from(map.values());
+    list.sort((a, b) => b.total_billed - a.total_billed);
+
+    const totalDebtorTurnover = list.reduce((acc, it) => acc + it.total_billed, 0) || 1;
+    let running = 0;
+    return list.map((it, idx) => {
+      const share = Math.round((it.total_billed / totalDebtorTurnover) * 1000) / 10;
+      running += share;
+      return {
+        ...it,
+        share_pct: share,
+        percentage_of_total: share,
+        cumulative_pct: Math.min(100, Math.round(running * 10) / 10),
+        cumulative_percentage: Math.min(100, Math.round(running * 10) / 10),
+        rank: idx + 1,
+      };
+    });
+  }, [forecast?.customer_pareto, forecast?.churn_accounts, rfmData]);
+
+  // Top 10 Core Pareto Accounts for Key Indicators
   const paretoCustomers = useMemo(() => {
-    const list: any[] = forecast?.customer_pareto || [];
-    return list
-      .filter((c: any) => {
-        const name = (c.party_name || c.name || "").trim().toLowerCase();
-        const billed = Number(c.total_billed ?? c.total_revenue ?? 0);
-        const isExcluded =
-          name.startsWith("cash") ||
-          name.includes("counter sale") ||
-          name.includes("cash sale") ||
-          name.includes("cash a/c") ||
-          name.includes("cash in hand") ||
-          name.includes("bank") ||
-          name.includes("supplier") ||
-          name.includes("creditor") ||
-          name.includes("purchase") ||
-          name.includes("tax") ||
-          name.includes("round off") ||
-          name.includes("expense");
-        return billed > 0 && !isExcluded;
-      })
-      .slice(0, 10);
-  }, [forecast?.customer_pareto]);
+    return allCustomerParties.slice(0, 10);
+  }, [allCustomerParties]);
 
   // Executive Customer Health Metrics for Top-Level Ribbon
   const customerExecutiveMetrics = useMemo(() => {
@@ -475,11 +525,16 @@ function AnalyticsHubContent() {
       else atRiskCount++;
     });
 
+    const totalDebtorSales = allCustomerParties.reduce((sum: number, c: any) => {
+      return sum + Number(c.total_billed ?? c.total_revenue ?? 0);
+    }, 0);
     const otherAccountsSales = Math.max(0, totalCompanySales - top10Sum);
     const otherAccountsShare = Math.max(0, 100 - top10Share);
 
     return {
       totalCompanySales,
+      totalDebtorSales,
+      totalDebtorCount: allCustomerParties.length,
       top10Sum,
       top10Share: Math.round(top10Share * 10) / 10,
       top1Name,
@@ -492,47 +547,100 @@ function AnalyticsHubContent() {
       otherAccountsSales: Math.round(otherAccountsSales * 100) / 100,
       otherAccountsShare: Math.round(otherAccountsShare * 10) / 10,
     };
-  }, [paretoCustomers, forecast, insights?.kpis]);
+  }, [paretoCustomers, allCustomerParties, forecast, insights?.kpis]);
 
-  // Filtered Pareto Customers for Table Display based on Search
+  // Filtered Pareto Customers for Table Display (Supports All vs Top 10 + Search)
   const filteredParetoCustomers = useMemo(() => {
-    if (!paretoSearch.trim()) return paretoCustomers;
+    const sourceList = paretoTableScope === "all" ? allCustomerParties : paretoCustomers;
+    if (!paretoSearch.trim()) return sourceList;
     const q = paretoSearch.toLowerCase().trim();
-    return paretoCustomers.filter((c: any) =>
+    return sourceList.filter((c: any) =>
       (c.party_name || c.name || "").toLowerCase().includes(q)
     );
-  }, [paretoCustomers, paretoSearch]);
+  }, [allCustomerParties, paretoCustomers, paretoTableScope, paretoSearch]);
 
-  // Customer Pareto Donut / Pie Chart Data
+  // Comprehensive 24-Color High-Contrast Palette for Customer Accounts
+  const CUSTOMER_PALETTE = [
+    "#6366f1", // Indigo
+    "#10b981", // Emerald
+    "#f59e0b", // Amber
+    "#ec4899", // Pink
+    "#8b5cf6", // Violet
+    "#06b6d4", // Cyan
+    "#f97316", // Orange
+    "#3b82f6", // Blue
+    "#14b8a6", // Teal
+    "#a855f7", // Purple
+    "#84cc16", // Lime
+    "#e11d48", // Rose
+    "#0ea5e9", // Sky
+    "#d97706", // Deep Amber
+    "#4f46e5", // Deep Indigo
+    "#059669", // Dark Emerald
+    "#7c3aed", // Deep Violet
+    "#db2777", // Magenta
+    "#2563eb", // Royal Blue
+    "#0d9488", // Deep Teal
+    "#ca8a04", // Gold
+    "#9333ea", // Bright Purple
+    "#16a34a", // Forest Green
+    "#64748b", // Slate
+  ];
+
+  // Customer Pareto Donut / Pie Chart Data (Defaults to ALL parties)
   const paretoPieChartData = useMemo(() => {
-    if (!paretoCustomers || paretoCustomers.length === 0) return [];
+    if (!allCustomerParties || allCustomerParties.length === 0) return [];
 
-    const colors = [
-      "#6366f1", // Indigo
-      "#10b981", // Emerald
-      "#8b5cf6", // Violet
-      "#f59e0b", // Amber
-      "#06b6d4", // Cyan
-      "#ec4899", // Pink
-      "#3b82f6", // Blue
-      "#14b8a6", // Teal
-      "#f97316", // Orange
-      "#a855f7", // Purple
-    ];
+    if (paretoDonutMode === "all_parties") {
+      return allCustomerParties.map((c: any, idx: number) => ({
+        name: c.party_name || c.name || `Party #${idx + 1}`,
+        value: Math.round(Number(c.total_billed ?? c.total_revenue ?? 0)),
+        share_pct: Number(c.share_pct ?? c.percentage_of_total ?? 0),
+        color: CUSTOMER_PALETTE[idx % CUSTOMER_PALETTE.length],
+        party_id: c.party_id,
+        days_since: c.days_since_last_sale ?? c.days_since_last_order ?? 0,
+        invoice_count: c.invoice_count,
+        risk_status: c.risk_status,
+        risk_label: c.risk_label,
+        rank: c.rank || (idx + 1),
+        original_idx: idx,
+      }));
+    }
 
-    const top10Items = paretoCustomers.map((c: any, idx: number) => ({
+    if (paretoDonutMode === "top_10") {
+      return paretoCustomers.map((c: any, idx: number) => ({
+        name: c.party_name || c.name || `Party #${idx + 1}`,
+        value: Math.round(Number(c.total_billed ?? c.total_revenue ?? 0)),
+        share_pct: Number(c.share_pct ?? c.percentage_of_total ?? 0),
+        color: CUSTOMER_PALETTE[idx % CUSTOMER_PALETTE.length],
+        party_id: c.party_id,
+        days_since: c.days_since_last_sale ?? c.days_since_last_order ?? 0,
+        invoice_count: c.invoice_count,
+        risk_status: c.risk_status,
+        risk_label: c.risk_label,
+        rank: c.rank || (idx + 1),
+        original_idx: idx,
+      }));
+    }
+
+    // full_80_20 mode: Top 10 + All Other Accounts combined
+    const top10 = paretoCustomers.map((c: any, idx: number) => ({
       name: c.party_name || c.name || `Party #${idx + 1}`,
       value: Math.round(Number(c.total_billed ?? c.total_revenue ?? 0)),
-      share_pct: Number(c.percentage_of_total ?? c.share_pct ?? 0),
-      color: colors[idx % colors.length],
+      share_pct: Number(c.share_pct ?? c.percentage_of_total ?? 0),
+      color: CUSTOMER_PALETTE[idx % CUSTOMER_PALETTE.length],
       party_id: c.party_id,
       days_since: c.days_since_last_sale ?? c.days_since_last_order ?? 0,
+      invoice_count: c.invoice_count,
+      risk_status: c.risk_status,
+      risk_label: c.risk_label,
+      rank: c.rank || (idx + 1),
       original_idx: idx,
     }));
 
-    if (paretoDonutMode === "full_80_20" && customerExecutiveMetrics.otherAccountsSales > 0) {
+    if (customerExecutiveMetrics.otherAccountsSales > 0) {
       return [
-        ...top10Items,
+        ...top10,
         {
           name: "All Other Accounts",
           value: Math.round(customerExecutiveMetrics.otherAccountsSales),
@@ -540,13 +648,17 @@ function AnalyticsHubContent() {
           color: "#94a3b8", // Slate neutral
           party_id: null,
           days_since: 0,
+          invoice_count: Math.max(0, allCustomerParties.length - 10),
+          risk_status: "HEALTHY",
+          risk_label: "Long-Tail Base",
+          rank: 11,
           original_idx: 10,
         },
       ];
     }
 
-    return top10Items;
-  }, [paretoCustomers, paretoDonutMode, customerExecutiveMetrics]);
+    return top10;
+  }, [allCustomerParties, paretoCustomers, paretoDonutMode, customerExecutiveMetrics]);
 
   // Churn Radar Accounts dynamically filtered by user-selected inactivity threshold days
   const churnFilteredAccounts = useMemo(() => {
@@ -1217,10 +1329,11 @@ function AnalyticsHubContent() {
               </div>
 
               {/* Current 7-Day Run Rate */}
+              {/* Daily Average Sales / 7D Run Rate */}
               <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1 relative overflow-hidden">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Daily Average Sales
+                    CURRENT SALES RUN RATE (7D)
                   </span>
                   <span className="p-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400">
                     <Activity className="w-3.5 h-3.5" />
@@ -1230,7 +1343,7 @@ function AnalyticsHubContent() {
                   ₹{(forecast?.historical_summary?.current_7d_run_rate || forecast?.projected_daily_average || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   <span className="text-xs font-normal text-muted-foreground">/day</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span
                     className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border ${
                       forecast?.trend_status === "Booming"
@@ -1243,7 +1356,7 @@ function AnalyticsHubContent() {
                     {forecast?.trend_status === "Booming" ? "Fast Growth" : forecast?.trend_status === "Declining" ? "Declining" : "Steady Pace"}
                   </span>
                   <span className="text-[11px] text-muted-foreground font-mono">
-                    Overall Mean: ₹{(forecast?.historical_daily_average || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/d
+                    MTD: ₹{(forecast?.monthly_comparison?.current_month?.current_daily_run_rate || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/d · 30D Base: ₹{(forecast?.historical_summary?.current_30d_run_rate || forecast?.historical_daily_average || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/d
                   </span>
                 </div>
               </div>
@@ -1334,7 +1447,15 @@ function AnalyticsHubContent() {
                     ₹{(forecast?.monthly_comparison?.current_month?.projected_month_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </div>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Expected to beat August (₹{(forecast?.monthly_comparison?.previous_month?.total_sales || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}) by <strong>+₹{(forecast?.monthly_comparison?.mom_comparison?.absolute_change || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong>. To hit this, you only need <strong>₹{(forecast?.monthly_comparison?.mom_comparison?.required_daily_to_match_last_month || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/day</strong>.
+                    {Number(forecast?.monthly_comparison?.current_month?.mtd_actual_sales || 0) >= Number(forecast?.monthly_comparison?.previous_month?.total_sales || 0) ? (
+                      <>
+                        Target already achieved! Surpassed {forecast?.monthly_comparison?.previous_month?.month_name || "last month"} by <strong>+₹{(Number(forecast?.monthly_comparison?.current_month?.mtd_actual_sales || 0) - Number(forecast?.monthly_comparison?.previous_month?.total_sales || 0)).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong> with {forecast?.monthly_comparison?.current_month?.days_remaining || 0} days still remaining.
+                      </>
+                    ) : (
+                      <>
+                        Expected to beat {forecast?.monthly_comparison?.previous_month?.month_name || "last month"} (₹{(forecast?.monthly_comparison?.previous_month?.total_sales || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}) by <strong>+₹{(forecast?.monthly_comparison?.mom_comparison?.absolute_change || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong>. To hit this, you only need <strong>₹{(forecast?.monthly_comparison?.mom_comparison?.required_daily_to_match_last_month || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/day</strong>.
+                      </>
+                    )}
                   </p>
                 </div>
 
@@ -2605,22 +2726,51 @@ function AnalyticsHubContent() {
                     <div>
                       <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
                         <Users className="w-4 h-4 text-primary" />
-                        <span>Customer Pareto Concentration (80/20 Rule)</span>
+                        <span>Customer Pareto Concentration</span>
                       </h3>
                       <p className="text-xs text-muted-foreground">
-                        Key debtor accounts driving core business volume. Excludes suppliers, banks, and walk-in counter sales.
+                        Key debtor accounts ranked by revenue. Excludes suppliers, banks, and walk-in cash bills.
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Table Scope Toggle */}
+                      <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => setParetoTableScope("all")}
+                          className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                            paretoTableScope === "all"
+                              ? "bg-card text-foreground font-bold shadow-2xs"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          title="Show all verified customer debtor accounts"
+                        >
+                          All ({allCustomerParties.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setParetoTableScope("top_10")}
+                          className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                            paretoTableScope === "top_10"
+                              ? "bg-card text-foreground font-bold shadow-2xs"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          title="Show top 10 accounts only"
+                        >
+                          Top 10
+                        </button>
+                      </div>
+
+                      {/* Filter Search */}
                       <div className="relative">
                         <Search className="w-3 h-3 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                         <input
                           type="text"
                           value={paretoSearch}
                           onChange={(e) => setParetoSearch(e.target.value)}
-                          placeholder="Filter top accounts..."
-                          className="bg-muted/50 border border-border/60 rounded-md pl-7 pr-2 py-1 text-[11px] text-foreground outline-none focus:border-primary w-36"
+                          placeholder="Filter accounts..."
+                          className="bg-muted/50 border border-border/60 rounded-md pl-7 pr-2 py-1 text-[11px] text-foreground outline-none focus:border-primary w-28 sm:w-36"
                         />
                         {paretoSearch && (
                           <button
@@ -2631,8 +2781,9 @@ function AnalyticsHubContent() {
                           </button>
                         )}
                       </div>
+
                       <span className="text-[11px] font-mono text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-md border border-border/40 shrink-0">
-                        Top {paretoCustomers.length} Parties
+                        {filteredParetoCustomers.length} Accounts
                       </span>
                     </div>
                   </div>
@@ -2659,17 +2810,17 @@ function AnalyticsHubContent() {
                   )}
 
                   {filteredParetoCustomers && filteredParetoCustomers.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
-                        <thead>
-                          <tr className="border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
-                            <th className="py-2.5 px-3">Rank & Customer</th>
-                            <th className="py-2.5 px-3 text-right">Revenue (₹)</th>
-                            <th className="py-2.5 px-3 text-right">Turnover Share</th>
-                            <th className="py-2.5 px-3 text-right">Cumulative</th>
-                            <th className="py-2.5 px-3 text-center">Last Active</th>
-                            <th className="py-2.5 px-3 text-center">Status</th>
-                            <th className="py-2.5 px-3 text-right">Actions</th>
+                    <div className="overflow-x-auto border border-border/40 rounded-lg max-h-[480px] overflow-y-auto scrollbar-thin">
+                      <table className="w-full text-left text-xs min-w-[720px]">
+                        <thead className="sticky top-0 bg-muted/95 backdrop-blur-xs z-10 border-b border-border/60 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
+                          <tr>
+                            <th className="py-2.5 px-3 min-w-[210px]">Rank & Customer</th>
+                            <th className="py-2.5 px-3 text-right min-w-[110px]">Revenue (₹)</th>
+                            <th className="py-2.5 px-3 text-right min-w-[120px]">Turnover Share</th>
+                            <th className="py-2.5 px-3 text-right min-w-[80px]">Cumulative</th>
+                            <th className="py-2.5 px-3 text-center min-w-[90px]">Last Active</th>
+                            <th className="py-2.5 px-3 text-center min-w-[100px]">Status</th>
+                            <th className="py-2.5 px-3 text-right min-w-[70px]">Actions</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border/30">
@@ -2680,6 +2831,7 @@ function AnalyticsHubContent() {
                             const cumPct = c.cumulative_pct ?? c.cumulative_percentage ?? 0;
                             const idleDays = c.days_since_last_sale ?? c.days_since_last_order ?? 0;
                             const isHovered = hoveredParetoIdx === idx;
+                            const sliceColor = CUSTOMER_PALETTE[idx % CUSTOMER_PALETTE.length];
                             
                             let badgeBg = "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20";
                             let badgeLabel = c.risk_label || "Active Buyer";
@@ -2697,19 +2849,19 @@ function AnalyticsHubContent() {
                             // Rank medal styling
                             const rankBadge =
                               idx === 0 ? (
-                                <span className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                                <span className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0">
                                   🥇
                                 </span>
                               ) : idx === 1 ? (
-                                <span className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] bg-slate-400/20 text-slate-600 dark:text-slate-300 border border-slate-400/30">
+                                <span className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] bg-slate-400/20 text-slate-600 dark:text-slate-300 border border-slate-400/30 shrink-0">
                                   🥈
                                 </span>
                               ) : idx === 2 ? (
-                                <span className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] bg-amber-700/20 text-amber-700 dark:text-amber-500 border border-amber-700/30">
+                                <span className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] bg-amber-700/20 text-amber-700 dark:text-amber-500 border border-amber-700/30 shrink-0">
                                   🥉
                                 </span>
                               ) : (
-                                <span className="font-mono text-[10px] text-muted-foreground w-5 text-center">
+                                <span className="font-mono text-[10px] text-muted-foreground w-5 text-center shrink-0">
                                   #{idx + 1}
                                 </span>
                               );
@@ -2720,23 +2872,28 @@ function AnalyticsHubContent() {
                                 onMouseEnter={() => setHoveredParetoIdx(idx)}
                                 onMouseLeave={() => setHoveredParetoIdx(null)}
                                 className={`transition-colors cursor-pointer ${
-                                  isHovered ? "bg-primary/8 ring-1 ring-primary/20" : "hover:bg-muted/40"
+                                  isHovered ? "bg-primary/10 ring-1 ring-primary/25" : "hover:bg-muted/40"
                                 }`}
                               >
                                 <td className="py-2.5 px-3">
                                   <div className="flex items-center gap-2">
+                                    <span
+                                      className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
+                                      style={{ backgroundColor: sliceColor }}
+                                      title="Chart slice color"
+                                    />
                                     {rankBadge}
                                     <div className="flex flex-col min-w-0">
                                       {c.party_id ? (
                                         <Link
                                           href={`/parties/${c.party_id}/statement`}
-                                          className="font-semibold text-foreground truncate max-w-[140px] sm:max-w-[180px] hover:text-primary hover:underline transition-colors"
+                                          className="font-semibold text-foreground truncate max-w-[150px] sm:max-w-[200px] hover:text-primary hover:underline transition-colors"
                                           title={partyName}
                                         >
                                           {partyName}
                                         </Link>
                                       ) : (
-                                        <span className="font-semibold text-foreground truncate max-w-[140px] sm:max-w-[180px]" title={partyName}>
+                                        <span className="font-semibold text-foreground truncate max-w-[150px] sm:max-w-[200px]" title={partyName}>
                                           {partyName}
                                         </span>
                                       )}
@@ -2755,7 +2912,7 @@ function AnalyticsHubContent() {
                                     <div className="w-16 h-1 bg-muted rounded-full overflow-hidden">
                                       <div
                                         className="h-full bg-primary rounded-full transition-all duration-300"
-                                        style={{ width: `${Math.min(100, (sharePct / (paretoCustomers[0]?.share_pct || 20)) * 100)}%` }}
+                                        style={{ width: `${Math.min(100, (sharePct / (allCustomerParties[0]?.share_pct || 20)) * 100)}%` }}
                                       />
                                     </div>
                                   </div>
@@ -2803,92 +2960,182 @@ function AnalyticsHubContent() {
                     </div>
                   ) : (
                     <div className="py-12 text-center text-xs text-muted-foreground">
-                      No customer accounts match the current Pareto search.
+                      No customer accounts match the current Pareto filter.
                     </div>
                   )}
                 </div>
 
-                <div className="pt-3 border-t border-border/40 flex items-center justify-between text-[11px] text-muted-foreground">
-                  <span>💡 Tip: Hover on any row to highlight their share in the Donut Chart.</span>
-                  <span className="font-mono">Top 10 = ₹{formatCurrencyShort(customerExecutiveMetrics.top10Sum)}</span>
+                <div className="pt-3 border-t border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] text-muted-foreground">
+                  <span>💡 Tip: Hover on any row to spotlight their slice in the chart.</span>
+                  <span className="font-mono font-medium text-foreground">
+                    {paretoTableScope === "all"
+                      ? `All ${allCustomerParties.length} Debtors = ₹${customerExecutiveMetrics.totalDebtorSales.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`
+                      : `Top 10 Debtors = ₹${customerExecutiveMetrics.top10Sum.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+                  </span>
                 </div>
               </div>
 
               {/* Pareto Pie / Donut Chart (5 cols) */}
               <div className="lg:col-span-5 bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between border-b border-border/40 pb-3">
-                    <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                      <PieChart className="w-4 h-4 text-purple-500" />
-                      <span>Customer Pareto Revenue Share</span>
-                    </h4>
-                    {/* View Mode Toggle: Full 80/20 vs Top 10 Breakdown */}
-                    <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-[10px]">
-                      <button
-                        type="button"
-                        onClick={() => setParetoDonutMode("full_80_20")}
-                        className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
-                          paretoDonutMode === "full_80_20"
-                            ? "bg-card text-foreground font-bold shadow-2xs"
-                            : "text-muted-foreground hover:text-foreground"
-                        }`}
-                        title="Show full 100% donut with Top 10 plus remaining accounts"
-                      >
-                        Full 80/20 View
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setParetoDonutMode("top_10")}
-                        className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
-                          paretoDonutMode === "top_10"
-                            ? "bg-card text-foreground font-bold shadow-2xs"
-                            : "text-muted-foreground hover:text-foreground"
-                        }`}
-                        title="Show breakdown of Top 10 only"
-                      >
-                        Top 10 Breakdown
-                      </button>
+                <div className="space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/40 pb-3">
+                    <div>
+                      <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                        <PieChart className="w-4 h-4 text-purple-500" />
+                        <span>Customer Revenue Share</span>
+                      </h4>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {paretoDonutMode === "all_parties"
+                          ? `Distribution across all ${allCustomerParties.length} client accounts`
+                          : paretoDonutMode === "top_10"
+                          ? "Breakdown among top 10 key debtor accounts"
+                          : "80/20 Rule: Top 10 accounts vs long-tail base"}
+                      </p>
+                    </div>
+
+                    {/* View Mode & Chart Style Toggles */}
+                    <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                      {/* View Scope Toggle */}
+                      <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => setParetoDonutMode("all_parties")}
+                          className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                            paretoDonutMode === "all_parties"
+                              ? "bg-card text-foreground font-bold shadow-2xs"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          title="Plot all verified debtor accounts"
+                        >
+                          All ({allCustomerParties.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setParetoDonutMode("top_10")}
+                          className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                            paretoDonutMode === "top_10"
+                              ? "bg-card text-foreground font-bold shadow-2xs"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          title="Plot breakdown of Top 10 only"
+                        >
+                          Top 10
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setParetoDonutMode("full_80_20")}
+                          className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                            paretoDonutMode === "full_80_20"
+                              ? "bg-card text-foreground font-bold shadow-2xs"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          title="Show 80/20 view: Top 10 plus remaining accounts"
+                        >
+                          80/20 View
+                        </button>
+                      </div>
+
+                      {/* Chart Style Toggle: Donut vs Solid Pie */}
+                      <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => setPieChartStyle("donut")}
+                          className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer flex items-center gap-1 ${
+                            pieChartStyle === "donut"
+                              ? "bg-card text-foreground font-bold shadow-2xs"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          title="Hollow Donut chart"
+                        >
+                          <span className="w-2 h-2 rounded-full border border-current inline-block" />
+                          <span>Donut</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPieChartStyle("pie")}
+                          className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer flex items-center gap-1 ${
+                            pieChartStyle === "pie"
+                              ? "bg-card text-foreground font-bold shadow-2xs"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          title="Solid Pie chart"
+                        >
+                          <span className="w-2 h-2 rounded-full bg-current inline-block" />
+                          <span>Pie</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  <p className="text-xs text-muted-foreground mt-2">
-                    {paretoDonutMode === "full_80_20"
-                      ? "Full company turnover distribution: Top 10 accounts vs remaining customer base."
-                      : "Relative revenue proportions among your top 10 key debtor accounts."}
-                  </p>
+                  {/* Active Account Focus Bar (Stationary outside canvas - completely prevents tooltip obstruction) */}
+                  {(() => {
+                    const activeParty = hoveredParetoIdx !== null ? paretoPieChartData[hoveredParetoIdx] : null;
+                    if (hoveredParetoIdx !== null && activeParty) {
+                      return (
+                        <div className="p-2.5 rounded-lg bg-primary/10 border border-primary/25 flex items-center justify-between transition-all duration-150">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs ring-1 ring-primary/40"
+                              style={{ backgroundColor: activeParty.color }}
+                            />
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-primary/20 text-primary font-bold">
+                                  #{hoveredParetoIdx + 1}
+                                </span>
+                                <span className="text-xs font-bold text-foreground truncate max-w-[150px] sm:max-w-[200px]" title={activeParty.name}>
+                                  {activeParty.name}
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-muted-foreground">
+                                {activeParty.invoice_count ? `${activeParty.invoice_count} orders billed` : "Debtor account"}
+                                {activeParty.days_since !== undefined ? ` · ${activeParty.days_since}d ago` : ""}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="text-xs font-bold font-mono text-foreground">
+                              ₹{Number(activeParty.value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                            </div>
+                            <div className="text-[11px] font-semibold text-purple-600 dark:text-purple-400">
+                              {activeParty.share_pct}% turnover
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="p-2.5 rounded-lg bg-muted/40 border border-border/40 flex items-center justify-between text-xs text-muted-foreground transition-all duration-150">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Users className="w-3.5 h-3.5 text-primary shrink-0" />
+                          <span className="text-[11px] truncate">
+                            {paretoDonutMode === "all_parties"
+                              ? `Plotting all ${allCustomerParties.length} client accounts`
+                              : paretoDonutMode === "top_10"
+                              ? "Plotting top 10 key debtor accounts"
+                              : "80/20 Rule: Top 10 vs remaining base"}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono font-medium text-foreground bg-card px-2 py-0.5 rounded border border-border/40 shrink-0">
+                          Hover slice to inspect
+                        </span>
+                      </div>
+                    );
+                  })()}
 
-                  {/* Donut Chart with Centered Dynamic KPI */}
+                  {/* Large, Beautiful Pie / Donut Chart (Enlarged diameter, NO intrusive floating tooltip) */}
                   {paretoPieChartData.length > 0 ? (
-                    <div className="relative h-64 w-full flex items-center justify-center mt-2">
+                    <div className="relative h-[380px] sm:h-[410px] w-full flex items-center justify-center my-1">
                       <ResponsiveContainer width="100%" height="100%">
                         <RechartsPieChart>
-                          <Tooltip
-                            content={({ active, payload }) => {
-                              if (!active || !payload || !payload.length) return null;
-                              const d = payload[0].payload;
-                              return (
-                                <div className="bg-card/95 backdrop-blur-md border border-border rounded-xl p-2.5 shadow-xl text-xs space-y-1">
-                                  <div className="font-bold text-foreground flex items-center gap-1.5">
-                                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: d.color }}></span>
-                                    <span>{d.name}</span>
-                                  </div>
-                                  <div className="text-muted-foreground">
-                                    Revenue: <strong className="text-foreground font-mono">₹{Number(d.value).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
-                                  </div>
-                                  <div className="text-purple-600 dark:text-purple-400 font-semibold">
-                                    Turnover Share: {d.share_pct}%
-                                  </div>
-                                </div>
-                              );
-                            }}
-                          />
+                          {/* NOTE: Tooltip is purposefully omitted from inside SVG to completely prevent floating card from covering the left or right of the pie chart! The Focus Bar above and Donut Center provide instant metrics without obstruction. */}
                           <Pie
                             data={paretoPieChartData}
                             cx="50%"
                             cy="50%"
-                            innerRadius={60}
-                            outerRadius={92}
-                            paddingAngle={2}
+                            innerRadius={pieChartStyle === "donut" ? 80 : 0}
+                            outerRadius={140}
+                            paddingAngle={paretoPieChartData.length > 25 ? 0.5 : paretoPieChartData.length > 10 ? 1 : 1.5}
                             dataKey="value"
                             onMouseEnter={(_, index) => setHoveredParetoIdx(index)}
                             onMouseLeave={() => setHoveredParetoIdx(null)}
@@ -2900,9 +3147,9 @@ function AnalyticsHubContent() {
                                   key={`cell-${index}`}
                                   fill={entry.color}
                                   stroke={isHighlighted ? "#ffffff" : "var(--card)"}
-                                  strokeWidth={isHighlighted ? 3 : 2}
-                                  opacity={hoveredParetoIdx === null || isHighlighted ? 1 : 0.45}
-                                  style={{ transition: "opacity 0.2s, stroke 0.2s" }}
+                                  strokeWidth={isHighlighted ? 3 : 1.5}
+                                  opacity={hoveredParetoIdx === null || isHighlighted ? 1 : 0.35}
+                                  style={{ transition: "opacity 0.2s, stroke 0.2s", cursor: "pointer", outline: "none" }}
                                 />
                               );
                             })}
@@ -2910,46 +3157,76 @@ function AnalyticsHubContent() {
                         </RechartsPieChart>
                       </ResponsiveContainer>
 
-                      {/* Donut Hollow Center Metric (Dynamic Hover Linkage) */}
-                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none p-4 text-center">
-                        {hoveredParetoIdx !== null && paretoPieChartData[hoveredParetoIdx] ? (
-                          <>
-                            <span className="text-[10px] uppercase font-bold tracking-wider text-primary truncate max-w-[120px]">
-                              {paretoPieChartData[hoveredParetoIdx].name}
-                            </span>
-                            <span className="text-base font-bold font-mono text-foreground">
-                              ₹{formatCurrencyShort(paretoPieChartData[hoveredParetoIdx].value)}
-                            </span>
-                            <span className="text-[10px] text-purple-600 dark:text-purple-400 font-semibold">
-                              {paretoPieChartData[hoveredParetoIdx].share_pct}% Share
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground">
-                              Top 10 Share
-                            </span>
-                            <span className="text-2xl font-bold font-mono text-foreground">
-                              {customerExecutiveMetrics.top10Share}%
-                            </span>
-                            <span className="text-[10px] text-purple-600 dark:text-purple-400 font-medium">
-                              ₹{formatCurrencyShort(customerExecutiveMetrics.top10Sum)}
-                            </span>
-                          </>
-                        )}
-                      </div>
+                      {/* Donut Hollow Center Metric (Dynamic Linkage - only rendered in Donut mode) */}
+                      {pieChartStyle === "donut" && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none p-3 text-center">
+                          {hoveredParetoIdx !== null && paretoPieChartData[hoveredParetoIdx] ? (
+                            <>
+                              <span className="text-[10px] uppercase font-bold tracking-wider text-primary truncate max-w-[125px]">
+                                {paretoPieChartData[hoveredParetoIdx].name}
+                              </span>
+                              <span className="text-xl sm:text-2xl font-bold font-mono text-foreground">
+                                ₹{formatCurrencyShort(paretoPieChartData[hoveredParetoIdx].value)}
+                              </span>
+                              <span className="text-[11px] text-purple-600 dark:text-purple-400 font-bold">
+                                {paretoPieChartData[hoveredParetoIdx].share_pct}% Share
+                              </span>
+                            </>
+                          ) : paretoDonutMode === "top_10" ? (
+                            <>
+                              <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground">
+                                Top 10 Share
+                              </span>
+                              <span className="text-2xl font-bold font-mono text-foreground">
+                                {customerExecutiveMetrics.top10Share}%
+                              </span>
+                              <span className="text-[10px] text-purple-600 dark:text-purple-400 font-medium">
+                                ₹{formatCurrencyShort(customerExecutiveMetrics.top10Sum)}
+                              </span>
+                            </>
+                          ) : paretoDonutMode === "full_80_20" ? (
+                            <>
+                              <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground">
+                                Top 10 vs Long-Tail
+                              </span>
+                              <span className="text-2xl font-bold font-mono text-foreground">
+                                {customerExecutiveMetrics.top10Share}%
+                              </span>
+                              <span className="text-[10px] text-purple-600 dark:text-purple-400 font-medium">
+                                Top 10 Accounts
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground">
+                                All Debtors ({allCustomerParties.length})
+                              </span>
+                              <span className="text-2xl font-bold font-mono text-foreground">
+                                ₹{formatCurrencyShort(customerExecutiveMetrics.totalDebtorSales)}
+                              </span>
+                              <span className="text-[10px] text-purple-600 dark:text-purple-400 font-medium">
+                                100% of Verified Ledger
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    <div className="h-56 flex items-center justify-center text-xs text-muted-foreground">
+                    <div className="h-64 flex items-center justify-center text-xs text-muted-foreground">
                       No sales data to plot revenue distribution.
                     </div>
                   )}
                 </div>
 
-                {/* Slices legend / breakdown list */}
+                {/* Slices Legend / Breakdown List with Two-Way Hover Sync */}
                 {paretoPieChartData.length > 0 && (
-                  <div className="pt-2 border-t border-border/40">
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 max-h-[140px] overflow-y-auto scrollbar-thin text-xs">
+                  <div className="pt-2 border-t border-border/40 space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span className="font-semibold">Accounts Breakdown ({paretoPieChartData.length} plotted)</span>
+                      <span>Hover row to highlight slice</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-[160px] overflow-y-auto scrollbar-thin text-xs pr-1">
                       {paretoPieChartData.map((item: any, idx: number) => {
                         const isHovered = hoveredParetoIdx === idx;
                         return (
@@ -2957,19 +3234,29 @@ function AnalyticsHubContent() {
                             key={idx}
                             onMouseEnter={() => setHoveredParetoIdx(idx)}
                             onMouseLeave={() => setHoveredParetoIdx(null)}
-                            className={`flex items-center justify-between text-[11px] gap-1 p-1 rounded transition-colors cursor-pointer ${
-                              isHovered ? "bg-muted font-bold" : "hover:bg-muted/40"
+                            className={`flex items-center justify-between text-[11px] gap-1 p-1.5 rounded-md transition-colors cursor-pointer border ${
+                              isHovered
+                                ? "bg-primary/10 border-primary/30 font-bold shadow-2xs"
+                                : "border-border/30 bg-muted/20 hover:bg-muted/50"
                             }`}
                           >
                             <div className="flex items-center gap-1.5 min-w-0">
-                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                              <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style={{ backgroundColor: item.color }} />
+                              <span className="font-mono text-[10px] text-muted-foreground shrink-0 font-medium">
+                                #{idx + 1}
+                              </span>
                               <span className="truncate text-foreground" title={item.name}>
                                 {item.name}
                               </span>
                             </div>
-                            <span className="font-mono text-muted-foreground shrink-0 font-semibold">
-                              {item.share_pct}%
-                            </span>
+                            <div className="flex items-center gap-1.5 shrink-0 font-mono">
+                              <span className="text-muted-foreground text-[10px]">
+                                ₹{formatCurrencyShort(item.value)}
+                              </span>
+                              <span className="text-purple-600 dark:text-purple-400 font-bold text-[10px]">
+                                {item.share_pct}%
+                              </span>
+                            </div>
                           </div>
                         );
                       })}

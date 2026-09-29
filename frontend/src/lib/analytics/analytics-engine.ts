@@ -40,6 +40,8 @@ export interface TrendDetails {
   growth_rate_pct: number;
   normalized_slope: number;
   average_daily_sales: number;
+  current_7d_run_rate?: number;
+  current_30d_run_rate?: number;
   daily_trend: Array<{ date: string; sales: number }>;
   summary: string;
 }
@@ -161,16 +163,22 @@ export interface SalesForecastResult {
     growth_status: string;
   };
   historical_summary?: {
-    total_historical_sales: number;
-    historical_invoices_count: number;
-    distinct_selling_days: number;
-    historical_daily_average: number;
+    total_historical_sales?: number;
+    total_sales?: number;
+    historical_invoices_count?: number;
+    distinct_selling_days?: number;
+    selling_days_count?: number;
+    historical_daily_average?: number;
+    daily_average?: number;
     peak_day?: {
-      date: string;
+      date: string | null;
       amount: number;
     };
     current_7d_run_rate?: number;
-    anchor_date?: string;
+    current_30d_run_rate?: number;
+    anchor_date?: string | null;
+    first_date?: string | null;
+    last_date?: string | null;
   };
   customer_pareto?: Array<{
     party_id: string;
@@ -411,6 +419,7 @@ export class LocalAnalyticsEngine {
 
     const salesByParty: Record<string, { name: string; count: number; total: number; lastDate: string }> = {};
     const salesByDate: Record<string, number> = {};
+    const salesCountByDate: Record<string, number> = {};
     const purchasesByDate: Record<string, number> = {};
     const overdueInvoices: SyncedVoucher[] = [];
 
@@ -424,6 +433,7 @@ export class LocalAnalyticsEngine {
         salesCount += d.salesCount;
         purchaseCount += d.purchaseCount;
         salesByDate[d.date] = d.sales;
+        salesCountByDate[d.date] = d.salesCount;
         purchasesByDate[d.date] = d.purchases;
 
         if (!oldestDate || d.date < oldestDate) oldestDate = d.date;
@@ -491,6 +501,7 @@ export class LocalAnalyticsEngine {
 
           // Daily trend accumulation
           salesByDate[vDate] = (salesByDate[vDate] || 0) + amt;
+          salesCountByDate[vDate] = (salesCountByDate[vDate] || 0) + 1;
 
           // Customer RFM accumulation (Exclude generic Cash counter sales from customer ranking)
           const partyKey = v.partyLedgerId || v.partyName || "";
@@ -620,7 +631,7 @@ export class LocalAnalyticsEngine {
     const trendDetails = this.calculateSalesTrend(salesByDate, todayStr);
 
     // --- E2. Sales Forecast Projection ---
-    const forecastData = this.calculateForecast(salesByDate, trendDetails, todayStr, 30, purchasesByDate);
+    const forecastData = this.calculateForecast(salesByDate, trendDetails, todayStr, 30, purchasesByDate, salesCountByDate);
 
     // Populate local Pareto & Churn accounts for offline resilience (real customer accounts with positive sales only)
     const partyEntries = Object.entries(salesByParty)
@@ -774,24 +785,40 @@ export class LocalAnalyticsEngine {
     }
 
     if (dailyTrend.length < 2) {
+      const singleSales = dailyTrend[0]?.sales || 0.0;
       return {
         status: "Constant",
         slope: 0.0,
         growth_rate_pct: 0.0,
         normalized_slope: 0.0,
-        average_daily_sales: dailyTrend[0]?.sales || 0.0,
+        average_daily_sales: singleSales,
+        current_7d_run_rate: singleSales,
+        current_30d_run_rate: singleSales,
         daily_trend: dailyTrend,
         summary: "Need at least 2 days of records for trend calculation.",
       };
     }
 
-    // Least Squares Slope calculation
-    const n = dailyTrend.length;
+    // 7-day rolling average to eliminate weekend dispatch distortion
+    const rolling7d: number[] = [];
+    for (let i = 0; i < dailyTrend.length; i++) {
+      const windowStart = Math.max(0, i - 6);
+      let windowSum = 0;
+      let windowCount = 0;
+      for (let j = windowStart; j <= i; j++) {
+        windowSum += dailyTrend[j].sales;
+        windowCount++;
+      }
+      rolling7d.push(windowSum / windowCount);
+    }
+
+    // Least Squares Slope calculation on rolling 7d series
+    const n = rolling7d.length;
     let sumX = 0;
     let sumY = 0;
     for (let i = 0; i < n; i++) {
       sumX += i;
-      sumY += dailyTrend[i].sales;
+      sumY += rolling7d[i];
     }
     const meanX = sumX / n;
     const meanY = sumY / n;
@@ -800,23 +827,28 @@ export class LocalAnalyticsEngine {
     let denominator = 0;
     for (let i = 0; i < n; i++) {
       const xDiff = i - meanX;
-      const yDiff = dailyTrend[i].sales - meanY;
+      const yDiff = rolling7d[i] - meanY;
       numerator += xDiff * yDiff;
       denominator += xDiff * xDiff;
     }
 
     const slope = denominator !== 0 ? numerator / denominator : 0.0;
-    const avgSales = meanY > 0 ? meanY : 0.0;
-    const normalizedSlope = avgSales > 0 ? (slope / avgSales) * 100.0 : 0.0;
+
+    // Calculate 7-day run rate and 30-day baseline
+    const recent7 = dailyTrend.slice(-7);
+    const recent7Avg = recent7.length > 0 ? recent7.reduce((acc, it) => acc + it.sales, 0) / recent7.length : meanY;
+    const recent30Avg = dailyTrend.reduce((acc, it) => acc + it.sales, 0) / dailyTrend.length;
+
+    const normalizedSlope = recent30Avg > 0 ? (slope / recent30Avg) * 100.0 : 0.0;
     const growthRatePct = Math.round(normalizedSlope * 10) / 10;
 
     let status: "Booming" | "Constant" | "Declining" = "Constant";
     let summary = "Sales trajectory is stable and constant.";
 
-    if (normalizedSlope > 1.5) {
+    if (normalizedSlope > 1.5 || recent7Avg > recent30Avg * 1.15) {
       status = "Booming";
-      summary = `Sales are rapidly increasing (+${growthRatePct}% daily trajectory).`;
-    } else if (normalizedSlope < -1.5) {
+      summary = `Sales are rapidly increasing (+${growthRatePct}% daily trajectory). 7-day run rate is pacing ahead of 30-day baseline.`;
+    } else if (normalizedSlope < -1.5 && recent7Avg < recent30Avg * 0.85) {
       status = "Declining";
       summary = `Sales are declining (${growthRatePct}% daily trajectory). Attention needed.`;
     }
@@ -826,7 +858,9 @@ export class LocalAnalyticsEngine {
       slope: Math.round(slope * 100) / 100,
       growth_rate_pct: growthRatePct,
       normalized_slope: Math.round(normalizedSlope * 100) / 100,
-      average_daily_sales: Math.round(avgSales * 100) / 100,
+      average_daily_sales: Math.round(recent30Avg * 100) / 100,
+      current_7d_run_rate: Math.round(recent7Avg * 100) / 100,
+      current_30d_run_rate: Math.round(recent30Avg * 100) / 100,
       daily_trend: dailyTrend,
       summary,
     };
@@ -840,7 +874,8 @@ export class LocalAnalyticsEngine {
     trend: TrendDetails,
     referenceDateStr: string,
     days: number = 30,
-    purchasesByDate?: Record<string, number>
+    purchasesByDate?: Record<string, number>,
+    salesCountByDate?: Record<string, number>
   ): SalesForecastResult {
     const positiveDates = Object.keys(salesByDate)
       .filter((d) => (salesByDate[d] || 0) > 0)
@@ -898,8 +933,29 @@ export class LocalAnalyticsEngine {
       }
     }
 
-    // Standard B2B operating profile: Mon-Fri peak, Sat reduced, Sun minimal
-    const dowWeights: Record<number, number> = { 0: 0.20, 1: 1.10, 2: 1.25, 3: 1.25, 4: 1.20, 5: 1.10, 6: 0.80 }; // Sunday is 0 in JS Date
+    // Recency-weighted composite baseline
+    const recent30Dates = positiveDates.slice(-30);
+    const recent60Dates = positiveDates.slice(-60);
+    const recent7Dates = positiveDates.slice(-7);
+
+    const recent30Mean = recent30Dates.length > 0 ? recent30Dates.reduce((s, d) => s + (salesByDate[d] || 0), 0) / Math.max(1, recent30Dates.length) : avgSales;
+    const recent60Mean = recent60Dates.length > 0 ? recent60Dates.reduce((s, d) => s + (salesByDate[d] || 0), 0) / Math.max(1, recent60Dates.length) : avgSales;
+    const recent7Mean = recent7Dates.length > 0 ? recent7Dates.reduce((s, d) => s + (salesByDate[d] || 0), 0) / Math.max(1, recent7Dates.length) : recent30Mean;
+
+    const effectiveBase = Math.max(
+      0.50 * recent30Mean +
+      0.30 * recent60Mean +
+      0.20 * Math.min(recent7Mean, recent30Mean * 1.35),
+      0
+    ) || avgSales;
+
+    // Standard B2B operating profile: Mon-Fri peak, Sat reduced, Sun minimal (Normalized to 1.0)
+    const rawDowWeights: Record<number, number> = { 0: 0.20, 1: 1.10, 2: 1.25, 3: 1.25, 4: 1.20, 5: 1.10, 6: 0.80 }; // Sunday is 0 in JS Date
+    const dowAvg = Object.values(rawDowWeights).reduce((a, b) => a + b, 0) / 7;
+    const dowWeights: Record<number, number> = {};
+    for (const [k, v] of Object.entries(rawDowWeights)) {
+      dowWeights[Number(k)] = v / (dowAvg || 1);
+    }
 
     const forecastList: Array<{
       date: string;
@@ -916,7 +972,7 @@ export class LocalAnalyticsEngine {
     for (let i = 1; i <= days; i++) {
       const futureD = new Date(anchorDate.getTime() + i * 24 * 60 * 60 * 1000);
       const dStr = futureD.toISOString().slice(0, 10);
-      let baseProj = Math.max(0, avgSales + slope * (i / 10.0));
+      let baseProj = Math.max(0, effectiveBase + slope * (i / 10.0));
 
       // Day of week profile
       const dayOfWeek = futureD.getDay(); // 0 is Sunday
@@ -957,10 +1013,12 @@ export class LocalAnalyticsEngine {
     const daysRemaining = Math.max(0, daysInCurMonth - daysElapsed);
 
     let mtdSales = 0;
+    let mtdOrders = 0;
     const curMonthKey = `${curYear}-${String(curMonth + 1).padStart(2, '0')}`;
     for (const d of positiveDates) {
       if (d.startsWith(curMonthKey) && d <= anchorDate.toISOString().slice(0, 10)) {
         mtdSales += salesByDate[d] || 0;
+        mtdOrders += salesCountByDate?.[d] || (salesByDate[d] ? 1 : 0);
       }
     }
 
@@ -988,7 +1046,7 @@ export class LocalAnalyticsEngine {
       for (const d of positiveDates) {
         if (d.startsWith(pmKey)) {
           mTotal += salesByDate[d] || 0;
-          mOrders++;
+          mOrders += salesCountByDate?.[d] || 1;
         }
       }
       const label = `${monthNames[pmDate.getMonth()]} ${pmDate.getFullYear()}`;
@@ -1016,7 +1074,7 @@ export class LocalAnalyticsEngine {
       actual_sales: Math.round(mtdSales * 100) / 100,
       projected_sales: Math.round(remainingForecast * 100) / 100,
       total_sales: projectedMonthTotal,
-      order_count: 0,
+      order_count: mtdOrders,
       is_current: true,
       is_projected: false,
       days_remaining: daysRemaining
@@ -1024,19 +1082,30 @@ export class LocalAnalyticsEngine {
 
     const momAbs = lastMonthTotal > 0 ? Math.round((projectedMonthTotal - lastMonthTotal) * 100) / 100 : 0;
     const momPct = lastMonthTotal > 0 ? Math.round(((projectedMonthTotal - lastMonthTotal) / lastMonthTotal) * 10000) / 100 : 0;
-    const paceStatus: "BEATING_LAST_MONTH" | "PACING_BEHIND" | "ON_PAR" | "NO_PRIOR_MONTH" = 
-      lastMonthTotal === 0 ? "NO_PRIOR_MONTH" : momPct > 1.5 ? "BEATING_LAST_MONTH" : momPct < -1.5 ? "PACING_BEHIND" : "ON_PAR";
+    
+    let paceStatus: "BEATING_LAST_MONTH" | "PACING_BEHIND" | "ON_PAR" | "NO_PRIOR_MONTH" = "ON_PAR";
+    let momSummary = "No previous month transactions found for MoM comparison.";
+
+    if (lastMonthTotal === 0) {
+      paceStatus = "NO_PRIOR_MONTH";
+      momSummary = "No previous month transactions found for MoM comparison.";
+    } else if (mtdSales >= lastMonthTotal) {
+      paceStatus = "BEATING_LAST_MONTH";
+      const aheadAmt = mtdSales - lastMonthTotal;
+      momSummary = `Already exceeded ${lastMonthName} (+₹${aheadAmt.toLocaleString('en-IN')} ahead) with ${daysRemaining} days remaining.`;
+    } else if (momPct > 1.5) {
+      paceStatus = "BEATING_LAST_MONTH";
+      momSummary = `On track to finish +${momPct}% ahead of ${lastMonthName} (+₹${momAbs.toLocaleString('en-IN')}).`;
+    } else if (momPct < -1.5) {
+      paceStatus = "PACING_BEHIND";
+      momSummary = `Pacing ${Math.abs(momPct)}% behind ${lastMonthName} (-₹${Math.abs(momAbs).toLocaleString('en-IN')}).`;
+    } else {
+      paceStatus = "ON_PAR";
+      momSummary = `Tracking on par with ${lastMonthName} (~0% variance).`;
+    }
 
     const shortfall = Math.max(0, lastMonthTotal - mtdSales);
     const requiredDaily = daysRemaining > 0 ? Math.round((shortfall / daysRemaining) * 100) / 100 : 0;
-
-    const momSummary = lastMonthTotal > 0
-      ? paceStatus === "BEATING_LAST_MONTH"
-        ? `On track to finish +${momPct}% ahead of ${lastMonthName} (+₹${momAbs.toLocaleString('en-IN')}).`
-        : paceStatus === "PACING_BEHIND"
-        ? `Pacing ${Math.abs(momPct)}% behind ${lastMonthName} (-₹${Math.abs(momAbs).toLocaleString('en-IN')}).`
-        : `Tracking on par with ${lastMonthName} (~0% variance).`
-      : "No previous month transactions found for MoM comparison.";
 
     const monthlyComparison: MonthlyComparisonResult = {
       current_month: {
@@ -1046,7 +1115,7 @@ export class LocalAnalyticsEngine {
         days_elapsed: daysElapsed,
         days_remaining: daysRemaining,
         mtd_actual_sales: Math.round(mtdSales * 100) / 100,
-        mtd_orders: 0,
+        mtd_orders: mtdOrders,
         remaining_projected_sales: Math.round(remainingForecast * 100) / 100,
         projected_month_total: projectedMonthTotal,
         completion_pct: projectedMonthTotal > 0 ? Math.round((mtdSales / projectedMonthTotal) * 1000) / 10 : 0,
@@ -1221,11 +1290,14 @@ export class LocalAnalyticsEngine {
 
     const historicalSummary = {
       total_historical_sales: totalSalesNum,
+      total_sales: totalSalesNum,
       historical_invoices_count: sampleSize,
       distinct_selling_days: sampleSize,
       historical_daily_average: avgSales,
+      daily_average: avgSales,
       peak_day: peakDay,
       current_7d_run_rate: current7dRunRate,
+      current_30d_run_rate: Math.round(recent30Mean * 100) / 100,
       anchor_date: anchorDateStr,
     };
 

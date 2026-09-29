@@ -159,33 +159,44 @@ class AnalyticsEngine:
                 "status": "Constant",
                 "slope": 0.0,
                 "growth_rate_pct": 0.0,
+                "normalized_slope": 0.0,
+                "average_daily_sales": 0.0,
+                "current_7d_run_rate": 0.0,
+                "current_30d_run_rate": 0.0,
                 "daily_trend": daily_trend,
                 "summary": "Need at least 2 days of data for trend calculation."
             }
 
-        # Linear regression on days
-        X = np.arange(len(df)).reshape(-1, 1)
-        y = df['daily_sales'].values
+        # 7-day rolling average to eliminate weekend dispatch distortion
+        df['rolling_7d'] = df['daily_sales'].rolling(window=7, min_periods=1).mean()
+        recent_window = min(len(df), 30)
+        recent_df = df.tail(recent_window)
+
+        # Linear regression on recent window of 7-day smoothed trend
+        X = np.arange(len(recent_df)).reshape(-1, 1)
+        y = recent_df['rolling_7d'].values
         
         if LinearRegression is not None:
             reg = LinearRegression().fit(X, y)
             slope = float(reg.coef_[0])
         else:
-            x_flat = np.arange(len(df), dtype=float)
+            x_flat = np.arange(len(recent_df), dtype=float)
             x_mean = float(np.mean(x_flat))
             y_mean = float(np.mean(y))
             denom = float(np.sum((x_flat - x_mean) ** 2))
             slope = float(np.sum((x_flat - x_mean) * (y - y_mean)) / denom) if denom != 0 else 0.0
         
-        avg_sales = float(y.mean()) if y.mean() > 0 else 1.0
-        normalized_slope = (slope / avg_sales) * 100.0  # percentage change per day
+        recent_30d_avg = float(recent_df['daily_sales'].mean()) if len(recent_df) > 0 else 1.0
+        recent_7d_avg = float(df['daily_sales'].tail(7).mean()) if len(df) >= 7 else recent_30d_avg
+        normalized_slope = (slope / max(1.0, recent_30d_avg)) * 100.0  # percentage change per day
+        growth_rate_pct = round(normalized_slope, 1)
         
-        if normalized_slope > 1.5:
+        if normalized_slope > 1.5 or recent_7d_avg > recent_30d_avg * 1.15:
             status = "Booming"
-            summary = f"Sales are rapidly increasing (+{round(normalized_slope, 1)}% daily trajectory)."
-        elif normalized_slope < -1.5:
+            summary = f"Sales are rapidly increasing (+{growth_rate_pct}% daily trajectory). 7-day run rate is pacing ahead of 30-day baseline."
+        elif normalized_slope < -1.5 and recent_7d_avg < recent_30d_avg * 0.85:
             status = "Declining"
-            summary = f"Sales are declining ({round(normalized_slope, 1)}% daily trajectory). Attention needed."
+            summary = f"Sales are declining ({growth_rate_pct}% daily trajectory). Attention needed."
         else:
             status = "Constant"
             summary = "Sales trajectory is stable and constant."
@@ -194,7 +205,10 @@ class AnalyticsEngine:
             "status": status,
             "slope": round(slope, 2),
             "normalized_slope": round(normalized_slope, 2),
-            "average_daily_sales": round(avg_sales, 2),
+            "growth_rate_pct": growth_rate_pct,
+            "average_daily_sales": round(recent_30d_avg, 2),
+            "current_7d_run_rate": round(recent_7d_avg, 2),
+            "current_30d_run_rate": round(recent_30d_avg, 2),
             "daily_trend": daily_trend,
             "summary": summary
         }
@@ -326,18 +340,29 @@ class AnalyticsEngine:
 
         # Baseline velocity metrics
         overall_avg_daily_sales = float(df['daily_sales'].mean()) if len(df) > 0 else 0.0
-        recent_window_days = min(len(df), 60)
-        recent_sales_mean = float(df['daily_sales'].tail(recent_window_days).mean()) if recent_window_days > 0 else overall_avg_daily_sales
+        recent_30d_df = df.tail(min(len(df), 30))
+        recent_60d_df = df.tail(min(len(df), 60))
+        recent_7d_df = df.tail(min(len(df), 7))
+
+        recent_30d_mean = float(recent_30d_df['daily_sales'].mean()) if len(recent_30d_df) > 0 else overall_avg_daily_sales
+        recent_60d_mean = float(recent_60d_df['daily_sales'].mean()) if len(recent_60d_df) > 0 else overall_avg_daily_sales
+        recent_7d_mean = float(recent_7d_df['daily_sales'].mean()) if len(recent_7d_df) > 0 else recent_30d_mean
 
         trend_info = AnalyticsEngine.get_sales_trend(company)
         slope = float(trend_info.get("slope", 0.0))
         status = trend_info.get("status", "Constant")
 
-        # Momentum weight between recent 60d velocity and overall historical average
-        if overall_avg_daily_sales > 0:
-            momentum_multiplier = min(max(recent_sales_mean / overall_avg_daily_sales, 0.70), 1.40)
-        else:
-            momentum_multiplier = 1.0
+        # Recency-weighted composite baseline for B2B wholesale:
+        # 50% on trailing 30 days (current operational scale)
+        # 30% on trailing 60 days (medium-term stability)
+        # 20% on trailing 7-day run rate (capped at 1.35x 30d baseline to avoid single-spike overprojection)
+        effective_base = (
+            0.50 * recent_30d_mean +
+            0.30 * recent_60d_mean +
+            0.20 * min(recent_7d_mean, recent_30d_mean * 1.35)
+        )
+        if effective_base <= 0:
+            effective_base = overall_avg_daily_sales
 
         # -------------------------------------------------------------
         # Factor 1: Past-Year Record / Seasonality
@@ -385,6 +410,11 @@ class AnalyticsEngine:
         else:
             # Standard B2B operating default (Mon-Fri peak, Sat light, Sun minimal)
             dow_weights = {0: 1.10, 1: 1.25, 2: 1.25, 3: 1.20, 4: 1.10, 5: 0.80, 6: 0.20}
+
+        # Normalize DOW weights so the 7-day average multiplier is exactly 1.000
+        dow_avg = sum(dow_weights.values()) / 7.0 if len(dow_weights) == 7 else 1.0
+        if dow_avg > 0:
+            dow_weights = {k: round(v / dow_avg, 4) for k, v in dow_weights.items()}
 
         # -------------------------------------------------------------
         # Factor 3: Month-End GST Rush Factor (25th to 31st)
@@ -480,8 +510,6 @@ class AnalyticsEngine:
         p10_total = 0.0
         p90_total = 0.0
 
-        effective_base = max(overall_avg_daily_sales * momentum_multiplier, 0.0)
-
         for i in range(1, days + 1):
             future_date = anchor_date + datetime.timedelta(days=i)
             f_month = future_date.month
@@ -511,9 +539,6 @@ class AnalyticsEngine:
             # 6. Add customer reorder cycle demand
             if date_str in customer_cycle_forecast:
                 daily_base += customer_cycle_forecast[date_str]
-
-            # 7. Apply physical stock availability constraint
-            daily_base *= stock_constraint_multiplier
 
             # Quantiles
             proj_p50 = round(daily_base, 2)
@@ -640,6 +665,8 @@ class AnalyticsEngine:
         historical_summary = {
             "total_sales": round(float(df['daily_sales'].sum()), 2),
             "daily_average": round(float(df['daily_sales'].mean()), 2) if len(df) > 0 else 0.0,
+            "current_7d_run_rate": round(recent_7d_mean, 2),
+            "current_30d_run_rate": round(recent_30d_mean, 2),
             "peak_day": peak_day_info,
             "selling_days_count": distinct_days,
             "first_date": min_date.strftime('%Y-%m-%d') if min_date else None,
@@ -744,8 +771,7 @@ class AnalyticsEngine:
             }
 
             all_churn_accounts.append(account_item)
-            if idx < 20: # Keep top 20 for Pareto table
-                customer_pareto.append(account_item)
+            customer_pareto.append(account_item)
 
         # 10. Brand Contribution & Revenue Share
         from apps.accounting.models import VoucherItem
@@ -1035,7 +1061,12 @@ class AnalyticsEngine:
         if last_month_total > 0:
             mom_abs = round(projected_month_total - last_month_total, 2)
             mom_pct = round(((projected_month_total - last_month_total) / last_month_total) * 100.0, 2)
-            if mom_pct > 1.5:
+            
+            if mtd_sales >= last_month_total:
+                pace_status = "BEATING_LAST_MONTH"
+                ahead_amt = mtd_sales - last_month_total
+                mom_summary = f"Already exceeded {last_month_name} (+₹{ahead_amt:,.0f} ahead) with {days_remaining} days remaining."
+            elif mom_pct > 1.5:
                 pace_status = "BEATING_LAST_MONTH"
                 mom_summary = f"On track to finish +{mom_pct}% ahead of {last_month_name} (+₹{mom_abs:,.0f})."
             elif mom_pct < -1.5:
@@ -1045,9 +1076,9 @@ class AnalyticsEngine:
                 pace_status = "ON_PAR"
                 mom_summary = f"Tracking on par with {last_month_name} (~0% variance)."
 
-            shortfall = last_month_total - mtd_sales
+            shortfall = max(0.0, last_month_total - mtd_sales)
             if days_remaining > 0:
-                required_daily = round(max(0.0, shortfall / days_remaining), 2)
+                required_daily = round(shortfall / days_remaining, 2)
             else:
                 required_daily = 0.0
         else:
