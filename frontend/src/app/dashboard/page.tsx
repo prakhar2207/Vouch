@@ -414,7 +414,7 @@ export default function Dashboard() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 pb-16 max-w-[1600px] mx-auto">
+      <div className="space-y-6 pb-16 max-w-[1600px] mx-auto overflow-x-hidden w-full">
         
         {/* ========================================================= */}
         {/* Top Header & Actions Bar (Fully Responsive)             */}

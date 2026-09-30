@@ -141,7 +141,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     pathname.startsWith("/gst");
 
   return (
-    <div className="min-h-screen bg-background font-sans text-foreground flex flex-col">
+    <div className="min-h-screen bg-background font-sans text-foreground flex flex-col overflow-x-hidden max-w-full">
       {/* Global Command Palette (Ctrl+K) */}
       <CommandPalette
         isOpen={isCommandPaletteOpen}
@@ -1188,7 +1188,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-auto print:overflow-visible print:p-0 print:m-0 print:w-full print:block">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden print:overflow-visible print:p-0 print:m-0 print:w-full print:block">
         <div className="p-4 sm:p-6 lg:p-8 max-w-[1600px] mx-auto print:p-0 print:m-0 print:max-w-none print:w-full">
           {children}
         </div>
