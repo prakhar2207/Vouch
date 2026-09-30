@@ -148,7 +148,11 @@ class GSTPortalService:
         simulated_token = f"GSTN-SANDBOX-{uuid.uuid4().hex[:16].upper()}"
         config.auth_token = simulated_token
         config.token_expires_at = timezone.now() + timedelta(hours=6)
-        config.save(update_fields=['auth_token', 'token_expires_at', 'updated_at'])
+        update_fields = ['auth_token', 'token_expires_at', 'updated_at']
+        if username and username.strip():
+            config.eway_username = username.strip()
+            update_fields.append('eway_username')
+        config.save(update_fields=update_fields)
 
         return {
             "success": True,

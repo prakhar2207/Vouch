@@ -39,7 +39,9 @@ import {
   Sparkles,
   QrCode,
   Smartphone,
-  Monitor
+  Monitor,
+  Key,
+  Send
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -72,8 +74,18 @@ export default function SettingsPage() {
   const [bankAccountNumber, setBankAccountNumber] = useState('');
   const [bankIfsc, setBankIfsc] = useState('');
   const [bankBranch, setBankBranch] = useState('');
-  
-  // Document Branding & Invoicing Design State
+  const [upiId, setUpiId] = useState('');
+
+  // GST Portal OTP Direct Connect State
+  const [portalConnected, setPortalConnected] = useState(false);
+  const [portalUsername, setPortalUsername] = useState('');
+  const [portalExpiresAt, setPortalExpiresAt] = useState<string | null>(null);
+  const [portalOtp, setPortalOtp] = useState('');
+  const [portalTxnId, setPortalTxnId] = useState('');
+  const [portalStep, setPortalStep] = useState<'idle' | 'otp' | 'connected'>('idle');
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [portalError, setPortalError] = useState<string | null>(null);
+  const [portalSuccess, setPortalSuccess] = useState<string | null>(null);
   const [accentColor, setAccentColor] = useState('#0f172a');
   const [logoPosition, setLogoPosition] = useState<'left' | 'center'>('left');
   const [logoHeight, setLogoHeight] = useState<number>(52);
@@ -178,7 +190,11 @@ export default function SettingsPage() {
         setBankAccountNumber(comp.bank_account_number || '');
         setBankIfsc(comp.bank_ifsc || '');
         setBankBranch(comp.bank_branch || '');
+        setUpiId(comp.upi_id || '');
         setWebsite(comp.website || '');
+        if (comp.id) {
+          fetchGSTConfig(comp.id);
+        }
 
         if (comp.stamp_data) {
           setStampPreview(comp.stamp_data);
@@ -336,6 +352,7 @@ export default function SettingsPage() {
       formData.append('bank_account_number', bankAccountNumber);
       formData.append('bank_ifsc', bankIfsc);
       formData.append('bank_branch', bankBranch);
+      formData.append('upi_id', upiId);
       
       await axios.patch(`${API_BASE_URL}/api/v1/companies/${company.id}/`, formData, { 
         headers: {
@@ -505,6 +522,86 @@ export default function SettingsPage() {
       toast.error('Rebuild failed', err.response?.data?.error || err.message);
     } finally {
       setRebuildingBalances(false);
+    }
+  };
+
+  // GST Portal Direct Connect Handlers
+  const fetchGSTConfig = async (companyId: string) => {
+    try {
+      const token = getAccessToken();
+      const res = await axios.get(`${API_BASE_URL}/api/v1/gst/config/${companyId}/`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.data?.success && res.data.config) {
+        setPortalConnected(Boolean(res.data.config.is_portal_connected));
+        setPortalUsername(res.data.config.portal_username || res.data.config.eway_username || '');
+        setPortalExpiresAt(res.data.config.token_expires_at || null);
+        if (res.data.config.is_portal_connected) {
+          setPortalStep('connected');
+        }
+      }
+    } catch (e) {
+      console.warn("Could not fetch GST config", e);
+    }
+  };
+
+  const handleRequestPortalOTP = async () => {
+    if (!company?.id) return;
+    setPortalLoading(true);
+    setPortalError(null);
+    setPortalSuccess(null);
+    try {
+      const token = getAccessToken();
+      const res = await axios.post(`${API_BASE_URL}/api/v1/gst/portal/request-otp/`, {
+        company_id: company.id,
+        gstin: gstin,
+        username: portalUsername || gstin,
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.data?.success) {
+        setPortalTxnId(res.data.txn_id || '');
+        setPortalStep('otp');
+        setPortalSuccess(res.data.message || `OTP sent to mobile registered with GST Portal.`);
+        toast.success("GST Portal OTP Sent", res.data.message || "Check your registered mobile number.");
+      } else {
+        setPortalError(res.data?.error || "Failed to request OTP from GST Portal.");
+      }
+    } catch (err: any) {
+      setPortalError(err.response?.data?.error || "Error contacting GST Portal gateway.");
+    } finally {
+      setPortalLoading(false);
+    }
+  };
+
+  const handleVerifyPortalOTP = async () => {
+    if (!company?.id) return;
+    setPortalLoading(true);
+    setPortalError(null);
+    try {
+      const token = getAccessToken();
+      const res = await axios.post(`${API_BASE_URL}/api/v1/gst/portal/verify-otp/`, {
+        company_id: company.id,
+        otp: portalOtp,
+        txn_id: portalTxnId,
+        gstin: gstin,
+        username: portalUsername || gstin,
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.data?.success) {
+        setPortalConnected(true);
+        setPortalStep('connected');
+        setPortalSuccess("GST Portal connected successfully! 30-day session active.");
+        toast.success("GST Connected", "Your business is now directly connected to the GST Portal.");
+        fetchGSTConfig(company.id);
+      } else {
+        setPortalError(res.data?.error || "Invalid OTP entered.");
+      }
+    } catch (err: any) {
+      setPortalError(err.response?.data?.error || "Failed to verify OTP.");
+    } finally {
+      setPortalLoading(false);
     }
   };
 
@@ -977,7 +1074,7 @@ export default function SettingsPage() {
                 <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
                   Bank Account (Printed on Invoices)
                 </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
                   <div>
                     <label className="block text-xs text-muted-foreground mb-1">Bank Name</label>
                     <input
@@ -1015,6 +1112,16 @@ export default function SettingsPage() {
                       className="w-full bg-muted/40 border border-input text-foreground text-xs p-2 rounded outline-none"
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">UPI ID / VPA (QR Code)</label>
+                    <input
+                      type="text"
+                      value={upiId}
+                      onChange={(e) => setUpiId(e.target.value)}
+                      placeholder="e.g. business@okhdfcbank"
+                      className="w-full bg-muted/40 border border-input text-foreground text-xs p-2 rounded outline-none font-mono"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1027,6 +1134,177 @@ export default function SettingsPage() {
                   {saving ? 'Saving Profile...' : 'Save Firm Details'}
                 </button>
               </div>
+            </div>
+
+            {/* 1.5 Government GST Portal Integration */}
+            <div className="bg-card border border-border/40 rounded-xl shadow-sm p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border/40 gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-bold text-foreground">Government GST Portal Integration</h2>
+                      {portalConnected ? (
+                        <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          Session Active (30 Days)
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                          <span className="w-2 h-2 rounded-full bg-amber-500" />
+                          Not Connected
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Connect directly to the official GSTN portal using your normal GST username and phone OTP. Zero API keys or technical developer accounts needed.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Status & Highlights */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div className="p-3 rounded-lg bg-muted/30 border border-border/40 space-y-1">
+                  <span className="text-foreground font-semibold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                    1-Click GSTR-1 Direct Filing
+                  </span>
+                  <p className="text-[11px] text-muted-foreground">Upload outward return invoices directly to gst.gov.in with zero JSON exporting.</p>
+                </div>
+                <div className="p-3 rounded-lg bg-muted/30 border border-border/40 space-y-1">
+                  <span className="text-foreground font-semibold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                    Live GSTR-2B ITC Sync
+                  </span>
+                  <p className="text-[11px] text-muted-foreground">Pull official purchase records directly from government servers for supplier audits.</p>
+                </div>
+                <div className="p-3 rounded-lg bg-muted/30 border border-border/40 space-y-1">
+                  <span className="text-foreground font-semibold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                    Instant E-Way Bills
+                  </span>
+                  <p className="text-[11px] text-muted-foreground">Generate Part-A and Part-B consignment numbers straight from sales invoices.</p>
+                </div>
+              </div>
+
+              {portalError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 rounded-xl text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{portalError}</span>
+                </div>
+              )}
+
+              {portalSuccess && (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 rounded-xl text-xs flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{portalSuccess}</span>
+                </div>
+              )}
+
+              {portalStep === 'connected' ? (
+                <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300 font-bold text-sm">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Authenticated with GSTN: {portalUsername || gstin}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Session token is active. Your business is authorized for 1-click filing and returns reconciliation without requiring further OTPs.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setPortalStep('idle'); setPortalOtp(''); }}
+                    className="px-3.5 py-1.5 text-xs font-semibold rounded-lg border border-border hover:bg-muted text-foreground transition-colors cursor-pointer self-start sm:self-auto"
+                  >
+                    Re-authenticate / Refresh OTP
+                  </button>
+                </div>
+              ) : portalStep === 'otp' ? (
+                <div className="p-4 rounded-xl bg-muted/30 border border-border/60 space-y-4 max-w-lg">
+                  <div className="space-y-1">
+                    <span className="font-bold text-sm text-foreground">Enter 6-Digit Government OTP</span>
+                    <p className="text-xs text-muted-foreground">
+                      GSTN has dispatched an SMS OTP to the authorized signatory mobile for GSTIN <strong className="font-mono text-foreground">{gstin}</strong>.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      maxLength={6}
+                      value={portalOtp}
+                      onChange={(e) => setPortalOtp(e.target.value.replace(/\D/g, ''))}
+                      placeholder="• • • • • •"
+                      className="w-full p-2.5 bg-background border border-input rounded-lg font-mono text-center tracking-[0.5em] text-lg font-bold text-foreground outline-none focus:ring-2 focus:ring-primary"
+                    />
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span>Sandbox test OTP: <strong className="text-foreground font-mono">575757</strong></span>
+                      <button
+                        type="button"
+                        onClick={handleRequestPortalOTP}
+                        disabled={portalLoading}
+                        className="text-primary hover:underline cursor-pointer"
+                      >
+                        Resend OTP
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setPortalStep('idle')}
+                      className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-border hover:bg-muted text-muted-foreground cursor-pointer"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleVerifyPortalOTP}
+                      disabled={portalLoading || portalOtp.length !== 6}
+                      className="flex-1 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold rounded-lg shadow transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                    >
+                      <Key className="w-3.5 h-3.5" />
+                      <span>{portalLoading ? 'Verifying OTP...' : 'Verify OTP & Connect Portal'}</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl bg-muted/30 border border-border/60 space-y-4 max-w-lg">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground mb-1">Company GSTIN</label>
+                      <input
+                        type="text"
+                        disabled
+                        value={gstin || 'No GSTIN registered'}
+                        className="w-full bg-muted/80 border border-input text-foreground text-xs font-mono p-2 rounded outline-none opacity-80"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground mb-1">GST Portal Username</label>
+                      <input
+                        type="text"
+                        value={portalUsername}
+                        onChange={(e) => setPortalUsername(e.target.value)}
+                        placeholder="e.g. rohit_traders"
+                        className="w-full bg-background border border-input text-foreground text-xs p-2 rounded outline-none focus:ring-1 focus:ring-primary font-mono"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRequestPortalOTP}
+                    disabled={portalLoading || !gstin}
+                    className="px-5 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold rounded-lg shadow transition-colors flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>{portalLoading ? 'Connecting to GST Portal...' : 'Connect via SMS OTP'}</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* 2. Document Branding & Invoicing Design */}

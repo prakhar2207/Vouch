@@ -350,6 +350,34 @@ export default function PrintInvoicePage() {
 
   const hasRoundOff = Math.abs(roundOff) >= 0.005;
 
+  const getQrData = () => {
+    if (invoice?.signed_qr_code) {
+      return {
+        value: invoice.signed_qr_code,
+        label: 'GST E-Invoice QR Code',
+        sublabel: 'Official GSTN Verification'
+      };
+    }
+    if (invoice?.company?.upi_id) {
+      const vpa = invoice.company.upi_id.trim();
+      const payeeName = (invoice.company.name || 'Merchant').replace(/[^\w\s]/g, '').trim();
+      const amount = finalGrandTotal > 0 ? finalGrandTotal.toFixed(2) : '';
+      const invoiceNo = (invoice.voucher_number || '').trim();
+      const upiUrl = `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${encodeURIComponent(payeeName)}&am=${amount}&cu=INR&tn=${encodeURIComponent('Invoice ' + invoiceNo)}`;
+      return {
+        value: upiUrl,
+        label: 'Scan & Pay via UPI',
+        sublabel: 'GPay • PhonePe • Paytm • BHIM'
+      };
+    }
+    const verifyUrl = typeof window !== 'undefined' ? window.location.href : '';
+    return {
+      value: verifyUrl,
+      label: 'Scan to Verify Invoice',
+      sublabel: 'Digital Verification'
+    };
+  };
+
   const getSignatureUrl = (sig: string | null | undefined) => {
     if (!sig) return '';
     if (sig.startsWith('data:') || sig.startsWith('http://') || sig.startsWith('https://')) {
@@ -1191,22 +1219,26 @@ export default function PrintInvoicePage() {
               ₹ {numberToWords(Math.round(finalGrandTotal))}
             </div>
 
-            {/* Bank Details */}
+            {/* Bank & Payment Details */}
             {invoice.company?.bank_account_number && (
               <div className="py-2 border-b border-dashed border-black text-[10px] text-center">
                 <div className="font-bold">BANK DETAILS FOR PAYMENT</div>
                 <div>{invoice.company.bank_name || ''}</div>
                 <div>A/C: {invoice.company.bank_account_number}</div>
                 <div>IFSC: {invoice.company.bank_ifsc || ''}</div>
+                {invoice.company.upi_id && (
+                  <div className="font-mono font-bold mt-1 text-[10px] text-emerald-800">UPI: {invoice.company.upi_id}</div>
+                )}
               </div>
             )}
 
             {/* QR Code */}
-            <div className="py-2 flex flex-col items-center justify-center border-b border-dashed border-black">
+            <div className="py-2 flex flex-col items-center justify-center border-b border-dashed border-black text-center">
               {typeof window !== 'undefined' && (
-                <QRCode value={window.location.href} size={75} />
+                <QRCode value={getQrData().value} size={80} />
               )}
-              <span className="text-[9px] mt-1 text-slate-600">Scan to Verify Invoice</span>
+              <span className="text-[10px] font-bold mt-1.5 text-slate-900">{getQrData().label}</span>
+              <span className="text-[8px] text-slate-500 font-mono tracking-tighter">{getQrData().sublabel}</span>
             </div>
 
             {/* Receipt Footer */}
@@ -1477,8 +1509,11 @@ export default function PrintInvoicePage() {
 
                 {/* Bank Details */}
                 <div className="p-2 border-b-2 border-black text-center text-xs font-medium">
-                    <span className="font-bold underline text-[13px]">BANK DETAILS</span><br/>
-                    {invoice.company.bank_name || ''} {invoice.company.bank_branch || ''}, ACCOUNT NO- {invoice.company.bank_account_number || ''}, IFSCODE: {invoice.company.bank_ifsc || ''}
+                    <span className="font-bold underline text-[13px]">BANK & PAYMENT DETAILS</span><br/>
+                    {invoice.company.bank_name || ''} {invoice.company.bank_branch || ''}
+                    {invoice.company.bank_account_number ? `, ACCOUNT NO- ${invoice.company.bank_account_number}` : ''}
+                    {invoice.company.bank_ifsc ? `, IFSCODE: ${invoice.company.bank_ifsc}` : ''}
+                    {invoice.company.upi_id ? ` • UPI ID: ${invoice.company.upi_id}` : ''}
                 </div>
               </div>
 
@@ -1496,12 +1531,12 @@ export default function PrintInvoicePage() {
                   </div>
                   
                   {/* Column 2: QR Code */}
-                  <div className="w-[20%] p-2 border-r-2 border-black flex flex-col items-center justify-between">
-                      <span className="font-bold text-[10px] mb-2">E-Invoice QR Code</span>
+                  <div className="w-[20%] p-2 border-r-2 border-black flex flex-col items-center justify-between text-center">
+                      <span className="font-bold text-[10px] mb-1">{getQrData().label}</span>
                       {typeof window !== 'undefined' && (
-                          <QRCode value={window.location.href} size={100} className="mx-auto my-auto" />
+                          <QRCode value={getQrData().value} size={92} className="mx-auto my-auto" />
                       )}
-                      <div className="h-2"></div>
+                      <span className="text-[8px] text-slate-600 font-mono tracking-tighter text-center">{getQrData().sublabel}</span>
                   </div>
                   
                   {/* Column 3: Signatures */}

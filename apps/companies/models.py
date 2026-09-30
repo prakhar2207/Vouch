@@ -38,6 +38,7 @@ class Company(models.Model):
     bank_account_number = models.CharField(max_length=100, null=True, blank=True)
     bank_ifsc = models.CharField(max_length=50, null=True, blank=True)
     bank_branch = models.CharField(max_length=255, null=True, blank=True)
+    upi_id = models.CharField(max_length=100, null=True, blank=True, help_text="UPI VPA (e.g. merchant@okhdfcbank) for dynamic QR code on invoices")
 
     is_active = models.BooleanField(default=True)
     deleted_at = models.DateTimeField(null=True, blank=True)

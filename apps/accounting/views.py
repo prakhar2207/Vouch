@@ -633,6 +633,7 @@ def serialize_voucher_detail(voucher, include_attachment=False, user=None):
             "bank_account_number": voucher.company.bank_account_number,
             "bank_ifsc": voucher.company.bank_ifsc,
             "bank_branch": voucher.company.bank_branch,
+            "upi_id": getattr(voucher.company, 'upi_id', '') or '',
         },
         "buyer_details": {
             "buyer_name": voucher.buyer_name or "",

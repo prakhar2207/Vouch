@@ -55,13 +55,18 @@ class CompanyGSTConfigAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, company_id):
+        from django.utils import timezone
         company = get_company_or_404(request.user, company_id)
         config, _ = CompanyGSTConfig.objects.get_or_create(company=company)
+        is_connected = bool(config.auth_token and (not config.token_expires_at or config.token_expires_at > timezone.now()))
         return Response({
             "success": True,
             "config": {
                 "provider": config.provider,
                 "is_sandbox": config.is_sandbox,
+                "is_portal_connected": is_connected,
+                "token_expires_at": config.token_expires_at.strftime('%Y-%m-%d %H:%M:%S') if config.token_expires_at else None,
+                "portal_username": config.eway_username or "",
                 "api_key": config.api_key[:4] + "****" if config.api_key else "",
                 "eway_username": config.eway_username,
                 "has_eway_password": bool(config.eway_password),
