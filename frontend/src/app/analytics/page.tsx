@@ -251,6 +251,7 @@ function AnalyticsHubContent() {
           startDate: activeFY?.start_date,
           endDate: activeFY?.end_date,
           financialYearId: activeFY?.id,
+          forecastDays: forecastDays || 30,
         };
 
         // 1. Instant local read from IndexedDB (<15ms)
@@ -2804,7 +2805,9 @@ function AnalyticsHubContent() {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-3 h-3 rounded-xs bg-indigo-500"></span>
-                    <span className="font-medium text-indigo-600 dark:text-indigo-400">Next Month Outlook</span>
+                    <span className="font-medium text-indigo-600 dark:text-indigo-400">
+                      {forecastDays > 30 ? `Projected Outlook (${forecastDays}d)` : "Upcoming Outlook"}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -2893,7 +2896,7 @@ function AnalyticsHubContent() {
                       />
                       <Bar dataKey="confirmed" name="Confirmed Billed" fill="#10b981" stackId="monthly" radius={[0, 0, 0, 0]} />
                       <Bar dataKey="projected_remainder" name="Expected Remainder" fill="#8b5cf6" fillOpacity={0.85} stackId="monthly" radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="next_month_projection" name="Next Month Outlook" fill="#6366f1" fillOpacity={0.85} radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="next_month_projection" name="Projected Outlook" fill="#6366f1" fillOpacity={0.85} radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (

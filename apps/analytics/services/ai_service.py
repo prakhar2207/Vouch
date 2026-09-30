@@ -1135,33 +1135,48 @@ class AnalyticsEngine:
             "days_remaining": days_remaining
         })
 
-        # Add next month (M+1 projected full month) if forecast covers it
-        next_y, next_m = get_prev_month(cur_year, cur_month, -1)
-        next_month_start = datetime.date(next_y, next_m, 1)
-        _, next_days = calendar.monthrange(next_y, next_m)
-        next_month_end = datetime.date(next_y, next_m, next_days)
-
-        next_month_projected = 0.0
+        # Add all upcoming projected months covered by forecast_list (e.g. Oct for 30d; Oct, Nov for 60d; Oct, Nov, Dec for 90d)
+        future_months_agg = {}
         if forecast_list:
             for item in forecast_list:
                 try:
-                    f_date = datetime.datetime.strptime(item['date'], '%Y-%m-%d').date()
-                    if next_month_start <= f_date <= next_month_end:
-                        next_month_projected += float(item.get('projected_sales', 0.0))
+                    item_date_str = item.get('date')
+                    if not item_date_str:
+                        continue
+                    if isinstance(item_date_str, datetime.date):
+                        f_date = item_date_str
+                    else:
+                        f_date = datetime.datetime.strptime(str(item_date_str)[:10], '%Y-%m-%d').date()
+
+                    if f_date > cur_month_end:
+                        m_key = f_date.strftime('%Y-%m')
+                        if m_key not in future_months_agg:
+                            future_months_agg[m_key] = {
+                                "start_date": f_date.replace(day=1),
+                                "projected_sales": 0.0,
+                                "days_count": 0
+                            }
+                        future_months_agg[m_key]["projected_sales"] += float(item.get('projected_sales', 0.0))
+                        future_months_agg[m_key]["days_count"] += 1
                 except Exception:
                     pass
-        if next_month_projected > 0:
-            historical_months.append({
-                "month_key": next_month_start.strftime('%Y-%m'),
-                "month_label": f"{next_month_start.strftime('%b %Y')} (Projected)",
-                "short_name": next_month_start.strftime('%b'),
-                "actual_sales": 0.0,
-                "projected_sales": round(next_month_projected, 2),
-                "total_sales": round(next_month_projected, 2),
-                "order_count": 0,
-                "is_current": False,
-                "is_projected": True
-            })
+
+        for m_key in sorted(future_months_agg.keys()):
+            m_info = future_months_agg[m_key]
+            m_start = m_info["start_date"]
+            if m_info["projected_sales"] > 0:
+                historical_months.append({
+                    "month_key": m_key,
+                    "month_label": f"{m_start.strftime('%b %Y')} (Projected)",
+                    "short_name": m_start.strftime('%b'),
+                    "actual_sales": 0.0,
+                    "projected_sales": round(m_info["projected_sales"], 2),
+                    "total_sales": round(m_info["projected_sales"], 2),
+                    "order_count": 0,
+                    "is_current": False,
+                    "is_projected": True,
+                    "days_projected": m_info["days_count"]
+                })
 
         # 4. MoM Comparison (Current Projected vs Last Month Actual)
         if last_month_total > 0:

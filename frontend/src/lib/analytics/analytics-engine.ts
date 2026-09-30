@@ -379,7 +379,7 @@ export class LocalAnalyticsEngine {
    */
   static async getDashboardAnalytics(
     companyId: string,
-    options?: { startDate?: string; endDate?: string; financialYearId?: string }
+    options?: { startDate?: string; endDate?: string; financialYearId?: string; forecastDays?: number }
   ): Promise<LocalDashboardResult> {
     if (!companyId) {
       return this.getEmptyDashboard();
@@ -703,7 +703,7 @@ export class LocalAnalyticsEngine {
       forecastSalesByDate,
       trendDetails,
       todayStr,
-      30,
+      options?.forecastDays || 30,
       forecastPurchasesByDate,
       forecastSalesCountByDate,
       totalAllTimeSalesCount
@@ -1448,6 +1448,42 @@ export class LocalAnalyticsEngine {
       is_projected: false,
       days_remaining: daysRemaining
     });
+
+    // Future upcoming months covered by forecastList (e.g. Oct for 30d; Oct, Nov for 60d; Oct, Nov, Dec for 90d)
+    const futureMonthsMap: Record<string, { date: Date; projected_sales: number; days: number }> = {};
+    for (const f of forecastList) {
+      if (f.date > anchorDate.toISOString().slice(0, 10) && !f.date.startsWith(curMonthKey)) {
+        const mKey = f.date.slice(0, 7); // YYYY-MM
+        if (!futureMonthsMap[mKey]) {
+          const [yr, mo] = mKey.split("-").map(Number);
+          futureMonthsMap[mKey] = {
+            date: new Date(yr, mo - 1, 1),
+            projected_sales: 0,
+            days: 0,
+          };
+        }
+        futureMonthsMap[mKey].projected_sales += f.projected_sales;
+        futureMonthsMap[mKey].days += 1;
+      }
+    }
+
+    const sortedFutureKeys = Object.keys(futureMonthsMap).sort();
+    for (const mKey of sortedFutureKeys) {
+      const fInfo = futureMonthsMap[mKey];
+      const mDate = fInfo.date;
+      const mLabel = `${monthNames[mDate.getMonth()]} ${mDate.getFullYear()} (Projected)`;
+      historicalMonths.push({
+        month_key: mKey,
+        month_label: mLabel,
+        short_name: monthNames[mDate.getMonth()],
+        actual_sales: 0,
+        projected_sales: Math.round(fInfo.projected_sales * 100) / 100,
+        total_sales: Math.round(fInfo.projected_sales * 100) / 100,
+        order_count: 0,
+        is_current: false,
+        is_projected: true,
+      });
+    }
 
     const momAbs = lastMonthTotal > 0 ? Math.round((projectedMonthTotal - lastMonthTotal) * 100) / 100 : 0;
     const momPct = lastMonthTotal > 0 ? Math.round(((projectedMonthTotal - lastMonthTotal) / lastMonthTotal) * 10000) / 100 : 0;
