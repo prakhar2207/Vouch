@@ -160,3 +160,63 @@ class InvoicePDFAndClaimTests(TestCase):
         inward_req = InwardVoucherRequest.objects.get(target_company=buyer_comp, source_voucher=self.sales_voucher)
         self.assertEqual(inward_req.status, 'PENDING')
         self.assertEqual(inward_req.source_company, self.company)
+
+    def test_claim_register_strict_gstin_enforcement(self):
+        """Registering with a mismatched GSTIN is blocked with 403 Forbidden."""
+        token = InvoiceNotificationService.generate_claim_token(self.sales_voucher)
+        url = reverse('claim_register')
+        mismatched_payload = {
+            'token': token,
+            'email': 'intruder@otherbiz.com',
+            'password': 'SecureBuyerPass123!',
+            'company_name': 'Other Business Corp',
+            'gstin': '07CCCCC3333C1Z3',  # Does NOT match invoice buyer GSTIN
+        }
+        response = self.client.post(url, mismatched_payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn('Security verification failed', response.data['error'])
+
+    def test_recipient_status_api_for_matching_buyer_and_duplicate_prevention(self):
+        """Authenticated matching recipient checks status, detects pending vs already added."""
+        # 1. Create a buyer user and company with matching GSTIN
+        buyer_user = User.objects.create_user(email='registered_buyer@betaretail.com', password='TestPass123!')
+        buyer_company = Company.objects.create(
+            name='Beta Retailers Pvt Ltd',
+            gstin='07BBBBB2222B1Z2',
+            state_code='07',
+        )
+        UserCompany.objects.create(user=buyer_user, company=buyer_company, role='OWNER')
+
+        # 2. Check recipient status as authenticated buyer (not yet added)
+        self.client.force_authenticate(user=buyer_user)
+        url = reverse('claim_recipient_status', kwargs={'voucher_id': self.sales_voucher.id})
+        response = self.client.get(url, HTTP_X_COMPANY_ID=str(buyer_company.id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['authenticated'])
+        self.assertTrue(response.data['is_recipient'])
+        self.assertFalse(response.data['already_added'])
+        self.assertTrue(bool(response.data['edi_request_id']))
+
+        # 3. Simulate invoice acceptance
+        inward_req = InwardVoucherRequest.objects.get(id=response.data['edi_request_id'])
+        from apps.accounting.services.edi_service import EDIService
+        pv = EDIService.accept_inward_request(inward_req=inward_req, user=buyer_user)
+
+        # 4. Check recipient status again -> must return already_added: True
+        response_after = self.client.get(url, HTTP_X_COMPANY_ID=str(buyer_company.id))
+        self.assertEqual(response_after.status_code, status.HTTP_200_OK)
+        self.assertTrue(response_after.data['already_added'])
+        self.assertEqual(response_after.data['purchase_voucher_number'], pv.voucher_number)
+
+        # 5. Attempting to register/claim again triggers duplicate prevention
+        token = InvoiceNotificationService.generate_claim_token(self.sales_voucher)
+        reg_payload = {
+            'token': token,
+            'email': 'registered_buyer@betaretail.com',
+            'password': 'TestPass123!',
+            'company_name': 'Beta Retailers Pvt Ltd',
+            'gstin': '07BBBBB2222B1Z2',
+        }
+        dup_resp = self.client.post(reverse('claim_register'), reg_payload, format='json')
+        self.assertEqual(dup_resp.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn('already been added', dup_resp.data['error'])

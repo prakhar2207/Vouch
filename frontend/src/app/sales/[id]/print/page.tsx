@@ -27,6 +27,8 @@ import {
   ChevronDown,
   Lock,
   ShieldAlert,
+  ShieldCheck,
+  Sparkles,
   LogIn,
   History
 } from 'lucide-react';
@@ -106,6 +108,16 @@ export default function PrintInvoicePage() {
   const [preferredWhatsAppClient, setPreferredWhatsAppClient] = useState<'web' | 'app'>('web');
   const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
 
+  // Mobile responsiveness and dynamic scaling
+  const [scaleMode, setScaleMode] = useState<'fit' | '100'>('fit');
+  const [viewportWidth, setViewportWidth] = useState<number>(typeof window !== 'undefined' ? window.innerWidth : 794);
+  const [sheetHeight, setSheetHeight] = useState<number>(1123);
+  const sheetRef = React.useRef<HTMLDivElement>(null);
+
+  // Dynamic QR Code & Recipient Status
+  const [qrMode, setQrMode] = useState<'SMART' | 'UPI' | 'E-INVOICE'>('SMART');
+  const [recipientStatus, setRecipientStatus] = useState<any>(null);
+
   const [downloadPermission, setDownloadPermission] = useState<{
     can_download: boolean;
     reason?: string;
@@ -126,6 +138,51 @@ export default function PrintInvoicePage() {
     }
     fetchInvoice();
   }, [invoiceId]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setViewportWidth(window.innerWidth);
+      if (sheetRef.current) {
+        setSheetHeight(sheetRef.current.offsetHeight);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    handleResize();
+    return () => window.removeEventListener('resize', handleResize);
+  }, [invoice, layoutMode]);
+
+  useEffect(() => {
+    if (invoice && sheetRef.current) {
+      const timer = setTimeout(() => {
+        if (sheetRef.current) {
+          setSheetHeight(sheetRef.current.offsetHeight);
+        }
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [invoice, layoutMode]);
+
+  // Recipient check for logged-in users
+  useEffect(() => {
+    if (invoiceId && isAuth && !String(invoiceId).startsWith('offline_')) {
+      const checkRecipient = async () => {
+        try {
+          const tokenStr = getAccessToken();
+          const activeCompId = typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') || '' : '';
+          const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${invoiceId}/recipient-status/`, {
+            headers: {
+              Authorization: `Bearer ${tokenStr}`,
+              'X-Company-ID': activeCompId
+            }
+          });
+          setRecipientStatus(res.data);
+        } catch (e) {
+          // Non-blocking
+        }
+      };
+      checkRecipient();
+    }
+  }, [invoiceId, isAuth]);
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -351,14 +408,17 @@ export default function PrintInvoicePage() {
   const hasRoundOff = Math.abs(roundOff) >= 0.005;
 
   const getQrData = () => {
-    if (invoice?.signed_qr_code) {
+    // 1. Official GST E-Invoice IRN QR
+    if (invoice?.signed_qr_code && (qrMode === 'E-INVOICE' || (!invoice?.company?.upi_id && qrMode === 'SMART'))) {
       return {
         value: invoice.signed_qr_code,
         label: 'GST E-Invoice QR Code',
         sublabel: 'Official GSTN Verification'
       };
     }
-    if (invoice?.company?.upi_id) {
+
+    // 2. Direct NPCI UPI QR (for counter POS / direct payment apps)
+    if (qrMode === 'UPI' && invoice?.company?.upi_id) {
       const vpa = invoice.company.upi_id.trim();
       const payeeName = (invoice.company.name || 'Merchant').replace(/[^\w\s]/g, '').trim();
       const amount = finalGrandTotal > 0 ? finalGrandTotal.toFixed(2) : '';
@@ -370,11 +430,14 @@ export default function PrintInvoicePage() {
         sublabel: 'GPay • PhonePe • Paytm • BHIM'
       };
     }
-    const verifyUrl = typeof window !== 'undefined' ? window.location.href : '';
+
+    // 3. Dynamic Smart Vouch Link (Default: Public View + Instant UPI + B2B Auto-Book)
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vouchapp.in';
+    const smartUrl = `${origin}/claim?token=${invoiceId}`;
     return {
-      value: verifyUrl,
-      label: 'Scan to Verify Invoice',
-      sublabel: 'Digital Verification'
+      value: smartUrl,
+      label: 'Scan to View, Pay & Add to Books',
+      sublabel: 'Public View • UPI Pay • Auto-Book'
     };
   };
 
@@ -832,6 +895,11 @@ export default function PrintInvoicePage() {
 
   const filename = invoice ? getCleanInvoiceFilename() : 'INVOICE.pdf';
 
+  const isMobile = viewportWidth < 794;
+  const padding = viewportWidth < 640 ? 16 : 32;
+  const scale = isMobile ? Math.min(1, Math.max(0.35, (viewportWidth - padding) / 794)) : 1;
+  const activeScale = scaleMode === 'fit' && isMobile ? scale : 1;
+
   return (
     <div className="bg-white text-black min-h-screen">
       <style>{`
@@ -863,6 +931,7 @@ export default function PrintInvoicePage() {
               margin: 8mm 6mm;
             }
             #invoice-sheet {
+              transform: none !important;
               width: 100% !important;
               min-width: 100% !important;
               max-width: 100% !important;
@@ -877,114 +946,312 @@ export default function PrintInvoicePage() {
       `}</style>
 
       {/* Print Controls Bar (Hidden on Print) */}
-      <div className="print:hidden p-3 bg-slate-900 text-white flex flex-wrap gap-3 justify-between items-center sticky top-0 z-50 shadow-md">
-        <div className="flex items-center gap-2">
-          {isAuth ? (
-            <button 
-              onClick={() => router.back()} 
-              className="text-slate-300 hover:text-white px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Back</span>
-            </button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded-lg text-xs font-semibold text-slate-200 border border-slate-700">
-                <FileText className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Invoice {invoice.voucher_number}</span>
-              </div>
-              <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-medium">
-                Public View
+      <div className="print:hidden bg-slate-900 text-white sticky top-0 z-50 shadow-md">
+        {/* Recipient Notification Banner if logged-in user is recipient */}
+        {recipientStatus?.is_recipient && (
+          <div className={`px-4 py-2 text-xs flex items-center justify-between border-b ${
+            recipientStatus.already_added 
+              ? 'bg-amber-500/10 border-amber-500/20 text-amber-300' 
+              : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+          }`}>
+            <div className="flex items-center gap-2 truncate">
+              {recipientStatus.already_added ? (
+                <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
+              ) : (
+                <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+              )}
+              <span className="truncate">
+                {recipientStatus.already_added
+                  ? `Recorded in your books as Voucher #${recipientStatus.purchase_voucher_number || 'RECORDED'}`
+                  : `Issued to ${recipientStatus.active_company_name}. Ready to book!`
+                }
               </span>
             </div>
-          )}
+            {recipientStatus.already_added ? (
+              <button
+                type="button"
+                onClick={() => router.push(recipientStatus.purchase_voucher_id ? `/sales/${recipientStatus.purchase_voucher_id}/print` : '/purchase')}
+                className="underline font-bold text-amber-400 hover:text-amber-300 shrink-0 ml-2 cursor-pointer"
+              >
+                View
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => router.push(`/network/inbox?open_request=${recipientStatus.edi_request_id || ''}`)}
+                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-[10px] shrink-0 ml-2 cursor-pointer shadow-xs"
+              >
+                1-Click Book
+              </button>
+            )}
+          </div>
+        )}
 
-          {/* Layout Toggle: A4 vs 80mm POS Thermal */}
-          <div className="flex items-center p-1 bg-slate-800 rounded-xl border border-slate-700 text-xs font-semibold">
-            <button
-              onClick={() => setLayoutMode('A4')}
-              className={`px-3 py-1 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-                layoutMode === 'A4' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>A4 Invoice</span>
-            </button>
-            <button
-              onClick={() => setLayoutMode('THERMAL')}
-              className={`px-3 py-1 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-                layoutMode === 'THERMAL' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Receipt className="w-3.5 h-3.5" />
-              <span>80mm POS Thermal</span>
-            </button>
+        {/* Mobile Toolbar (sm:hidden) */}
+        <div className="p-2.5 space-y-2 sm:hidden border-b border-slate-800">
+          <div className="flex items-center justify-between gap-1.5">
+            {isAuth ? (
+              <button
+                onClick={() => router.back()}
+                className="text-slate-300 hover:text-white p-1.5 bg-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Back</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200 truncate">
+                <FileText className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="truncate font-mono">#{invoice?.voucher_number || 'INVOICE'}</span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-1.5">
+              {!isAuth && (
+                <button
+                  onClick={() => router.push(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)}
+                  className="px-2.5 py-1.5 bg-slate-800 text-slate-200 text-xs rounded-lg font-medium flex items-center gap-1"
+                >
+                  <LogIn className="w-3.5 h-3.5 text-primary" />
+                  <span>Sign In</span>
+                </button>
+              )}
+              <button
+                onClick={handleWhatsAppShareClick}
+                disabled={isGeneratingPdf}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white p-2 rounded-lg text-xs font-bold flex items-center justify-center shadow-xs cursor-pointer disabled:opacity-50"
+                title="Share on WhatsApp"
+              >
+                <MessageCircle className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handleDownloadPdf}
+                disabled={isGeneratingPdf}
+                className="bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 p-2 rounded-lg text-xs font-bold flex items-center justify-center cursor-pointer disabled:opacity-50"
+                title="Download PDF"
+              >
+                <Download className="w-4 h-4 text-primary" />
+              </button>
+              <button
+                onClick={() => window.print()}
+                className="bg-primary text-primary-foreground hover:bg-primary/90 p-2 rounded-lg text-xs font-bold flex items-center justify-center cursor-pointer"
+                title="Print"
+              >
+                <Printer className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
-          {isAuth && (
-            <button
-              onClick={() => setIsAuditModalOpen(true)}
-              className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
-              title="MCA Statutory Audit Trail & Version History"
-            >
-              <History className="w-3.5 h-3.5 text-blue-400" />
-              <span>Version History</span>
-            </button>
-          )}
+          {/* Row 2 on Mobile: Segmented Controls */}
+          <div className="flex items-center justify-between gap-1.5 pt-1 text-[11px]">
+            <div className="flex items-center p-0.5 bg-slate-800 rounded-lg border border-slate-700 font-semibold">
+              <button
+                onClick={() => setLayoutMode('A4')}
+                className={`px-2 py-1 rounded-md transition-all ${
+                  layoutMode === 'A4' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-slate-400'
+                }`}
+              >
+                A4
+              </button>
+              <button
+                onClick={() => setLayoutMode('THERMAL')}
+                className={`px-2 py-1 rounded-md transition-all ${
+                  layoutMode === 'THERMAL' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-slate-400'
+                }`}
+              >
+                POS
+              </button>
+            </div>
+
+            {layoutMode === 'A4' && (
+              <div className="flex items-center p-0.5 bg-slate-800 rounded-lg border border-slate-700 font-semibold">
+                <button
+                  onClick={() => setScaleMode('fit')}
+                  className={`px-2 py-1 rounded-md transition-all ${
+                    scaleMode === 'fit' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400'
+                  }`}
+                >
+                  Fit Screen
+                </button>
+                <button
+                  onClick={() => setScaleMode('100')}
+                  className={`px-2 py-1 rounded-md transition-all ${
+                    scaleMode === '100' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400'
+                  }`}
+                >
+                  100%
+                </button>
+              </div>
+            )}
+
+            {invoice?.company?.upi_id && (
+              <div className="flex items-center p-0.5 bg-slate-800 rounded-lg border border-slate-700 font-semibold">
+                <button
+                  onClick={() => setQrMode('SMART')}
+                  className={`px-2 py-1 rounded-md transition-all ${
+                    qrMode === 'SMART' ? 'bg-emerald-600 text-white' : 'text-slate-400'
+                  }`}
+                  title="Dynamic Vouch Link QR"
+                >
+                  Smart QR
+                </button>
+                <button
+                  onClick={() => setQrMode('UPI')}
+                  className={`px-2 py-1 rounded-md transition-all ${
+                    qrMode === 'UPI' ? 'bg-emerald-600 text-white' : 'text-slate-400'
+                  }`}
+                  title="Direct UPI Payment QR"
+                >
+                  UPI QR
+                </button>
+              </div>
+            )}
+
+            {isAuth && (
+              <button
+                onClick={() => setIsAuditModalOpen(true)}
+                className="bg-slate-800 text-slate-300 p-1.5 rounded-lg border border-slate-700"
+                title="Audit Trail"
+              >
+                <History className="w-3.5 h-3.5 text-blue-400" />
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          {!isAuth && (
+        {/* Desktop Toolbar (hidden sm:flex) */}
+        <div className="hidden sm:flex p-3 gap-3 justify-between items-center">
+          <div className="flex items-center gap-2">
+            {isAuth ? (
+              <button 
+                onClick={() => router.back()} 
+                className="text-slate-300 hover:text-white px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded-lg text-xs font-semibold text-slate-200 border border-slate-700">
+                  <FileText className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Invoice {invoice?.voucher_number}</span>
+                </div>
+                <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-medium">
+                  Public View
+                </span>
+              </div>
+            )}
+
+            {/* Layout Toggle: A4 vs 80mm POS Thermal */}
+            <div className="flex items-center p-1 bg-slate-800 rounded-xl border border-slate-700 text-xs font-semibold">
+              <button
+                onClick={() => setLayoutMode('A4')}
+                className={`px-3 py-1 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                  layoutMode === 'A4' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>A4 Invoice</span>
+              </button>
+              <button
+                onClick={() => setLayoutMode('THERMAL')}
+                className={`px-3 py-1 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                  layoutMode === 'THERMAL' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Receipt className="w-3.5 h-3.5" />
+                <span>80mm POS Thermal</span>
+              </button>
+            </div>
+
+            {/* Dynamic QR Mode Toggle on Desktop */}
+            {invoice?.company?.upi_id && (
+              <div className="flex items-center p-1 bg-slate-800 rounded-xl border border-slate-700 text-xs font-semibold">
+                <button
+                  onClick={() => setQrMode('SMART')}
+                  className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                    qrMode === 'SMART' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Dynamic QR: Public View, Pay UPI, Register/Add to Purchase"
+                >
+                  Smart QR
+                </button>
+                <button
+                  onClick={() => setQrMode('UPI')}
+                  className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                    qrMode === 'UPI' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Direct UPI Payment QR"
+                >
+                  UPI QR
+                </button>
+              </div>
+            )}
+
+            {isAuth && (
+              <button
+                onClick={() => setIsAuditModalOpen(true)}
+                className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+                title="MCA Statutory Audit Trail & Version History"
+              >
+                <History className="w-3.5 h-3.5 text-blue-400" />
+                <span>Version History</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {!isAuth && (
+              <button
+                onClick={() => {
+                  const redirectUrl = encodeURIComponent(window.location.pathname + '?download=true');
+                  router.push(`/login?redirect=${redirectUrl}`);
+                }}
+                className="text-slate-300 hover:text-white px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <LogIn className="w-3.5 h-3.5 text-primary" />
+                <span>Sign In</span>
+              </button>
+            )}
+
+            {/* WhatsApp Share Button */}
             <button
-              onClick={() => {
-                const redirectUrl = encodeURIComponent(window.location.pathname + '?download=true');
-                router.push(`/login?redirect=${redirectUrl}`);
-              }}
-              className="text-slate-300 hover:text-white px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              onClick={handleWhatsAppShareClick}
+              disabled={isGeneratingPdf}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+              title="Share on WhatsApp with Official PDF & Link"
             >
-              <LogIn className="w-3.5 h-3.5 text-primary" />
-              <span>Sign In</span>
+              {isGeneratingPdf ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <MessageCircle className="w-4 h-4" />
+              )}
+              <span>Share</span>
             </button>
-          )}
 
-          {/* WhatsApp Share Button */}
-          <button
-            onClick={handleWhatsAppShareClick}
-            disabled={isGeneratingPdf}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
-            title="Share on WhatsApp with Official PDF & Link"
-          >
-            {isGeneratingPdf ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <MessageCircle className="w-4 h-4" />
-            )}
-            <span>Share</span>
-          </button>
+            {/* Download PDF Button */}
+            <button
+              onClick={handleDownloadPdf}
+              disabled={isGeneratingPdf}
+              className="bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+              title="Download Official PDF"
+            >
+              {isGeneratingPdf ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4 text-primary" />
+              )}
+              <span>PDF</span>
+            </button>
 
-          {/* Download PDF Button */}
-          <button
-            onClick={handleDownloadPdf}
-            disabled={isGeneratingPdf}
-            className="bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
-            title="Download Official PDF"
-          >
-            {isGeneratingPdf ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Download className="w-4 h-4 text-primary" />
-            )}
-            <span>PDF</span>
-          </button>
-
-          {/* Print Button */}
-          <button
-            onClick={() => window.print()}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all cursor-pointer"
-          >
-            <Printer className="w-4 h-4" />
-            <span>Print {layoutMode === 'THERMAL' ? 'Receipt' : 'Invoice'}</span>
-          </button>
+            {/* Print Button */}
+            <button
+              onClick={() => window.print()}
+              className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all cursor-pointer"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Print {layoutMode === 'THERMAL' ? 'Receipt' : 'Invoice'}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1251,8 +1518,53 @@ export default function PrintInvoicePage() {
         </div>
       ) : (
         /* ================= A4 STANDARD TAX INVOICE LAYOUT ================= */
-        <div className="w-full overflow-x-auto p-4 sm:p-8 flex justify-center bg-slate-200 print:bg-white print:p-0">
-          <div id="invoice-sheet" className="w-[210mm] max-w-[210mm] shrink-0 min-h-[270mm] print:min-h-[270mm] print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none flex flex-col mx-auto">
+        <div className="w-full overflow-x-auto p-2 sm:p-8 flex flex-col items-center justify-start bg-slate-200 print:bg-white print:p-0">
+          
+          {/* Mobile Screen Scaling Controls Pill */}
+          {viewportWidth < 794 && (
+            <div className="mb-2.5 flex items-center justify-between w-full max-w-sm px-3.5 py-1.5 bg-slate-800 text-white rounded-full text-[11px] shadow-sm border border-slate-700 print:hidden">
+              <span className="text-slate-300 font-mono">
+                {scaleMode === 'fit' ? `Screen Fit: ${Math.round(scale * 100)}%` : 'Full Size: 100%'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setScaleMode(scaleMode === 'fit' ? '100' : 'fit')}
+                className="font-bold text-primary hover:underline ml-2 cursor-pointer"
+              >
+                {scaleMode === 'fit' ? 'Zoom 100%' : 'Fit Screen'}
+              </button>
+            </div>
+          )}
+
+          <div
+            style={
+              activeScale < 1
+                ? {
+                    width: `${794 * activeScale}px`,
+                    height: `${sheetHeight * activeScale}px`,
+                    overflow: 'hidden',
+                    transition: 'width 0.15s ease, height 0.15s ease',
+                  }
+                : undefined
+            }
+            className="print:w-full print:h-auto print:overflow-visible transition-all flex justify-center"
+          >
+            <div 
+              id="invoice-sheet" 
+              ref={sheetRef}
+              style={
+                activeScale < 1
+                  ? {
+                      transform: `scale(${activeScale})`,
+                      transformOrigin: 'top left',
+                      width: '794px',
+                      minWidth: '794px',
+                      maxWidth: '794px',
+                    }
+                  : undefined
+              }
+              className="w-[210mm] max-w-[210mm] shrink-0 min-h-[270mm] print:min-h-[270mm] print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none flex flex-col mx-auto"
+            >
           
           {/* Main Border Box */}
           <div className="border-2 border-black flex-1 flex flex-col justify-between">
@@ -1571,6 +1883,7 @@ export default function PrintInvoicePage() {
           <div className="flex justify-between items-center text-[10px] text-slate-500 pt-1 px-1">
             <span>This is a Computer Generated Invoice</span>
             <span>Page 1 of 1</span>
+          </div>
           </div>
         </div>
         </div>

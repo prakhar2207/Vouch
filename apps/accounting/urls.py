@@ -22,6 +22,7 @@ from .claim_views import (
     InvoicePDFDownloadAPIView,
     InvoiceClaimRegisterAPIView,
     InvoiceDispatchDetailsAPIView,
+    InvoiceRecipientStatusAPIView,
 )
 import apps.accounting.banking_views
 
@@ -67,6 +68,8 @@ urlpatterns = [
     path('b2b/inbox/<uuid:pk>/reject/', InwardVoucherRejectView.as_view(), name='b2b_inbox_reject'),
 
     # Viral Invoice Claim & Automated PDF Dispatch
+    path('vouchers/recipient-status/', InvoiceRecipientStatusAPIView.as_view(), name='claim_recipient_status_query'),
+    path('vouchers/<uuid:voucher_id>/recipient-status/', InvoiceRecipientStatusAPIView.as_view(), name='claim_recipient_status'),
     path('vouchers/claim-preview/', InvoiceClaimPreviewAPIView.as_view(), name='claim_preview'),
     path('vouchers/claim-register/', InvoiceClaimRegisterAPIView.as_view(), name='claim_register'),
     path('vouchers/<uuid:voucher_id>/pdf/', InvoicePDFDownloadAPIView.as_view(), name='invoice_pdf_download'),

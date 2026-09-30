@@ -1,8 +1,9 @@
-﻿"use client";
+"use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import axios from "axios";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { 
   Network, 
   ArrowDownLeft, 
@@ -79,8 +80,11 @@ interface InwardRequest {
   created_at: string;
 }
 
-export default function B2BInboxPage() {
+function B2BInboxContent() {
   const { toast } = useToast();
+  const searchParams = useSearchParams();
+  const openRequestId = searchParams.get("open_request");
+  const [hasAutoOpened, setHasAutoOpened] = useState(false);
   const [requests, setRequests] = useState<InwardRequest[]>([]);
   const [counts, setCounts] = useState({ all: 0, pending: 0, accepted: 0, rejected: 0 });
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
@@ -114,6 +118,35 @@ export default function B2BInboxPage() {
   useEffect(() => {
     fetchInbox();
   }, [statusFilter]);
+
+  // Auto-open requested inward voucher modal if open_request parameter is provided
+  useEffect(() => {
+    if (!openRequestId || hasAutoOpened) return;
+    const match = requests.find((r) => r.id === openRequestId);
+    if (match) {
+      setSelectedReq(match);
+      setIsSignModalOpen(true);
+      setHasAutoOpened(true);
+    } else if (!loading) {
+      // If not present in current list/filter, fetch explicitly by ID
+      const fetchDirect = async () => {
+        try {
+          const token = getAccessToken();
+          const res = await axios.get(`${API_BASE_URL}/api/b2b/inbox/${openRequestId}/`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (res.data && res.data.id) {
+            setSelectedReq(res.data);
+            setIsSignModalOpen(true);
+            setHasAutoOpened(true);
+          }
+        } catch (e) {
+          console.warn("Could not auto-open requested inward voucher:", e);
+        }
+      };
+      fetchDirect();
+    }
+  }, [openRequestId, requests, loading, hasAutoOpened]);
 
   const handleAccept = async () => {
     if (!selectedReq) return;
@@ -668,5 +701,21 @@ export default function B2BInboxPage() {
 
       </div>
     </DashboardLayout>
+  );
+}
+
+export default function B2BInboxPage() {
+  return (
+    <Suspense
+      fallback={
+        <DashboardLayout>
+          <div className="min-h-[60vh] flex items-center justify-center p-8">
+            <RefreshCw className="w-8 h-8 animate-spin text-primary" />
+          </div>
+        </DashboardLayout>
+      }
+    >
+      <B2BInboxContent />
+    </Suspense>
   );
 }
