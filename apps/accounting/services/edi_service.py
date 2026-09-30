@@ -1,5 +1,6 @@
 import json
 import hashlib
+import logging
 from typing import Optional, Dict, Any
 from decimal import Decimal
 from django.db import transaction
@@ -13,23 +14,58 @@ from apps.accounting.models import Voucher, VoucherItem, InwardVoucherRequest
 from apps.accounting.services.purchase_service import PurchaseInvoiceService
 from apps.accounting.services.voucher_service import VoucherService
 
+logger = logging.getLogger(__name__)
+
 
 class EDIService:
     @staticmethod
     def create_inward_request_for_sales_voucher(voucher: Voucher) -> Optional[InwardVoucherRequest]:
         """
-        Extracts buyer GSTIN from sales voucher party_ledger.
-        If a registered Company in the system matches the GSTIN (excluding the seller),
-        generates an InwardVoucherRequest in PENDING status.
+        Extracts buyer GSTIN and party details from sales voucher party_ledger.
+        Matches against registered Companies in Vouch using exact GSTIN, normalized GSTIN,
+        state + PAN matching, or verified company trade name.
+        If matched (excluding the seller), generates an InwardVoucherRequest in PENDING status.
         """
         if voucher.voucher_type != 'SALES' or not voucher.party_ledger:
             return None
 
         buyer_gstin = (voucher.party_ledger.gstin or "").strip().upper()
-        if not buyer_gstin:
-            return None
+        target_company = None
 
-        target_company = Company.objects.filter(gstin__iexact=buyer_gstin).exclude(id=voucher.company_id).first()
+        # Strategy 1: Exact GSTIN match
+        if buyer_gstin:
+            target_company = Company.objects.filter(gstin__iexact=buyer_gstin).exclude(id=voucher.company_id).first()
+
+        # Strategy 2: Normalized GSTIN match (handle common 1/I and 0/O OCR/clerical typos)
+        if not target_company and buyer_gstin:
+            norm_buyer = buyer_gstin.replace('I', '1').replace('O', '0')
+            for c in Company.objects.exclude(id=voucher.company_id).filter(gstin__isnull=False):
+                if c.gstin and c.gstin.strip().upper().replace('I', '1').replace('O', '0') == norm_buyer:
+                    target_company = c
+                    break
+
+        # Strategy 3: PAN matching within the same state (e.g. chars 2..12, or transposed letters like IWPSK vs IWSPK)
+        if not target_company and buyer_gstin and len(buyer_gstin) >= 12:
+            buyer_state = buyer_gstin[:2]
+            buyer_pan = buyer_gstin[2:12]
+            for c in Company.objects.exclude(id=voucher.company_id).filter(gstin__startswith=buyer_state):
+                if c.gstin and len(c.gstin) >= 12:
+                    c_pan = c.gstin[2:12]
+                    if c_pan == buyer_pan or sorted(c_pan) == sorted(buyer_pan):
+                        target_company = c
+                        break
+
+        # Strategy 4: Party Name matching registered Company Name or Legal Name
+        if not target_company and voucher.party_ledger.name:
+            clean_party = voucher.party_ledger.name.strip().lower().replace('.', '').replace(' ', '')
+            if len(clean_party) >= 3:
+                for c in Company.objects.exclude(id=voucher.company_id):
+                    c_name = (c.name or '').strip().lower().replace('.', '').replace(' ', '')
+                    c_legal = (c.legal_name or '').strip().lower().replace('.', '').replace(' ', '')
+                    if clean_party in [c_name, c_legal]:
+                        target_company = c
+                        break
+
         if not target_company:
             return None
 
@@ -87,15 +123,17 @@ class EDIService:
             try:
                 from apps.notifications.services import NotificationService
                 for uc in target_company.users.all():
-                    NotificationService.send_notification(
-                        user=uc.user,
-                        title="New Inward EDI Request",
-                        message=f"{voucher.company.name} sent you a purchase bill request (#{voucher.voucher_number}) for ₹{voucher.total_amount:,.2f}.",
-                        link="/network/inbox"
-                    )
+                    try:
+                        NotificationService.send_notification(
+                            user=uc.user,
+                            title="New Inward EDI Request",
+                            message=f"{voucher.company.name} sent you a purchase bill request (#{voucher.voucher_number}) for ₹{voucher.total_amount:,.2f}.",
+                            link="/network/inbox"
+                        )
+                    except Exception as inner_e:
+                        logger.warning(f"Could not dispatch push notification to user {uc.user_id}: {inner_e}")
             except Exception as e:
-                import traceback
-                logger.error(f"Failed to send EDI notification: {e} \n {traceback.format_exc()}")
+                logger.warning(f"Failed to send EDI notification: {e}")
 
         return inward_req
 
