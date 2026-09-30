@@ -416,6 +416,174 @@ def get_seasonal_factor(month: int, has_yoy_history: bool = False, empirical_ind
     return domain_mult
 
 
+SEASON_DRIVERS: Dict[int, str] = {
+    1: "Post-holiday winter resumption; corporate capital budgets unlocked for Q4 execution.",
+    2: "Pre-fiscal budget reviews and advance order placements ahead of March rush.",
+    3: "Maximum annual billing peak across Indian wholesale mandis; budget exhaustion, tax planning, and depreciation claims before March 31.",
+    4: "New financial year kickoff; annual rate contracts take effect with fresh capital allocations.",
+    5: "Pre-monsoon manufacturing peak; industrial factories build inventory of belting and spares before rains disrupt supply chains.",
+    6: "Standard summer production; initial monsoon arrival in Southern and Eastern states.",
+    7: "Peak monsoon slowdown; flooded logistics corridors, mining halts, and outdoor civil works suspension cause the sharpest annual slump.",
+    8: "Monsoon continuation; transition towards pre-festive machinery servicing and dealer replenishment.",
+    9: "Vishwakarma Puja industrial servicing surge; factories and workshops overhaul plant machinery before the festival quarter.",
+    10: "Peak festive production and dispatch; wholesale dealers and retailers stock up for Navratri, Dussehra, and Diwali.",
+    11: "Diwali trade week; brief market closures followed by heavy post-festive restock orders.",
+    12: "Q3 fiscal closing and calendar year-end target achievement rush."
+}
+
+
+def build_multi_year_seasonal_mapping(df, anchor_date: datetime.date) -> Dict[str, Any]:
+    """
+    Builds a season-wise sales mapping across all available years in the dataset.
+    Identifies in which month of the year sales surged or dropped due to seasonal patterns.
+    If multiple years exist, blends them with recency weighting.
+    If only current/partial history exists, gracefully maps available months and supplements
+    the remaining months with domain B2B industrial benchmarks.
+    """
+    import pandas as pd
+    
+    distinct_years = sorted(df.index.year.unique()) if (df is not None and len(df) > 0) else []
+    yearly_breakdown: Dict[str, Any] = {}
+    empirical_monthly_indices: Dict[int, float] = {}
+    historical_sales_matrix: Dict[int, Dict[str, float]] = {m: {} for m in range(1, 13)}
+    
+    # Month names in Indian Financial Year order (Apr to Mar)
+    fy_month_order = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3]
+    month_names = {
+        1: ("January", "Jan"), 2: ("February", "Feb"), 3: ("March", "Mar"),
+        4: ("April", "Apr"), 5: ("May", "May"), 6: ("June", "Jun"),
+        7: ("July", "Jul"), 8: ("August", "Aug"), 9: ("September", "Sep"),
+        10: ("October", "Oct"), 11: ("November", "Nov"), 12: ("December", "Dec")
+    }
+
+    if df is not None and len(df) > 0 and df['daily_sales'].sum() > 0:
+        year_overall_means = {}
+        year_month_means: Dict[int, Dict[int, float]] = {}
+
+        for yr in distinct_years:
+            yr_df = df[df.index.year == yr]
+            yr_total = float(yr_df['daily_sales'].sum())
+            yr_days = len(yr_df)
+            yr_mean = yr_df['daily_sales'].mean() or 1.0
+
+            if yr_total > 0 and yr_days >= 7:
+                year_overall_means[yr] = yr_mean
+                year_month_means[yr] = {}
+                m_details = {}
+
+                for m in range(1, 13):
+                    m_df = yr_df[yr_df.index.month == m]
+                    m_total = float(m_df['daily_sales'].sum()) if len(m_df) > 0 else 0.0
+                    m_active_days = int((m_df['daily_sales'] > 0).sum()) if len(m_df) > 0 else 0
+                    m_mean = float(m_df['daily_sales'].mean()) if len(m_df) > 0 else 0.0
+
+                    if len(m_df) >= 3 and m_total > 0:
+                        year_month_means[yr][m] = m_mean
+                        historical_sales_matrix[m][str(yr)] = round(m_total, 2)
+                        
+                        # Calculate surge percentage relative to that year's daily mean
+                        surge_pct = round(((m_mean - yr_mean) / yr_mean) * 100.0, 1)
+                        m_status = "SURGE" if surge_pct >= 15.0 else ("LOW" if surge_pct <= -15.0 else "STEADY")
+
+                        m_details[str(m)] = {
+                            "month": m,
+                            "month_name": month_names[m][0],
+                            "total_sales": round(m_total, 2),
+                            "daily_mean": round(m_mean, 2),
+                            "surge_pct": surge_pct,
+                            "status": m_status,
+                            "active_days": m_active_days
+                        }
+
+                yearly_breakdown[str(yr)] = {
+                    "year": int(yr),
+                    "total_sales": round(yr_total, 2),
+                    "daily_mean": round(yr_mean, 2),
+                    "recorded_days": yr_days,
+                    "months": m_details
+                }
+
+        # Multi-year cross-year aggregation with recency weighting
+        usable_years = sorted(year_overall_means.keys())
+        for m in range(1, 13):
+            weighted_sum = 0.0
+            weight_total = 0.0
+            for rank, yr in enumerate(usable_years):
+                if m in year_month_means.get(yr, {}):
+                    yr_mean = year_overall_means[yr]
+                    if yr_mean > 0:
+                        idx = year_month_means[yr][m] / yr_mean
+                        weight = 1.0 + 0.6 * rank  # Later years get more weight
+                        weighted_sum += idx * weight
+                        weight_total += weight
+            if weight_total > 0:
+                empirical_monthly_indices[m] = round(min(max(weighted_sum / weight_total, 0.45), 2.20), 3)
+
+    # Build the complete 12-month season-wise mapping calendar (April to March)
+    season_calendar = []
+    surge_months_list = []
+    slump_months_list = []
+
+    for rank, m in enumerate(fy_month_order, start=1):
+        domain_mult = B2B_SEASONAL_INDICES.get(m, 1.0)
+        has_empirical = m in empirical_monthly_indices
+        
+        if has_empirical and len(yearly_breakdown) >= 1:
+            emp_mult = empirical_monthly_indices[m]
+            # Blend empirical data with structural domain index
+            effective_mult = round(0.65 * emp_mult + 0.35 * domain_mult, 3)
+        else:
+            effective_mult = domain_mult
+
+        pct_diff = round((effective_mult - 1.0) * 100.0, 1)
+        pct_label = f"+{pct_diff}%" if pct_diff > 0 else f"{pct_diff}%"
+
+        if effective_mult >= 1.15:
+            m_status = "SURGE"
+            surge_months_list.append(f"{month_names[m][0]} ({pct_label})")
+        elif effective_mult <= 0.85:
+            m_status = "LOW"
+            slump_months_list.append(f"{month_names[m][0]} ({pct_label})")
+        else:
+            m_status = "STEADY"
+
+        season_calendar.append({
+            "month_num": m,
+            "fy_order": rank,
+            "month_name": month_names[m][0],
+            "short_name": month_names[m][1],
+            "multiplier": effective_mult,
+            "status": m_status,
+            "surge_pct_label": pct_label,
+            "surge_pct_value": pct_diff,
+            "season_name": SEASON_DESCRIPTIONS.get(m, "Standard Operations"),
+            "driver": SEASON_DRIVERS.get(m, "Regular wholesale business flow."),
+            "historical_sales_by_year": historical_sales_matrix.get(m, {}),
+            "is_empirical": has_empirical
+        })
+
+    has_multi_year = len(yearly_breakdown) >= 2
+    years_list = sorted([int(y) for y in yearly_breakdown.keys()])
+
+    if has_multi_year:
+        data_note = f"Season-wise demand curves synthesized from {len(years_list)} historical years ({', '.join(str(y) for y in years_list)}) with recency-weighted multi-year blending."
+    elif len(years_list) == 1:
+        data_note = f"Season-wise demand calibrated from available {years_list[0]} historical transactions and enriched with Indian B2B wholesale seasonal benchmarks."
+    else:
+        data_note = "Season-wise demand mapped using Indian B2B wholesale industrial benchmark calendar."
+
+    return {
+        "has_multi_year": has_multi_year,
+        "years_analyzed": years_list,
+        "yearly_breakdown": yearly_breakdown,
+        "season_calendar": season_calendar,
+        "top_surge_months": surge_months_list,
+        "top_slump_months": slump_months_list,
+        "empirical_indices": empirical_monthly_indices,
+        "data_status_description": data_note
+    }
+
+
 def get_holidays_in_horizon(start_date: datetime.date, days: int) -> List[Dict[str, Any]]:
     """Lists all trading calendar events falling within the forecast window."""
     events = []
@@ -432,3 +600,4 @@ def get_holidays_in_horizon(start_date: datetime.date, days: int) -> List[Dict[s
                 "description": ev["description"]
             })
     return events
+

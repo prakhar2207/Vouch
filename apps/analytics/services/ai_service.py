@@ -372,6 +372,7 @@ class AnalyticsEngine:
             effective_base = overall_avg_daily_sales
 
         # -------------------------------------------------------------
+        # -------------------------------------------------------------
         # Factor 1: Indian Trading Calendar & Mandi Operating Profile
         # -------------------------------------------------------------
         import math
@@ -381,7 +382,8 @@ class AnalyticsEngine:
             SEASON_DESCRIPTIONS,
             get_calendar_event,
             get_seasonal_factor,
-            get_holidays_in_horizon
+            get_holidays_in_horizon,
+            build_multi_year_seasonal_mapping
         )
 
         # -------------------------------------------------------------
@@ -409,30 +411,21 @@ class AnalyticsEngine:
             dow_weights = {k: round(v / dow_avg, 4) for k, v in dow_weights.items()}
 
         # -------------------------------------------------------------
-        # Factor 3: Indian B2B Structural Seasonality & YoY Blending
+        # Factor 3: Multi-Year Seasonal Intelligence & YoY Blending
         # -------------------------------------------------------------
+        # Scan ALL available years of history (not just one prior year)
+        # to build robust month-by-month seasonal indices and surge/slump mapping.
+        seasonal_mapping = build_multi_year_seasonal_mapping(df, anchor_date)
+        empirical_yoy_indices = seasonal_mapping.get("empirical_indices", {})
         has_yoy_history = False
-        empirical_yoy_indices = {}
-        if history_span_days >= 330:
-            try:
-                py_start = anchor_date.replace(year=anchor_date.year - 1)
-                py_end = (anchor_date + datetime.timedelta(days=days)).replace(year=anchor_date.year - 1)
-                py_subset = df[(df.index >= pd.to_datetime(py_start - datetime.timedelta(days=60))) & 
-                               (df.index <= pd.to_datetime(py_end + datetime.timedelta(days=60)))]
-                if len(py_subset) > 0 and py_subset['daily_sales'].sum() > 0:
-                    has_yoy_history = True
-                    py_mean = py_subset['daily_sales'].mean() or 1.0
-                    for m in range(1, 13):
-                        m_sales = py_subset[py_subset.index.month == m]['daily_sales']
-                        if len(m_sales) > 0 and m_sales.mean() > 0:
-                            empirical_yoy_indices[m] = min(max(float(m_sales.mean() / py_mean), 0.50), 2.00)
-            except Exception:
-                has_yoy_history = False
 
-        if has_yoy_history:
-            yoy_summary = "Incorporated historical year-over-year seasonal pattern learned from prior year records."
-            yoy_trend_text = "YoY Annual Seasonality: Enabled (from prior year history)"
+        if history_span_days >= 330 and len(empirical_yoy_indices) >= 1:
+            has_yoy_history = True
+            years_used = len(seasonal_mapping.get("years_analyzed", []))
+            yoy_summary = f"Incorporated historical year-over-year seasonal pattern learned from {years_used} year(s) of records. Month-by-month indices averaged with recency weighting across all available history."
+            yoy_trend_text = f"YoY Annual Seasonality: Enabled (from {years_used} year(s) of history)"
         else:
+            has_yoy_history = False
             yoy_summary = "Past-year records not available (< 1 year history); annual seasonality excluded to ensure realistic predictions."
             yoy_trend_text = "YoY Seasonality: Excluded (insufficient past-year history)"
 
@@ -989,6 +982,7 @@ class AnalyticsEngine:
                 "profit_margin_pct": round(((float(df['daily_sales'].sum() - df['daily_purchases'].sum())) / max(0.01, float(df['daily_sales'].sum()))) * 100.0, 1),
                 "growth_status": "EXPANDING" if float(df['daily_sales'].sum() - df['daily_purchases'].sum()) > 0 else "CONTRACTION"
             },
+            "seasonal_mapping": seasonal_mapping,
             "factors_analyzed": {
                 "yoy_seasonality_applied": has_yoy_history,
                 "yoy_summary": yoy_summary,
@@ -1003,7 +997,8 @@ class AnalyticsEngine:
                 "customer_schedules_count": len(customer_schedules),
                 "open_proforma_pipeline": round(open_pipeline_val, 2),
                 "stock_health_ratio": round(stock_health_ratio, 2),
-                "stock_constraint_applied": stock_constraint_multiplier < 1.0
+                "stock_constraint_applied": stock_constraint_multiplier < 1.0,
+                "seasonal_mapping": seasonal_mapping
             },
             "monthly_comparison": monthly_comparison
         }

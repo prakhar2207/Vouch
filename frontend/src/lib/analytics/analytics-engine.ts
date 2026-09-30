@@ -262,6 +262,33 @@ export interface SalesForecastResult {
     open_proforma_pipeline?: number;
     stock_health_ratio?: number;
     stock_constraint_applied?: boolean;
+    seasonal_mapping?: any;
+    has_multi_year_data?: boolean;
+    years_analyzed?: number[];
+    top_surge_months?: string[];
+    top_slump_months?: string[];
+  };
+  seasonal_mapping?: {
+    has_multi_year: boolean;
+    years_analyzed: number[];
+    yearly_breakdown: Record<string, any>;
+    season_calendar: Array<{
+      month_num: number;
+      fy_order: number;
+      month_name: string;
+      short_name: string;
+      multiplier: number;
+      status: "SURGE" | "LOW" | "STEADY";
+      surge_pct_label: string;
+      surge_pct_value: number;
+      season_name: string;
+      driver: string;
+      historical_sales_by_year: Record<string, number>;
+      is_empirical: boolean;
+    }>;
+    top_surge_months: string[];
+    top_slump_months: string[];
+    data_status_description: string;
   };
   monthly_comparison?: MonthlyComparisonResult;
 }
@@ -365,7 +392,8 @@ export class LocalAnalyticsEngine {
       .equals(companyId)
       .toArray();
 
-    let activeVouchers = this.resolveEffectiveVouchers(allCompanyVouchers);
+    const allEffectiveVouchers = this.resolveEffectiveVouchers(allCompanyVouchers);
+    let activeVouchers = allEffectiveVouchers;
     if (options?.startDate) {
       activeVouchers = activeVouchers.filter((v) => v.voucherDate >= options.startDate!);
     }
@@ -373,6 +401,21 @@ export class LocalAnalyticsEngine {
       activeVouchers = activeVouchers.filter((v) => v.voucherDate <= options.endDate!);
     }
     const activeVouchersMap = new Map(activeVouchers.map(v => [v.id, v]));
+
+    // All-time historical series for multi-year forecasting and seasonal learning
+    const allTimeSalesByDate: Record<string, number> = {};
+    const allTimeSalesCountByDate: Record<string, number> = {};
+    const allTimePurchasesByDate: Record<string, number> = {};
+    for (const v of allEffectiveVouchers) {
+      const amt = Number(v.totalAmount) || 0;
+      const vDate = v.voucherDate;
+      if (v.voucherType === "SALES") {
+        allTimeSalesByDate[vDate] = (allTimeSalesByDate[vDate] || 0) + amt;
+        allTimeSalesCountByDate[vDate] = (allTimeSalesCountByDate[vDate] || 0) + 1;
+      } else if (v.voucherType === "PURCHASE") {
+        allTimePurchasesByDate[vDate] = (allTimePurchasesByDate[vDate] || 0) + amt;
+      }
+    }
 
     // Fetch allocations for outstanding calculations
     const allAllocations = await offlineDb.syncedPaymentAllocations
@@ -647,10 +690,24 @@ export class LocalAnalyticsEngine {
     }
 
     // --- E. Sales Velocity Trend (Linear Regression) ---
-    const trendDetails = this.calculateSalesTrend(salesByDate, todayStr);
+    // Use full multi-year history for trend and projection so seasonality is preserved across financial years
+    const forecastSalesByDate = Object.keys(allTimeSalesByDate).length > 0 ? allTimeSalesByDate : salesByDate;
+    const forecastPurchasesByDate = Object.keys(allTimePurchasesByDate).length > 0 ? allTimePurchasesByDate : purchasesByDate;
+    const forecastSalesCountByDate = Object.keys(allTimeSalesCountByDate).length > 0 ? allTimeSalesCountByDate : salesCountByDate;
+    const totalAllTimeSalesCount = Object.values(forecastSalesCountByDate).reduce((a, b) => a + b, 0) || salesCount;
+
+    const trendDetails = this.calculateSalesTrend(forecastSalesByDate, todayStr);
 
     // --- E2. Sales Forecast Projection ---
-    const forecastData = this.calculateForecast(salesByDate, trendDetails, todayStr, 30, purchasesByDate, salesCountByDate, salesCount);
+    const forecastData = this.calculateForecast(
+      forecastSalesByDate,
+      trendDetails,
+      todayStr,
+      30,
+      forecastPurchasesByDate,
+      forecastSalesCountByDate,
+      totalAllTimeSalesCount
+    );
 
     // Populate local Pareto & Churn accounts for offline resilience (real customer accounts with positive sales only)
     const partyEntries = Object.entries(salesByParty)
@@ -1028,8 +1085,202 @@ export class LocalAnalyticsEngine {
       7: 0.78, 8: 0.82, 9: 1.25, 10: 1.35, 11: 1.10, 12: 1.08
     };
 
+    const clientSeasonDescriptions: Record<number, string> = {
+      1: "Post-Holiday Steady Procurement",
+      2: "Pre-Fiscal Budget Invoicing",
+      3: "Fiscal Year-End Billing Blitz (Peak Annual Rush)",
+      4: "Financial Year Kickoff & Annual Contracts",
+      5: "Pre-Monsoon Peak Manufacturing",
+      6: "Standard Summer Operations",
+      7: "Monsoon Slump (Transport Slowdown & Civil Works Halt)",
+      8: "Monsoon Recovery & Festive Planning",
+      9: "Post-Monsoon Industrial Surge & Machine Maintenance",
+      10: "Peak Festive Manufacturing & Wholesale Dispatch",
+      11: "Diwali Trade Week & Restocking Replenishment",
+      12: "Q3 Fiscal Closing & Year-End Procurement"
+    };
+
+    const clientSeasonDrivers: Record<number, string> = {
+      1: "Post-holiday winter resumption; corporate capital budgets unlocked for Q4 execution.",
+      2: "Pre-fiscal budget reviews and advance order placements ahead of March rush.",
+      3: "Maximum annual billing peak across Indian wholesale mandis; budget exhaustion, tax planning, and depreciation claims before March 31.",
+      4: "New financial year kickoff; annual rate contracts take effect with fresh capital allocations.",
+      5: "Pre-monsoon manufacturing peak; industrial factories build inventory of belting and spares before rains disrupt supply chains.",
+      6: "Standard summer production; initial monsoon arrival in Southern and Eastern states.",
+      7: "Peak monsoon slowdown; flooded logistics corridors, mining halts, and outdoor civil works suspension cause the sharpest annual slump.",
+      8: "Monsoon continuation; transition towards pre-festive machinery servicing and dealer replenishment.",
+      9: "Vishwakarma Puja industrial servicing surge; factories and workshops overhaul plant machinery before the festival quarter.",
+      10: "Peak festive production and dispatch; wholesale dealers and retailers stock up for Navratri, Dussehra, and Diwali.",
+      11: "Diwali trade week; brief market closures followed by heavy post-festive restock orders.",
+      12: "Q3 fiscal closing and calendar year-end target achievement rush."
+    };
+
+    // --- Multi-Year Seasonal Intelligence & Empirical Learning ---
+    // Scans all years in salesByDate to build empirical monthly multipliers and surge/slump classification
+    const fyMonthOrder = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
+    const monthNamesMap: Record<number, [string, string]> = {
+      1: ["January", "Jan"], 2: ["February", "Feb"], 3: ["March", "Mar"],
+      4: ["April", "Apr"], 5: ["May", "May"], 6: ["June", "Jun"],
+      7: ["July", "Jul"], 8: ["August", "Aug"], 9: ["September", "Sep"],
+      10: ["October", "Oct"], 11: ["November", "Nov"], 12: ["December", "Dec"]
+    };
+
+    const salesByYearMonth: Record<number, Record<number, { total: number; days: number }>> = {};
+    const yearTotals: Record<number, { total: number; days: number }> = {};
+    const historicalSalesMatrix: Record<number, Record<string, number>> = {
+      1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {}, 7: {}, 8: {}, 9: {}, 10: {}, 11: {}, 12: {}
+    };
+
+    for (const d of positiveDates) {
+      const amt = salesByDate[d] || 0;
+      if (amt <= 0) continue;
+      const parts = d.split("-");
+      const yr = parseInt(parts[0], 10);
+      const mo = parseInt(parts[1], 10);
+
+      if (!salesByYearMonth[yr]) salesByYearMonth[yr] = {};
+      if (!salesByYearMonth[yr][mo]) salesByYearMonth[yr][mo] = { total: 0, days: 0 };
+      salesByYearMonth[yr][mo].total += amt;
+      salesByYearMonth[yr][mo].days += 1;
+
+      if (!yearTotals[yr]) yearTotals[yr] = { total: 0, days: 0 };
+      yearTotals[yr].total += amt;
+      yearTotals[yr].days += 1;
+    }
+
+    const empiricalMonthlyIndices: Record<number, number> = {};
+    const usableYears = Object.keys(yearTotals).map(Number).sort();
+    const yearlyBreakdown: Record<string, any> = {};
+
+    for (const yr of usableYears) {
+      const yrInfo = yearTotals[yr];
+      const yrDailyMean = yrInfo.total / Math.max(1, yrInfo.days);
+      const mDetails: Record<string, any> = {};
+
+      for (let m = 1; m <= 12; m++) {
+        const mInfo = salesByYearMonth[yr]?.[m];
+        if (mInfo && mInfo.total > 0) {
+          historicalSalesMatrix[m][String(yr)] = Math.round(mInfo.total * 100) / 100;
+          const mDailyMean = mInfo.total / Math.max(1, mInfo.days);
+          const surgePct = Math.round(((mDailyMean - yrDailyMean) / (yrDailyMean || 1)) * 1000) / 10;
+          const mStatus = surgePct >= 15.0 ? "SURGE" : (surgePct <= -15.0 ? "LOW" : "STEADY");
+          mDetails[String(m)] = {
+            month: m,
+            month_name: monthNamesMap[m][0],
+            total_sales: Math.round(mInfo.total * 100) / 100,
+            daily_mean: Math.round(mDailyMean * 100) / 100,
+            surge_pct: surgePct,
+            status: mStatus,
+            active_days: mInfo.days
+          };
+        }
+      }
+
+      yearlyBreakdown[String(yr)] = {
+        year: yr,
+        total_sales: Math.round(yrInfo.total * 100) / 100,
+        daily_mean: Math.round(yrDailyMean * 100) / 100,
+        recorded_days: yrInfo.days,
+        months: mDetails
+      };
+    }
+
+    // Cross-year recency weighted aggregation
+    for (let m = 1; m <= 12; m++) {
+      let weightedSum = 0;
+      let weightTotal = 0;
+      for (let rank = 0; rank < usableYears.length; rank++) {
+        const yr = usableYears[rank];
+        const mInfo = salesByYearMonth[yr]?.[m];
+        const yrMean = yearTotals[yr]?.total ? (yearTotals[yr].total / Math.max(1, yearTotals[yr].days)) : 0;
+        if (mInfo && yrMean > 0) {
+          const mMean = mInfo.total / Math.max(1, mInfo.days);
+          const idx = mMean / yrMean;
+          const weight = 1.0 + 0.6 * rank;
+          weightedSum += idx * weight;
+          weightTotal += weight;
+        }
+      }
+      if (weightTotal > 0) {
+        empiricalMonthlyIndices[m] = Math.round(Math.min(Math.max(weightedSum / weightTotal, 0.45), 2.20) * 1000) / 1000;
+      }
+    }
+
+    const seasonCalendar: Array<{
+      month_num: number;
+      fy_order: number;
+      month_name: string;
+      short_name: string;
+      multiplier: number;
+      status: "SURGE" | "LOW" | "STEADY";
+      surge_pct_label: string;
+      surge_pct_value: number;
+      season_name: string;
+      driver: string;
+      historical_sales_by_year: Record<string, number>;
+      is_empirical: boolean;
+    }> = [];
+    const surgeMonthsList: string[] = [];
+    const slumpMonthsList: string[] = [];
+    const effectiveSeasonalMultipliers: Record<number, number> = {};
+
+    fyMonthOrder.forEach((m, idx) => {
+      const domainMult = clientB2bSeasonalIndices[m] || 1.0;
+      const hasEmpirical = m in empiricalMonthlyIndices;
+      const effectiveMult = hasEmpirical && usableYears.length >= 1
+        ? Math.round((0.65 * empiricalMonthlyIndices[m] + 0.35 * domainMult) * 1000) / 1000
+        : domainMult;
+
+      effectiveSeasonalMultipliers[m] = effectiveMult;
+      const pctDiff = Math.round((effectiveMult - 1.0) * 1000) / 10;
+      const pctLabel = pctDiff > 0 ? `+${pctDiff}%` : `${pctDiff}%`;
+
+      let mStatus: "SURGE" | "LOW" | "STEADY" = "STEADY";
+      if (effectiveMult >= 1.15) {
+        mStatus = "SURGE";
+        surgeMonthsList.push(`${monthNamesMap[m][0]} (${pctLabel})`);
+      } else if (effectiveMult <= 0.85) {
+        mStatus = "LOW";
+        slumpMonthsList.push(`${monthNamesMap[m][0]} (${pctLabel})`);
+      }
+
+      seasonCalendar.push({
+        month_num: m,
+        fy_order: idx + 1,
+        month_name: monthNamesMap[m][0],
+        short_name: monthNamesMap[m][1],
+        multiplier: effectiveMult,
+        status: mStatus,
+        surge_pct_label: pctLabel,
+        surge_pct_value: pctDiff,
+        season_name: clientSeasonDescriptions[m] || "Standard Operations",
+        driver: clientSeasonDrivers[m] || "Regular wholesale commercial flow.",
+        historical_sales_by_year: historicalSalesMatrix[m] || {},
+        is_empirical: hasEmpirical
+      });
+    });
+
+    const hasMultiYear = usableYears.length >= 2;
+    const dataNote = hasMultiYear
+      ? `Season-wise demand curves synthesized from ${usableYears.length} historical years (${usableYears.join(", ")}) with recency-weighted multi-year blending.`
+      : usableYears.length === 1
+      ? `Season-wise demand calibrated from available ${usableYears[0]} historical transactions and enriched with Indian B2B wholesale seasonal benchmarks.`
+      : "Season-wise demand mapped using Indian B2B wholesale industrial benchmark calendar.";
+
+    const seasonalMapping = {
+      has_multi_year: hasMultiYear,
+      years_analyzed: usableYears,
+      yearly_breakdown: yearlyBreakdown,
+      season_calendar: seasonCalendar,
+      top_surge_months: surgeMonthsList,
+      top_slump_months: slumpMonthsList,
+      empirical_indices: empiricalMonthlyIndices,
+      effective_indices: effectiveSeasonalMultipliers,
+      data_status_description: dataNote
+    };
+
     const anchorMonth = anchorDate.getMonth() + 1;
-    const anchorSeasonalFactor = clientB2bSeasonalIndices[anchorMonth] || 1.0;
+    const anchorSeasonalFactor = effectiveSeasonalMultipliers[anchorMonth] || clientB2bSeasonalIndices[anchorMonth] || 1.0;
 
     const forecastList: Array<{
       date: string;
@@ -1093,9 +1344,9 @@ export class LocalAnalyticsEngine {
         baseProj *= 0.88;
       }
 
-      // B2B Seasonal Index
+      // B2B Seasonal Index (Multi-Year empirical blended)
       const fMonth = futureD.getMonth() + 1;
-      const seasonalFactor = clientB2bSeasonalIndices[fMonth] || 1.0;
+      const seasonalFactor = effectiveSeasonalMultipliers[fMonth] || clientB2bSeasonalIndices[fMonth] || 1.0;
       const relativeSeasonal = seasonalFactor / Math.max(0.5, anchorSeasonalFactor);
       baseProj *= relativeSeasonal;
 
@@ -1441,6 +1692,7 @@ export class LocalAnalyticsEngine {
       historical_summary: historicalSummary,
       financial_momentum_summary: financialMomentumSummary,
       historical_daily_average: avgSales,
+      seasonal_mapping: seasonalMapping,
       factors_analyzed: {
         yoy_seasonality_applied: true,
         yoy_summary: hasYoyHistory ? yoySummary : "Calibrated Indian B2B Industrial Distribution Index",
@@ -1455,6 +1707,11 @@ export class LocalAnalyticsEngine {
         open_proforma_pipeline: 0.0,
         stock_health_ratio: 1.0,
         stock_constraint_applied: false,
+        seasonal_mapping: seasonalMapping,
+        has_multi_year_data: hasMultiYear,
+        years_analyzed: usableYears,
+        top_surge_months: surgeMonthsList,
+        top_slump_months: slumpMonthsList,
       },
       monthly_comparison: monthlyComparison
     };

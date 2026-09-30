@@ -141,6 +141,7 @@ function AnalyticsHubContent() {
   const [lineChartMode, setLineChartMode] = useState<"smoothed" | "daily" | "cumulative">("smoothed");
   const [chartViewMode, setChartViewMode] = useState<"combined" | "historical" | "forecast" | "trend">("combined");
   const [historicalRangeDays, setHistoricalRangeDays] = useState<number>(60);
+  const [seasonalFilter, setSeasonalFilter] = useState<"ALL" | "SURGE" | "LOW">("ALL");
 
   // Customer Churn Radar Threshold Controls (30, 60, 90, 120, 240, 360, or custom)
   const [churnDaysThreshold, setChurnDaysThreshold] = useState<number>(60);
@@ -342,12 +343,26 @@ function AnalyticsHubContent() {
     if (combinedList.length > 0) {
       const histItems = combinedList.filter((it: any) => it.is_historical);
       const futureItems = combinedList.filter((it: any) => !it.is_historical);
-      const slicedHist = historicalRangeDays >= 999 ? histItems : histItems.slice(-historicalRangeDays);
+      let slicedHist = histItems;
+      if (historicalRangeDays === 999 && activeFY?.start_date) {
+        slicedHist = histItems.filter((it: any) => it.date >= activeFY.start_date!);
+      } else if (historicalRangeDays >= 9999 || historicalRangeDays === 999) {
+        slicedHist = histItems;
+      } else {
+        slicedHist = histItems.slice(-historicalRangeDays);
+      }
       baseItems = [...slicedHist, ...futureItems];
     } else {
       const histList: any[] = forecast.historical_daily_series || [];
       const futureList: any[] = forecast.daily_forecast || [];
-      const slicedHist = historicalRangeDays >= 999 ? histList : histList.slice(-historicalRangeDays);
+      let slicedHist = histList;
+      if (historicalRangeDays === 999 && activeFY?.start_date) {
+        slicedHist = histList.filter((it: any) => it.date >= activeFY.start_date!);
+      } else if (historicalRangeDays >= 9999 || historicalRangeDays === 999) {
+        slicedHist = histList;
+      } else {
+        slicedHist = histList.slice(-historicalRangeDays);
+      }
       baseItems = [...slicedHist, ...futureList];
     }
 
@@ -1641,6 +1656,7 @@ function AnalyticsHubContent() {
                       { label: "60d", val: 60 },
                       { label: "90d", val: 90 },
                       { label: "All FY", val: 999 },
+                      { label: "All History", val: 9999 },
                     ].map((r) => (
                       <button
                         key={r.val}
@@ -2107,6 +2123,176 @@ function AnalyticsHubContent() {
                 </div>
               </div>
             </div>
+
+            {/* Season-Wise Sales & Demand Mapping Section */}
+            {forecast?.seasonal_mapping && (
+              <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-sm sm:text-base font-semibold text-foreground flex items-center gap-1.5">
+                        <Flame className="w-4 h-4 text-amber-500" />
+                        <span>Season-Wise Sales & Demand Mapping</span>
+                      </h3>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 uppercase tracking-wider">
+                        {forecast.seasonal_mapping.has_multi_year
+                          ? `Multi-Year Synthesis (${forecast.seasonal_mapping.years_analyzed?.join(", ")})`
+                          : forecast.seasonal_mapping.years_analyzed?.length === 1
+                          ? `Calibrated from ${forecast.seasonal_mapping.years_analyzed[0]} Actuals`
+                          : "Indian B2B Seasonal Baseline"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {forecast.seasonal_mapping.data_status_description ||
+                        "Month-by-month demand mapping identifying which months surge or experience seasonal lows across all recorded years."}
+                    </p>
+                  </div>
+
+                  {/* Filter tabs: All 12M | Surges Only | Lows Only */}
+                  <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-xs self-start sm:self-auto">
+                    {[
+                      { label: "All Months (12M)", val: "ALL" },
+                      { label: "🚀 Surges", val: "SURGE" },
+                      { label: "📉 Seasonal Lows", val: "LOW" },
+                    ].map((tab) => (
+                      <button
+                        key={tab.val}
+                        type="button"
+                        onClick={() => setSeasonalFilter(tab.val as any)}
+                        className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
+                          seasonalFilter === tab.val
+                            ? "bg-card text-foreground font-bold shadow-2xs"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Highlights Summary Bar */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 bg-muted/20 border border-border/40 rounded-xl p-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                      <span className="text-base">🚀</span>
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Top Surge Months</div>
+                      <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                        {forecast.seasonal_mapping.top_surge_months?.length > 0
+                          ? forecast.seasonal_mapping.top_surge_months.slice(0, 3).join(", ")
+                          : "March (+50%), October (+35%), September (+25%)"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                      <span className="text-base">📉</span>
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Seasonal Lulls (Monsoon/Transition)</div>
+                      <div className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+                        {forecast.seasonal_mapping.top_slump_months?.length > 0
+                          ? forecast.seasonal_mapping.top_slump_months.slice(0, 2).join(", ")
+                          : "July (-22%), August (-18%)"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                      <Zap className="w-4 h-4 text-primary" />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Intelligent Projection Impact</div>
+                      <div className="text-xs text-foreground font-medium">
+                        Forecast engine dynamically scales daily sales according to these empirical seasonal indices.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 12-Month Season-Wise Grid (April to March) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 pt-1">
+                  {forecast.seasonal_mapping.season_calendar
+                    ?.filter((item: any) => {
+                      if (seasonalFilter === "SURGE") return item.status === "SURGE";
+                      if (seasonalFilter === "LOW") return item.status === "LOW";
+                      return true;
+                    })
+                    .map((item: any) => {
+                      const isSurge = item.status === "SURGE";
+                      const isLow = item.status === "LOW";
+                      const borderClass = isSurge
+                        ? "border-emerald-500/30 bg-emerald-500/[0.03]"
+                        : isLow
+                        ? "border-amber-500/30 bg-amber-500/[0.03]"
+                        : "border-border/40 bg-muted/20";
+                      const badgeClass = isSurge
+                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                        : isLow
+                        ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                        : "bg-muted text-muted-foreground border-border/40";
+
+                      const histYears = Object.keys(item.historical_sales_by_year || {});
+
+                      return (
+                        <div
+                          key={item.month_num}
+                          className={`border rounded-xl p-3.5 flex flex-col justify-between transition-all hover:shadow-xs space-y-2.5 ${borderClass}`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm font-bold text-foreground">
+                                  {item.month_name}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground font-mono">
+                                  (FY #{item.fy_order})
+                                </span>
+                              </div>
+                              <div className="text-[11px] font-semibold text-muted-foreground line-clamp-1">
+                                {item.season_name}
+                              </div>
+                            </div>
+
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border shrink-0 ${badgeClass}`}>
+                              {isSurge ? "🚀 " : isLow ? "📉 " : "⚡ "}
+                              {item.surge_pct_label}
+                            </span>
+                          </div>
+
+                          <p className="text-[11px] text-muted-foreground leading-relaxed line-clamp-2">
+                            {item.driver}
+                          </p>
+
+                          <div className="pt-2 border-t border-border/40 flex items-center justify-between text-[11px]">
+                            <div className="flex items-center gap-1">
+                              <span className="font-semibold text-foreground">
+                                {item.multiplier}x
+                              </span>
+                              <span className="text-muted-foreground text-[10px]">index</span>
+                            </div>
+
+                            {item.is_empirical && histYears.length > 0 ? (
+                              <div className="flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                                <span>₹{Math.round(Object.values(item.historical_sales_by_year as Record<string, number>).reduce((a, b) => a + b, 0)).toLocaleString("en-IN")}</span>
+                                <span className="text-muted-foreground font-normal">({histYears.join(", ")})</span>
+                              </div>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground">
+                                Domain B2B Cycle
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
 
             {/* Dynamic Groww-Style Sales vs Purchases vs Profit Chart */}
             <div className="bg-card border border-border/50 rounded-xl p-5 shadow-2xs space-y-4">
