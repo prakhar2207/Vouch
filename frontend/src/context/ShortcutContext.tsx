@@ -10,12 +10,20 @@ interface ShortcutContextType {
   setIsDateOpen: (open: boolean) => void;
   isAltCOpen: boolean;
   setIsAltCOpen: (open: boolean) => void;
+  isCalculatorOpen: boolean;
+  setIsCalculatorOpen: (open: boolean) => void;
   altCEntityType: "LEDGER" | "PRODUCT";
   setAltCEntityType: (type: "LEDGER" | "PRODUCT") => void;
   workingDate: string;
   setWorkingDate: (date: string) => void;
   registerSaveHandler: (fn: () => void) => () => void;
   triggerSave: () => void;
+  registerDeleteLineHandler: (fn: () => void) => () => void;
+  triggerDeleteLine: () => void;
+  registerExportHandler: (fn: () => void) => () => void;
+  triggerExport: () => void;
+  registerEditMasterHandler: (fn: () => void) => () => void;
+  triggerEditMaster: () => void;
   registerAltCCallback: (cb: (entity: any) => void) => void;
   notifyAltCCreated: (entity: any) => void;
   startTour: () => void;
@@ -31,10 +39,14 @@ export function ShortcutProvider({ children }: { children: React.ReactNode }) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isDateOpen, setIsDateOpen] = useState(false);
   const [isAltCOpen, setIsAltCOpen] = useState(false);
+  const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const [altCEntityType, setAltCEntityType] = useState<"LEDGER" | "PRODUCT">("LEDGER");
   const [workingDate, setWorkingDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
 
   const saveHandlerRef = useRef<(() => void) | null>(null);
+  const deleteLineHandlerRef = useRef<(() => void) | null>(null);
+  const exportHandlerRef = useRef<(() => void) | null>(null);
+  const editMasterHandlerRef = useRef<(() => void) | null>(null);
   const altCCallbackRef = useRef<((entity: any) => void) | null>(null);
   const tourStarterRef = useRef<(() => void) | null>(null);
 
@@ -50,6 +62,57 @@ export function ShortcutProvider({ children }: { children: React.ReactNode }) {
   const triggerSave = useCallback(() => {
     if (saveHandlerRef.current) {
       saveHandlerRef.current();
+    }
+  }, []);
+
+  const registerDeleteLineHandler = useCallback((fn: () => void) => {
+    deleteLineHandlerRef.current = fn;
+    return () => {
+      if (deleteLineHandlerRef.current === fn) {
+        deleteLineHandlerRef.current = null;
+      }
+    };
+  }, []);
+
+  const triggerDeleteLine = useCallback(() => {
+    if (deleteLineHandlerRef.current) {
+      deleteLineHandlerRef.current();
+    } else if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("vouch:delete-line"));
+    }
+  }, []);
+
+  const registerExportHandler = useCallback((fn: () => void) => {
+    exportHandlerRef.current = fn;
+    return () => {
+      if (exportHandlerRef.current === fn) {
+        exportHandlerRef.current = null;
+      }
+    };
+  }, []);
+
+  const triggerExport = useCallback(() => {
+    if (exportHandlerRef.current) {
+      exportHandlerRef.current();
+    } else {
+      router.push("/export/tally");
+    }
+  }, [router]);
+
+  const registerEditMasterHandler = useCallback((fn: () => void) => {
+    editMasterHandlerRef.current = fn;
+    return () => {
+      if (editMasterHandlerRef.current === fn) {
+        editMasterHandlerRef.current = null;
+      }
+    };
+  }, []);
+
+  const triggerEditMaster = useCallback(() => {
+    if (editMasterHandlerRef.current) {
+      editMasterHandlerRef.current();
+    } else if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("vouch:edit-master"));
     }
   }, []);
 
@@ -134,9 +197,44 @@ export function ShortcutProvider({ children }: { children: React.ReactNode }) {
     router.push("/vouchers/credit-note?type=DEBIT_NOTE");
   }, { enableOnFormTags: true });
 
-  // Esc: Close open modal or Go Back
+  // Alt + N or Ctrl + N or Alt + K: Tally Calculator (Alt+N avoids browser Ctrl+N "New Window" conflict)
+  useHotkeys(["alt+n", "option+n", "alt+k", "ctrl+n", "meta+n"], (e) => {
+    e.preventDefault();
+    setIsCalculatorOpen((prev) => !prev);
+  }, { enableOnFormTags: true });
+
+  // Ctrl + M: Close Calculator / Return to Voucher Entry
+  useHotkeys(["ctrl+m", "meta+m"], (e) => {
+    if (isCalculatorOpen) {
+      e.preventDefault();
+      setIsCalculatorOpen(false);
+    }
+  }, { enableOnFormTags: true });
+
+  // Alt + D: Delete Line Item or Voucher
+  useHotkeys(["alt+d", "option+d"], (e) => {
+    e.preventDefault();
+    triggerDeleteLine();
+  }, { enableOnFormTags: true });
+
+  // Alt + E: Export to Excel / CSV / Tally
+  useHotkeys(["alt+e", "option+e"], (e) => {
+    e.preventDefault();
+    triggerExport();
+  }, { enableOnFormTags: true });
+
+  // Ctrl + Enter: Alter / Edit Master Inline
+  useHotkeys(["ctrl+enter", "meta+enter"], (e) => {
+    e.preventDefault();
+    triggerEditMaster();
+  }, { enableOnFormTags: true });
+
+  // Esc: Close open modal / calculator or Go Back
   useHotkeys("escape", (e) => {
-    if (isHelpOpen || isDateOpen || isAltCOpen) {
+    if (isCalculatorOpen) {
+      e.preventDefault();
+      setIsCalculatorOpen(false);
+    } else if (isHelpOpen || isDateOpen || isAltCOpen) {
       e.preventDefault();
       setIsHelpOpen(false);
       setIsDateOpen(false);
@@ -184,12 +282,20 @@ export function ShortcutProvider({ children }: { children: React.ReactNode }) {
         setIsDateOpen,
         isAltCOpen,
         setIsAltCOpen,
+        isCalculatorOpen,
+        setIsCalculatorOpen,
         altCEntityType,
         setAltCEntityType,
         workingDate,
         setWorkingDate,
         registerSaveHandler,
         triggerSave,
+        registerDeleteLineHandler,
+        triggerDeleteLine,
+        registerExportHandler,
+        triggerExport,
+        registerEditMasterHandler,
+        triggerEditMaster,
         registerAltCCallback,
         notifyAltCCreated,
         startTour,

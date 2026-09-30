@@ -9,6 +9,7 @@ from .views import (
     PurchasePeriodSummaryAPIView, CheckDuplicateVoucherAPIView
 )
 from .ocr_views import OCRExtractAPIView
+from .task_views import TaskStatusAPIView
 from .proforma_views import (
     ListCreateProformaAPIView, ProformaDetailAPIView, ConvertProformaToInvoiceAPIView
 )
@@ -111,5 +112,7 @@ urlpatterns = [
     path('sync/pull/', apps.accounting.sync_views.SyncPullAPIView.as_view(), name='accounting_sync_pull'),
     path('sync/push/', apps.accounting.sync_views.SyncPushAPIView.as_view(), name='accounting_sync_push'),
     path('sync/stream/', apps.accounting.sync_views.SyncStreamAPIView.as_view(), name='accounting_sync_stream'),
+    # Asynchronous Background Task Polling
+    path('tasks/<str:task_id>/', TaskStatusAPIView.as_view(), name='task_status'),
 ]
 

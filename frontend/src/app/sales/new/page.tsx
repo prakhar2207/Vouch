@@ -9,15 +9,16 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useShortcuts } from '@/context/ShortcutContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
 import { useToast } from '@/context/ToastContext';
-import { ChevronDown, ScanBarcode, AlertTriangle, CheckCircle2, ArrowRight, Hash, Plus } from 'lucide-react';
+import { ChevronDown, ScanBarcode, AlertTriangle, CheckCircle2, ArrowRight, Hash, Plus, Calculator, Sparkles, RefreshCw } from 'lucide-react';
 import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
 
 export default function SalesPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const { workingDate, registerSaveHandler, registerAltCCallback } = useShortcuts();
+  const { workingDate, registerSaveHandler, registerAltCCallback, registerDeleteLineHandler, registerEditMasterHandler, setIsCalculatorOpen } = useShortcuts();
   const { activeFY, isReadOnly } = useFinancialYear();
+  const [activeRow, setActiveRow] = useState<{ gIndex: number; iIndex: number } | null>(null);
   const [seqPreview, setSeqPreview] = useState('');
   const [companyId, setCompanyId] = useState('');
   const [company, setCompany] = useState<any>(null);
@@ -56,10 +57,47 @@ export default function SalesPage() {
   const [partyRates, setPartyRates] = useState<Record<string, any>>({});
   const [loadingPartyRates, setLoadingPartyRates] = useState(false);
   const [groupedItems, setGroupedItems] = useState<any[]>([
-    { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: 0 } ] }
+    { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: 0, purchase_cost: 0, last_party_rate: null, last_party_date: null, last_party_vnum: null } ] }
   ]);
   const [barcodeInput, setBarcodeInput] = useState('');
   const barcodeInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Tally Alt + D: Delete current line item
+  useEffect(() => {
+    return registerDeleteLineHandler(() => {
+      if (activeRow) {
+        removeRow(activeRow.gIndex, activeRow.iIndex);
+      } else {
+        setGroupedItems(prev => {
+          const lastGIdx = prev.length - 1;
+          if (lastGIdx < 0) return prev;
+          const lastGroup = prev[lastGIdx];
+          if (lastGroup.items.length > 1) {
+            return prev.map((g, idx) => idx === lastGIdx ? { ...g, items: g.items.slice(0, -1) } : g);
+          } else if (prev.length > 1) {
+            return prev.slice(0, -1);
+          }
+          return prev;
+        });
+      }
+    });
+  }, [registerDeleteLineHandler, activeRow]);
+
+  // Tally Ctrl + Enter: Edit focused Master inline
+  useEffect(() => {
+    return registerEditMasterHandler(() => {
+      if (activeRow) {
+        const item = groupedItems[activeRow.gIndex]?.items[activeRow.iIndex];
+        if (item?.product_id) {
+          window.open(`/inventory/items?edit=${item.product_id}`, '_blank');
+          return;
+        }
+      }
+      if (partyLedgerId) {
+        window.open(`/sales/customers/${partyLedgerId}`, '_blank');
+      }
+    });
+  }, [registerEditMasterHandler, activeRow, groupedItems, partyLedgerId]);
 
   useEffect(() => {
     if (workingDate) {
@@ -262,14 +300,16 @@ export default function SalesPage() {
                 rate: Number(pastRateInfo.rate),
                 last_party_rate: Number(pastRateInfo.rate),
                 last_party_date: pastRateInfo.voucher_date,
-                last_party_vnum: pastRateInfo.voucher_number
+                last_party_vnum: pastRateInfo.voucher_number,
+                purchase_cost: pastRateInfo.purchase_cost ?? item.purchase_cost ?? 0
               };
             }
             return {
               ...item,
               last_party_rate: null,
               last_party_date: null,
-              last_party_vnum: null
+              last_party_vnum: null,
+              purchase_cost: pastRateInfo?.purchase_cost ?? item.purchase_cost ?? 0
             };
           })
         })));
@@ -542,6 +582,9 @@ export default function SalesPage() {
     const keyBrand = `${cleanName}|${cleanBrand}`;
     const pastRateInfo = (keyId && partyRates[keyId]) || partyRates[keyBrand] || partyRates[cleanName];
 
+    const purchaseCost = pastRateInfo?.purchase_cost ?? parseFloat(prod.purchase_price) ?? 0;
+    item.purchase_cost = purchaseCost;
+
     if (pastRateInfo && Number(pastRateInfo.rate) > 0) {
       item.rate = Number(pastRateInfo.rate);
       item.last_party_rate = Number(pastRateInfo.rate);
@@ -611,6 +654,8 @@ export default function SalesPage() {
         const cleanBrand = String(match.brand || brandName).trim().toLowerCase();
         const keyBrand = `${cleanName}|${cleanBrand}`;
         const pastRateInfo = (keyId && partyRates[keyId]) || partyRates[keyBrand];
+        const purchaseCost = pastRateInfo?.purchase_cost ?? parseFloat(match.purchase_price) ?? 0;
+        item.purchase_cost = purchaseCost;
 
         if (pastRateInfo && Number(pastRateInfo.rate) > 0) {
           item.rate = Number(pastRateInfo.rate);
@@ -704,6 +749,8 @@ export default function SalesPage() {
           const cleanBrand = String(match.brand || item.brand || '').trim().toLowerCase();
           const keyBrand = `${cleanName}|${cleanBrand}`;
           const pastRateInfo = (keyId && partyRates[keyId]) || partyRates[keyBrand] || partyRates[cleanName];
+          const purchaseCost = pastRateInfo?.purchase_cost ?? parseFloat(match.purchase_price) ?? 0;
+          item.purchase_cost = purchaseCost;
 
           if (pastRateInfo && Number(pastRateInfo.rate) > 0) {
             item.rate = Number(pastRateInfo.rate);
@@ -759,14 +806,38 @@ export default function SalesPage() {
       unit: 'PCS',
       quantity: 1, 
       rate: 0, 
-      discount_percent: currentPartyDiscount 
+      discount_percent: currentPartyDiscount,
+      purchase_cost: 0,
+      last_party_rate: null,
+      last_party_date: null,
+      last_party_vnum: null
     });
     setGroupedItems(newGroups);
   };
 
   const removeRow = (gIndex: number, iIndex: number) => {
     const newGroups = [...groupedItems];
-    if (newGroups[gIndex].items.length === 1) return;
+    if (newGroups[gIndex].items.length === 1) {
+      if (newGroups.length > 1) {
+        setGroupedItems(newGroups.filter((_, idx) => idx !== gIndex));
+      } else {
+        newGroups[gIndex].items[0] = {
+          product_name: '',
+          product_id: '',
+          brand: '',
+          unit: 'PCS',
+          quantity: 1,
+          rate: 0,
+          discount_percent: currentPartyDiscount,
+          purchase_cost: 0,
+          last_party_rate: null,
+          last_party_date: null,
+          last_party_vnum: null
+        };
+        setGroupedItems(newGroups);
+      }
+      return;
+    }
     newGroups[gIndex].items = newGroups[gIndex].items.filter((_: any, i: number) => i !== iIndex);
     setGroupedItems(newGroups);
   };
@@ -1474,26 +1545,37 @@ export default function SalesPage() {
                                         const taxable = gross - discount;
                                         
                                         return (
-                                        <tr key={iIndex} className="hover:bg-muted/40 transition-colors">
-                                            <td className="p-2 relative">
+                                        <tr 
+                                          key={iIndex} 
+                                          className={`transition-colors ${
+                                            activeRow?.gIndex === gIndex && activeRow?.iIndex === iIndex 
+                                              ? 'bg-muted/60' 
+                                              : 'hover:bg-muted/40'
+                                          }`}
+                                          onClick={() => setActiveRow({ gIndex, iIndex })}
+                                        >
+                                            <td className="p-2 relative align-top">
                                                 <div className="relative">
                                                     <input 
                                                         type="text" 
-                                                        placeholder="e.g. Item Name or Size" 
+                                                        placeholder="e.g. Item Name, Size, or Brand" 
                                                         value={item.product_name} 
                                                         onChange={e => {
                                                             updateItem(gIndex, iIndex, 'product_name', e.target.value);
                                                             setActiveSearch(`${gIndex}-${iIndex}`);
                                                         }} 
-                                                        onFocus={() => setActiveSearch(`${gIndex}-${iIndex}`)}
+                                                        onFocus={() => {
+                                                            setActiveSearch(`${gIndex}-${iIndex}`);
+                                                            setActiveRow({ gIndex, iIndex });
+                                                        }}
                                                         onBlur={() => setTimeout(() => setActiveSearch(null), 250)}
                                                         className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-sm font-medium" 
                                                     />
 
-                                                    {/* Autocomplete Dropdown Popover */}
+                                                    {/* Autocomplete Dropdown Popover with Cross-Brand Search */}
                                                     {activeSearch === `${gIndex}-${iIndex}` && (
                                                         <div 
-                                                            className="absolute left-0 top-full mt-1 z-50 w-full min-w-[340px] max-w-[480px] bg-card border border-border rounded-xl shadow-2xl overflow-hidden max-h-64 overflow-y-auto"
+                                                            className="absolute left-0 top-full mt-1 z-50 w-full min-w-[360px] max-w-[520px] bg-card border border-border rounded-xl shadow-2xl overflow-hidden max-h-80 overflow-y-auto"
                                                             onMouseDown={(e) => e.preventDefault()}
                                                         >
                                                             {(() => {
@@ -1507,16 +1589,28 @@ export default function SalesPage() {
                                                                     const pBrand = (p.brand || '').toLowerCase();
                                                                     const pAlias = (p.alias || '').toLowerCase();
                                                                     const pSku = (p.sku || '').toLowerCase();
+                                                                    const pDesc = (p.description || '').toLowerCase();
                                                                     return (
                                                                         pName.includes(query) ||
                                                                         pAlpha.includes(queryAlpha) ||
                                                                         pBrand.includes(query) ||
                                                                         pAlias.includes(query) ||
-                                                                        pSku.includes(query)
+                                                                        pSku.includes(query) ||
+                                                                        pDesc.includes(query)
                                                                     );
                                                                 });
 
-                                                                if (filteredProds.length === 0) {
+                                                                // Extract core dimension / size token for cross-brand comparison (e.g. "c88", "b65", "6204", "2235")
+                                                                const sizeMatch = queryAlpha.match(/([a-z]{0,3}\d{2,5}[a-z]{0,2})/);
+                                                                const coreSizeToken = sizeMatch ? sizeMatch[0] : (queryAlpha.length >= 2 ? queryAlpha : '');
+                                                                const crossBrandEquivalents = coreSizeToken.length >= 2 ? products.filter((p: any) => {
+                                                                    const pAlpha = (p.name || '').toLowerCase().replace(/[\s\-_/.]/g, '');
+                                                                    const aAlpha = (p.alias || '').toLowerCase().replace(/[\s\-_/.]/g, '');
+                                                                    const dAlpha = (p.description || '').toLowerCase().replace(/[\s\-_/.]/g, '');
+                                                                    return pAlpha.includes(coreSizeToken) || aAlpha.includes(coreSizeToken) || dAlpha.includes(coreSizeToken);
+                                                                }) : [];
+
+                                                                if (filteredProds.length === 0 && crossBrandEquivalents.length === 0) {
                                                                     return (
                                                                         <div className="p-3 text-xs text-muted-foreground italic">
                                                                             No catalog product found. Enter details manually.
@@ -1526,9 +1620,61 @@ export default function SalesPage() {
 
                                                                 return (
                                                                     <div className="divide-y divide-border">
+                                                                        {/* Cross-Brand Equivalents Bar (Wholesale Reality) */}
+                                                                        {crossBrandEquivalents.length > 1 && (
+                                                                            <div className="bg-blue-950/40 border-b border-blue-500/30 p-2.5">
+                                                                                <div className="flex items-center justify-between mb-1.5">
+                                                                                    <div className="flex items-center gap-1.5 text-xs font-bold text-blue-400">
+                                                                                        <RefreshCw className="w-3.5 h-3.5 animate-spin-slow text-blue-400" />
+                                                                                        <span>Cross-Brand Equivalents ({crossBrandEquivalents.length} brands in size "{coreSizeToken.toUpperCase()}")</span>
+                                                                                    </div>
+                                                                                    <span className="text-[10px] text-muted-foreground">Click to select in-stock brand</span>
+                                                                                </div>
+                                                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                                                                    {crossBrandEquivalents.map((altProd: any) => {
+                                                                                        const altStock = Number(altProd.stock_quantity ?? 0);
+                                                                                        const isAltStocked = altStock > 0;
+                                                                                        const altMrp = parseFloat(altProd.selling_price) || 0;
+                                                                                        return (
+                                                                                            <button
+                                                                                                key={altProd.id}
+                                                                                                type="button"
+                                                                                                onClick={() => {
+                                                                                                    selectProduct(gIndex, iIndex, altProd);
+                                                                                                    setActiveSearch(null);
+                                                                                                }}
+                                                                                                className={`p-2 rounded-lg border text-left text-xs transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                                                                                    isAltStocked 
+                                                                                                        ? 'bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30 shadow-2xs' 
+                                                                                                        : 'bg-muted/50 hover:bg-muted border-border/80 opacity-70'
+                                                                                                }`}
+                                                                                            >
+                                                                                                <div className="min-w-0">
+                                                                                                    <div className="font-bold text-foreground flex items-center gap-1.5">
+                                                                                                        <span className="text-primary">{altProd.brand || 'Unbranded'}</span>
+                                                                                                        <span className="text-[11px] font-normal text-muted-foreground truncate">{altProd.name}</span>
+                                                                                                    </div>
+                                                                                                    <div className="text-[10px] font-mono text-muted-foreground">
+                                                                                                        {altMrp > 0 ? `MRP: ₹${altMrp.toFixed(2)}` : 'No MRP'}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                                <div className="text-right whitespace-nowrap">
+                                                                                                    <span className={`text-[11px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                                                                                                        isAltStocked ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
+                                                                                                    }`}>
+                                                                                                        {altStock} {altProd.unit || 'PCS'}
+                                                                                                    </span>
+                                                                                                </div>
+                                                                                            </button>
+                                                                                        );
+                                                                                    })}
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+
                                                                         <div className="bg-muted px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex justify-between border-b border-border">
-                                                                            <span>Catalog SKUs</span>
-                                                                            <span>{filteredProds.length} match{filteredProds.length > 1 ? 'es' : ''}</span>
+                                                                            <span>Matching Catalog SKUs</span>
+                                                                            <span>{filteredProds.length} result{filteredProds.length > 1 ? 's' : ''}</span>
                                                                         </div>
                                                                         {filteredProds.map((p: any) => {
                                                                             const mrp = parseFloat(p.selling_price) || 0;
@@ -1567,7 +1713,7 @@ export default function SalesPage() {
                                                                                             )}
                                                                                         </div>
                                                                                         <div className="text-[11px] text-muted-foreground truncate mt-0.5">
-                                                                                            {p.category} {p.sku ? `• SKU: ${p.sku}` : ''}
+                                                                                            {p.category} {p.sku ? `• SKU: ${p.sku}` : ''} {p.description ? `• ${p.description}` : ''}
                                                                                         </div>
                                                                                     </div>
                                                                                     <div className="text-right whitespace-nowrap pl-2">
@@ -1595,37 +1741,7 @@ export default function SalesPage() {
 
                                                 {item.product_name && (
                                                     <div className="flex items-center gap-2 mt-0.5 px-1.5 flex-wrap">
-                                                        {/* Master MRP (Catalog price - protected from invoice overrides) */}
-                                                        {(() => {
-                                                            const matched = products.find((p: any) => 
-                                                                (item.product_id && p.id === item.product_id) || 
-                                                                (p.name.toLowerCase() === String(item.product_name || '').trim().toLowerCase() && 
-                                                                 (!item.brand || (p.brand || '').toLowerCase() === item.brand.toLowerCase()))
-                             );
-                                                            const catalogMrp = parseFloat(matched?.selling_price || item.mrp || 0);
-                                                            
-                                                            if (catalogMrp > 0) {
-                                                                return (
-                                                                    <span className="text-[11px] font-mono flex items-center gap-1 bg-muted/60 text-muted-foreground border border-border px-2 py-0.5 rounded">
-                                                                        <span className="text-muted-foreground font-sans">MRP:</span>
-                                                                        <strong className="text-foreground">₹{catalogMrp.toFixed(2)}</strong>
-                                                                        {Number(item.rate) !== catalogMrp && (
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={() => updateItem(gIndex, iIndex, 'rate', catalogMrp)}
-                                                                                className="text-[10px] text-blue-400 hover:text-blue-300 ml-1 underline cursor-pointer"
-                                                                                title="Click to apply master catalog MRP to this line"
-                                                                            >
-                                                                                Use MRP
-                                                                            </button>
-                                                                        )}
-                                                                    </span>
-                                                                );
-                                                            }
-                                                            return <span className="text-[11px] text-muted-foreground italic">No MRP stored</span>;
-                                                        })()}
-
-                                                        {/* Party's Remembered Past Sales Rate */}
+                                                        {/* Wholesale Rate History HUD Ribbon (Party Last-Sold, Purchase Cost, Margin, Master MRP) */}
                                                         {(() => {
                                                             const matched = products.find((p: any) => 
                                                                 (item.product_id && p.id === item.product_id) || 
@@ -1637,33 +1753,113 @@ export default function SalesPage() {
                                                             const keyId = item.product_id || matched?.id;
                                                             const keyBrand = `${cleanName}|${cleanBrand}`;
                                                             const pastInfo = (keyId && partyRates[keyId]) || partyRates[keyBrand] || partyRates[cleanName];
+                                                            
                                                             const pastRate = item.last_party_rate ?? (pastInfo ? Number(pastInfo.rate) : null);
+                                                            const purchaseCost = Number(item.purchase_cost || pastInfo?.purchase_cost || matched?.purchase_price || 0);
+                                                            const catalogMrp = parseFloat(matched?.selling_price || item.mrp || 0);
+                                                            const currentRate = Number(item.rate || 0);
+                                                            
+                                                            const vNum = item.last_party_vnum || pastInfo?.voucher_number;
+                                                            const vDate = item.last_party_date || pastInfo?.voucher_date;
+                                                            const partyName = ledgers.find(l => l.id === partyLedgerId)?.name || 'Customer';
 
-                                                            if (pastRate && pastRate > 0) {
-                                                                const partyName = ledgers.find(l => l.id === partyLedgerId)?.name || 'this customer';
-                                                                const vNum = item.last_party_vnum || pastInfo?.voucher_number;
-                                                                const vDate = item.last_party_date || pastInfo?.voucher_date;
-                                                                return (
-                                                                    <span 
-                                                                        className="text-[11px] font-mono flex items-center gap-1 bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded shadow-sm"
-                                                                        title={`Last sold to ${partyName} at ₹${pastRate.toFixed(2)} on ${vDate || 'past invoice'}${vNum ? ` (#${vNum})` : ''}`}
-                                                                    >
-                                                                        <span className="text-emerald-500 font-sans text-[10px]">Party Rate:</span>
-                                                                        <strong className="text-emerald-300">₹{pastRate.toFixed(2)}</strong>
-                                                                        {Number(item.rate) !== pastRate && (
+                                                            const isBelowCost = currentRate > 0 && purchaseCost > 0 && currentRate < purchaseCost;
+                                                            const marginPercent = currentRate > 0 && purchaseCost > 0 
+                                                                ? ((currentRate - purchaseCost) / currentRate) * 100 
+                                                                : null;
+
+                                                            return (
+                                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                                    {/* Last Billed HUD Card */}
+                                                                    {pastRate && pastRate > 0 ? (
+                                                                        <div 
+                                                                            className="text-[11px] font-mono inline-flex items-center gap-1 bg-emerald-950/40 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded shadow-sm"
+                                                                            title={`Last billed to ${partyName} on ${vDate || 'past invoice'} @ ₹${pastRate.toFixed(2)}${vNum ? ` (${vNum})` : ''}`}
+                                                                        >
+                                                                            <span className="text-[10px] text-emerald-400 font-sans font-semibold">Last Sold:</span>
+                                                                            <strong className="text-emerald-200">₹{pastRate.toFixed(2)}</strong>
+                                                                            {vDate && <span className="text-[10px] text-emerald-400/80">({vDate})</span>}
+                                                                            {Number(item.rate) !== pastRate && (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => updateItem(gIndex, iIndex, 'rate', pastRate)}
+                                                                                    className="text-[10px] bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 px-1 py-0.2 rounded ml-1 font-sans cursor-pointer transition-colors"
+                                                                                    title="Apply party's last billed rate"
+                                                                                >
+                                                                                    Apply
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
+                                                                    ) : (
+                                                                        partyLedgerId && (
+                                                                            <span className="text-[10px] font-sans text-muted-foreground/80 bg-muted/30 px-1.5 py-0.5 rounded border border-border/40">
+                                                                                No prior billing to party
+                                                                            </span>
+                                                                        )
+                                                                    )}
+
+                                                                    {/* Purchase Cost HUD Card */}
+                                                                    {purchaseCost > 0 && (
+                                                                        <div 
+                                                                            className="text-[11px] font-mono inline-flex items-center gap-1 bg-slate-800/60 text-slate-300 border border-slate-700/60 px-2 py-0.5 rounded"
+                                                                            title={`Latest purchase cost: ₹${purchaseCost.toFixed(2)}. Click '+25%' to apply standard 25% wholesale margin.`}
+                                                                        >
+                                                                            <span className="text-[10px] text-slate-400 font-sans font-semibold">Cost:</span>
+                                                                            <strong className="text-slate-200">₹{purchaseCost.toFixed(2)}</strong>
                                                                             <button
                                                                                 type="button"
-                                                                                onClick={() => updateItem(gIndex, iIndex, 'rate', pastRate)}
-                                                                                className="text-[10px] text-emerald-400 hover:text-emerald-300 ml-1 underline cursor-pointer"
-                                                                                title="Click to reset to party's past sales rate"
+                                                                                onClick={() => updateItem(gIndex, iIndex, 'rate', Math.round(purchaseCost * 1.25 * 100) / 100)}
+                                                                                className="text-[10px] bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 px-1 py-0.2 rounded ml-1 font-sans cursor-pointer transition-colors"
+                                                                                title="Set rate to Cost + 25% margin"
                                                                             >
-                                                                                Use Past
+                                                                                +25%
                                                                             </button>
-                                                                        )}
-                                                                    </span>
-                                                                );
-                                                            }
-                                                            return null;
+                                                                        </div>
+                                                                    )}
+
+                                                                    {/* Live Margin HUD Card */}
+                                                                    {currentRate > 0 && purchaseCost > 0 && (
+                                                                        <div 
+                                                                            className={`text-[11px] font-mono inline-flex items-center gap-1 px-2 py-0.5 rounded border font-semibold ${
+                                                                                isBelowCost 
+                                                                                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse'
+                                                                                    : marginPercent! >= 20
+                                                                                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                                                                    : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                                                            }`}
+                                                                            title={isBelowCost ? `⚠️ CRITICAL: Selling below cost (-₹${(purchaseCost - currentRate).toFixed(2)} loss/unit)!` : `Current gross margin on this line: ${marginPercent!.toFixed(1)}%`}
+                                                                        >
+                                                                            <span className="font-sans text-[10px]">
+                                                                                {isBelowCost ? '⚠️ Loss:' : 'Margin:'}
+                                                                            </span>
+                                                                            <span>{marginPercent!.toFixed(1)}%</span>
+                                                                            {isBelowCost && (
+                                                                                <span className="text-[10px] text-rose-200">
+                                                                                    (-₹{(purchaseCost - currentRate).toFixed(2)})
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+
+                                                                    {/* Master MRP (Catalog price) */}
+                                                                    {catalogMrp > 0 && (
+                                                                        <div className="text-[11px] font-mono inline-flex items-center gap-1 bg-muted/60 text-muted-foreground border border-border px-2 py-0.5 rounded">
+                                                                            <span className="text-muted-foreground font-sans text-[10px]">MRP:</span>
+                                                                            <strong className="text-foreground">₹{catalogMrp.toFixed(2)}</strong>
+                                                                            {Number(item.rate) !== catalogMrp && (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => updateItem(gIndex, iIndex, 'rate', catalogMrp)}
+                                                                                    className="text-[10px] text-blue-400 hover:text-blue-300 ml-1 underline cursor-pointer"
+                                                                                    title="Click to apply catalog MRP"
+                                                                                >
+                                                                                    Use MRP
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
                                                         })()}
 
                                                         {/* Interactive Brand Switcher Dropdown */}
@@ -1855,6 +2051,7 @@ export default function SalesPage() {
                                                     min="1" 
                                                     value={item.quantity} 
                                                     onChange={e => updateItem(gIndex, iIndex, 'quantity', e.target.value)} 
+                                                    onFocus={() => setActiveRow({ gIndex, iIndex })}
                                                     className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-center text-sm font-mono tabular-nums font-semibold" 
                                                 />
                                                 {(() => {
@@ -1874,24 +2071,47 @@ export default function SalesPage() {
                                                 })()}
                                             </td>
                                             <td className="p-2">
-                                                <input 
-                                                    type="number" 
-                                                    step="0.01"
-                                                    min="0" 
-                                                    placeholder="0.00"
-                                                    value={item.rate === 0 && !item.product_name ? '' : item.rate} 
-                                                    onChange={e => updateItem(gIndex, iIndex, 'rate', e.target.value)} 
-                                                    className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-right text-sm font-mono tabular-nums font-semibold" 
-                                                />
+                                                {(() => {
+                                                    const cost = Number(item.purchase_cost || 0);
+                                                    const rate = Number(item.rate || 0);
+                                                    const isBelowCost = cost > 0 && rate > 0 && rate < cost;
+                                                    return (
+                                                        <div className="relative">
+                                                            <input 
+                                                                type="number" 
+                                                                step="0.01" 
+                                                                min="0" 
+                                                                placeholder="0.00" 
+                                                                value={item.rate === 0 && !item.product_name ? '' : item.rate} 
+                                                                onChange={e => updateItem(gIndex, iIndex, 'rate', e.target.value)} 
+                                                                onFocus={() => setActiveRow({ gIndex, iIndex })}
+                                                                className={`w-full min-h-[34px] rounded-md px-2.5 py-1.5 outline-none transition-all text-right text-sm font-mono tabular-nums font-semibold ${
+                                                                    isBelowCost 
+                                                                        ? 'bg-rose-500/10 border-rose-500 text-rose-300 focus:border-rose-400 ring-2 ring-rose-500/30' 
+                                                                        : 'bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background text-foreground'
+                                                                }`} 
+                                                            />
+                                                            {isBelowCost && (
+                                                                <div 
+                                                                    className="text-[10px] text-rose-400 font-mono tabular-nums text-right font-semibold mt-0.5"
+                                                                    title={`Selling below purchase cost (₹${cost.toFixed(2)})!`}
+                                                                >
+                                                                    ⚠️ Below Cost (-₹{(cost - rate).toFixed(2)})
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
                                             </td>
                                             <td className="p-2">
                                                 <input 
                                                     type="number" 
-                                                    step="0.01"
+                                                    step="0.01" 
                                                     min="0" 
                                                     max="100" 
                                                     value={item.discount_percent} 
                                                     onChange={e => updateItem(gIndex, iIndex, 'discount_percent', e.target.value)} 
+                                                    onFocus={() => setActiveRow({ gIndex, iIndex })}
                                                     className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-center text-sm font-mono tabular-nums font-semibold" 
                                                 />
                                             </td>
@@ -1899,7 +2119,12 @@ export default function SalesPage() {
                                                 ₹{taxable.toFixed(2)}
                                             </td>
                                             <td className="p-2 text-center">
-                                                <button onClick={() => removeRow(gIndex, iIndex)} className="text-muted-foreground hover:text-destructive transition-colors p-1.5 rounded hover:bg-destructive/10 min-w-[32px] min-h-[32px] inline-flex items-center justify-center" title="Remove line item">
+                                                <button 
+                                                    type="button"
+                                                    onClick={() => removeRow(gIndex, iIndex)} 
+                                                    className="text-muted-foreground hover:text-destructive transition-colors p-1.5 rounded hover:bg-destructive/10 min-w-[32px] min-h-[32px] inline-flex items-center justify-center cursor-pointer" 
+                                                    title="Remove line item (Alt + D)"
+                                                >
                                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                                 </button>
                                             </td>

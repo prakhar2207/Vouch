@@ -173,8 +173,10 @@ class ProductListView(APIView):
         try:
             company = Company.objects.get(id=company_id, users__user=request.user)
             category_id = request.query_params.get('category')
+            search_query = request.query_params.get('q') or request.query_params.get('search')
+            brand_filter = request.query_params.get('brand')
             
-            from django.db.models import Exists, OuterRef
+            from django.db.models import Exists, OuterRef, Q
             from apps.accounting.models import VoucherItem
 
             has_posted_purchase_subquery = VoucherItem.objects.filter(
@@ -192,6 +194,21 @@ class ProductListView(APIView):
                     qs = qs.filter(category__isnull=True)
                 else:
                     qs = qs.filter(category_id=category_id)
+
+            if brand_filter:
+                qs = qs.filter(brand__iexact=brand_filter.strip())
+
+            if search_query:
+                terms = [t.strip() for t in search_query.strip().split() if t.strip()]
+                for term in terms:
+                    qs = qs.filter(
+                        Q(name__icontains=term) |
+                        Q(brand__icontains=term) |
+                        Q(alias__icontains=term) |
+                        Q(sku__icontains=term) |
+                        Q(barcode__icontains=term) |
+                        Q(description__icontains=term)
+                    )
                 
             category_stock_val = Decimal('0.00')
             category_retail_val = Decimal('0.00')
@@ -213,6 +230,7 @@ class ProductListView(APIView):
                     "name": p.name,
                     "alias": p.alias or "",
                     "brand": p.brand or "",
+                    "description": p.description or "",
                     "sku": p.sku,
                     "barcode": p.barcode or "",
                     "category": p.category.name if p.category else "Unassigned",

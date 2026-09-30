@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import axios from "axios";
 import { getAccessToken } from "@/utils/auth";
 import { ledgersRepository, productsRepository } from "@/lib/data";
+import { useShortcuts } from "@/context/ShortcutContext";
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -13,6 +14,7 @@ interface CommandPaletteProps {
 
 export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   const router = useRouter();
+  const { setIsCalculatorOpen } = useShortcuts();
   const [query, setQuery] = useState("");
   const [ledgers, setLedgers] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
@@ -62,6 +64,7 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
     { label: "Inventory Products Master", shortcut: "I", action: () => router.push("/inventory") },
     { label: "Parties & Customers List", shortcut: "P", action: () => router.push("/parties") },
     { label: "Payments & Receipts Vouchers", shortcut: "V", action: () => router.push("/vouchers") },
+    { label: "Tally Calculator & GST Tape", shortcut: "Alt+N", action: () => setIsCalculatorOpen(true) },
     { label: "Profile & Company Settings", shortcut: "S", action: () => router.push("/settings") },
   ];
 

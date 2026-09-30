@@ -69,3 +69,7 @@ walkthrough*.md
 implementation_plan*.md
 .system_generated/
 scratch/
+backups/
+*.sql
+*.enc
+

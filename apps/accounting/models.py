@@ -181,6 +181,10 @@ class Voucher(models.Model):
             models.Index(fields=['company', 'financial_year', 'voucher_number']),
             models.Index(fields=['company', 'voucher_date']),
             models.Index(fields=['company', 'status', 'voucher_date']),
+            models.Index(fields=['company', 'status']),
+            models.Index(fields=['company', 'party_ledger', 'voucher_date']),
+            models.Index(fields=['company', 'party_ledger', 'status']),
+            models.Index(fields=['company', 'voucher_type', 'voucher_date']),
             models.Index(fields=['company', 'updated_at']),
         ]
 
@@ -267,6 +271,9 @@ class LedgerEntry(models.Model):
         ]
         indexes = [
             models.Index(fields=['company', 'ledger', 'created_at']),
+            models.Index(fields=['company', 'ledger']),
+            models.Index(fields=['voucher', 'ledger']),
+            models.Index(fields=['company', 'ledger', 'voucher']),
         ]
 
     def save(self, *args, **kwargs):

@@ -27,6 +27,22 @@ class OCRExtractAPIView(APIView):
         custom_api_key = request.headers.get('X-Gemini-Key') or request.data.get('gemini_api_key')
         scan_mode = request.data.get('scan_mode', 'auto')
 
+        is_async = (request.data.get('async') is True or request.query_params.get('async', '').lower() == 'true')
+        if is_async:
+            from .tasks import ocr_invoice_extract_task
+            task = ocr_invoice_extract_task.delay(
+                file_base64,
+                mime_type=mime_type,
+                custom_api_key=custom_api_key,
+                scan_mode=scan_mode
+            )
+            return Response({
+                "success": True,
+                "async": True,
+                "task_id": task.id,
+                "message": "OCR scanning task dispatched to background worker."
+            }, status=status.HTTP_202_ACCEPTED)
+
         try:
             extracted_data = InvoiceOCRService.extract_from_base64(
                 file_base64, 

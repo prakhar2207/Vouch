@@ -35,6 +35,10 @@ export default function HelpModal() {
       shortcuts: [
         { key: "Ctrl + A", label: "Accept / Save Form", desc: "Instantly submit without mouse", active: isVoucherPage },
         { key: "Alt + C", label: "Create on the Fly", desc: "Add new Customer/Product inside form", active: isVoucherPage },
+        { key: "Ctrl + Enter", label: "Alter / Edit Master", desc: "Modify focused Customer/Product without leaving form", active: isVoucherPage },
+        { key: "Alt + D", label: "Delete Line / Voucher", desc: "Delete current line item or voucher", active: isVoucherPage },
+        { key: "Alt + N", label: "Tally Calculator", desc: "Quick arithmetic tape & 1-click GST (Ctrl+N also supported)", active: true },
+        { key: "Alt + E", label: "Export Data", desc: "Export to Excel, CSV, or Tally XML", active: true },
         { key: "Alt + P", label: "Print Active Invoice", desc: "Generate GST print preview", active: isSalesPage || isPurchasePage },
         { key: "Tab / Enter", label: "Next Cell / Field", desc: "Move between input boxes", active: isGridPage || isVoucherPage },
       ],
@@ -44,6 +48,8 @@ export default function HelpModal() {
       shortcuts: [
         { key: "Ctrl + K", label: "Command Palette", desc: "Instant search for ledgers & items", active: true },
         { key: "F2", label: "Change Working Date", desc: "Adjust current voucher date", active: true },
+        { key: "Alt + F2", label: "Change Period", desc: "Switch financial year or date window", active: true },
+        { key: "Ctrl + M", label: "Return from Calculator", desc: "Switch back from calculator to entry", active: true },
         { key: "Esc", label: "Back / Close", desc: "Step back or dismiss popup", active: true },
         { key: "F1", label: "Help & Tutorials", desc: "Toggle this guide anytime", active: true },
       ],

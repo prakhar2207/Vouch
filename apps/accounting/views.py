@@ -2596,12 +2596,27 @@ class PartyRatesAPIView(APIView):
                 return Response({"success": False, "error": "Party ledger not found."}, status=status.HTTP_404_NOT_FOUND)
 
             # Query historical voucher items for this party ordered by date desc
-            items = VoucherItem.objects.filter(
+            items = list(VoucherItem.objects.filter(
                 voucher__company=company,
                 voucher__party_ledger=party_ledger,
                 voucher__voucher_type=v_type,
                 voucher__status__in=['POSTED', 'VALIDATING', 'DRAFT']
-            ).select_related('product', 'voucher').order_by('-voucher__voucher_date', '-voucher__created_at')
+            ).select_related('product', 'voucher').order_by('-voucher__voucher_date', '-voucher__created_at')[:200])
+
+            # Batch fetch recent purchase costs for products in these items
+            product_ids = list({vi.product_id for vi in items if vi.product_id})
+            purchase_cost_map = {}
+            if product_ids:
+                recent_purchases = VoucherItem.objects.filter(
+                    voucher__company=company,
+                    product_id__in=product_ids,
+                    voucher__voucher_type='PURCHASE',
+                    voucher__status__in=['POSTED', 'VALIDATING']
+                ).order_by('product_id', '-voucher__voucher_date', '-voucher__created_at')
+                for pi in recent_purchases:
+                    pid_str = str(pi.product_id)
+                    if pid_str not in purchase_cost_map and pi.rate:
+                        purchase_cost_map[pid_str] = float(pi.rate)
 
             rates_map = {}
             for vi in items:
@@ -2612,17 +2627,24 @@ class PartyRatesAPIView(APIView):
                 pbrand = (vi.product.brand or '').strip().lower()
                 key_brand = f"{pname}|{pbrand}"
 
+                # Latest purchase cost from purchase invoices or product master purchase price
+                purchase_cost = purchase_cost_map.get(pid, float(vi.product.purchase_price or 0))
+                rate_val = float(vi.rate)
+                margin_percent = round(((rate_val - purchase_cost) / rate_val) * 100, 1) if rate_val > 0 and purchase_cost > 0 else 0.0
+
                 # First seen is the latest due to descending ordering
                 if pid not in rates_map:
                     entry = {
                         "product_id": pid,
                         "product_name": vi.product.name,
                         "brand": vi.product.brand or "",
-                        "rate": float(vi.rate),
+                        "rate": rate_val,
                         "discount_percent": float(vi.discount_percent),
                         "voucher_number": vi.voucher.voucher_number,
                         "voucher_date": vi.voucher.voucher_date.strftime('%Y-%m-%d') if vi.voucher.voucher_date else "",
-                        "mrp": float(vi.product.selling_price or 0)
+                        "mrp": float(vi.product.selling_price or 0),
+                        "purchase_cost": purchase_cost,
+                        "margin_percent": margin_percent,
                     }
                     rates_map[pid] = entry
                     if key_brand not in rates_map:
@@ -2648,6 +2670,17 @@ class RebuildBalancesAPIView(APIView):
                 company = Company.objects.filter(users__user=request.user).first()
             if not company:
                 return Response({"success": False, "error": "Company not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            is_async = (request.data.get('async') is True or request.query_params.get('async', '').lower() == 'true')
+            if is_async:
+                from apps.accounting.tasks import rebuild_company_balances_task
+                task = rebuild_company_balances_task.delay(str(company.id), str(request.user.id))
+                return Response({
+                    "success": True,
+                    "async": True,
+                    "task_id": task.id,
+                    "message": "Bulk balance rebuild task dispatched to background worker."
+                }, status=status.HTTP_202_ACCEPTED)
 
             res = BalanceRebuildService.rebuild_company_ledger_balances(company)
             return Response({

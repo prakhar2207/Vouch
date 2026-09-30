@@ -65,6 +65,7 @@ INSTALLED_APPS = [
     'apps.documents',
     'apps.notifications',
     'apps.superadmin',
+    'apps.common',
 ]
 
 AUTH_USER_MODEL = 'accounts.User'
@@ -193,6 +194,30 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # Celery Configuration
 CELERY_BROKER_URL = env('REDIS_URL', default='redis://127.0.0.1:6379/0')
 CELERY_TASK_ALWAYS_EAGER = env.bool('CELERY_TASK_ALWAYS_EAGER', default=DEBUG)
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+
+# Automated Nightly Celery Beat Schedule (02:00 AM IST)
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    'nightly-disaster-recovery-backup': {
+        'task': 'apps.accounting.tasks.automated_nightly_backup_task',
+        'schedule': crontab(hour=20, minute=30),  # 20:30 UTC = 02:00 AM IST
+        'kwargs': {'upload_s3': True, 'encrypt': True},
+    },
+}
+
+# Off-site Disaster Recovery & Cloud Storage Settings
+BACKUP_RETENTION_DAYS = env.int('BACKUP_RETENTION_DAYS', default=7)
+BACKUP_ENCRYPTION_KEY = env('BACKUP_ENCRYPTION_KEY', default=SECRET_KEY)
+BACKUP_S3_BUCKET = env('BACKUP_S3_BUCKET', default=None)
+AWS_STORAGE_BUCKET_NAME = env('AWS_STORAGE_BUCKET_NAME', default=None)
+AWS_ACCESS_KEY_ID = env('AWS_ACCESS_KEY_ID', default=None)
+AWS_SECRET_ACCESS_KEY = env('AWS_SECRET_ACCESS_KEY', default=None)
+AWS_S3_REGION_NAME = env('AWS_S3_REGION_NAME', default='ap-south-1')
 
 from datetime import timedelta
 

@@ -54,6 +54,7 @@ import { PeriodProvider } from "@/context/PeriodContext";
 import YearEndClosingModal from "@/components/modals/YearEndClosingModal";
 import PeriodModal from "@/components/modals/PeriodModal";
 import SplitCompanyModal from "@/components/modals/SplitCompanyModal";
+import TallyCalculator from "@/components/accounting/TallyCalculator";
 
 export default function RootLayout({
   children,
@@ -81,6 +82,7 @@ export default function RootLayout({
                     <HelpModal />
                     <QuickCreateModal />
                     <YearEndClosingModal />
+                    <TallyCalculator />
                     <OnboardingTour />
                     <PWAInstallPrompt />
                     <OfflineSyncHandler />

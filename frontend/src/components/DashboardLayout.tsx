@@ -37,6 +37,7 @@ import {
 
   Check,
   Plus,
+  Calculator,
 } from "lucide-react";
 import SyncStatusBadge from "./SyncStatusBadge";
 
@@ -62,7 +63,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const fyRef = useRef<HTMLDivElement>(null);
   const companyRef = useRef<HTMLDivElement>(null);
 
-  const { setIsHelpOpen, setIsDateOpen, workingDate, startTour } = useShortcuts();
+  const { setIsHelpOpen, setIsDateOpen, workingDate, startTour, isCalculatorOpen, setIsCalculatorOpen } = useShortcuts();
   const { activeFY, availableFYs, setActiveFY, isReadOnly, setIsClosingModalOpen } = useFinancialYear();
   const { displayPeriod, setIsPeriodModalOpen, setIsSplitModalOpen } = useAccountingPeriod();
   const { activeCompany, availableCompanies, setActiveCompany } = useCompany();
@@ -765,6 +766,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               title="Keyboard Shortcuts & Help (F1)"
             >
               <HelpCircle className="w-4 h-4" />
+            </button>
+
+            {/* Tally Calculator Quick Access (Alt+N or Ctrl+N) */}
+            <button
+              id="tour-calculator-btn"
+              onClick={() => setIsCalculatorOpen(!isCalculatorOpen)}
+              className={`p-2 rounded-xl transition-all cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center ${
+                isCalculatorOpen
+                  ? "bg-primary/20 text-primary border border-primary/40 shadow-xs"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+              }`}
+              title="Tally Calculator (Alt+N or Ctrl+N) - Quick calculations & GST tools"
+            >
+              <Calculator className="w-4 h-4" />
             </button>
 
             {/* Notifications */}

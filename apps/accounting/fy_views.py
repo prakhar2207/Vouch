@@ -140,6 +140,17 @@ class FinancialYearCloseAPIView(APIView):
 
         next_fy_id = request.data.get('next_fy_id')
 
+        is_async = (request.data.get('async') is True or request.query_params.get('async', '').lower() == 'true')
+        if is_async:
+            from .tasks import close_financial_year_task
+            task = close_financial_year_task.delay(str(company.id), str(pk), next_fy_id, str(request.user.id))
+            return Response({
+                "success": True,
+                "async": True,
+                "task_id": task.id,
+                "message": "Financial year close and roll-forward task dispatched to background worker."
+            }, status=status.HTTP_202_ACCEPTED)
+
         try:
             result = YearEndClosingService.close_and_roll_forward(company.id, str(pk), next_fy_id)
             return Response(result, status=status.HTTP_200_OK)
