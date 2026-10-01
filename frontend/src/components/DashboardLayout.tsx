@@ -150,10 +150,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* TOP NAVIGATION BAR */}
       <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-card/90 backdrop-blur-xl shadow-2xs print:hidden">
-        <div className="w-full px-3 sm:px-4 lg:px-4 xl:px-6 h-14 flex items-center justify-between gap-2 xl:gap-3">
+        <div className="w-full px-3 sm:px-4 xl:px-5 2xl:px-6 h-14 flex items-center justify-between gap-1.5 lg:gap-2 xl:gap-2.5 min-w-0">
           
           {/* Left Section: Brand & Primary Nav */}
-          <div className="flex items-center gap-1.5 xl:gap-2.5 2xl:gap-4 shrink-0">
+          <div className="flex items-center gap-1.5 xl:gap-2 2xl:gap-3 min-w-0 shrink">
             {/* Mobile / Tablet Hamburger Button */}
             <button
               onClick={() => setIsMobileNavOpen(true)}
@@ -176,7 +176,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
 
             {/* Desktop Navigation Links */}
-            <nav className="hidden lg:flex items-center gap-0.5 xl:gap-1 2xl:gap-1.5 shrink-0">
+            <nav className="hidden lg:flex items-center gap-0.5 xl:gap-0.5 2xl:gap-1 shrink-0">
               {/* Dashboard */}
               <Link
                 id="tour-dashboard-link"
@@ -301,11 +301,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 Inventory
               </Link>
 
-              {/* Banking */}
+              {/* Banking (visible on xl+, comfortable access in More on lg) */}
               <Link
                 id="tour-banking-link"
                 href="/banking"
-                className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
+                className={`hidden xl:inline-flex px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
                   pathname.startsWith("/banking")
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -314,18 +314,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 Banking
               </Link>
 
-              {/* Analytics Hub */}
+              {/* Analytics Hub (visible on xl+, comfortable access in More on lg) */}
               <Link
                 id="tour-analytics-link"
                 href="/analytics"
-                className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap flex items-center gap-1 xl:gap-1.5 ${
+                className={`hidden xl:inline-flex px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap items-center gap-1 xl:gap-1.5 ${
                   pathname.startsWith("/analytics")
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                 }`}
               >
                 <span>Analytics</span>
-                <span className="hidden xl:inline-flex text-[9px] bg-purple-500/15 text-purple-600 dark:text-purple-400 font-bold px-1.5 py-0.2 rounded-full">
+                <span className="hidden 2xl:inline-flex text-[9px] bg-purple-500/15 text-purple-600 dark:text-purple-400 font-bold px-1.5 py-0.2 rounded-full">
                   AI
                 </span>
               </Link>
@@ -413,6 +413,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         Accounting & Entries
                       </div>
                       <Link
+                        href="/banking"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs text-emerald-600 dark:text-emerald-400">Banking & Feeds</div>
+                          <div className="text-[10px] text-muted-foreground">Statements & reconciliation</div>
+                        </div>
+                      </Link>
+                      <Link
                         href="/vouchers"
                         className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
                         onClick={() => setIsMoreDropdownOpen(false)}
@@ -470,6 +480,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         Reports & Statements
                       </div>
                       <Link
+                        href="/analytics"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs text-purple-600 dark:text-purple-400 flex items-center gap-1">
+                            <span>Analytics AI Hub</span>
+                            <span className="text-[8px] bg-purple-500/20 text-purple-400 px-1 py-0.2 rounded font-bold">AI</span>
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">Predictive sales & forecasting</div>
+                        </div>
+                      </Link>
+                      <Link
                         href="/reports/trial-balance"
                         className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
                         onClick={() => setIsMoreDropdownOpen(false)}
@@ -526,6 +549,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       <div className="px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
                         GST & Operations
                       </div>
+                      <Link
+                        href="/inventory"
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
+                        onClick={() => setIsMoreDropdownOpen(false)}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs text-blue-600 dark:text-blue-400">Inventory & Stock</div>
+                          <div className="text-[10px] text-muted-foreground">Item batches, valuation & alerts</div>
+                        </div>
+                      </Link>
                       <Link
                         href="/gst/itc-shield"
                         className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
@@ -601,7 +634,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
 
           {/* Right Section: Workspace Context, Quick Search & Utilities */}
-          <div className="flex items-center gap-1 sm:gap-1.5 xl:gap-2 shrink-0 ml-auto">
+          <div className="flex items-center gap-1 sm:gap-1.5 xl:gap-2 shrink-0 ml-auto pr-1 sm:pr-1.5">
             
             {/* Company Switcher Pill */}
             <div ref={companyRef} className="relative hidden md:block shrink-0">
@@ -611,13 +644,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   setIsFYDropdownOpen(false);
                   setIsUserMenuOpen(false);
                 }}
-                className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-2.5 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
+                className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
                 title={`Active Company: ${activeCompany?.name || 'Company'}`}
               >
                 <div className="w-5 h-5 rounded-md bg-gradient-to-br from-primary/20 to-primary/10 border border-primary/25 flex items-center justify-center text-[10px] font-bold text-primary shrink-0 uppercase">
                   {(activeCompany?.name || "C")[0]}
                 </div>
-                <span className="font-semibold text-xs text-foreground truncate max-w-[70px] lg:max-w-[85px] xl:max-w-[120px] 2xl:max-w-[160px]">
+                <span className="font-semibold text-xs text-foreground truncate max-w-[70px] lg:max-w-[80px] xl:max-w-[100px] 2xl:max-w-[150px]">
                   {activeCompany?.name || "Company"}
                 </span>
                 <ChevronDown className={`w-3 h-3 text-muted-foreground/70 shrink-0 transition-transform duration-150 ${isCompanyDropdownOpen ? "rotate-180" : ""}`} />
@@ -673,13 +706,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
 
             {/* Financial Year & Period Switcher */}
-            <div ref={fyRef} className="relative hidden md:block">
+            <div ref={fyRef} className="relative hidden md:block shrink-0">
               <button
                 onClick={() => setIsFYDropdownOpen(!isFYDropdownOpen)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
+                className="flex items-center gap-1.5 px-2 xl:px-2.5 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
                 title="Change Financial Year or Period (Alt + F2)"
               >
-                <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0 hidden 2xl:block" />
                 <span className="font-mono tabular-nums text-xs font-semibold text-foreground whitespace-nowrap">
                   {activeFY ? (activeFY.code || activeFY.name) : "FY 26-27"}
                 </span>
@@ -748,12 +781,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <button
               id="tour-command-palette-btn"
               onClick={() => setIsCommandPaletteOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px]"
+              className="flex items-center justify-center gap-1.5 p-2 2xl:px-2.5 2xl:py-1.5 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px] min-w-[36px] shrink-0"
               title="Quick Search & Navigation (Ctrl+K)"
             >
-              <Search className="w-3.5 h-3.5 text-muted-foreground" />
+              <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
               <span className="hidden 2xl:inline text-xs font-medium">Search</span>
-              <kbd className="hidden xl:inline-block text-[10px] font-mono bg-muted/80 px-1.5 py-0.2 rounded border border-border/60 text-muted-foreground">
+              <kbd className="hidden 2xl:inline-block text-[10px] font-mono bg-muted/80 px-1.5 py-0.2 rounded border border-border/60 text-muted-foreground">
                 Ctrl+K
               </kbd>
             </button>
@@ -762,37 +795,41 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <button
               id="tour-help-btn"
               onClick={() => setIsHelpOpen(true)}
-              className="hidden xl:inline-flex p-2 text-muted-foreground hover:text-foreground rounded-xl hover:bg-muted/60 transition-colors cursor-pointer min-h-[36px] min-w-[36px] items-center justify-center"
+              className="hidden 2xl:inline-flex p-2 text-muted-foreground hover:text-foreground rounded-xl hover:bg-muted/60 transition-colors cursor-pointer min-h-[36px] min-w-[36px] items-center justify-center shrink-0"
               title="Keyboard Shortcuts & Help (F1)"
             >
-              <HelpCircle className="w-4 h-4" />
+              <HelpCircle className="w-4 h-4 shrink-0" />
             </button>
 
             {/* Tally Calculator Quick Access (Alt+N or Ctrl+N) */}
             <button
               id="tour-calculator-btn"
               onClick={() => setIsCalculatorOpen(!isCalculatorOpen)}
-              className={`p-2 rounded-xl transition-all cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center ${
+              className={`p-2 rounded-xl transition-all cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center shrink-0 ${
                 isCalculatorOpen
                   ? "bg-primary/20 text-primary border border-primary/40 shadow-xs"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
               }`}
               title="Tally Calculator (Alt+N or Ctrl+N) - Quick calculations & GST tools"
             >
-              <Calculator className="w-4 h-4" />
+              <Calculator className="w-4 h-4 shrink-0" />
             </button>
 
             {/* Notifications */}
-            <NotificationBell />
+            <div className="shrink-0 flex items-center">
+              <NotificationBell />
+            </div>
 
             {/* Theme Toggle */}
-            <ThemeToggle />
+            <div className="shrink-0 flex items-center">
+              <ThemeToggle />
+            </div>
 
             {/* User Avatar Dropdown */}
-            <div ref={userMenuRef} className="relative">
+            <div ref={userMenuRef} className="relative shrink-0">
               <button
                 onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className="w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 via-primary/10 to-accent/20 border border-border/60 flex items-center justify-center text-xs font-bold text-foreground hover:ring-2 hover:ring-primary/30 transition-all cursor-pointer"
+                className="w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 via-primary/10 to-accent/20 border border-border/60 flex items-center justify-center text-xs font-bold text-foreground hover:ring-2 hover:ring-primary/30 transition-all cursor-pointer shrink-0"
                 title="Account Menu"
               >
                 {user?.first_name ? user.first_name[0].toUpperCase() : <User className="w-4 h-4 text-muted-foreground" />}
