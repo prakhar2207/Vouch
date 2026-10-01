@@ -169,6 +169,46 @@ export interface SyncedPaymentAllocation {
   serverUpdatedAt: number;
 }
 
+export interface ClientAccountingOperation {
+  operationId: string;
+  transactionId: string;
+  replicaId: string;
+  operationType: string;
+  operationClass?: string;
+  payload: any;
+  logicalTimestamp: number;
+  parents: string[];
+  payloadHash: string;
+  signature?: string;
+  status: "PENDING" | "SYNCED" | "COMMITTED" | "REJECTED";
+  createdAt: number;
+}
+
+export interface OutboxItem {
+  id?: number;
+  operationId: string;
+  transactionId: string;
+  status: "QUEUED" | "IN_FLIGHT" | "FAILED" | "COMPLETED";
+  retryCount: number;
+  lastError?: string;
+  createdAt: number;
+  nextRetryAt?: number;
+}
+
+export interface InboxItem {
+  id?: number;
+  operationId: string;
+  transactionId: string;
+  status: "UNAPPLIED" | "APPLIED" | "CONFLICT";
+  receivedAt: number;
+}
+
+export interface SyncCursor {
+  transactionId: string;
+  cursor: string;
+  lastSyncedAt: number;
+}
+
 export class VouchOfflineDB extends Dexie {
   vouchers!: Table<OfflineVoucher, number>;
   masters!: Table<MasterCache, string>;
@@ -181,6 +221,10 @@ export class VouchOfflineDB extends Dexie {
   analyticsParty!: Table<AnalyticsParty, string>;
   syncedBankTransactions!: Table<SyncedBankTransaction, string>;
   syncedPaymentAllocations!: Table<SyncedPaymentAllocation, string>;
+  operationLog!: Table<ClientAccountingOperation, string>;
+  outboxQueue!: Table<OutboxItem, number>;
+  inboxQueue!: Table<InboxItem, number>;
+  syncCursors!: Table<SyncCursor, string>;
 
   constructor() {
     super("VouchOfflineDB");
@@ -253,6 +297,23 @@ export class VouchOfflineDB extends Dexie {
       analyticsParty: "id, companyId, partyId, [companyId+partyId]",
       syncedBankTransactions: "id, companyId, bankLedgerId, status, transactionDate, serverUpdatedAt, [companyId+status], [companyId+bankLedgerId]",
       syncedPaymentAllocations: "id, companyId, paymentVoucherId, invoiceVoucherId, [companyId+paymentVoucherId], [companyId+invoiceVoucherId]"
+    });
+    this.version(8).stores({
+      vouchers: "++id, localId, voucherType, status, createdAt",
+      masters: "key, updatedAt",
+      ocrCache: "fileHash, cachedAt",
+      syncedVouchers: "id, companyId, voucherType, voucherDate, dueDate, status, partyLedgerId, serverUpdatedAt, [companyId+voucherDate], [companyId+status], [companyId+voucherType]",
+      syncedLedgers: "id, companyId, ledgerType, name, [companyId+ledgerType]",
+      syncedProducts: "id, companyId, sku, [companyId+currentStock]",
+      syncMeta: "companyId, lastSyncAt, syncStatus",
+      analyticsDaily: "id, companyId, date, [companyId+date]",
+      analyticsParty: "id, companyId, partyId, [companyId+partyId]",
+      syncedBankTransactions: "id, companyId, bankLedgerId, status, transactionDate, serverUpdatedAt, [companyId+status], [companyId+bankLedgerId]",
+      syncedPaymentAllocations: "id, companyId, paymentVoucherId, invoiceVoucherId, [companyId+paymentVoucherId], [companyId+invoiceVoucherId]",
+      operationLog: "operationId, transactionId, replicaId, operationType, logicalTimestamp, status, [transactionId+logicalTimestamp]",
+      outboxQueue: "++id, operationId, transactionId, status, retryCount, nextRetryAt",
+      inboxQueue: "++id, operationId, transactionId, status, receivedAt",
+      syncCursors: "transactionId, lastSyncedAt"
     });
   }
 }

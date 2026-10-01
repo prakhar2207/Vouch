@@ -67,6 +67,53 @@ class DE_CRDT:
         """Returns all admitted operations in strict causal topological order."""
         return self.dag.topological_sort()
 
+    @staticmethod
+    def _extract_tax_components(payload: Dict[str, Any], total_tax: Decimal) -> Dict[str, Decimal]:
+        """
+        Authoritative GST decomposition engine integration.
+        Uses explicit payload decomposition if provided, or calls Vouch's GSTCalculator.
+        Eliminates naive 'igst += tax' logic.
+        """
+        has_cgst = 'cgst_amount' in payload
+        has_sgst = 'sgst_amount' in payload
+        has_igst = 'igst_amount' in payload
+
+        if has_cgst or has_sgst or has_igst:
+            cgst = Decimal(str(payload.get('cgst_amount', 0)))
+            sgst = Decimal(str(payload.get('sgst_amount', 0)))
+            igst = Decimal(str(payload.get('igst_amount', 0)))
+            # If total_tax is non-zero but parts sum to 0, assign remainder to IGST
+            if (cgst + sgst + igst) == Decimal('0.0') and total_tax > Decimal('0.0'):
+                igst = total_tax
+            return {'cgst': cgst, 'sgst': sgst, 'igst': igst}
+
+        seller_state = payload.get('seller_state_code') or payload.get('company_state_code')
+        buyer_state = payload.get('buyer_state_code') or payload.get('party_state_code')
+        taxable = Decimal(str(payload.get('taxable_amount', payload.get('amount', 0))))
+        rate = Decimal(str(payload.get('tax_rate_percent', payload.get('gst_rate', 0))))
+
+        if (seller_state or buyer_state) and (taxable > Decimal('0') or total_tax > Decimal('0')):
+            try:
+                from apps.gst.services.gst_calculator import GSTCalculator
+                c_state = str(seller_state or buyer_state)
+                p_state = str(buyer_state or seller_state)
+                res = GSTCalculator.calculate_taxes(
+                    company_state_code=c_state,
+                    party_state_code=p_state,
+                    taxable_amount=taxable,
+                    gst_rate=rate if rate > Decimal('0') else Decimal('18.00')
+                )
+                return {
+                    'cgst': res['cgst'],
+                    'sgst': res['sgst'],
+                    'igst': res['igst']
+                }
+            except Exception:
+                pass
+
+        # If neither is available, preserve total_tax as IGST for backward compatibility
+        return {'cgst': Decimal('0.0'), 'sgst': Decimal('0.0'), 'igst': total_tax}
+
     def evaluate_state(self) -> Dict[str, Any]:
         """
         Projects the causal operation graph into a complete, balanced accounting state:
@@ -107,7 +154,12 @@ class DE_CRDT:
                 state['grand_total'] += gt
                 state['invoice_grand_total'] += gt
                 state['total_tax'] += tax
-                state['igst'] += tax
+                
+                tax_parts = self._extract_tax_components(payload, tax)
+                state['cgst'] += tax_parts['cgst']
+                state['sgst'] += tax_parts['sgst']
+                state['igst'] += tax_parts['igst']
+                
                 state['taxable_amount'] += taxable
                 state['total_quantity'] += qty
                 
@@ -123,7 +175,12 @@ class DE_CRDT:
                 
                 state['grand_total'] -= gt
                 state['total_tax'] -= tax
-                state['igst'] -= tax
+                
+                tax_parts = self._extract_tax_components(payload, tax)
+                state['cgst'] -= tax_parts['cgst']
+                state['sgst'] -= tax_parts['sgst']
+                state['igst'] -= tax_parts['igst']
+                
                 state['taxable_amount'] -= amt
                 state['total_quantity'] -= qty
                 
@@ -138,7 +195,12 @@ class DE_CRDT:
                 
                 state['grand_total'] += gt
                 state['total_tax'] += tax
-                state['igst'] += tax
+                
+                tax_parts = self._extract_tax_components(payload, tax)
+                state['cgst'] += tax_parts['cgst']
+                state['sgst'] += tax_parts['sgst']
+                state['igst'] += tax_parts['igst']
+                
                 state['taxable_amount'] += amt
                 
                 state['ledgers']['AccountsReceivable']['debit'] += gt
@@ -149,13 +211,16 @@ class DE_CRDT:
                 amt = Decimal(str(payload.get('taxable_amount', payload.get('amount', 0))))
                 tax = Decimal(str(payload.get('tax_amount', 0)))
                 gt = amt + tax
+                tax_parts = self._extract_tax_components(payload, abs(tax))
                 if amt < Decimal('0'):
                     abs_amt = abs(amt)
                     abs_tax = abs(tax)
                     abs_gt = abs_amt + abs_tax
                     state['grand_total'] -= abs_gt
                     state['total_tax'] -= abs_tax
-                    state['igst'] -= abs_tax
+                    state['cgst'] -= tax_parts['cgst']
+                    state['sgst'] -= tax_parts['sgst']
+                    state['igst'] -= tax_parts['igst']
                     state['taxable_amount'] -= abs_amt
                     state['ledgers']['AccountsReceivable']['credit'] += abs_gt
                     state['ledgers']['SalesAccount']['debit'] += abs_amt
@@ -163,7 +228,9 @@ class DE_CRDT:
                 else:
                     state['grand_total'] += gt
                     state['total_tax'] += tax
-                    state['igst'] += tax
+                    state['cgst'] += tax_parts['cgst']
+                    state['sgst'] += tax_parts['sgst']
+                    state['igst'] += tax_parts['igst']
                     state['taxable_amount'] += amt
                     state['ledgers']['AccountsReceivable']['debit'] += gt
                     state['ledgers']['SalesAccount']['credit'] += amt

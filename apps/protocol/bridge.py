@@ -1,3 +1,5 @@
+import hashlib
+import uuid
 from decimal import Decimal
 import logging
 from typing import Dict, List, Any, Optional
@@ -19,6 +21,7 @@ from apps.gst.services.gst_calculator import GSTCalculator
 
 from .schema import CanonicalTransaction
 from .operation import AccountingOperation, OperationType
+from .models import ProtocolBridgeExecution
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +108,29 @@ class LedgerBridge:
 
         voucher_type = 'SALES' if is_seller else 'PURCHASE'
         counterparty_entity = canonical_tx.destination_entity if is_seller else canonical_tx.source_entity
+
+        # Idempotency Protection: H(company_id || tx_id || sorted_op_ids)
+        sorted_op_ids = sorted([op.operation_id for op in converged_operations])
+        idempotency_raw = f"{company.id}|{canonical_tx.transaction_id}|{sorted_op_ids}"
+        idempotency_key = hashlib.sha256(idempotency_raw.encode('utf-8')).hexdigest()
+
+        existing_exec = ProtocolBridgeExecution.objects.filter(
+            idempotency_key=idempotency_key,
+            status="SUCCESS"
+        ).first()
+
+        if existing_exec:
+            logger.info(f"LedgerBridge: returning cached idempotent execution for {canonical_tx.transaction_id}")
+            return {
+                "status": "BRIDGE_SUCCESS",
+                "idempotent_cached": True,
+                "company_id": str(company.id),
+                "company_name": company.name,
+                "role": existing_exec.role,
+                "base_voucher_number": existing_exec.base_voucher_number,
+                "posted_vouchers": existing_exec.posted_vouchers,
+                "vouchers_count": len(existing_exec.posted_vouchers)
+            }
 
         # 0. Resolve created_by user
         if not user:
@@ -296,12 +322,27 @@ class LedgerBridge:
                             logger.warning(f"Payment allocation warning: {e}")
                     posted_vouchers.append(pay_voucher)
 
+        posted_numbers = [v.voucher_number for v in posted_vouchers]
+        try:
+            ProtocolBridgeExecution.objects.create(
+                execution_id=f"EXEC-{uuid.uuid4().hex[:12].upper()}",
+                idempotency_key=idempotency_key,
+                company_id=str(company.id),
+                transaction_id=canonical_tx.transaction_id,
+                role="SELLER" if is_seller else "BUYER",
+                base_voucher_number=base_voucher.voucher_number if base_voucher else None,
+                posted_vouchers=posted_numbers,
+                status="SUCCESS"
+            )
+        except Exception as e:
+            logger.warning(f"Could not persist ProtocolBridgeExecution audit: {e}")
+
         return {
             "status": "BRIDGE_SUCCESS",
             "company_id": str(company.id),
             "company_name": company.name,
             "role": "SELLER" if is_seller else "BUYER",
-            "base_voucher_number": base_voucher.voucher_number,
-            "posted_vouchers": [v.voucher_number for v in posted_vouchers],
+            "base_voucher_number": base_voucher.voucher_number if base_voucher else None,
+            "posted_vouchers": posted_numbers,
             "vouchers_count": len(posted_vouchers)
         }

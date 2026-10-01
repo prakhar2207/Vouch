@@ -24,13 +24,13 @@ In contrast, Vouch transmits only an atomic, immutable `AccountingOperation` nod
 
 | Benchmark Metric | Measured Result | Significance |
 |------------------|-----------------|--------------|
-| **CRDT Topological Merge & Ledger Evaluation** | **30.75 $\mu$s / merge** | Over **32,516 merges/sec** throughput per single CPU core |
-| **Merkle Inclusion Proof Tamper Detection** | **286.70 $\mu$s** | Sub-millisecond audit and cryptographic non-repudiation |
-| **Duplicate Replay Deduplication Latency** | **0.19 $\mu$s / op** | Instantaneous rejection of replayed network packets |
+| **CRDT Topological Merge & Ledger Evaluation** | **17.54 $\mu$s / merge** | Over **57,009 merges/sec** throughput per single CPU core |
+| **Merkle Inclusion Proof Tamper Detection** | **167.70 $\mu$s** | Sub-millisecond audit and cryptographic non-repudiation |
+| **Duplicate Replay Deduplication Latency** | **0.13 $\mu$s / op** | Instantaneous rejection of replayed network packets |
 
 ---
 
 ## 3. Measurable Technical Conclusions
 1. **Network Efficiency:** Vouch achieves a **89.6% reduction in network traffic** per synchronization event.
-2. **Deterministic Processing:** Causal topological sorting and invariant evaluation execute in under **30.8 microseconds**, enabling high-frequency mobile PWA and edge device operation.
+2. **Deterministic Processing:** Causal topological sorting and invariant evaluation execute in under **17.5 microseconds**, enabling high-frequency mobile PWA and edge device operation.
 3. **Cryptographic Rigor:** Merkle tree state roots provide $O(\log N)$ proof verification and immediate detection of tampering.

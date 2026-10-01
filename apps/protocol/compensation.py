@@ -188,3 +188,50 @@ class CompensationEngine:
             logical_timestamp=logical_timestamp,
             parents=[rejection_op.operation_id] # Strictly declares causal dependency on Buyer's rejection
         )
+
+    @staticmethod
+    def generate_reciprocal_price_adjustment_note(
+        price_adj_op: AccountingOperation,
+        seller_replica_id: str,
+        logical_timestamp: int
+    ) -> AccountingOperation:
+        """
+        Generates reciprocal Credit Note or Debit Note when a price adjustment is negotiated.
+        Downwards adjustment -> Reciprocal Credit Note
+        Upwards adjustment   -> Reciprocal Debit Note
+        """
+        if price_adj_op.operation_type != OperationType.PRICE_ADJUSTED:
+            raise ValueError("Reciprocal adjustment note can only be derived from PRICE_ADJUSTED operation.")
+
+        payload_taxable = Decimal(str(price_adj_op.payload.get('taxable_amount', 0)))
+        payload_tax = Decimal(str(price_adj_op.payload.get('tax_amount', 0)))
+        is_downward = (payload_taxable < Decimal('0'))
+
+        op_type = OperationType.CREDIT_NOTE_ISSUED if is_downward else OperationType.DEBIT_NOTE_ISSUED
+        note_type = "PRICE_REDUCTION_CREDIT_NOTE" if is_downward else "PRICE_INCREASE_DEBIT_NOTE"
+
+        payload = {
+            "reference_price_op": price_adj_op.operation_id,
+            "line_id": price_adj_op.payload.get("line_id"),
+            "sku": price_adj_op.payload.get("sku"),
+            "taxable_amount": float(abs(payload_taxable)),
+            "tax_amount": float(abs(payload_tax)),
+            "cgst_amount": float(abs(Decimal(str(price_adj_op.payload.get('cgst_amount', 0))))),
+            "sgst_amount": float(abs(Decimal(str(price_adj_op.payload.get('sgst_amount', 0))))),
+            "igst_amount": float(abs(Decimal(str(price_adj_op.payload.get('igst_amount', 0))))),
+            "note_type": note_type
+        }
+
+        seed = f"{price_adj_op.transaction_id}|{price_adj_op.operation_id}|RECIPROCAL_PRICE_NOTE|{seller_replica_id}"
+        op_id = f"OP-RECIP-PRC-{hashlib.sha256(seed.encode()).hexdigest()[:8].upper()}"
+
+        return AccountingOperation(
+            operation_id=op_id,
+            transaction_id=price_adj_op.transaction_id,
+            replica_id=seller_replica_id,
+            operation_type=op_type,
+            operation_class=OperationClass.COMPENSATING,
+            payload=payload,
+            logical_timestamp=logical_timestamp,
+            parents=[price_adj_op.operation_id]
+        )

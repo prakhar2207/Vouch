@@ -39,7 +39,8 @@ class SyncService:
         public_keys_map: Optional[Dict[str, str]] = None,
         company: Any = None,
         canonical_tx: Optional[CanonicalTransaction] = None,
-        user: Any = None
+        user: Any = None,
+        persist_to_db: bool = False
     ) -> Dict[str, Any]:
         """
         Idempotent 2-way synchronization endpoint:
@@ -122,6 +123,12 @@ class SyncService:
             for op in merged_crdt.operations.values()
             if op.operation_type == OperationType.CREDIT_NOTE_ISSUED and op.payload.get('reference_rejection_op')
         }
+        existing_recip_prices = {
+            op.payload.get('reference_price_op')
+            for op in merged_crdt.operations.values()
+            if op.operation_type in (OperationType.CREDIT_NOTE_ISSUED, OperationType.DEBIT_NOTE_ISSUED)
+            and op.payload.get('reference_price_op')
+        }
 
         compensations_added = False
         for op in list(merged_crdt.operations.values()):
@@ -133,6 +140,15 @@ class SyncService:
                     logical_timestamp=max_clock + 1
                 )
                 merged_crdt.apply_operation(recip_cn)
+                compensations_added = True
+            elif op.operation_type == OperationType.PRICE_ADJUSTED and op.operation_id not in existing_recip_prices:
+                max_clock = max([o.logical_timestamp for o in merged_crdt.operations.values()] or [0])
+                recip_note = CompensationEngine.generate_reciprocal_price_adjustment_note(
+                    price_adj_op=op,
+                    seller_replica_id="SERVER_SELLER",
+                    logical_timestamp=max_clock + 1
+                )
+                merged_crdt.apply_operation(recip_note)
                 compensations_added = True
 
         if compensations_added:
@@ -189,6 +205,52 @@ class SyncService:
             except Exception as e:
                 logger.error(f"LedgerBridge execution error: {e}", exc_info=True)
                 bridge_result = {"status": "BRIDGE_FAILED", "error": str(e)}
+
+        # 12. Persist Merged State to Django ORM (if requested)
+        if persist_to_db:
+            try:
+                from django.db import transaction as db_transaction
+                from .models import ProtocolTransaction, ProtocolOperation, CryptographicCommitment
+
+                with db_transaction.atomic():
+                    payload_dict = canonical_tx.to_dict() if (canonical_tx and hasattr(canonical_tx, 'to_dict')) else {"transaction_id": transaction_id}
+                    ptx, _ = ProtocolTransaction.objects.get_or_create(
+                        transaction_id=transaction_id,
+                        defaults={
+                            "transaction_type": "SALE",
+                            "protocol_version": "1.0",
+                            "source_company_id": seller_identity,
+                            "destination_company_id": buyer_identity,
+                            "canonical_payload": payload_dict
+                        }
+                    )
+
+                    for op in merged_crdt.get_operations():
+                        op_type_val = op.operation_type.value if hasattr(op.operation_type, 'value') else str(op.operation_type)
+                        ProtocolOperation.objects.get_or_create(
+                            operation_id=op.operation_id,
+                            replica_id=op.replica_id,
+                            defaults={
+                                "transaction": ptx,
+                                "operation_type": op_type_val,
+                                "payload": dict(op.payload),
+                                "logical_timestamp": op.logical_timestamp,
+                                "parents": list(op.parents),
+                                "payload_hash": op.payload_hash,
+                                "signature": op.signature
+                            }
+                        )
+
+                    CryptographicCommitment.objects.get_or_create(
+                        commitment_hash=commitment_hash,
+                        defaults={
+                            "transaction": ptx,
+                            "operation_state_root": roots["operation_state_root"],
+                            "previous_commitment_hash": str(previous_commitment_hash) if previous_commitment_hash else None
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"Protocol database persistence notice: {e}")
 
         return {
             "status": "SYNC_SUCCESS",

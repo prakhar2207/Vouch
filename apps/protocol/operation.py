@@ -18,6 +18,7 @@ class OperationType(str, Enum):
     """Exhaustive classification of B2B accounting state transitions."""
     TRANSACTION_ISSUED = "TRANSACTION_ISSUED"
     INVOICE_ISSUED = "TRANSACTION_ISSUED"     # Semantic alias
+    PURCHASE_INVOICE_CREATED = "PURCHASE_INVOICE_CREATED"
     ITEM_ACCEPTED = "ITEM_ACCEPTED"
     ITEM_REJECTED = "ITEM_REJECTED"
     QUANTITY_ADJUSTED = "QUANTITY_ADJUSTED"
@@ -29,6 +30,10 @@ class OperationType(str, Enum):
     CREDIT_NOTE_CREATED = "CREDIT_NOTE_ISSUED" # Semantic alias
     DEBIT_NOTE_ISSUED = "DEBIT_NOTE_ISSUED"
     DEBIT_NOTE_CREATED = "DEBIT_NOTE_ISSUED"   # Semantic alias
+    CONTRA_CREATED = "CONTRA_CREATED"
+    JOURNAL_CREATED = "JOURNAL_CREATED"
+    SALES_RETURN_CREATED = "SALES_RETURN_CREATED"
+    PURCHASE_RETURN_CREATED = "PURCHASE_RETURN_CREATED"
     STOCK_ADJUSTED = "STOCK_ADJUSTED"
     VOUCHER_CANCELLED = "VOUCHER_CANCELLED"
     INVOICE_CANCELLED = "VOUCHER_CANCELLED"    # Semantic alias
@@ -37,6 +42,7 @@ class OperationType(str, Enum):
 # Formal mapping of operations to their execution class
 DEFAULT_OPERATION_CLASSES: Dict[OperationType, OperationClass] = {
     OperationType.TRANSACTION_ISSUED: OperationClass.CAUSAL,
+    OperationType.PURCHASE_INVOICE_CREATED: OperationClass.CAUSAL,
     OperationType.ITEM_ACCEPTED: OperationClass.COMMUTATIVE,
     OperationType.ITEM_REJECTED: OperationClass.COMPENSATING,
     OperationType.QUANTITY_ADJUSTED: OperationClass.COMPENSATING,
@@ -46,6 +52,10 @@ DEFAULT_OPERATION_CLASSES: Dict[OperationType, OperationClass] = {
     OperationType.PAYMENT_UNALLOCATED: OperationClass.REVERSAL,
     OperationType.CREDIT_NOTE_ISSUED: OperationClass.COMPENSATING,
     OperationType.DEBIT_NOTE_ISSUED: OperationClass.COMPENSATING,
+    OperationType.CONTRA_CREATED: OperationClass.COMMUTATIVE,
+    OperationType.JOURNAL_CREATED: OperationClass.CAUSAL,
+    OperationType.SALES_RETURN_CREATED: OperationClass.COMPENSATING,
+    OperationType.PURCHASE_RETURN_CREATED: OperationClass.COMPENSATING,
     OperationType.STOCK_ADJUSTED: OperationClass.COMMUTATIVE,
     OperationType.VOUCHER_CANCELLED: OperationClass.FINALIZING,
     OperationType.COMMIT_CREATED: OperationClass.FINALIZING,

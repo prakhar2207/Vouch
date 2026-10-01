@@ -87,3 +87,21 @@ class EdiSession(models.Model):
         db_table = "protocol_edi_sessions"
         ordering = ['-created_at']
 
+class ProtocolBridgeExecution(models.Model):
+    """Phase 13: Audit trail and idempotency ledger for Protocol -> LedgerBridge executions."""
+    execution_id = models.CharField(max_length=100, unique=True, db_index=True)
+    idempotency_key = models.CharField(max_length=128, unique=True, db_index=True)
+    company_id = models.CharField(max_length=100, db_index=True)
+    transaction_id = models.CharField(max_length=100, db_index=True)
+    role = models.CharField(max_length=20)  # SELLER or BUYER
+    base_voucher_number = models.CharField(max_length=100, null=True, blank=True)
+    posted_vouchers = models.JSONField(default=list)
+    status = models.CharField(max_length=50, default="SUCCESS")  # SUCCESS, FAILED
+    error_message = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "protocol_bridge_executions"
+        ordering = ['-created_at']
+
+

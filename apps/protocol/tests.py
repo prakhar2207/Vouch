@@ -285,3 +285,176 @@ class ProtocolCryptoTests(TestCase):
 
         self.assertTrue(verification['seller_valid'])
         self.assertTrue(verification['buyer_valid'])
+
+class AdvancedProtocolMechanismsTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='advuser@vouch.example.com',
+            password='TestPassword123!',
+            first_name='Adv',
+            last_name='User'
+        )
+        self.company = Company.objects.create(
+            name="Adv Test Corp",
+            gstin="27ADVTT1234F1Z9",
+            state_code="27"
+        )
+        from apps.companies.models import UserCompany
+        UserCompany.objects.create(user=self.user, company=self.company, role='ADMIN')
+
+    def test_ledger_bridge_idempotency_caching(self):
+        """Verifies that duplicate execution of LedgerBridge is cached and creates 0 duplicate vouchers."""
+        from apps.protocol.schema import ProtocolEntity, TransactionLine, TaxSummary, TransactionTotals
+        
+        seller_entity = ProtocolEntity('GSTIN', self.company.gstin, self.company.name, '27')
+        buyer_entity = ProtocolEntity('GSTIN', '27BUYER9999F1Z1', 'Buyer Firm', '27')
+        line = TransactionLine(
+            line_id='L-IDEM',
+            sku='IDEM-SKU',
+            name='Idempotent Item',
+            hsn_code='8481',
+            quantity=Decimal('5.00'),
+            unit='PCS',
+            unit_price=Decimal('100.00'),
+            discount_amount=Decimal('0.00'),
+            taxable_amount=Decimal('500.00'),
+            tax_rate_percent=Decimal('18.00')
+        )
+        tx = CanonicalTransaction(
+            protocol_version='1.0',
+            transaction_id='TX-IDEMPOTENCY-01',
+            transaction_type='SALE',
+            state_version=1,
+            issued_at=timezone.now(),
+            source_entity=seller_entity,
+            destination_entity=buyer_entity,
+            items=[line],
+            tax_summary=TaxSummary(cgst_amount=Decimal('45.00'), sgst_amount=Decimal('45.00')),
+            totals=TransactionTotals(subtotal=Decimal('500.00'), total_tax=Decimal('90.00'), grand_total=Decimal('590.00'))
+        )
+
+        # First execution
+        res1 = LedgerBridge.execute_converged_accounting(
+            company=self.company,
+            canonical_tx=tx,
+            converged_operations=[],
+            user=self.user
+        )
+        self.assertEqual(res1['status'], 'BRIDGE_SUCCESS')
+        initial_voucher_count = Voucher.objects.filter(company=self.company).count()
+
+        # Second execution with exact same transaction & operations
+        res2 = LedgerBridge.execute_converged_accounting(
+            company=self.company,
+            canonical_tx=tx,
+            converged_operations=[],
+            user=self.user
+        )
+        self.assertEqual(res2['status'], 'BRIDGE_SUCCESS')
+        self.assertTrue(res2.get('idempotent_cached'))
+        final_voucher_count = Voucher.objects.filter(company=self.company).count()
+
+        # Zero duplicate vouchers created
+        self.assertEqual(initial_voucher_count, final_voucher_count)
+
+    def test_bounded_semantic_mapping_engine(self):
+        """Verifies multi-tier heuristic and token similarity matching."""
+        from apps.protocol.mapping import SemanticMappingEngine, MappingConfidence
+
+        catalog = [
+            {"sku": "PIPE-20MM-SS", "name": "Stainless Steel Pipe 20mm Industrial", "hsn_code": "7306"},
+            {"sku": "VALVE-BRASS-50", "name": "Brass Ball Valve 50mm", "hsn_code": "8481"},
+        ]
+
+        # Tier 1: Exact SKU
+        m1 = SemanticMappingEngine.match_product("PIPE-20MM-SS", "Any Name", "7306", catalog)
+        self.assertIsNotNone(m1)
+        self.assertEqual(m1[0]['sku'], "PIPE-20MM-SS")
+        self.assertEqual(m1[1], 1.0)
+        self.assertEqual(m1[2], MappingConfidence.HEURISTIC)
+
+        # Tier 2: Normalized SKU (dashes omitted, lowercase)
+        m2 = SemanticMappingEngine.match_product("pipe20mmss", "Different Name", "0000", catalog)
+        self.assertIsNotNone(m2)
+        self.assertEqual(m2[0]['sku'], "PIPE-20MM-SS")
+        self.assertEqual(m2[1], 0.95)
+
+        # Tier 3: HSN code + Token Overlap
+        m3 = SemanticMappingEngine.match_product("FOREIGN-V", "Brass Ball Valve High Pressure", "8481", catalog)
+        self.assertIsNotNone(m3)
+        self.assertEqual(m3[0]['sku'], "VALVE-BRASS-50")
+        self.assertGreaterEqual(m3[1], 0.70)
+
+    def test_key_manager_rotation_and_revocation(self):
+        """Verifies key manager lifecycle: generation, rotation, and revocation fail-closed."""
+        from apps.protocol.key_manager import ProtocolKeyManager, SecurityViolationError
+
+        km = ProtocolKeyManager()
+        k1 = km.generate_keypair("REPLICA-A")
+        self.assertIsNotNone(k1.public_key_hex)
+
+        # Can retrieve active key
+        pub = km.get_public_key("REPLICA-A")
+        self.assertEqual(pub, k1.public_key_hex)
+
+        # Key rotation creates new key
+        k2 = km.rotate_key("REPLICA-A")
+        self.assertNotEqual(k1.key_id, k2.key_id)
+        pub_rotated = km.get_public_key("REPLICA-A")
+        self.assertEqual(pub_rotated, k2.public_key_hex)
+
+        # Revocation causes fail-closed exception
+        km.revoke_key(k2.key_id)
+        with self.assertRaises(SecurityViolationError):
+            km.get_public_key(k2.key_id)
+
+    def test_replay_protection_sliding_window(self):
+        """Verifies replay engine rejects replayed nonces and stale timestamps."""
+        from apps.protocol.key_manager import ReplayProtectionEngine, SecurityViolationError
+
+        rpe = ReplayProtectionEngine(window_seconds=300)
+        now = time.time()
+
+        # Valid consumption
+        rpe.validate_and_consume("NODE-1", "NONCE-001", now)
+
+        # Replay same nonce -> Rejection
+        with self.assertRaises(SecurityViolationError):
+            rpe.validate_and_consume("NODE-1", "NONCE-001", now)
+
+        # Stale timestamp beyond 300s window -> Rejection
+        with self.assertRaises(SecurityViolationError):
+            rpe.validate_and_consume("NODE-1", "NONCE-002", now - 400)
+
+    def test_protocol_sync_api_view(self):
+        """Tests POST /api/v1/protocol/sync/ REST endpoint."""
+        from django.test import Client
+        c = Client()
+        payload = {
+            "transaction_id": "TX-API-TEST-001",
+            "client_replica_id": "CLI-TEST-01",
+            "client_operations": [
+                {
+                    "operation_id": "OP-API-001",
+                    "transaction_id": "TX-API-TEST-001",
+                    "replica_id": "CLI-TEST-01",
+                    "operation_type": "TRANSACTION_ISSUED",
+                    "payload": {
+                        "grand_total": 1180.0,
+                        "taxable_amount": 1000.0,
+                        "total_tax": 180.0,
+                        "cgst_amount": 90.0,
+                        "sgst_amount": 90.0
+                    },
+                    "logical_timestamp": 1,
+                    "parents": []
+                }
+            ]
+        }
+        resp = c.post('/api/v1/protocol/sync/', data=payload, content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        resp_data = resp.json()
+        self.assertEqual(resp_data['status'], 'SYNC_SUCCESS')
+        self.assertIn('state_commitment', resp_data)
+        self.assertIn('merkle_state_roots', resp_data)
+
