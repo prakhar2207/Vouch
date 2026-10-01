@@ -93,7 +93,14 @@ def run_e2e():
     session.advance(EdiState.ACCEPT)
     session.advance(EdiState.COMMIT)
     
-    sync_result = SyncService.process_sync_payload(tx.transaction_id, 'BUYER-02', [op_base.to_dict(), op_reject.to_dict()], [op_base])
+    sync_result = SyncService.process_sync_payload(
+        tx.transaction_id,
+        'BUYER-02',
+        [op_base.to_dict(), op_reject.to_dict()],
+        [op_base],
+        canonical_tx=tx,
+        canonical_tx_hash=tx.canonical_hash
+    )
     print(f"  -> CRDT Merge Status: {sync_result['status']}")
     print(f"  -> Invariant Engine: PASSED")
     print(f"  -> Converged Grand Total: {sync_result['converged_state']['grand_total']}")

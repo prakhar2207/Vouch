@@ -58,7 +58,14 @@ class SyncService:
         11. Persists to database atomically (fails closed on persistence error).
         12. Returns missing server operations for 2-way client sync.
         """
-        # 0. Canonical Transaction Hash Integrity Verification
+        # 1. Server-Side Multi-Tenant Authorization Check
+        if authorized_counterparty_ids is not None:
+            if authenticated_tenant_id not in authorized_counterparty_ids:
+                raise MultiTenantSecurityError(
+                    f"Access Denied: Tenant {authenticated_tenant_id} is not an authorized counterparty for transaction {transaction_id}"
+                )
+
+        # 2. Canonical Transaction Hash Integrity Verification
         if canonical_tx_hash == "TBD_CANONICAL_HASH":
             return {
                 "status": "SYNC_REJECTED",
@@ -72,13 +79,12 @@ class SyncService:
                     "status": "SYNC_REJECTED",
                     "reason": f"Canonical transaction hash mismatch: claimed {canonical_tx_hash} != calculated {computed_tx_hash}"
                 }
-        effective_tx_hash = computed_tx_hash or canonical_tx_hash or f"TX-HASH-{hashlib.sha256(transaction_id.encode('utf-8')).hexdigest()[:16]}"
-        # 1. Server-Side Multi-Tenant Authorization Check
-        if authorized_counterparty_ids is not None:
-            if authenticated_tenant_id not in authorized_counterparty_ids:
-                raise MultiTenantSecurityError(
-                    f"Access Denied: Tenant {authenticated_tenant_id} is not an authorized counterparty for transaction {transaction_id}"
-                )
+        effective_tx_hash = computed_tx_hash or canonical_tx_hash
+        if not effective_tx_hash:
+            return {
+                "status": "SYNC_REJECTED",
+                "reason": "Missing canonical transaction payload or deterministic canonical_tx_hash. Transaction-ID hash fallbacks are strictly forbidden before state commitment."
+            }
 
         # 2. Reconstruct Server CRDT from local database state
         server_crdt = DE_CRDT(
@@ -90,6 +96,18 @@ class SyncService:
             server_crdt.apply_operation(op)
 
         # 3. Reconstruct Client CRDT from incoming payload
+        if company:
+            try:
+                from .models import AuthorizedDevice
+                client_dev = AuthorizedDevice.objects.filter(company=company, replica_id=client_replica_id).first()
+                if client_dev and client_dev.status == "REVOKED":
+                    return {
+                        "status": "SYNC_REJECTED",
+                        "reason": f"Client replica device {client_replica_id} has been REVOKED for company {company.name}."
+                    }
+            except Exception:
+                pass
+
         client_crdt = DE_CRDT(
             replica_id=client_replica_id,
             transaction_id=transaction_id,
@@ -105,6 +123,18 @@ class SyncService:
                 
             op_copy.pop('payload_hash', None)
             op = AccountingOperation(**op_copy)
+
+            if company:
+                try:
+                    from .models import AuthorizedDevice
+                    op_dev = AuthorizedDevice.objects.filter(company=company, replica_id=op.replica_id).first()
+                    if op_dev and op_dev.status == "REVOKED":
+                        return {
+                            "status": "SYNC_REJECTED",
+                            "reason": f"Replica device {op.replica_id} has been REVOKED for company {company.name}."
+                        }
+                except Exception:
+                    pass
 
             # Strict Fail-Closed Digital Signature Verification
             if verify_signatures:

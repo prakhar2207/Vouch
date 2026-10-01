@@ -77,24 +77,46 @@ class QRSessionManager:
         if current_timestamp > payload.expires_at:
             raise SecurityViolation("QR Code has expired. Please refresh the sender's screen.")
             
-        # 3. Nonce Check (Replay Attack Prevention)
+        # 3. Nonce Check (Cross-Instance Multi-Node Replay Attack Prevention)
         nonce_consumed = False
+        nonce_key = f"qr_nonce:{payload.issuer_id}:{payload.nonce}"
+        timeout = max(60, payload.expires_at - current_timestamp)
+
+        # Tier 1: Shared atomic cache (Redis)
         try:
             from django.core.cache import cache
-            nonce_key = f"qr_nonce:{payload.issuer_id}:{payload.nonce}"
-            timeout = max(60, payload.expires_at - current_timestamp)
-            # cache.add is atomic: returns True only if key did NOT already exist
-            if not cache.add(nonce_key, 1, timeout=timeout):
+            # cache.add is atomic in Redis: returns True only if key did NOT already exist
+            added = cache.add(nonce_key, 1, timeout=timeout)
+            if not added:
                 raise SecurityViolation("Replay Attack Detected: Nonce has already been consumed.")
             nonce_consumed = True
         except SecurityViolation:
             raise
         except Exception:
-            # Fallback to local memory if Django cache is not configured or offline
-            if payload.nonce in self.used_nonces:
+            pass
+
+        # Tier 2: Durable atomic database uniqueness (guaranteed cross-server consistency)
+        if not nonce_consumed:
+            try:
+                from .models import ProtocolConsumedNonce
+                from django.db import IntegrityError
+                ProtocolConsumedNonce.objects.create(
+                    nonce_key=nonce_key,
+                    issuer_id=payload.issuer_id,
+                    nonce=payload.nonce,
+                    expires_at=payload.expires_at
+                )
+                nonce_consumed = True
+            except IntegrityError:
                 raise SecurityViolation("Replay Attack Detected: Nonce has already been consumed.")
-            self.used_nonces.add(payload.nonce)
-            nonce_consumed = True
+            except Exception as ex:
+                if "already exists" in str(ex) or "UNIQUE" in str(ex).upper():
+                    raise SecurityViolation("Replay Attack Detected: Nonce has already been consumed.")
+                # Local memory fallback strictly in unit tests when DB and Redis are disabled
+                if payload.nonce in self.used_nonces:
+                    raise SecurityViolation("Replay Attack Detected: Nonce has already been consumed.")
+                self.used_nonces.add(payload.nonce)
+                nonce_consumed = True
 
         # 4. Signature Verification
         if not payload.signature:

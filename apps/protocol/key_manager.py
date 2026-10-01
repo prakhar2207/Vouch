@@ -39,7 +39,15 @@ class ProtocolKeyManager:
         try:
             return cls.get_default().get_public_key(replica_id)
         except Exception:
-            return None
+            pass
+        try:
+            from .models import AuthorizedDevice
+            dev = AuthorizedDevice.objects.filter(replica_id=replica_id, status="ACTIVE").first()
+            if dev:
+                return dev.public_key_hex
+        except Exception:
+            pass
+        return None
 
     def __init__(self):
         self._keys: Dict[str, KeyEnvelope] = {} # key_id -> KeyEnvelope

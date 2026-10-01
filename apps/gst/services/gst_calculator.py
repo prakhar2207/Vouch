@@ -44,11 +44,12 @@ class GSTCalculator:
         c_state = (company_state_code or '').strip()
         p_state = (party_state_code or '').strip()
 
-        # Graceful fallback: Never crash if state code is omitted
-        # If party state code is missing, default to intra-state (company state)
+        # Fail-closed validation: Never silently guess artificial states (e.g. '07') for taxable transactions
         if not c_state and not p_state:
-            c_state = '07'
-            p_state = '07'
+            if gst_rate > Decimal('0.00'):
+                raise ValidationError("GST calculation failed: Both seller and buyer state codes are missing for taxable transaction. Place of supply cannot be determined.")
+            c_state = '00'
+            p_state = '00'
         elif not c_state:
             c_state = p_state
         elif not p_state:

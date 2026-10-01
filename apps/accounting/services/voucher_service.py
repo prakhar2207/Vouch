@@ -142,12 +142,9 @@ class VoucherService:
             from apps.accounting.services.invoice_notification_service import InvoiceNotificationService
             transaction.on_commit(lambda: InvoiceNotificationService.dispatch_invoice_on_post(voucher))
 
-        # 7. Protocol Operational DAG Emitter
-        try:
-            from apps.protocol.operation_emitter import ProtocolOperationEmitter
-            ProtocolOperationEmitter.emit_from_voucher(voucher, action='POST')
-        except Exception:
-            pass
+        # 7. Protocol Operational DAG Emitter (Transactional atomic emission)
+        from apps.protocol.operation_emitter import ProtocolOperationEmitter
+        ProtocolOperationEmitter.emit_from_voucher(voucher, action='POST')
         
         return voucher
 
@@ -205,12 +202,9 @@ class VoucherService:
             changes={"status": "CANCELLED"}
         )
 
-        # 4. Protocol Operational DAG Emitter
-        try:
-            from apps.protocol.operation_emitter import ProtocolOperationEmitter
-            ProtocolOperationEmitter.emit_from_voucher(voucher, action='CANCEL')
-        except Exception:
-            pass
+        # 4. Protocol Operational DAG Emitter (Transactional atomic emission)
+        from apps.protocol.operation_emitter import ProtocolOperationEmitter
+        ProtocolOperationEmitter.emit_from_voucher(voucher, action='CANCEL')
         
         # Ensure single-source-of-truth accuracy for all affected ledgers
         for ledger in locked_ledgers.values():

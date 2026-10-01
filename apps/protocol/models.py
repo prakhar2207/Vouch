@@ -1,5 +1,7 @@
 from django.db import models
 from django.utils import timezone
+from apps.companies.models import Company
+from apps.accounts.models import User
 
 class ProtocolTransaction(models.Model):
     """Phase 13: Django ORM persistence for the Canonical Transaction Envelope."""
@@ -103,5 +105,52 @@ class ProtocolBridgeExecution(models.Model):
     class Meta:
         db_table = "protocol_bridge_executions"
         ordering = ['-created_at']
+
+
+class AuthorizedDevice(models.Model):
+    """
+    Cryptographic identity binding a physical client/replica device to an enterprise Company.
+    Enforces device authorization, replica ID validation, and asymmetric Ed25519 public key pinning.
+    """
+    device_id = models.CharField(max_length=100, unique=True, db_index=True)
+    replica_id = models.CharField(max_length=100, unique=True, db_index=True)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="authorized_devices")
+    registered_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    device_name = models.CharField(max_length=255, default="Browser Client")
+    
+    public_key_hex = models.CharField(max_length=128, db_index=True)
+    key_id = models.CharField(max_length=100, db_index=True)
+    
+    STATUS_CHOICES = (
+        ("ACTIVE", "Active"),
+        ("REVOKED", "Revoked"),
+        ("ROTATED", "Rotated"),
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="ACTIVE", db_index=True)
+    
+    last_seen_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "protocol_authorized_devices"
+        unique_together = ('company', 'replica_id')
+        ordering = ['-created_at']
+
+
+class ProtocolConsumedNonce(models.Model):
+    """
+    Durable, cross-instance replay prevention for ephemeral nonces (QR codes, handshake nonces).
+    Guarantees strict once-only execution across horizontally scaled backend servers.
+    """
+    nonce_key = models.CharField(max_length=255, unique=True, db_index=True)
+    issuer_id = models.CharField(max_length=100, db_index=True)
+    nonce = models.CharField(max_length=128)
+    expires_at = models.BigIntegerField(db_index=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "protocol_consumed_nonces"
+        ordering = ['-created_at']
+
 
 

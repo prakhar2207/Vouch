@@ -7,7 +7,8 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from apps.companies.models import Company
 from .sync_service import SyncService, MultiTenantSecurityError
 from .handshake import EdiStateMachine, EdiState
-from .models import ProtocolTransaction, ProtocolOperation, CryptographicCommitment, EdiSession
+import uuid
+from .models import ProtocolTransaction, ProtocolOperation, CryptographicCommitment, EdiSession, AuthorizedDevice
 from .operation import AccountingOperation
 from .bridge import LedgerBridge
 
@@ -187,3 +188,80 @@ class ProtocolCommitmentAPIView(APIView):
             "previous_commitment_hash": commitment.previous_commitment_hash,
             "created_at": commitment.created_at.isoformat()
         }, status=status.HTTP_200_OK)
+
+
+class ProtocolDeviceRegistrationAPIView(APIView):
+    """
+    Cryptographic Device Registration and Authorization Endpoint.
+    Binds an offline client device identity (device_id, replica_id) to an enterprise Company,
+    records its Ed25519 public key, and enables fail-closed cryptographic sync.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        data = request.data
+        device_id = data.get("device_id")
+        replica_id = data.get("replica_id")
+        public_key_hex = data.get("public_key_hex")
+        key_id = data.get("key_id") or f"KID-{uuid.uuid4().hex[:12].upper()}"
+        device_name = data.get("device_name", "Browser Client")
+        company_id = data.get("company_id")
+
+        if not (device_id and replica_id and public_key_hex):
+            return Response(
+                {"error": "device_id, replica_id, and public_key_hex are required.", "status": "INVALID_PAYLOAD"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Multi-Tenant isolation check
+        user = request.user
+        company = None
+        if getattr(user, 'is_superuser', False):
+            if company_id:
+                company = Company.objects.filter(id=company_id).first()
+            else:
+                company = Company.objects.first()
+        else:
+            if company_id:
+                company = Company.objects.filter(id=company_id, users__user=user).first()
+            else:
+                user_co = user.companies.select_related('company').first()
+                if user_co:
+                    company = user_co.company
+
+        if not company:
+            return Response(
+                {"error": "Access Denied: Authenticated user is not associated with the requested company.", "status": "ACCESS_DENIED"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Register or update AuthorizedDevice
+        device, created = AuthorizedDevice.objects.update_or_create(
+            device_id=device_id,
+            defaults={
+                "replica_id": replica_id,
+                "company": company,
+                "registered_by": user,
+                "device_name": device_name,
+                "public_key_hex": public_key_hex,
+                "key_id": key_id,
+                "status": "ACTIVE"
+            }
+        )
+
+        # Register in in-memory ProtocolKeyManager as well
+        from .key_manager import ProtocolKeyManager
+        ProtocolKeyManager.get_default().register_public_key(
+            key_id=key_id,
+            replica_id=replica_id,
+            public_key_hex=public_key_hex
+        )
+
+        return Response({
+            "status": "REGISTERED",
+            "device_id": device.device_id,
+            "replica_id": device.replica_id,
+            "key_id": device.key_id,
+            "device_status": device.status,
+            "company_id": str(company.id)
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)

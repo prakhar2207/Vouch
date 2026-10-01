@@ -194,8 +194,25 @@ class LedgerBridge:
                 )
                 if semantic_res:
                     matched_item, score, confidence = semantic_res
-                    prod = Product.objects.filter(company=company, id=matched_item['id']).first()
-                    if prod:
+                    if score >= 0.90:
+                        prod = Product.objects.filter(company=company, id=matched_item['id']).first()
+                        if prod:
+                            EntityMapping.objects.get_or_create(
+                                source_company_id=source_id,
+                                destination_company_id=dest_id,
+                                foreign_sku=line.sku,
+                                mapping_version=1,
+                                defaults={
+                                    "mapping_id": f"MAP-{uuid.uuid4().hex[:12].upper()}",
+                                    "local_sku": prod.sku,
+                                    "confidence_level": confidence.value,
+                                    "approval_state": ApprovalState.APPROVED.value,
+                                    "conversion_multiplier": 1.0,
+                                    "hsn_override": line.hsn_code
+                                }
+                            )
+                    else:
+                        # 0.70 <= score < 0.90: Uncertainty barrier holds - record as PENDING review, do NOT auto-map
                         EntityMapping.objects.get_or_create(
                             source_company_id=source_id,
                             destination_company_id=dest_id,
@@ -203,9 +220,9 @@ class LedgerBridge:
                             mapping_version=1,
                             defaults={
                                 "mapping_id": f"MAP-{uuid.uuid4().hex[:12].upper()}",
-                                "local_sku": prod.sku,
+                                "local_sku": matched_item.get('sku', ''),
                                 "confidence_level": confidence.value,
-                                "approval_state": ApprovalState.APPROVED.value if score >= 0.90 else ApprovalState.PENDING.value,
+                                "approval_state": ApprovalState.PENDING.value,
                                 "conversion_multiplier": 1.0,
                                 "hsn_override": line.hsn_code
                             }

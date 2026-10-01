@@ -3,6 +3,7 @@ import time
 from decimal import Decimal
 from django.test import TestCase
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from apps.companies.models import Company
 from apps.accounts.models import User
@@ -226,7 +227,8 @@ class ProtocolSyncAndStateMachineTests(TestCase):
             client_replica_id="BUYER",
             client_operations=[base_op.to_dict(), rej_op.to_dict()],
             server_operations=[base_op],
-            authenticated_tenant_id="TENANT-01"
+            authenticated_tenant_id="TENANT-01",
+            canonical_tx_hash="HASH-TEST-001"
         )
 
         self.assertEqual(res['status'], 'SYNC_SUCCESS')
@@ -475,6 +477,7 @@ class AdvancedProtocolMechanismsTests(TestCase):
             "transaction_id": "TX-API-TEST-001",
             "client_replica_id": "CLI-TEST-01",
             "company_id": str(self.company.id),
+            "canonical_tx_hash": "HASH-TX-API-001",
             "client_operations": [op_data]
         }
         resp = c.post('/api/v1/protocol/sync/', data=payload, format='json')
@@ -483,4 +486,67 @@ class AdvancedProtocolMechanismsTests(TestCase):
         self.assertEqual(resp_data['status'], 'SYNC_SUCCESS')
         self.assertIn('state_commitment', resp_data)
         self.assertIn('merkle_state_roots', resp_data)
+
+    def test_device_registration_and_revocation_api(self):
+        """Verifies cryptographic device registration endpoint and subsequent revocation enforcement."""
+        from apps.protocol.models import AuthorizedDevice
+        c = APIClient()
+        c.force_authenticate(user=self.user)
+
+        # 1. Register device
+        priv_k, pub_k = ProtocolCrypto.generate_keypair()
+        reg_payload = {
+            "device_id": "DEV-TEST-PHONE-99",
+            "replica_id": "REP-TEST-PHONE-99",
+            "public_key_hex": pub_k,
+            "device_name": "Warehouse Scanner Tab",
+            "company_id": str(self.company.id)
+        }
+        res = c.post('/api/v1/protocol/devices/register/', data=reg_payload, format='json')
+        self.assertIn(res.status_code, [200, 201])
+        data = res.json()
+        self.assertEqual(data["status"], "REGISTERED")
+        self.assertEqual(data["replica_id"], "REP-TEST-PHONE-99")
+
+        # Verify record in DB
+        device = AuthorizedDevice.objects.get(device_id="DEV-TEST-PHONE-99")
+        self.assertEqual(device.status, "ACTIVE")
+        self.assertEqual(device.public_key_hex, pub_k)
+
+        # 2. Revoke device in DB
+        device.status = "REVOKED"
+        device.save()
+
+        # 3. Attempt sync with revoked device - must be rejected fail-closed
+        op_data = {
+            "operation_id": "OP-REVOKED-01",
+            "transaction_id": "TX-REV-01",
+            "replica_id": "REP-TEST-PHONE-99",
+            "operation_type": "TRANSACTION_ISSUED",
+            "payload": {"grand_total": 500.0, "taxable_amount": 500.0, "total_tax": 0.0},
+            "logical_timestamp": 1,
+            "parents": []
+        }
+        op = AccountingOperation(
+            operation_id=op_data["operation_id"],
+            transaction_id=op_data["transaction_id"],
+            replica_id=op_data["replica_id"],
+            operation_type=OperationType.TRANSACTION_ISSUED,
+            payload=op_data["payload"],
+            logical_timestamp=1,
+            parents=[]
+        )
+        op_data["signature"] = ProtocolCrypto.sign(op.payload_hash, priv_k)
+
+        sync_payload = {
+            "transaction_id": "TX-REV-01",
+            "client_replica_id": "REP-TEST-PHONE-99",
+            "company_id": str(self.company.id),
+            "canonical_tx_hash": "HASH-REV-01",
+            "client_operations": [op_data]
+        }
+        sync_resp = c.post('/api/v1/protocol/sync/', data=sync_payload, format='json')
+        self.assertEqual(sync_resp.status_code, 400)
+        self.assertEqual(sync_resp.json()["status"], "SYNC_REJECTED")
+        self.assertIn("REVOKED", sync_resp.json()["reason"])
 

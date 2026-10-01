@@ -140,5 +140,5 @@ class ProtocolOperationEmitter:
             return db_op
 
         except Exception as e:
-            logger.warning(f"ProtocolOperationEmitter warning: Failed to emit operation for Voucher {voucher.id}: {e}")
-            return None
+            logger.error(f"ProtocolOperationEmitter failure for Voucher {voucher.id}: {e}", exc_info=True)
+            raise RuntimeError(f"Transactional Protocol Operation Emission Failed for Voucher {voucher.voucher_number}: {e}") from e

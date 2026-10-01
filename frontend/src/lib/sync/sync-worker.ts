@@ -2,6 +2,7 @@ import { offlineDb, OfflineVoucher, SyncedVoucher, SyncedLedger, SyncedProduct, 
 import { LocalAnalyticsEngine } from "../analytics/analytics-engine";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
+import { ClientOperationManager } from "../crdt/clientOperationManager";
 
 /**
  * Returns a persistent, anonymous device UUID stored in localStorage.
@@ -20,21 +21,15 @@ export function getDeviceId(): string {
 }
 
 export async function queueOfflineVoucher(voucherType: string, payload: any, voucherDate: string) {
-  const localId = typeof crypto !== "undefined" && crypto.randomUUID 
-    ? crypto.randomUUID() 
-    : `cmd-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-  const entry: OfflineVoucher = {
-    localId,
+  const companyId = payload.company_id || payload.company || "";
+  const result = await ClientOperationManager.recordLocalVoucherMutation({
+    companyId,
     voucherType,
     voucherDate,
-    payload,
-    status: "PENDING",
-    retryCount: 0,
-    createdAt: Date.now(),
-  };
-  const id = await offlineDb.vouchers.add(entry);
+    payload
+  });
   await triggerOutboxSync();
-  return { id, localId, status: "QUEUED_OFFLINE" };
+  return { id: 1, localId: result.localId, transactionId: result.transactionId, status: "QUEUED_OFFLINE" };
 }
 
 let isSyncInProgress = false;
@@ -126,123 +121,35 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
 
     const deviceId = getDeviceId();
 
+    // 1. Drain legacy OfflineVoucher records into authoritative CRDT operation log
     for (const item of pending) {
       try {
         await offlineDb.vouchers.update(item.id!, { status: "SYNCING" });
-
-        const commandId = item.localId;
-        const companyId = item.payload.company_id || item.payload.company;
-
-        const pushPayload = {
-          company_id: companyId,
-          commands: [
-            {
-              command_id: commandId,
-              command_type: `CREATE_${item.voucherType.toUpperCase()}`,
-              payload: item.payload,
-              device_id: deviceId,
-            }
-          ]
-        };
-
-        const response = await fetch(`${API_BASE_URL}/api/v1/sync/push/`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-            "X-Company-ID": companyId || "",
-          },
-          body: JSON.stringify(pushPayload),
+        const companyId = item.payload?.company_id || item.payload?.company || "";
+        
+        await ClientOperationManager.recordLocalVoucherMutation({
+          companyId,
+          voucherType: item.voucherType,
+          voucherDate: item.voucherDate,
+          payload: item.payload,
+          transactionId: item.localId
         });
 
-        const resData = await response.json().catch(() => ({}));
-        const httpStatus = response.status;
-
-        if (response.ok && (resData.success || resData.processed_count > 0)) {
-          const cmdResult = resData.results?.find((r: any) => r.command_id === commandId) || resData.results?.[0];
-          if (cmdResult && cmdResult.status === "PROCESSED") {
-            if (cmdResult.voucher_data) {
-              await ingestVoucherLocally(companyId, cmdResult.voucher_data);
-            }
-            await offlineDb.vouchers.update(item.id!, {
-              status: "SYNCED",
-              voucherNumber: cmdResult?.voucher_number,
-              syncedAt: Date.now(),
-              nextRetryAt: undefined,
-            });
-            processedCount++;
-          } else {
-            const cmdErr = resData.errors?.find((e: any) => e.command_id === commandId)?.error || "Server processing failed";
-            await offlineDb.vouchers.update(item.id!, {
-              status: "FAILED",
-              errorMessage: cmdErr,
-              retryCount: (item.retryCount || 0) + 1,
-            });
-            failedCount++;
-          }
-        } else if (httpStatus === 400 || httpStatus === 422 || httpStatus === 409) {
-          // Permanent validation or conflict failure: do NOT retry in a loop
-          const errMsg = resData.errors?.find((e: any) => e.command_id === commandId)?.error || resData.error || `Rejected by server (${httpStatus})`;
-          await offlineDb.vouchers.update(item.id!, {
-            status: "FAILED",
-            errorMessage: errMsg,
-            retryCount: (item.retryCount || 0) + 1,
-            nextRetryAt: undefined,
-          });
-          failedCount++;
-        } else if (httpStatus === 401 || httpStatus === 403) {
-          // Auth or permission failure: requires user login / role fix
-          await offlineDb.vouchers.update(item.id!, {
-            status: "FAILED",
-            errorMessage: `Authorization error (${httpStatus})`,
-            retryCount: (item.retryCount || 0) + 1,
-            nextRetryAt: undefined,
-          });
-          failedCount++;
-        } else {
-          // Retryable error: 408, 429, 500, 502, 503, 504, or network failure
-          const newRetry = (item.retryCount || 0) + 1;
-          const errMsg = resData.errors?.[0]?.error || resData.error || `Server error (${httpStatus})`;
-          if (newRetry >= 10) {
-            await offlineDb.vouchers.update(item.id!, {
-              status: "FAILED",
-              errorMessage: `Exceeded max retry limit (10): ${errMsg}`,
-              retryCount: newRetry,
-              nextRetryAt: undefined,
-            });
-            failedCount++;
-          } else {
-            const delay = BACKOFF_DELAYS[newRetry - 1] || 60000;
-            await offlineDb.vouchers.update(item.id!, {
-              status: "PENDING",
-              errorMessage: errMsg,
-              retryCount: newRetry,
-              nextRetryAt: Date.now() + delay,
-            });
-          }
-        }
+        await offlineDb.vouchers.update(item.id!, {
+          status: "SYNCED",
+          syncedAt: Date.now(),
+          nextRetryAt: undefined
+        });
+        processedCount++;
       } catch (err: any) {
-        const isOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
-        const newRetry = (item.retryCount || 0) + 1;
-        if (isOnline && newRetry >= 10) {
-          await offlineDb.vouchers.update(item.id!, {
-            status: "FAILED",
-            errorMessage: err?.message || "Exceeded max network retry limit",
-            retryCount: newRetry,
-            nextRetryAt: undefined,
-          });
-          failedCount++;
-        } else {
-          const delay = BACKOFF_DELAYS[Math.min(newRetry - 1, BACKOFF_DELAYS.length - 1)];
-          await offlineDb.vouchers.update(item.id!, {
-            status: "PENDING",
-            errorMessage: err?.message || "Network error during sync",
-            retryCount: newRetry,
-            nextRetryAt: Date.now() + delay,
-          });
-        }
+        console.warn("Failed to migrate legacy voucher to protocol operation:", err);
+        failedCount++;
       }
     }
+
+    // 2. Authoritative Protocol Sync via ClientOperationManager
+    const protoResult = await ClientOperationManager.syncOutboxWithServer(API_BASE_URL);
+    processedCount += protoResult.syncedCount;
 
     return { processed: processedCount, failed: failedCount };
   } finally {
@@ -266,7 +173,6 @@ export async function retryFailedVoucher(idOrLocalId: number | string) {
 export async function triggerOutboxSync() {
   if (typeof window === "undefined" || !navigator.onLine) return;
 
-  // Verify there are actually eligible pending items before registering or executing sync
   const now = Date.now();
   const eligiblePending = await offlineDb.vouchers
     .where("status")
@@ -275,7 +181,13 @@ export async function triggerOutboxSync() {
     .count()
     .catch(() => 0);
 
-  if (eligiblePending === 0) return;
+  const outboxPending = await offlineDb.outboxQueue
+    .where("status")
+    .equals("QUEUED")
+    .count()
+    .catch(() => 0);
+
+  if (eligiblePending === 0 && outboxPending === 0) return;
 
   if ("serviceWorker" in navigator && "SyncManager" in window) {
     try {
@@ -283,11 +195,9 @@ export async function triggerOutboxSync() {
       await (registration as any).sync.register("vouch-outbox-sync");
       return;
     } catch (err) {
-      // Fallback to direct client-side sync worker loop if registration fails
       await executeClientOutboxSync();
     }
   } else {
-    // Fallback for browsers without Background Sync API (e.g., Safari iOS)
     await executeClientOutboxSync();
   }
 }
