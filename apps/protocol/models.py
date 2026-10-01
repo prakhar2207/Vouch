@@ -153,4 +153,25 @@ class ProtocolConsumedNonce(models.Model):
         ordering = ['-created_at']
 
 
+class DeviceKeyRotationAudit(models.Model):
+    """
+    Immutable audit ledger for cryptographic key rotation events.
+    Records previous public key, new public key, authorizer, rotation proof, and timestamp.
+    """
+    device = models.ForeignKey(AuthorizedDevice, on_delete=models.CASCADE, related_name="rotation_history")
+    old_public_key_hex = models.CharField(max_length=128)
+    old_key_id = models.CharField(max_length=100)
+    new_public_key_hex = models.CharField(max_length=128)
+    new_key_id = models.CharField(max_length=100)
+    rotated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    authorization_method = models.CharField(max_length=50) # 'CRYPTOGRAPHIC_PROOF' or 'COMPANY_ADMIN'
+    rotation_signature = models.CharField(max_length=512, null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "protocol_device_key_rotations"
+        ordering = ['-created_at']
+
+
+
 

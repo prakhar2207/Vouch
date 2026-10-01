@@ -268,7 +268,8 @@ export class ClientOperationManager {
               delta = qty;
             }
 
-            const rawStock = (product.currentStock || 0) + delta;
+            const baseStock = typeof product.currentStock === "number" ? product.currentStock : Number((product as any).current_stock ?? 0);
+            const rawStock = baseStock + delta;
             if (rawStock < 0) {
               console.warn(`[Inventory Invariant Warning] Product ${product.id} stock projected negative (${rawStock}). Retaining exact arithmetic state for accounting review without clamp masking.`);
             }

@@ -36,6 +36,7 @@ from apps.protocol.schema import (
 from apps.protocol.operation import AccountingOperation, OperationType
 from apps.protocol.crypto import ProtocolCrypto
 from apps.protocol.bridge import LedgerBridge, LedgerBridgeError
+from apps.protocol.compensation import CompensationEngine
 from apps.protocol.sync_service import SyncService
 from apps.protocol.models import AuthorizedDevice, CryptographicCommitment, ProtocolTransaction
 
@@ -395,6 +396,199 @@ def test_high_concurrency_ledger_bridge(num_workers: int = 8):
     print("  [PASSED] Ledger Bridge concurrency stress test passed with 100% idempotency.")
 
 
+def test_concurrent_payment_allocations():
+    """Scenario 6: Two concurrent threads execute payment allocations on the same invoice simultaneously."""
+    print("\n[Scenario 6] Concurrent Payment Allocations (Two simultaneous payments on same invoice)...")
+    company, user = create_test_company_and_user("PAYRACE")
+    tx_id = f"TX-PAY-{uuid.uuid4().hex[:8].upper()}"
+
+    tx = CanonicalTransaction(
+        protocol_version="1.0",
+        transaction_id=tx_id,
+        transaction_type="SALE",
+        state_version=1,
+        issued_at=time.time(),
+        source_entity=ProtocolEntity("GSTIN", company.gstin, company.name, "27"),
+        destination_entity=ProtocolEntity("GSTIN", "27COUNTR9999B1Z", "Counterparty Buyer", "27"),
+        items=[
+            TransactionLine("L1", "PAY-SKU-1", "Payment Test Item", "8481", Decimal("10.00"), "PCS", Decimal("100.00"), Decimal("0.00"), Decimal("1000.00"), Decimal("18.00"))
+        ],
+        tax_summary=TaxSummary(cgst_amount=Decimal("90.00"), sgst_amount=Decimal("90.00")),
+        totals=TransactionTotals(subtotal=Decimal("1000.00"), total_tax=Decimal("180.00"), grand_total=Decimal("1180.00"))
+    )
+
+    priv_k, pub_k = ProtocolCrypto.generate_keypair()
+    base_op = AccountingOperation(
+        operation_id=f"OP-BASE-{tx_id}",
+        transaction_id=tx_id,
+        replica_id="REP-PAY-1",
+        operation_type=OperationType.TRANSACTION_ISSUED,
+        payload={"grand_total": 1180.0, "taxable_amount": 1000.0, "total_tax": 180.0},
+        logical_timestamp=1
+    ).sign(priv_k)
+
+    # Base voucher creation
+    init_res = LedgerBridge.execute_converged_accounting(
+        company=company,
+        canonical_tx=tx,
+        converged_operations=[base_op],
+        user=user
+    )
+    assert init_res["status"] == "BRIDGE_SUCCESS"
+
+    # Now create two concurrent payments:
+    # Payment 1: 500.00
+    pay_op1 = AccountingOperation(
+        operation_id=f"OP-PAY-1-{tx_id}",
+        transaction_id=tx_id,
+        replica_id="REP-PAY-1",
+        operation_type=OperationType.PAYMENT_ALLOCATED,
+        payload={"amount": 500.00, "payment_mode": "BANK_TRANSFER"},
+        logical_timestamp=2,
+        parents=[base_op.operation_id]
+    ).sign(priv_k)
+
+    # Payment 2: 680.00
+    pay_op2 = AccountingOperation(
+        operation_id=f"OP-PAY-2-{tx_id}",
+        transaction_id=tx_id,
+        replica_id="REP-PAY-1",
+        operation_type=OperationType.PAYMENT_ALLOCATED,
+        payload={"amount": 680.00, "payment_mode": "UPI"},
+        logical_timestamp=3,
+        parents=[base_op.operation_id]
+    ).sign(priv_k)
+
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def pay_worker(op_to_apply):
+        connection.close()
+        try:
+            barrier.wait()
+            res = LedgerBridge.execute_converged_accounting(
+                company=company,
+                canonical_tx=tx,
+                converged_operations=[base_op, op_to_apply],
+                user=user
+            )
+            results.append(res)
+        except Exception as ex:
+            errors.append(ex)
+
+    t1 = threading.Thread(target=pay_worker, args=(pay_op1,))
+    t2 = threading.Thread(target=pay_worker, args=(pay_op2,))
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+
+    assert not errors, f"Unexpected errors during payment race: {errors}"
+    assert len(results) == 2, f"Expected 2 results, got {len(results)}"
+
+    # Check database receipts created
+    receipts = Voucher.objects.filter(company=company, voucher_type='RECEIPT')
+    pay_vouchers = [v for v in receipts if v.reference_number in [f"PAY-{pay_op1.operation_id[:8]}", f"PAY-{pay_op2.operation_id[:8]}"]]
+    assert len(pay_vouchers) == 2, f"Expected 2 receipt vouchers, found {len(pay_vouchers)}"
+    total_received = sum(v.total_amount for v in pay_vouchers)
+    assert total_received == Decimal("1180.00"), f"Expected 1180.00 total received, got {total_received}"
+    print(f"  -> Concurrently Posted Payment Vouchers: {len(pay_vouchers)}")
+    print(f"  -> Total Reconciled Amount: {total_received} (100% Exact)")
+    print("  [PASSED] Simultaneous payment allocations converged with zero lost updates.")
+
+
+def test_concurrent_compensations():
+    """Scenario 7: Two concurrent compensations on the same invoice processed simultaneously."""
+    print("\n[Scenario 7] Concurrent Compensations (Two simultaneous line rejections on same invoice)...")
+    company, user = create_test_company_and_user("COMPRACE")
+    tx_id = f"TX-COMP-{uuid.uuid4().hex[:8].upper()}"
+
+    tx = CanonicalTransaction(
+        protocol_version="1.0",
+        transaction_id=tx_id,
+        transaction_type="SALE",
+        state_version=1,
+        issued_at=time.time(),
+        source_entity=ProtocolEntity("GSTIN", company.gstin, company.name, "27"),
+        destination_entity=ProtocolEntity("GSTIN", "27COUNTR9999B1Z", "Counterparty Buyer", "27"),
+        items=[
+            TransactionLine("L1", "COMP-SKU-1", "Compensation Item 1", "8481", Decimal("10.00"), "PCS", Decimal("100.00"), Decimal("0.00"), Decimal("1000.00"), Decimal("18.00")),
+            TransactionLine("L2", "COMP-SKU-2", "Compensation Item 2", "8481", Decimal("10.00"), "PCS", Decimal("50.00"), Decimal("0.00"), Decimal("500.00"), Decimal("18.00"))
+        ],
+        tax_summary=TaxSummary(cgst_amount=Decimal("135.00"), sgst_amount=Decimal("135.00")),
+        totals=TransactionTotals(subtotal=Decimal("1500.00"), total_tax=Decimal("270.00"), grand_total=Decimal("1770.00"))
+    )
+
+    priv_k, pub_k = ProtocolCrypto.generate_keypair()
+    base_op = AccountingOperation(
+        operation_id=f"OP-BASE-{tx_id}",
+        transaction_id=tx_id,
+        replica_id="REP-COMP-1",
+        operation_type=OperationType.TRANSACTION_ISSUED,
+        payload={"grand_total": 1770.0, "taxable_amount": 1500.0, "total_tax": 270.0},
+        logical_timestamp=1
+    ).sign(priv_k)
+
+    init_res = LedgerBridge.execute_converged_accounting(
+        company=company,
+        canonical_tx=tx,
+        converged_operations=[base_op],
+        user=user
+    )
+    assert init_res["status"] == "BRIDGE_SUCCESS"
+
+    # Compensation 1: Reject 2 PCS of L1
+    comp_op1 = CompensationEngine.generate_item_rejection(
+        transaction=tx,
+        line_id="L1",
+        quantity_rejected=Decimal("2.00"),
+        replica_id="REP-COMP-1",
+        logical_timestamp=2,
+        parent_operation_id=base_op.operation_id
+    ).sign(priv_k)
+
+    # Compensation 2: Reject 3 PCS of L2
+    comp_op2 = CompensationEngine.generate_item_rejection(
+        transaction=tx,
+        line_id="L2",
+        quantity_rejected=Decimal("3.00"),
+        replica_id="REP-COMP-1",
+        logical_timestamp=3,
+        parent_operation_id=base_op.operation_id
+    ).sign(priv_k)
+
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def comp_worker(op_to_apply):
+        connection.close()
+        try:
+            barrier.wait()
+            res = LedgerBridge.execute_converged_accounting(
+                company=company,
+                canonical_tx=tx,
+                converged_operations=[base_op, op_to_apply],
+                user=user
+            )
+            results.append(res)
+        except Exception as ex:
+            errors.append(ex)
+
+    t1 = threading.Thread(target=comp_worker, args=(comp_op1,))
+    t2 = threading.Thread(target=comp_worker, args=(comp_op2,))
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+
+    assert not errors, f"Unexpected errors during compensation race: {errors}"
+    assert len(results) == 2, f"Expected 2 results, got {len(results)}"
+
+    # Check Credit Notes created for company
+    credit_notes = Voucher.objects.filter(company=company, voucher_type='CREDIT_NOTE', external_invoice_number=tx_id)
+    assert credit_notes.count() == 2, f"Expected 2 credit notes, found {credit_notes.count()}"
+    print(f"  -> Concurrently Posted Credit Notes: {credit_notes.count()}")
+    print("  [PASSED] Simultaneous compensations converged with atomic voucher posting.")
+
+
 def run_all_concurrency_tests():
     print("=" * 80)
     print("   VOUCH PROTOCOL: HIGH-CONCURRENCY & TRANSACTION ISOLATION TEST SUITE")
@@ -404,8 +598,10 @@ def run_all_concurrency_tests():
     test_key_rotation_and_sync_race()
     test_concurrent_identical_sync_requests()
     test_high_concurrency_ledger_bridge(8)
+    test_concurrent_payment_allocations()
+    test_concurrent_compensations()
     print("\n" + "=" * 80)
-    print(">>> ALL 5 CONCURRENCY RACE CONDITIONS PASSED WITH ZERO DATA CORRUPTION <<<")
+    print(">>> ALL 7 CONCURRENCY RACE CONDITIONS PASSED WITH ZERO DATA CORRUPTION <<<")
     print("=" * 80)
 
 

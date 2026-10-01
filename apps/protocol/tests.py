@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.companies.models import Company
+from apps.companies.models import Company, UserCompany
 from apps.accounts.models import User
 from apps.ledgers.models import Ledger, LedgerGroup
 from apps.accounting.models import Voucher, LedgerEntry
@@ -222,13 +222,29 @@ class ProtocolSyncAndStateMachineTests(TestCase):
             parents=["OP-BASE"]
         ).sign(buyer_env.private_key_hex)
 
+        canonical_tx = CanonicalTransaction(
+            protocol_version="1.0",
+            transaction_id=tx_id,
+            transaction_type="SALE",
+            state_version=1,
+            issued_at=timezone.now(),
+            source_entity=ProtocolEntity("GSTIN", "27AAAAA1234A1Z5", "Seller", "27"),
+            destination_entity=ProtocolEntity("GSTIN", "27BBBBB5678B1Z6", "Buyer", "27"),
+            items=[
+                TransactionLine("L1", "ITEM-1", "Item", "8481", Decimal("10.00"), "PCS", Decimal("100.00"), Decimal("0.00"), Decimal("1000.00"), Decimal("18.00"))
+            ],
+            tax_summary=TaxSummary(cgst_amount=Decimal("90.00"), sgst_amount=Decimal("90.00")),
+            totals=TransactionTotals(subtotal=Decimal("1000.00"), total_tax=Decimal("180.00"), grand_total=Decimal("1180.00"))
+        )
+
         res = SyncService.process_sync_payload(
             transaction_id=tx_id,
             client_replica_id="BUYER",
             client_operations=[base_op.to_dict(), rej_op.to_dict()],
             server_operations=[base_op],
             authenticated_tenant_id="TENANT-01",
-            canonical_tx_hash="HASH-TEST-001"
+            canonical_tx=canonical_tx,
+            canonical_tx_hash=canonical_tx.canonical_hash
         )
 
         self.assertEqual(res['status'], 'SYNC_SUCCESS')
@@ -658,8 +674,8 @@ class AdvancedProtocolMechanismsTests(TestCase):
         self.assertIn("not an authorized device for company", res.json()["reason"])
 
     def test_device_rotation_api(self):
-        """Verifies POST /api/v1/protocol/devices/rotate/ replaces key and maintains active authorization."""
-        from apps.protocol.models import AuthorizedDevice
+        """Verifies POST /api/v1/protocol/devices/rotate/ enforces authorization, logs audit trail, and replaces key."""
+        from apps.protocol.models import AuthorizedDevice, DeviceKeyRotationAudit
         c = APIClient()
         c.force_authenticate(user=self.user)
 
@@ -675,6 +691,7 @@ class AdvancedProtocolMechanismsTests(TestCase):
             status="ACTIVE"
         )
 
+        # 1. Admin Authorization Rotation
         rotate_payload = {
             "device_id": "DEV-ROTATE-TEST",
             "new_public_key_hex": pub_new,
@@ -683,12 +700,55 @@ class AdvancedProtocolMechanismsTests(TestCase):
         }
         res = c.post('/api/v1/protocol/devices/rotate/', data=rotate_payload, format='json')
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.json()["status"], "ROTATED")
+        data = res.json()
+        self.assertEqual(data["status"], "ROTATED")
+        self.assertEqual(data["authorization_method"], "COMPANY_ADMIN")
+        self.assertIn("audit_id", data)
 
         device = AuthorizedDevice.objects.get(device_id="DEV-ROTATE-TEST")
         self.assertEqual(device.public_key_hex, pub_new)
         self.assertEqual(device.key_id, "KID-NEW-02")
         self.assertEqual(device.status, "ACTIVE")
+
+        # Verify audit trail record in DB
+        audit_records = DeviceKeyRotationAudit.objects.filter(device=device)
+        self.assertEqual(audit_records.count(), 1)
+        self.assertEqual(audit_records.first().old_public_key_hex, pub_orig)
+        self.assertEqual(audit_records.first().new_public_key_hex, pub_new)
+        self.assertEqual(audit_records.first().authorization_method, "COMPANY_ADMIN")
+
+        # 2. Cryptographic Proof Rotation (Signed by current active key priv_new)
+        priv_v3, pub_v3 = ProtocolCrypto.generate_keypair()
+        rot_msg = f"ROTATE:DEV-ROTATE-TEST:{pub_v3}:KID-V3"
+        rot_sig = ProtocolCrypto.sign(rot_msg, priv_new)
+
+        rot_crypto_payload = {
+            "device_id": "DEV-ROTATE-TEST",
+            "new_public_key_hex": pub_v3,
+            "new_key_id": "KID-V3",
+            "rotation_signature": rot_sig,
+            "company_id": str(self.company.id)
+        }
+        res_crypto = c.post('/api/v1/protocol/devices/rotate/', data=rot_crypto_payload, format='json')
+        self.assertEqual(res_crypto.status_code, 200)
+        self.assertEqual(res_crypto.json()["authorization_method"], "CRYPTOGRAPHIC_PROOF")
+        self.assertEqual(DeviceKeyRotationAudit.objects.filter(device=device).count(), 2)
+
+        # 3. Unauthorized User Rotation Rejection (Non-admin without valid signature)
+        non_admin_user = User.objects.create_user(email="viewer@vouch.example.com", password="Pass123!Password", role="VIEWER")
+        UserCompany.objects.create(user=non_admin_user, company=self.company, role='VIEWER')
+        c_unauth = APIClient()
+        c_unauth.force_authenticate(user=non_admin_user)
+        priv_v4, pub_v4 = ProtocolCrypto.generate_keypair()
+        unauth_payload = {
+            "device_id": "DEV-ROTATE-TEST",
+            "new_public_key_hex": pub_v4,
+            "new_key_id": "KID-V4",
+            "company_id": str(self.company.id)
+        }
+        res_unauth = c_unauth.post('/api/v1/protocol/devices/rotate/', data=unauth_payload, format='json')
+        self.assertEqual(res_unauth.status_code, 403)
+        self.assertIn("UNAUTHORIZED", res_unauth.json()["status"])
 
     def test_canonical_transaction_reconstruction_and_tamper_detection(self):
         """Verifies that the server reconstructs CanonicalTransaction and rejects claimed hash mismatches."""

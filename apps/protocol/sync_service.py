@@ -37,7 +37,6 @@ class SyncService:
         canonical_tx_hash: Optional[str] = None,
         previous_commitment_hash: Any = None,
         verify_signatures: bool = True,
-        public_keys_map: Optional[Dict[str, str]] = None,
         company: Any = None,
         canonical_tx: Optional[CanonicalTransaction] = None,
         user: Any = None,
@@ -100,12 +99,10 @@ class SyncService:
 
         # If transaction is brand-new, canonical_tx is strictly required
         if canonical_tx is None:
-            if company is not None or not canonical_tx_hash:
-                return {
-                    "status": "SYNC_REJECTED",
-                    "reason": f"New transaction '{transaction_id}' requires a complete canonical_transaction payload for server-side invariant validation and hash computation. Pure hash assertions are rejected."
-                }
-            effective_tx_hash = canonical_tx_hash
+            return {
+                "status": "SYNC_REJECTED",
+                "reason": f"New transaction '{transaction_id}' requires a complete canonical_transaction payload for server-side invariant validation and hash computation. Pure hash assertions are rejected."
+            }
         else:
             # Validate canonical invariants
             if hasattr(canonical_tx, 'validate_invariants'):
@@ -187,11 +184,10 @@ class SyncService:
                 from .models import AuthorizedDevice
                 op_dev = AuthorizedDevice.objects.filter(replica_id=op.replica_id).first()
                 if not op_dev:
-                    if not (public_keys_map and op.replica_id in public_keys_map):
-                        return {
-                            "status": "SYNC_REJECTED",
-                            "reason": f"Operation from unauthorized replica: {op.replica_id} is not registered in system."
-                        }
+                    return {
+                        "status": "SYNC_REJECTED",
+                        "reason": f"Operation from unauthorized replica: {op.replica_id} is not registered in system."
+                    }
                 elif op_dev.status != "ACTIVE":
                     return {
                         "status": "SYNC_REJECTED",
@@ -207,11 +203,10 @@ class SyncService:
                 else:
                     # COUNTERPARTY OPERATION: Must belong to an authorized transaction participant
                     if participant_company_ids and str(op_dev.company_id) not in participant_company_ids:
-                        if not (public_keys_map and op.replica_id in public_keys_map):
-                            return {
-                                "status": "SYNC_REJECTED",
-                                "reason": f"Operation {op.operation_id} from replica {op.replica_id} belongs to unauthorized company '{op_dev.company.name}', which is not a participant in transaction {transaction_id}."
-                            }
+                        return {
+                            "status": "SYNC_REJECTED",
+                            "reason": f"Operation {op.operation_id} from replica {op.replica_id} belongs to unauthorized company '{op_dev.company.name}', which is not a participant in transaction {transaction_id}."
+                        }
 
             # Strict Fail-Closed Digital Signature Verification
             if verify_signatures:
@@ -225,8 +220,6 @@ class SyncService:
                 pub_key = None
                 if op_dev:
                     pub_key = op_dev.public_key_hex
-                elif public_keys_map and op.replica_id in public_keys_map:
-                    pub_key = public_keys_map[op.replica_id]
                 else:
                     from .key_manager import ProtocolKeyManager
                     pub_key = ProtocolKeyManager.get_active_public_key(op.replica_id)
@@ -360,46 +353,58 @@ class SyncService:
         # 12. Persist Merged State to Django ORM (if requested)
         if persist_to_db:
             try:
-                from django.db import transaction as db_transaction
+                from django.db import transaction as db_transaction, IntegrityError
                 from .models import ProtocolTransaction, ProtocolOperation, CryptographicCommitment
 
                 with db_transaction.atomic():
                     payload_dict = canonical_tx.to_dict() if (canonical_tx and hasattr(canonical_tx, 'to_dict')) else {"transaction_id": transaction_id}
-                    ptx, _ = ProtocolTransaction.objects.get_or_create(
-                        transaction_id=transaction_id,
-                        defaults={
-                            "transaction_type": "SALE",
-                            "protocol_version": "1.0",
-                            "source_company_id": seller_identity,
-                            "destination_company_id": buyer_identity,
-                            "canonical_payload": payload_dict
-                        }
-                    )
+                    try:
+                        with db_transaction.atomic():
+                            ptx, _ = ProtocolTransaction.objects.get_or_create(
+                                transaction_id=transaction_id,
+                                defaults={
+                                    "transaction_type": "SALE",
+                                    "protocol_version": "1.0",
+                                    "source_company_id": seller_identity,
+                                    "destination_company_id": buyer_identity,
+                                    "canonical_payload": payload_dict
+                                }
+                            )
+                    except IntegrityError:
+                        ptx = ProtocolTransaction.objects.get(transaction_id=transaction_id)
 
                     for op in merged_crdt.get_operations():
                         op_type_val = op.operation_type.value if hasattr(op.operation_type, 'value') else str(op.operation_type)
-                        ProtocolOperation.objects.get_or_create(
-                            operation_id=op.operation_id,
-                            replica_id=op.replica_id,
-                            defaults={
-                                "transaction": ptx,
-                                "operation_type": op_type_val,
-                                "payload": dict(op.payload),
-                                "logical_timestamp": op.logical_timestamp,
-                                "parents": list(op.parents),
-                                "payload_hash": op.payload_hash,
-                                "signature": op.signature
-                            }
-                        )
+                        try:
+                            with db_transaction.atomic():
+                                ProtocolOperation.objects.get_or_create(
+                                    operation_id=op.operation_id,
+                                    replica_id=op.replica_id,
+                                    defaults={
+                                        "transaction": ptx,
+                                        "operation_type": op_type_val,
+                                        "payload": dict(op.payload),
+                                        "logical_timestamp": op.logical_timestamp,
+                                        "parents": list(op.parents),
+                                        "payload_hash": op.payload_hash,
+                                        "signature": op.signature
+                                    }
+                                )
+                        except IntegrityError:
+                            pass # Concurrently inserted by racing thread
 
-                    CryptographicCommitment.objects.get_or_create(
-                        commitment_hash=commitment_hash,
-                        defaults={
-                            "transaction": ptx,
-                            "operation_state_root": roots["operation_state_root"],
-                            "previous_commitment_hash": str(previous_commitment_hash) if previous_commitment_hash else None
-                        }
-                    )
+                    try:
+                        with db_transaction.atomic():
+                            CryptographicCommitment.objects.get_or_create(
+                                commitment_hash=commitment_hash,
+                                defaults={
+                                    "transaction": ptx,
+                                    "operation_state_root": roots["operation_state_root"],
+                                    "previous_commitment_hash": str(previous_commitment_hash) if previous_commitment_hash else None
+                                }
+                            )
+                    except IntegrityError:
+                        pass # Concurrently inserted by racing thread
             except Exception as e:
                 logger.error(f"Protocol database persistence failure: {e}", exc_info=True)
                 return {

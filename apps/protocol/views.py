@@ -9,7 +9,7 @@ from django.db import IntegrityError
 from .sync_service import SyncService, MultiTenantSecurityError
 from .handshake import EdiStateMachine, EdiState
 import uuid
-from .models import ProtocolTransaction, ProtocolOperation, CryptographicCommitment, EdiSession, AuthorizedDevice
+from .models import ProtocolTransaction, ProtocolOperation, CryptographicCommitment, EdiSession, AuthorizedDevice, DeviceKeyRotationAudit
 from .operation import AccountingOperation
 from .bridge import LedgerBridge
 
@@ -353,11 +353,57 @@ class ProtocolDeviceRotationAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Secure Authorization: Require Cryptographic Proof (signed by old key) OR Company Admin role
+        old_public_key_hex = device.public_key_hex
+        old_key_id = device.key_id
+        rotation_signature = data.get("rotation_signature")
+
+        authorization_method = None
+        if rotation_signature:
+            from .crypto import ProtocolCrypto
+            import hashlib
+            rotation_msg = f"ROTATE:{device_id}:{new_public_key_hex}:{new_key_id}"
+            msg_hash = hashlib.sha256(rotation_msg.encode('utf-8')).hexdigest()
+            if ProtocolCrypto.verify(rotation_msg, rotation_signature, old_public_key_hex) or \
+               ProtocolCrypto.verify(msg_hash, rotation_signature, old_public_key_hex):
+                authorization_method = "CRYPTOGRAPHIC_PROOF"
+
+        if not authorization_method:
+            # Check if user has administrative rights for this company
+            is_admin = (
+                getattr(user, 'is_superuser', False) or
+                user.companies.filter(company=device.company, role__in=['ADMIN', 'OWNER']).exists() or
+                getattr(user, 'role', '') in ['ADMIN', 'OWNER']
+            )
+            if is_admin:
+                authorization_method = "COMPANY_ADMIN"
+
+        if not authorization_method:
+            return Response(
+                {
+                    "error": "Access Denied: Key rotation requires either a valid cryptographic signature from the existing active key or company administrator credentials.",
+                    "status": "UNAUTHORIZED_KEY_ROTATION"
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         # Update public key and key ID
         device.public_key_hex = new_public_key_hex
         device.key_id = new_key_id
         device.status = "ACTIVE"
         device.save(update_fields=['public_key_hex', 'key_id', 'status', 'last_seen_at'])
+
+        # Create persistent audit ledger entry
+        audit_record = DeviceKeyRotationAudit.objects.create(
+            device=device,
+            old_public_key_hex=old_public_key_hex,
+            old_key_id=old_key_id,
+            new_public_key_hex=new_public_key_hex,
+            new_key_id=new_key_id,
+            rotated_by=user,
+            authorization_method=authorization_method,
+            rotation_signature=rotation_signature
+        )
 
         # Update in-memory ProtocolKeyManager
         from .key_manager import ProtocolKeyManager
@@ -372,7 +418,9 @@ class ProtocolDeviceRotationAPIView(APIView):
             "device_id": device.device_id,
             "replica_id": device.replica_id,
             "new_key_id": device.key_id,
-            "device_status": device.status
+            "device_status": device.status,
+            "authorization_method": authorization_method,
+            "audit_id": audit_record.id
         }, status=status.HTTP_200_OK)
 
 
