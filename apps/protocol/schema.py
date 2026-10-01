@@ -9,14 +9,14 @@ class ProtocolException(Exception):
 class InvariantViolation(ProtocolException):
     pass
 
-@dataclass
+@dataclass(frozen=True)
 class ProtocolEntity:
     identity_type: str  # e.g., 'GSTIN', 'PAN'
     identity_value: str
     name: str
     state_code: Optional[str] = None
 
-@dataclass
+@dataclass(frozen=True)
 class TransactionLine:
     line_id: str
     sku: str
@@ -31,10 +31,10 @@ class TransactionLine:
 
     def validate(self):
         expected_taxable = (self.quantity * self.unit_price) - self.discount_amount
-        if abs(self.taxable_amount - expected_taxable) > Decimal('0.05'):
+        if abs(self.taxable_amount - expected_taxable) > Decimal('0.01'):
             raise InvariantViolation(f"Line {self.line_id} taxable amount mismatch. Expected {expected_taxable}, got {self.taxable_amount}")
 
-@dataclass
+@dataclass(frozen=True)
 class TaxSummary:
     cgst_amount: Decimal = Decimal('0.0')
     sgst_amount: Decimal = Decimal('0.0')
@@ -45,7 +45,7 @@ class TaxSummary:
     def total_tax(self) -> Decimal:
         return self.cgst_amount + self.sgst_amount + self.igst_amount + self.cess_amount
 
-@dataclass
+@dataclass(frozen=True)
 class TransactionTotals:
     subtotal: Decimal
     total_tax: Decimal
@@ -53,7 +53,7 @@ class TransactionTotals:
     total_discount: Decimal = Decimal('0.0')
     grand_total: Decimal = Decimal('0.0')
 
-@dataclass
+@dataclass(frozen=True)
 class CanonicalTransaction:
     protocol_version: str
     transaction_id: str
@@ -72,6 +72,14 @@ class CanonicalTransaction:
     references: List[Dict[str, str]] = field(default_factory=list)
     expires_at: Optional[datetime] = None
 
+    def __post_init__(self):
+        if isinstance(self.items, list):
+            object.__setattr__(self, 'items', tuple(self.items))
+        if isinstance(self.causal_dependencies, list):
+            object.__setattr__(self, 'causal_dependencies', tuple(self.causal_dependencies))
+        if isinstance(self.references, list):
+            object.__setattr__(self, 'references', tuple(self.references))
+
     def validate_invariants(self):
         """Enforces deterministic accounting invariants on the canonical payload."""
         # 1. Line Level Integrity
@@ -81,16 +89,16 @@ class CanonicalTransaction:
             calc_subtotal += item.taxable_amount
             
         # 2. Subtotal Integrity
-        if abs(self.totals.subtotal - calc_subtotal) > Decimal('0.05'):
+        if abs(self.totals.subtotal - calc_subtotal) > Decimal('0.01'):
             raise InvariantViolation(f"Subtotal mismatch. Lines sum to {calc_subtotal}, header claims {self.totals.subtotal}")
 
         # 3. Tax Integrity
-        if abs(self.totals.total_tax - self.tax_summary.total_tax) > Decimal('0.05'):
+        if abs(self.totals.total_tax - self.tax_summary.total_tax) > Decimal('0.01'):
             raise InvariantViolation("Tax summary sum does not match header total_tax")
 
         # 4. Grand Total Integrity
         expected_grand_total = self.totals.subtotal + self.totals.total_tax + self.totals.shipping_charges - self.totals.total_discount
-        if abs(self.totals.grand_total - expected_grand_total) > Decimal('0.05'):
+        if abs(self.totals.grand_total - expected_grand_total) > Decimal('0.01'):
             raise InvariantViolation(f"Grand total invariant violated. Expected {expected_grand_total}, got {self.totals.grand_total}")
         
         # 5. Causality Checks

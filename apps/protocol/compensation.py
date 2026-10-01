@@ -65,3 +65,45 @@ class CompensationEngine:
             logical_timestamp=logical_timestamp,
             parents=[parent_operation_id]
         )
+
+    @staticmethod
+    def generate_price_adjustment(
+        transaction: CanonicalTransaction,
+        line_id: str,
+        new_unit_price: Decimal,
+        replica_id: str,
+        logical_timestamp: int,
+        parent_operation_id: str
+    ) -> AccountingOperation:
+        """
+        Derives deterministic financial correction for an item price adjustment.
+        """
+        line = next((l for l in transaction.items if l.line_id == line_id), None)
+        if not line:
+            raise ValueError(f"Line {line_id} not found in Canonical Transaction.")
+            
+        unit_price_diff = new_unit_price - line.unit_price
+        taxable_delta = round(unit_price_diff * line.quantity, 2)
+        tax_delta = round(taxable_delta * (line.tax_rate_percent / Decimal('100')), 2)
+
+        payload = {
+            "line_id": line_id,
+            "sku": line.sku,
+            "old_unit_price": float(line.unit_price),
+            "new_unit_price": float(new_unit_price),
+            "taxable_amount": float(taxable_delta),
+            "tax_amount": float(tax_delta)
+        }
+
+        deterministic_seed = f"{transaction.transaction_id}|{line_id}|{float(new_unit_price)}|PRICE_ADJUSTED|{parent_operation_id}"
+        deterministic_id = f"OP-COMP-{hashlib.sha256(deterministic_seed.encode()).hexdigest()[:8].upper()}"
+
+        return AccountingOperation(
+            operation_id=deterministic_id,
+            transaction_id=transaction.transaction_id,
+            replica_id=replica_id,
+            operation_type=OperationType.PRICE_ADJUSTED,
+            payload=payload,
+            logical_timestamp=logical_timestamp,
+            parents=[parent_operation_id]
+        )

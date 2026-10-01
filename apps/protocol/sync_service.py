@@ -13,7 +13,11 @@ class SyncService:
         transaction_id: str,
         client_replica_id: str,
         client_operations: List[Dict[str, Any]],
-        server_operations: List[AccountingOperation]
+        server_operations: List[AccountingOperation],
+        seller_identity: str = "SELLER",
+        buyer_identity: str = "BUYER",
+        canonical_tx_hash: str = "TBD_CANONICAL_HASH",
+        previous_commitment_hash: Any = None
     ) -> Dict[str, Any]:
         """
         Idempotent 2-way synchronization endpoint.
@@ -59,7 +63,12 @@ class SyncService:
         ]
 
         # 6. Generate Mathematical State Commitment
-        commitment_hash = merged_crdt.generate_state_commitment()
+        commitment_hash = merged_crdt.generate_state_commitment(
+            seller_identity=seller_identity,
+            buyer_identity=buyer_identity,
+            canonical_tx_hash=canonical_tx_hash,
+            previous_commitment_hash=previous_commitment_hash
+        )
         
         # 7. Execute actual DB commit here (Phase 13 implementation)
         # db.commit(merged_crdt.operations)

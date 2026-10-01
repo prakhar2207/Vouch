@@ -79,9 +79,9 @@ class DE_CRDT:
                 state['ledgers']['SalesAccount']['credit'] += taxable
                 state['ledgers']['TaxAccount']['credit'] += tax
                 
-            elif op.operation_type == OperationType.ITEM_REJECTED:
-                # Deterministic Compensating Operation
-                amt = Decimal(str(payload.get('taxable_amount', 0)))
+            elif op.operation_type in (OperationType.ITEM_REJECTED, OperationType.CREDIT_NOTE_ISSUED):
+                # Deterministic Compensating Operation (Reversal/Credit)
+                amt = Decimal(str(payload.get('taxable_amount', payload.get('amount', 0))))
                 tax = Decimal(str(payload.get('tax_amount', 0)))
                 gt = amt + tax
                 
@@ -90,10 +90,48 @@ class DE_CRDT:
                 state['igst'] -= tax
                 state['taxable_amount'] -= amt
                 
-                # Reversal Ledgers (Debit Note equivalent)
+                # Reversal Ledgers (Credit Note equivalent)
                 state['ledgers']['AccountsReceivable']['credit'] += gt
                 state['ledgers']['SalesAccount']['debit'] += amt
                 state['ledgers']['TaxAccount']['debit'] += tax
+
+            elif op.operation_type == OperationType.DEBIT_NOTE_ISSUED:
+                amt = Decimal(str(payload.get('taxable_amount', payload.get('amount', 0))))
+                tax = Decimal(str(payload.get('tax_amount', 0)))
+                gt = amt + tax
+                
+                state['grand_total'] += gt
+                state['total_tax'] += tax
+                state['igst'] += tax
+                state['taxable_amount'] += amt
+                
+                state['ledgers']['AccountsReceivable']['debit'] += gt
+                state['ledgers']['SalesAccount']['credit'] += amt
+                state['ledgers']['TaxAccount']['credit'] += tax
+
+            elif op.operation_type == OperationType.PRICE_ADJUSTED:
+                amt = Decimal(str(payload.get('taxable_amount', payload.get('amount', 0))))
+                tax = Decimal(str(payload.get('tax_amount', 0)))
+                gt = amt + tax
+                if amt < Decimal('0'):
+                    abs_amt = abs(amt)
+                    abs_tax = abs(tax)
+                    abs_gt = abs_amt + abs_tax
+                    state['grand_total'] -= abs_gt
+                    state['total_tax'] -= abs_tax
+                    state['igst'] -= abs_tax
+                    state['taxable_amount'] -= abs_amt
+                    state['ledgers']['AccountsReceivable']['credit'] += abs_gt
+                    state['ledgers']['SalesAccount']['debit'] += abs_amt
+                    state['ledgers']['TaxAccount']['debit'] += abs_tax
+                else:
+                    state['grand_total'] += gt
+                    state['total_tax'] += tax
+                    state['igst'] += tax
+                    state['taxable_amount'] += amt
+                    state['ledgers']['AccountsReceivable']['debit'] += gt
+                    state['ledgers']['SalesAccount']['credit'] += amt
+                    state['ledgers']['TaxAccount']['credit'] += tax
 
             elif op.operation_type == OperationType.PAYMENT_ALLOCATED:
                 amt = Decimal(str(payload.get('amount', 0)))
@@ -101,6 +139,9 @@ class DE_CRDT:
                 if 'CashAccount' not in state['ledgers']:
                     state['ledgers']['CashAccount'] = {'debit': Decimal('0.0'), 'credit': Decimal('0.0')}
                 state['ledgers']['CashAccount']['debit'] += amt
+
+            elif op.operation_type == OperationType.ITEM_ACCEPTED:
+                pass  # Confirmation op, no ledger balance mutation
 
         return state
         
@@ -112,7 +153,13 @@ class DE_CRDT:
         state = self.evaluate_state()
         return InvariantEngine.evaluate_converged_state(state)
 
-    def generate_state_commitment(self) -> str:
+    def generate_state_commitment(
+        self,
+        seller_identity: str = "SELLER",
+        buyer_identity: str = "BUYER",
+        canonical_tx_hash: str = "TBD_CANONICAL_HASH",
+        previous_commitment_hash: Any = None
+    ) -> str:
         """
         Calculates the Cross-Ledger State Commitment (CLSC) hash for the graph.
         """
@@ -127,16 +174,21 @@ class DE_CRDT:
         # 2. Extract context from base operation (Assume first operation is TRANSACTION_ISSUED)
         base_op = ops[0] if ops else None
         tx_id = base_op.transaction_id if base_op else "UNKNOWN"
+        base_payload = base_op.payload if base_op else {}
+        
+        seller = seller_identity if seller_identity != "SELLER" else base_payload.get("source_company_id", "SELLER")
+        buyer = buyer_identity if buyer_identity != "BUYER" else base_payload.get("destination_company_id", "BUYER")
+        tx_hash = canonical_tx_hash if canonical_tx_hash != "TBD_CANONICAL_HASH" else base_payload.get("canonical_tx_hash", "TBD_CANONICAL_HASH")
         
         # 3. Generate final commitment
         commitment = CrossLedgerCommitment(
             transaction_id=tx_id,
-            canonical_tx_hash="TBD_CANONICAL_HASH",  # Normally injected from CanonicalTx
+            canonical_tx_hash=tx_hash,
             operation_state_root=operation_state_root,
-            seller_identity="SELLER", # Extracted from context
-            buyer_identity="BUYER",   # Extracted from context
+            seller_identity=seller,
+            buyer_identity=buyer,
             protocol_version="1.0",
-            previous_commitment_hash=None
+            previous_commitment_hash=previous_commitment_hash
         )
         return commitment.calculate_hash()
 

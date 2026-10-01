@@ -16,6 +16,25 @@ class OperationType(str, Enum):
     DEBIT_NOTE_ISSUED = "DEBIT_NOTE_ISSUED"
     VOUCHER_CANCELLED = "VOUCHER_CANCELLED"
 
+class ReadOnlyDict(dict):
+    """Immutable dictionary wrapper enforcing tamper-proof payload integrity."""
+    def _immutable(self, *args, **kwargs):
+        raise TypeError("AccountingOperation payload is strictly immutable.")
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    pop = _immutable
+    popitem = _immutable
+    clear = _immutable
+    update = _immutable
+    setdefault = _immutable
+
+def _freeze(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return ReadOnlyDict({k: _freeze(v) for k, v in obj.items()})
+    elif isinstance(obj, (list, tuple)):
+        return tuple(_freeze(v) for v in obj)
+    return obj
+
 @dataclass(frozen=True)
 class AccountingOperation:
     """
@@ -31,6 +50,11 @@ class AccountingOperation:
     parents: List[str] = field(default_factory=list)
     version: int = 1
     signature: Optional[str] = None
+
+    def __post_init__(self):
+        object.__setattr__(self, 'payload', _freeze(self.payload))
+        if isinstance(self.parents, list):
+            object.__setattr__(self, 'parents', tuple(self.parents))
 
     @property
     def payload_hash(self) -> str:

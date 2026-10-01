@@ -47,9 +47,9 @@ def run_benchmarks():
     print(f"--> Interlock Hash: {hash_AB[:16]}...\n")
     
     if state_AB == state_BA:
-        print("✅ ALL TESTS PASSED: Protocol demonstrates mathematically sound, conflict-free accounting convergence.\n")
+        print("[PASS] ALL TESTS PASSED: Protocol demonstrates mathematically sound, conflict-free accounting convergence.\n")
     else:
-        print("❌ FAILED")
+        print("[FAIL] FAILED")
 
 if __name__ == '__main__':
     run_benchmarks()

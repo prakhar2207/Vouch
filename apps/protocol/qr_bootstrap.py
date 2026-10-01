@@ -62,10 +62,10 @@ class QRSessionManager:
     """
     Validates scanned QR codes and bootstraps them directly into 
     the Phase 8 EDI Distributed State Machine.
+    Uses atomic cache-backed nonce tracking (Redis/DB) with in-memory fallback.
     """
     def __init__(self, signer: ProtocolSigner):
         self.signer = signer
-        # In memory nonce cache for POC. Production uses Redis/DB.
         self.used_nonces = set()
 
     def initiate_session_from_scan(self, qr_string: str, current_timestamp: int) -> EdiStateMachine:
@@ -77,9 +77,24 @@ class QRSessionManager:
             raise SecurityViolation("QR Code has expired. Please refresh the sender's screen.")
             
         # 3. Nonce Check (Replay Attack Prevention)
-        if payload.nonce in self.used_nonces:
-            raise SecurityViolation("Replay Attack Detected: Nonce has already been consumed.")
-            
+        nonce_consumed = False
+        try:
+            from django.core.cache import cache
+            nonce_key = f"qr_nonce:{payload.issuer_id}:{payload.nonce}"
+            timeout = max(60, payload.expires_at - current_timestamp)
+            # cache.add is atomic: returns True only if key did NOT already exist
+            if not cache.add(nonce_key, 1, timeout=timeout):
+                raise SecurityViolation("Replay Attack Detected: Nonce has already been consumed.")
+            nonce_consumed = True
+        except SecurityViolation:
+            raise
+        except Exception:
+            # Fallback to local memory if Django cache is not configured or offline
+            if payload.nonce in self.used_nonces:
+                raise SecurityViolation("Replay Attack Detected: Nonce has already been consumed.")
+            self.used_nonces.add(payload.nonce)
+            nonce_consumed = True
+
         # 4. Signature Verification
         if not payload.signature:
             raise SecurityViolation("QR lacks cryptographic signature.")
@@ -91,9 +106,6 @@ class QRSessionManager:
         )
         if not is_valid:
             raise SecurityViolation("Cryptographic signature validation failed.")
-            
-        # Consume Nonce
-        self.used_nonces.add(payload.nonce)
         
         # 5. Bootstrap the EDI State Machine
         session = EdiStateMachine(session_id=payload.session_id)
