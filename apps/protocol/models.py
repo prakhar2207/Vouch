@@ -69,3 +69,21 @@ class EntityMapping(models.Model):
     class Meta:
         db_table = "protocol_entity_mappings"
         unique_together = ('source_company_id', 'destination_company_id', 'foreign_sku', 'mapping_version')
+
+class EdiSession(models.Model):
+    """Crash-safe persistence for EDI handshake and consensus state machine."""
+    session_id = models.CharField(max_length=100, unique=True, db_index=True)
+    current_state = models.CharField(max_length=50, default="DISCOVER", db_index=True)
+    transaction_id = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    initiator_replica_id = models.CharField(max_length=100, null=True, blank=True)
+    responder_replica_id = models.CharField(max_length=100, null=True, blank=True)
+    timeout_seconds = models.IntegerField(default=300)
+    context_data = models.JSONField(default=dict, blank=True)
+    transition_history = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "protocol_edi_sessions"
+        ordering = ['-created_at']
+

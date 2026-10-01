@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from apps.protocol.schema import CanonicalTransaction, ProtocolEntity, TransactionLine, TaxSummary, TransactionTotals
 from apps.protocol.qr_bootstrap import QRBootstrapPayload, QRSessionManager
-from apps.protocol.crypto import Ed25519SignerPlaceholder, CrossLedgerCommitment
+from apps.protocol.crypto import Ed25519Signer, ProtocolCrypto, CrossLedgerCommitment
 from apps.protocol.handshake import EdiStateMachine, EdiState
 from apps.protocol.mapping import MappingResolutionEngine, ProductMapping, MappingConfidence, ApprovalState
 from apps.protocol.compensation import CompensationEngine
@@ -21,7 +21,8 @@ def run_e2e():
     print("       VOUCH PROTOCOL: END-TO-END INTEGRATION TEST       ")
     print("=========================================================")
     
-    signer = Ed25519SignerPlaceholder()
+    priv_key, pub_key = ProtocolCrypto.generate_keypair()
+    signer = Ed25519Signer()
     
     # -----------------------------------------------------------
     # PHASE 1: Canonical Schema Generation
@@ -43,11 +44,13 @@ def run_e2e():
     # PHASE 9: Dynamic QR Session Bootstrap
     # -----------------------------------------------------------
     print("\n[Phase 9] Bootstrapping Dynamic QR Session...")
-    qr_payload = QRBootstrapPayload('1.0', tx.transaction_id, 'SESS-E2E', 'NONCE-1', 'SELLER-01', 'DIGEST', int(time.time())+300)
-    qr_payload.signature = signer.sign(qr_payload.serialize_for_signature(), 'PRIV_KEY')
+    sess_id = f'SESS-E2E-{int(time.time())}'
+    nonce = f'NONCE-{int(time.time())}'
+    qr_payload = QRBootstrapPayload('1.0', tx.transaction_id, sess_id, nonce, 'SELLER-01', 'DIGEST', int(time.time())+300)
+    qr_payload.signature = signer.sign(qr_payload.serialize_for_signature(), priv_key)
     qr_string = qr_payload.encode_to_qr_string()
     
-    qr_mgr = QRSessionManager(signer)
+    qr_mgr = QRSessionManager(signer=signer, public_keys={'SELLER-01': pub_key})
     session = qr_mgr.initiate_session_from_scan(qr_string, int(time.time()))
     print(f"  -> QR Scanned Successfully. Started Session: {session.session_id}")
     

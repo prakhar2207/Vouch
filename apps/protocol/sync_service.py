@@ -1,9 +1,15 @@
+import logging
 from typing import List, Dict, Any, Optional, Set
 from .operation import AccountingOperation, OperationType
 from .crdt import DE_CRDT
 from .crypto import ProtocolCrypto, CrossLedgerCommitment
 from .semantic_delta import SemanticDeltaEngine, SemanticDelta
 from .invariants import InvariantEngine
+from .compensation import CompensationEngine
+from .bridge import LedgerBridge
+from .schema import CanonicalTransaction
+
+logger = logging.getLogger(__name__)
 
 class MultiTenantSecurityError(Exception):
     """Raised when tenant isolation or counterparty authorization is violated."""
@@ -13,7 +19,8 @@ class SyncService:
     """
     Production-grade 2-way synchronization service for distributed, offline accounting replicas.
     Enforces server-side tenant isolation, asymmetric signature verification, 
-    causal dependency satisfaction, and 4-way Merkle cross-ledger state commitments.
+    causal dependency satisfaction, atomic merge-compensation pipeline, 
+    independent Merkle state roots, and Vouch Ledger Bridge execution.
     """
 
     @staticmethod
@@ -29,12 +36,24 @@ class SyncService:
         canonical_tx_hash: str = "TBD_CANONICAL_HASH",
         previous_commitment_hash: Any = None,
         verify_signatures: bool = False,
-        public_keys_map: Optional[Dict[str, str]] = None
+        public_keys_map: Optional[Dict[str, str]] = None,
+        company: Any = None,
+        canonical_tx: Optional[CanonicalTransaction] = None,
+        user: Any = None
     ) -> Dict[str, Any]:
         """
-        Idempotent 2-way synchronization endpoint.
-        Takes the client's operation log, merges it into the server's causal DAG,
-        validates the invariants, and returns the missing server operations to the client.
+        Idempotent 2-way synchronization endpoint:
+        1. Validates multi-tenant isolation and counterparty authorization.
+        2. Reconstructs server and client causal DAGs.
+        3. Enforces cryptographic signatures (fail-closed Ed25519).
+        4. Validates causal parent completeness.
+        5. Performs deterministic CRDT merge.
+        6. Runs automated atomic compensation pipeline (Item Rejection -> Reciprocal Credit Note).
+        7. Evaluates double-entry and tax invariants.
+        8. Calculates semantic delta.
+        9. Computes independent Seller and Buyer Merkle state roots & commitment hash.
+        10. Optionally executes Vouch Ledger Bridge to post physical vouchers and entries.
+        11. Returns missing server operations for 2-way client sync.
         """
         # 1. Server-Side Multi-Tenant Authorization Check
         if authorized_counterparty_ids is not None:
@@ -52,7 +71,7 @@ class SyncService:
         for op in server_operations:
             server_crdt.apply_operation(op)
 
-        # 3. Reconstruct Client CRDT from incoming payload (working on copies to avoid mutating caller data)
+        # 3. Reconstruct Client CRDT from incoming payload
         client_crdt = DE_CRDT(
             replica_id=client_replica_id,
             transaction_id=transaction_id,
@@ -69,7 +88,7 @@ class SyncService:
             op_copy.pop('payload_hash', None)
             op = AccountingOperation(**op_copy)
 
-            # Optional asymmetric digital signature verification
+            # Strict digital signature verification
             if verify_signatures and public_keys_map and op.signature:
                 pub_key = public_keys_map.get(op.replica_id)
                 if pub_key:
@@ -84,7 +103,6 @@ class SyncService:
 
         # 4. Check for missing causal parents / orphaned operations
         missing_parents = client_crdt.dag.get_missing_parents()
-        # If server has the missing parents, supply them
         server_op_ids = {op.operation_id for op in server_operations}
         unresolved_missing = [p for p in missing_parents if p not in server_op_ids]
         if unresolved_missing:
@@ -98,7 +116,29 @@ class SyncService:
         # 5. Deterministic CRDT Merge
         merged_crdt = server_crdt.merge(client_crdt)
 
-        # 6. Evaluate & Validate Converged State
+        # 6. Automated Atomic Compensation Pipeline
+        existing_recip_rejections = {
+            op.payload.get('reference_rejection_op')
+            for op in merged_crdt.operations.values()
+            if op.operation_type == OperationType.CREDIT_NOTE_ISSUED and op.payload.get('reference_rejection_op')
+        }
+
+        compensations_added = False
+        for op in list(merged_crdt.operations.values()):
+            if op.operation_type == OperationType.ITEM_REJECTED and op.operation_id not in existing_recip_rejections:
+                max_clock = max([o.logical_timestamp for o in merged_crdt.operations.values()] or [0])
+                recip_cn = CompensationEngine.generate_reciprocal_seller_credit_note(
+                    rejection_op=op,
+                    seller_replica_id="SERVER_SELLER",
+                    logical_timestamp=max_clock + 1
+                )
+                merged_crdt.apply_operation(recip_cn)
+                compensations_added = True
+
+        if compensations_added:
+            merged_crdt = merged_crdt.merge(merged_crdt)
+
+        # 7. Evaluate & Validate Converged State
         try:
             is_valid = merged_crdt.validate_convergence()
             if not is_valid:
@@ -106,7 +146,7 @@ class SyncService:
         except Exception as e:
             return {"status": "SYNC_REJECTED", "reason": str(e)}
 
-        # 7. Compute Semantic Delta between pre-merge server state and converged state
+        # 8. Compute Semantic Delta between pre-merge server state and converged state
         server_eval = server_crdt.evaluate_state() if server_operations else {}
         converged_eval = merged_crdt.evaluate_state()
         semantic_delta = None
@@ -120,14 +160,14 @@ class SyncService:
                 cause="Reconciliation of remote client operations"
             )
 
-        # 8. Determine Missing Operations for Client (2-Way Sync)
+        # 9. Determine Missing Operations for Client (2-Way Sync)
         client_op_ids = {op['operation_id'] for op in client_operations}
         operations_for_client = [
             op.to_dict() for op_id, op in merged_crdt.operations.items()
             if op_id not in client_op_ids
         ]
 
-        # 9. Generate 4-way Merkle State Roots & Commitment
+        # 10. Generate Independent Merkle State Roots & Commitment
         roots = merged_crdt.compute_merkle_state_roots()
         commitment_hash = merged_crdt.generate_state_commitment(
             seller_identity=seller_identity,
@@ -136,6 +176,20 @@ class SyncService:
             previous_commitment_hash=previous_commitment_hash
         )
 
+        # 11. Execute Authoritative Vouch Accounting Ledger Bridge (if requested)
+        bridge_result = None
+        if company and canonical_tx:
+            try:
+                bridge_result = LedgerBridge.execute_converged_accounting(
+                    company=company,
+                    canonical_tx=canonical_tx,
+                    converged_operations=merged_crdt.get_operations(),
+                    user=user
+                )
+            except Exception as e:
+                logger.error(f"LedgerBridge execution error: {e}", exc_info=True)
+                bridge_result = {"status": "BRIDGE_FAILED", "error": str(e)}
+
         return {
             "status": "SYNC_SUCCESS",
             "transaction_id": transaction_id,
@@ -143,5 +197,6 @@ class SyncService:
             "state_commitment": commitment_hash,
             "merkle_state_roots": roots,
             "converged_state": converged_eval,
-            "semantic_delta": semantic_delta.summary() if semantic_delta and semantic_delta.has_divergence else None
+            "semantic_delta": semantic_delta.summary() if semantic_delta and semantic_delta.has_divergence else None,
+            "bridge_result": bridge_result
         }

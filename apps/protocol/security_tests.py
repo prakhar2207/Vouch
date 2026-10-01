@@ -1,4 +1,8 @@
 import os, sys
+if not os.environ.get('DJANGO_SETTINGS_MODULE'):
+    os.environ['DJANGO_SETTINGS_MODULE'] = 'config.settings'
+import django
+django.setup()
 from decimal import Decimal
 import time
 
@@ -6,7 +10,7 @@ from .operation import AccountingOperation, OperationType
 from .crdt import DE_CRDT
 from .handshake import EdiStateMachine, EdiState, IllegalStateTransitionError
 from .qr_bootstrap import QRSessionManager, QRBootstrapPayload, SecurityViolation
-from .crypto import ProtocolCrypto, MerkleTree, Ed25519SignerPlaceholder
+from .crypto import ProtocolCrypto, MerkleTree, Ed25519Signer
 from .invariants import InvariantEngine, AccountingInvariantViolation
 from .sync_service import SyncService, MultiTenantSecurityError
 
@@ -46,7 +50,7 @@ def run_threat_simulations():
     # THREAT 3: STATE-SKIPPING HACK
     # ---------------------------------------------------------
     print("\n[Threat 3] Malicious node attempts to skip PREPARE phase and force COMMIT...")
-    session = EdiStateMachine('SESS-01')
+    session = EdiStateMachine(f'SESS-THREAT3-{time.time()}', persist=False)
     session.advance(EdiState.CAPABILITY_EXCHANGE)
     session.advance(EdiState.AUTHENTICATE)
     try:
@@ -126,10 +130,11 @@ def run_threat_simulations():
     # THREAT 8: DYNAMIC QR REPLAY ATTACK (Consumed Nonce)
     # ---------------------------------------------------------
     print("\n[Threat 8] Attacker replays consumed QR bootstrap code...")
-    signer = Ed25519SignerPlaceholder()
-    qr_mgr = QRSessionManager(signer)
-    qr_payload = QRBootstrapPayload("1.0", "TX-QR-1", "SESS-SEC", "NONCE-REPLAY-99", "SELLER", "DIGEST", int(time.time())+300)
-    qr_payload.signature = signer.sign(qr_payload.serialize_for_signature(), "PRIV_KEY")
+    signer = Ed25519Signer()
+    priv_key, pub_key = ProtocolCrypto.generate_keypair()
+    qr_mgr = QRSessionManager(signer=signer, public_keys={"SELLER": pub_key})
+    qr_payload = QRBootstrapPayload("1.0", "TX-QR-1", f"SESS-SEC-{time.time()}", f"NONCE-REPLAY-{time.time()}", "SELLER", "DIGEST", int(time.time())+300)
+    qr_payload.signature = signer.sign(qr_payload.serialize_for_signature(), priv_key)
     qr_str = qr_payload.encode_to_qr_string()
     
     # First scan succeeds

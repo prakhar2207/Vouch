@@ -74,7 +74,7 @@ class VoucherService:
         from apps.inventory.services.stock_service import StockService
         
         if process_stock:
-            if voucher.voucher_type in ('SALES', 'PURCHASE'):
+            if voucher.voucher_type in ('SALES', 'PURCHASE', 'CREDIT_NOTE', 'DEBIT_NOTE'):
                 StockService.process_voucher_stock(voucher)
         
         # 3. Process Accounting Ledger Entries with Concurrency Locks

@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
 
-from .crypto import ProtocolSigner, Ed25519SignerPlaceholder
+from .crypto import ProtocolCrypto, ProtocolSigner, Ed25519Signer
 from .handshake import EdiStateMachine, EdiState
 
 class SecurityViolation(Exception):
@@ -64,8 +64,9 @@ class QRSessionManager:
     the Phase 8 EDI Distributed State Machine.
     Uses atomic cache-backed nonce tracking (Redis/DB) with in-memory fallback.
     """
-    def __init__(self, signer: ProtocolSigner):
-        self.signer = signer
+    def __init__(self, signer: Optional[ProtocolSigner] = None, public_keys: Optional[Dict[str, str]] = None):
+        self.signer = signer or Ed25519Signer()
+        self.public_keys = public_keys or {}
         self.used_nonces = set()
 
     def initiate_session_from_scan(self, qr_string: str, current_timestamp: int) -> EdiStateMachine:
@@ -99,10 +100,11 @@ class QRSessionManager:
         if not payload.signature:
             raise SecurityViolation("QR lacks cryptographic signature.")
             
+        public_key = self.public_keys.get(payload.issuer_id, f"PUB_{payload.issuer_id}")
         is_valid = self.signer.verify(
             payload_hash=payload.serialize_for_signature(),
             signature=payload.signature,
-            public_key=f"PUB_{payload.issuer_id}"
+            public_key=public_key
         )
         if not is_valid:
             raise SecurityViolation("Cryptographic signature validation failed.")

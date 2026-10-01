@@ -63,6 +63,10 @@ class DE_CRDT:
         """Returns operations in strictly valid causal topological order."""
         return self.dag.topological_sort()
 
+    def get_operations(self) -> List[AccountingOperation]:
+        """Returns all admitted operations in strict causal topological order."""
+        return self.dag.topological_sort()
+
     def evaluate_state(self) -> Dict[str, Any]:
         """
         Projects the causal operation graph into a complete, balanced accounting state:
@@ -96,7 +100,7 @@ class DE_CRDT:
             
             if op.operation_type in (OperationType.TRANSACTION_ISSUED, OperationType.INVOICE_ISSUED):
                 gt = Decimal(str(payload.get('grand_total', 0)))
-                tax = Decimal(str(payload.get('total_tax', 0)))
+                tax = Decimal(str(payload.get('total_tax', payload.get('tax_amount', 0))))
                 taxable = Decimal(str(payload.get('taxable_amount', 0)))
                 qty = Decimal(str(payload.get('quantity', 0)))
                 
@@ -185,11 +189,13 @@ class DE_CRDT:
 
     def compute_merkle_state_roots(self) -> Dict[str, str]:
         """
-        Builds formal Merkle trees for the 4 distinct accounting subsystems:
+        Builds formal Merkle trees for the distinct accounting subsystems:
         1. Operation State Root (O_n)
-        2. Ledger State Root (L_n)
-        3. Inventory State Root (I_n)
-        4. Transaction State Root (T_n)
+        2. Seller Ledger State Root (L_seller)
+        3. Seller Inventory State Root (I_seller)
+        4. Buyer Ledger State Root (L_buyer)
+        5. Buyer Inventory State Root (I_buyer)
+        6. Transaction Baseline Root (T_n)
         """
         ops = self._causal_sort()
         state = self.evaluate_state()
@@ -198,18 +204,40 @@ class DE_CRDT:
         op_leaves = [op.payload_hash for op in ops]
         op_root = MerkleTree(op_leaves).root
 
-        # 2. Ledger Root
-        ledger_leaves = [
+        # 2. Seller Ledger Root (Receivable, Sales Income, Output Tax)
+        seller_leaves = [
             f"{acct}:{data['debit']}:{data['credit']}"
             for acct, data in sorted(state['ledgers'].items())
         ]
-        ledger_root = MerkleTree(ledger_leaves).root
+        seller_ledger_root = MerkleTree(seller_leaves).root
 
-        # 3. Inventory Root
-        inv_leaves = [f"TOTAL_QTY:{state['total_quantity']}"]
-        inv_root = MerkleTree(inv_leaves).root
+        # 3. Seller Inventory Root
+        seller_inv_leaves = [f"SELLER_DISPATCHED:{state['total_quantity']}"]
+        seller_inv_root = MerkleTree(seller_inv_leaves).root
 
-        # 4. Transaction Baseline Root
+        # 4. Buyer Ledger Root (Reciprocal Payable, Purchase Expense, Input Tax Credit)
+        ar = state['ledgers'].get('AccountsReceivable', {'debit': Decimal('0.0'), 'credit': Decimal('0.0')})
+        sales = state['ledgers'].get('SalesAccount', {'debit': Decimal('0.0'), 'credit': Decimal('0.0')})
+        tax = state['ledgers'].get('TaxAccount', {'debit': Decimal('0.0'), 'credit': Decimal('0.0')})
+        cash = state['ledgers'].get('CashAccount', {'debit': Decimal('0.0'), 'credit': Decimal('0.0')})
+
+        buyer_ledgers = {
+            'AccountsPayable': {'debit': ar['credit'], 'credit': ar['debit']},
+            'PurchaseAccount': {'debit': sales['credit'], 'credit': sales['debit']},
+            'InputTaxAccount': {'debit': tax['credit'], 'credit': tax['debit']},
+            'CashAccount': {'debit': cash['credit'], 'credit': cash['debit']}
+        }
+        buyer_leaves = [
+            f"{acct}:{data['debit']}:{data['credit']}"
+            for acct, data in sorted(buyer_ledgers.items())
+        ]
+        buyer_ledger_root = MerkleTree(buyer_leaves).root
+
+        # 5. Buyer Inventory Root
+        buyer_inv_leaves = [f"BUYER_RECEIVED:{state['total_quantity']}"]
+        buyer_inv_root = MerkleTree(buyer_inv_leaves).root
+
+        # 6. Transaction Baseline Root
         tx_leaves = [
             f"TX_ID:{self.transaction_id}",
             f"GT:{state['grand_total']}",
@@ -217,11 +245,19 @@ class DE_CRDT:
         ]
         tx_root = MerkleTree(tx_leaves).root
 
+        # Combined roots for backward compatibility
+        combined_ledger_root = MerkleTree(seller_leaves + buyer_leaves).root
+        combined_inv_root = MerkleTree(seller_inv_leaves + buyer_inv_leaves).root
+
         return {
             "operation_state_root": op_root,
-            "ledger_state_root": ledger_root,
-            "inventory_state_root": inv_root,
-            "transaction_state_root": tx_root
+            "seller_ledger_root": seller_ledger_root,
+            "seller_inventory_root": seller_inv_root,
+            "buyer_ledger_root": buyer_ledger_root,
+            "buyer_inventory_root": buyer_inv_root,
+            "transaction_state_root": tx_root,
+            "ledger_state_root": combined_ledger_root,
+            "inventory_state_root": combined_inv_root
         }
 
     def generate_state_commitment(
@@ -232,7 +268,7 @@ class DE_CRDT:
         previous_commitment_hash: Any = None
     ) -> str:
         """
-        Calculates the Cross-Ledger State Commitment ($C_n$) hash binding the 4 Merkle state roots.
+        Calculates the Cross-Ledger State Commitment ($C_n$) hash binding the independent Merkle state roots.
         """
         roots = self.compute_merkle_state_roots()
         ops = self._causal_sort()
@@ -247,8 +283,10 @@ class DE_CRDT:
             transaction_id=self.transaction_id,
             transaction_state_root=tx_hash,
             operation_state_root=roots["operation_state_root"],
-            ledger_state_root=roots["ledger_state_root"],
-            inventory_state_root=roots["inventory_state_root"],
+            seller_ledger_root=roots["seller_ledger_root"],
+            seller_inventory_root=roots["seller_inventory_root"],
+            buyer_ledger_root=roots["buyer_ledger_root"],
+            buyer_inventory_root=roots["buyer_inventory_root"],
             seller_identity=seller,
             buyer_identity=buyer,
             protocol_version="1.0",

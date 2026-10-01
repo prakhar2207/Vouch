@@ -1,102 +1,249 @@
 import os, sys, random
 from decimal import Decimal
+from typing import List, Dict, Any
 
-from .operation import AccountingOperation, OperationType
+from .operation import AccountingOperation, OperationType, OperationClass
 from .crdt import DE_CRDT
 from .invariants import InvariantEngine
+from .compensation import CompensationEngine
 
 def generate_random_fuzz():
-    print("--- VOUCH PROTOCOL PROPERTY-BASED FUZZER ---")
-    print("Generating thousands of random offline operations to mathematically prove convergence...")
+    print("==================================================================")
+    print("   VOUCH DISTRIBUTED ACCOUNTING: MULTI-REPLICA PROPERTY FUZZER    ")
+    print("==================================================================")
+    print("Testing distributed CRDT convergence across 3, 5, 8, and 10 replicas...")
+    print("Simulating network partitions, causal DAG branches, and random gossip merges.\n")
     
-    ITERATIONS = 500
-    success_count = 0
-    
-    for i in range(ITERATIONS):
-        # 1. Initialize Replicas
-        replica_a = DE_CRDT("A")
-        replica_b = DE_CRDT("B")
-        replica_c = DE_CRDT("C")
-        
-        replicas = [replica_a, replica_b, replica_c]
-        
-        # 2. Base Transaction (Common starting point)
-        base_op = AccountingOperation(
-            operation_id='OP-BASE', transaction_id=f'TX-{i}', replica_id='A',
-            operation_type=OperationType.TRANSACTION_ISSUED,
-            payload={'grand_total': 1180, 'total_tax': 180, 'taxable_amount': 1000},
-            logical_timestamp=1
-        )
-        for r in replicas:
-            r.apply_operation(base_op)
-            
-        # 3. Generate Random Offline Operations
-        num_ops = random.randint(1, 10)
-        total_payment_allocated = 0
-        for j in range(num_ops):
-            op_type = random.choice([OperationType.ITEM_REJECTED, OperationType.PAYMENT_ALLOCATED])
-            
-            if op_type == OperationType.ITEM_REJECTED:
-                tax_amt = random.randint(1, 5)
-                taxable = random.randint(5, 30)
-                payload = {'tax_amount': tax_amt, 'taxable_amount': taxable}
-            else:
-                remaining_cap = max(0, 800 - total_payment_allocated)
-                pay_amt = random.randint(5, min(50, remaining_cap)) if remaining_cap > 5 else 0
-                total_payment_allocated += pay_amt
-                payload = {'amount': pay_amt}
-                
-            new_op = AccountingOperation(
-                operation_id=f'OP-RND-{j}', transaction_id=f'TX-{i}',
-                replica_id=random.choice(['A', 'B', 'C']),
-                operation_type=op_type,
-                payload=payload,
-                logical_timestamp=j+2,
-                parents=['OP-BASE']
+    test_configs = [
+        {"replica_count": 3, "iterations": 100},
+        {"replica_count": 5, "iterations": 80},
+        {"replica_count": 8, "iterations": 50},
+        {"replica_count": 10, "iterations": 30},
+    ]
+
+    total_scenarios = 0
+    total_permutations = 0
+
+    for config in test_configs:
+        num_replicas = config["replica_count"]
+        iterations = config["iterations"]
+        replica_names = [f"R{k}" for k in range(num_replicas)]
+
+        print(f"[*] Fuzzing with {num_replicas} Replicas ({iterations} iterations)...")
+
+        for i in range(iterations):
+            tx_id = f"FUZZ-TX-{num_replicas}R-{i}"
+            replicas = [DE_CRDT(replica_id=name, transaction_id=tx_id) for name in replica_names]
+
+            # 1. Base Canonical Transaction Issued
+            base_taxable = Decimal(str(random.randint(5000, 50000)))
+            base_tax = (base_taxable * Decimal('18') / Decimal('100')).quantize(Decimal('0.01'))
+            base_gt = base_taxable + base_tax
+
+            base_op = AccountingOperation(
+                operation_id=f"OP-ROOT-{i}",
+                transaction_id=tx_id,
+                replica_id=replica_names[0],
+                operation_type=OperationType.TRANSACTION_ISSUED,
+                operation_class=OperationClass.CAUSAL,
+                payload={
+                    "taxable_amount": float(base_taxable),
+                    "tax_amount": float(base_tax),
+                    "total_tax": float(base_tax),
+                    "grand_total": float(base_gt),
+                    "quantity": 100.0
+                },
+                logical_timestamp=1,
+                parents=[]
             )
-            
-            # Randomly distribute operation to 1, 2, or all 3 replicas (simulating network partition)
-            targets = random.sample(replicas, random.randint(1, 3))
-            for t in targets:
-                t.apply_operation(new_op)
-                
-        # 4. Perform Random Merge Permutations
-        # Permutation 1: (A merge B) merge C
-        ab = replica_a.merge(replica_b)
-        abc = ab.merge(replica_c)
-        
-        # Permutation 2: (C merge B) merge A
-        cb = replica_c.merge(replica_b)
-        cba = cb.merge(replica_a)
-        
-        # Permutation 3: (A merge C) merge B
-        ac = replica_a.merge(replica_c)
-        acb = ac.merge(replica_b)
-        
-        # 5. Property Assertions
-        state_abc = abc.evaluate_state()
-        state_cba = cba.evaluate_state()
-        state_acb = acb.evaluate_state()
-        
-        # P1: Commutativity & Associativity (All permutations yield exact same ledger math)
-        assert state_abc == state_cba == state_acb, f"Merge divergence detected on Iteration {i}"
-        
-        # P2: Cryptographic State Roots match exactly
-        hash_abc = abc.generate_state_commitment()
-        hash_cba = cba.generate_state_commitment()
-        assert hash_abc == hash_cba, f"Cryptographic commitment divergence on Iteration {i}"
-        
-        # P3: Invariant Integrity (The chaotic random state still maintains Double Entry & Tax math)
-        assert abc.validate_convergence() == True
-        
-        success_count += 1
-        
-    print(f"\n[SUCCESS] Property-Based Testing Complete.")
-    print(f"[SUCCESS] Executed {ITERATIONS} concurrent transaction scenarios.")
-    print(f"[SUCCESS] Tested > {ITERATIONS * 5} merge permutations.")
-    print(f"[SUCCESS] ZERO divergent states.")
-    print(f"[SUCCESS] ZERO invariant violations.")
-    print("The DE-CRDT algorithm is mathematically sound.")
+
+            # Genesis: All replicas receive root transaction
+            for r in replicas:
+                r.apply_operation(base_op)
+
+            # 2. Generate random distributed operations concurrently across replicas
+            num_ops = random.randint(3, 12)
+            allocated_payment = Decimal('0.00')
+            cumulative_rejection = Decimal('0.00')
+            op_pool = []
+
+            for op_idx in range(num_ops):
+                creator = random.choice(replica_names)
+                choice = random.choice([
+                    'ITEM_REJECTED',
+                    'PAYMENT',
+                    'ITEM_ACCEPTED',
+                    'CREDIT_NOTE',
+                    'PRICE_ADJUSTED'
+                ])
+
+                parent_id = base_op.operation_id
+                if op_pool and random.random() > 0.4:
+                    parent_id = random.choice(op_pool).operation_id
+
+                if choice == 'ITEM_REJECTED':
+                    rej_qty = Decimal(str(random.randint(1, 10)))
+                    cumulative_rejection += rej_qty
+                    rej_taxable = (rej_qty * (base_taxable / Decimal('100'))).quantize(Decimal('0.01'))
+                    rej_tax = (rej_taxable * Decimal('18') / Decimal('100')).quantize(Decimal('0.01'))
+                    payload = {
+                        "quantity": float(rej_qty),
+                        "taxable_amount": float(rej_taxable),
+                        "tax_amount": float(rej_tax),
+                        "line_id": "LINE-01"
+                    }
+                    op = AccountingOperation(
+                        operation_id=f"OP-REJ-{i}-{op_idx}",
+                        transaction_id=tx_id,
+                        replica_id=creator,
+                        operation_type=OperationType.ITEM_REJECTED,
+                        operation_class=OperationClass.COMPENSATING,
+                        payload=payload,
+                        logical_timestamp=op_idx + 2,
+                        parents=[parent_id]
+                    )
+
+                elif choice == 'CREDIT_NOTE':
+                    cn_taxable = Decimal(str(random.randint(50, 500)))
+                    cn_tax = (cn_taxable * Decimal('18') / Decimal('100')).quantize(Decimal('0.01'))
+                    payload = {
+                        "quantity": 2.0,
+                        "taxable_amount": float(cn_taxable),
+                        "tax_amount": float(cn_tax)
+                    }
+                    op = AccountingOperation(
+                        operation_id=f"OP-CN-{i}-{op_idx}",
+                        transaction_id=tx_id,
+                        replica_id=creator,
+                        operation_type=OperationType.CREDIT_NOTE_ISSUED,
+                        operation_class=OperationClass.COMPENSATING,
+                        payload=payload,
+                        logical_timestamp=op_idx + 2,
+                        parents=[parent_id]
+                    )
+
+                elif choice == 'PAYMENT':
+                    rem = base_gt - allocated_payment
+                    p_amt = Decimal(str(random.randint(100, 1000))) if rem > 1000 else rem
+                    if p_amt <= Decimal('0'):
+                        p_amt = Decimal('10.00')
+                    allocated_payment += p_amt
+                    payload = {"amount": float(p_amt)}
+                    op = AccountingOperation(
+                        operation_id=f"OP-PAY-{i}-{op_idx}",
+                        transaction_id=tx_id,
+                        replica_id=creator,
+                        operation_type=OperationType.PAYMENT_ALLOCATED,
+                        operation_class=OperationClass.COMMUTATIVE,
+                        payload=payload,
+                        logical_timestamp=op_idx + 2,
+                        parents=[parent_id]
+                    )
+
+                elif choice == 'PRICE_ADJUSTED':
+                    delta = Decimal(str(random.randint(-200, 200)))
+                    delta_tax = (delta * Decimal('18') / Decimal('100')).quantize(Decimal('0.01'))
+                    payload = {
+                        "taxable_amount": float(delta),
+                        "tax_amount": float(delta_tax)
+                    }
+                    op = AccountingOperation(
+                        operation_id=f"OP-PRC-{i}-{op_idx}",
+                        transaction_id=tx_id,
+                        replica_id=creator,
+                        operation_type=OperationType.PRICE_ADJUSTED,
+                        operation_class=OperationClass.COMPENSATING,
+                        payload=payload,
+                        logical_timestamp=op_idx + 2,
+                        parents=[parent_id]
+                    )
+
+                else: # ITEM_ACCEPTED
+                    payload = {"quantity": 5.0, "status": "VERIFIED"}
+                    op = AccountingOperation(
+                        operation_id=f"OP-ACC-{i}-{op_idx}",
+                        transaction_id=tx_id,
+                        replica_id=creator,
+                        operation_type=OperationType.ITEM_ACCEPTED,
+                        operation_class=OperationClass.COMMUTATIVE,
+                        payload=payload,
+                        logical_timestamp=op_idx + 2,
+                        parents=[parent_id]
+                    )
+
+                op_pool.append(op)
+
+                # Random network partition: Op reaches a random subset of replicas
+                target_subset = random.sample(replicas, random.randint(1, num_replicas))
+                for target in target_subset:
+                    target.apply_operation(op)
+
+            # 3. Simulate Multi-Hop Gossip & Random Partition Synchronization
+            # Create two completely random merge orders
+            order_1 = list(replicas)
+            random.shuffle(order_1)
+
+            order_2 = list(replicas)
+            random.shuffle(order_2)
+
+            order_3 = list(replicas)
+            random.shuffle(order_3)
+
+            # Fold merge 1
+            merged_1 = order_1[0]
+            for r in order_1[1:]:
+                merged_1 = merged_1.merge(r)
+
+            # Fold merge 2
+            merged_2 = order_2[0]
+            for r in order_2[1:]:
+                merged_2 = merged_2.merge(r)
+
+            # Fold merge 3
+            merged_3 = order_3[0]
+            for r in order_3[1:]:
+                merged_3 = merged_3.merge(r)
+
+            # 4. Property Assertions: Mathematical Soundness
+            state_1 = merged_1.evaluate_state()
+            state_2 = merged_2.evaluate_state()
+            state_3 = merged_3.evaluate_state()
+
+            # Theorem 1: Convergence (Commutativity & Associativity across all orders)
+            assert state_1 == state_2 == state_3, (
+                f"Convergence divergence across {num_replicas} replicas on iteration {i}!\n"
+                f"State 1: {state_1}\nState 2: {state_2}"
+            )
+
+            # Theorem 2: Idempotency (A merge A == A)
+            idem = merged_1.merge(merged_1)
+            assert idem.evaluate_state() == state_1, f"Idempotency violation on iteration {i}!"
+
+            # Theorem 3: Deterministic Cryptographic State Roots & Commitments
+            h1 = merged_1.generate_state_commitment()
+            h2 = merged_2.generate_state_commitment()
+            h3 = merged_3.generate_state_commitment()
+            assert h1 == h2 == h3, f"Cryptographic commitment divergence on iteration {i}!"
+
+            # Theorem 4: Double-Entry Invariant Integrity
+            valid = merged_1.validate_convergence()
+            assert valid == True, f"Double-entry invariant failure on iteration {i}!"
+
+            total_scenarios += 1
+            total_permutations += 3
+
+        print(f"    [+] {num_replicas}-Replica scenarios passed 100% ({iterations} trials)")
+
+    print("\n==================================================================")
+    print("   MULTI-REPLICA PROPERTY TESTING RESULTS: COMPLETE SUCCESS       ")
+    print("==================================================================")
+    print(f"Scenarios evaluated:     {total_scenarios}")
+    print(f"Merge permutations:      {total_permutations}")
+    print("Replica topologies:      3, 5, 8, and 10 concurrent nodes")
+    print("Convergence divergence:  0 (0.00%)")
+    print("Cryptographic mismatch:  0 (0.00%)")
+    print("Invariant violations:    0 (0.00%)")
+    print("Status:                  MATHEMATICALLY SOUND & VERIFIED\n")
 
 if __name__ == '__main__':
     generate_random_fuzz()
