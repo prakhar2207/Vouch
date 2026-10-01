@@ -18,6 +18,7 @@ from apps.protocol.compensation import CompensationEngine
 from apps.protocol.sync_service import SyncService
 from apps.protocol.operation import AccountingOperation, OperationType
 from apps.protocol.models import ProtocolTransaction, ProtocolOperation, CryptographicCommitment
+from apps.protocol.key_manager import ProtocolKeyManager
 
 def run_e2e():
     print("=========================================================")
@@ -73,8 +74,12 @@ def run_e2e():
     # PHASE 2 & 5: Accounting Operation & Compensation Engine
     # -----------------------------------------------------------
     print("\n[Phase 2 & 5] Buyer Rejects 2 Items Offline (Compensation Engine)...")
-    op_base = AccountingOperation('OP-BASE', tx.transaction_id, 'SELLER-01', OperationType.TRANSACTION_ISSUED, {'grand_total': 1180, 'total_tax': 180, 'taxable_amount': 1000}, 1)
-    op_reject = CompensationEngine.generate_item_rejection(tx, 'L1', Decimal('2'), 'BUYER-02', 2, 'OP-BASE')
+    km = ProtocolKeyManager.get_default()
+    seller_key = km.generate_keypair('SELLER-01')
+    buyer_key = km.generate_keypair('BUYER-02')
+
+    op_base = AccountingOperation('OP-BASE', tx.transaction_id, 'SELLER-01', OperationType.TRANSACTION_ISSUED, {'grand_total': 1180, 'total_tax': 180, 'taxable_amount': 1000}, 1).sign(seller_key.private_key_hex)
+    op_reject = CompensationEngine.generate_item_rejection(tx, 'L1', Decimal('2'), 'BUYER-02', 2, 'OP-BASE').sign(buyer_key.private_key_hex)
     print(f"  -> Auto-generated deterministic compensating operation: {op_reject.operation_id}")
     
     # -----------------------------------------------------------

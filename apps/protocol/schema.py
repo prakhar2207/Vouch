@@ -104,3 +104,66 @@ class CanonicalTransaction:
         # 5. Causality Checks
         if self.transaction_type in ['CREDIT_NOTE', 'DEBIT_NOTE'] and not self.causal_dependencies:
             raise InvariantViolation(f"{self.transaction_type} must declare causal dependencies on the parent transaction.")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes CanonicalTransaction into canonical JSON-serializable dictionary."""
+        return {
+            "protocol_version": self.protocol_version,
+            "transaction_id": self.transaction_id,
+            "transaction_type": self.transaction_type,
+            "state_version": self.state_version,
+            "issued_at": self.issued_at.isoformat() if hasattr(self.issued_at, 'isoformat') else str(self.issued_at),
+            "source_entity": {
+                "type": self.source_entity.identity_type,
+                "value": self.source_entity.identity_value,
+                "name": self.source_entity.name,
+                "state_code": self.source_entity.state_code
+            },
+            "destination_entity": {
+                "type": self.destination_entity.identity_type,
+                "value": self.destination_entity.identity_value,
+                "name": self.destination_entity.name,
+                "state_code": self.destination_entity.state_code
+            },
+            "items": [
+                {
+                    "line_id": line.line_id,
+                    "sku": line.sku,
+                    "name": line.name,
+                    "hsn_code": line.hsn_code,
+                    "quantity": str(line.quantity),
+                    "unit": line.unit,
+                    "unit_price": str(line.unit_price),
+                    "discount_amount": str(line.discount_amount),
+                    "taxable_amount": str(line.taxable_amount),
+                    "tax_rate_percent": str(line.tax_rate_percent)
+                }
+                for line in self.items
+            ],
+            "tax_summary": {
+                "cgst": str(self.tax_summary.cgst_amount),
+                "sgst": str(self.tax_summary.sgst_amount),
+                "igst": str(self.tax_summary.igst_amount),
+                "cess": str(self.tax_summary.cess_amount),
+                "total_tax": str(self.tax_summary.total_tax)
+            },
+            "totals": {
+                "subtotal": str(self.totals.subtotal),
+                "total_tax": str(self.totals.total_tax),
+                "shipping": str(self.totals.shipping_charges),
+                "discount": str(self.totals.total_discount),
+                "grand_total": str(self.totals.grand_total)
+            },
+            "causal_dependencies": list(self.causal_dependencies)
+        }
+
+    @property
+    def canonical_hash(self) -> str:
+        """
+        Computes deterministic SHA-256 digest over normalized canonical fields.
+        Guarantees that both parties compute the exact same identity hash.
+        """
+        import hashlib, json
+        canonical_json = json.dumps(self.to_dict(), sort_keys=True, separators=(',', ':'))
+        return hashlib.sha256(canonical_json.encode('utf-8')).hexdigest()
+

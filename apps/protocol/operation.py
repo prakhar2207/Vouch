@@ -163,3 +163,10 @@ class AccountingOperation:
             "version": self.version,
             "payload_hash": self.payload_hash
         }
+
+    def sign(self, private_key_hex: str) -> 'AccountingOperation':
+        """Signs the operation payload hash with an Ed25519 private key, attaching the signature."""
+        from .crypto import ProtocolCrypto
+        sig = ProtocolCrypto.sign(self.payload_hash, private_key_hex)
+        object.__setattr__(self, 'signature', sig)
+        return self

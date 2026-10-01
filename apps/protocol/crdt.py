@@ -72,7 +72,7 @@ class DE_CRDT:
         """
         Authoritative GST decomposition engine integration.
         Uses explicit payload decomposition if provided, or calls Vouch's GSTCalculator.
-        Eliminates naive 'igst += tax' logic.
+        Fails closed on calculation errors. Eliminates naive 'igst += tax' logic.
         """
         has_cgst = 'cgst_amount' in payload
         has_sgst = 'sgst_amount' in payload
@@ -82,9 +82,13 @@ class DE_CRDT:
             cgst = Decimal(str(payload.get('cgst_amount', 0)))
             sgst = Decimal(str(payload.get('sgst_amount', 0)))
             igst = Decimal(str(payload.get('igst_amount', 0)))
-            # If total_tax is non-zero but parts sum to 0, assign remainder to IGST
             if (cgst + sgst + igst) == Decimal('0.0') and total_tax > Decimal('0.0'):
-                igst = total_tax
+                if payload.get('treatment') == 'INTERSTATE':
+                    igst = total_tax
+                else:
+                    half = (total_tax / Decimal('2')).quantize(Decimal('0.01'))
+                    cgst = half
+                    sgst = total_tax - half
             return {'cgst': cgst, 'sgst': sgst, 'igst': igst}
 
         seller_state = payload.get('seller_state_code') or payload.get('company_state_code')
@@ -93,26 +97,30 @@ class DE_CRDT:
         rate = Decimal(str(payload.get('tax_rate_percent', payload.get('gst_rate', 0))))
 
         if (seller_state or buyer_state) and (taxable > Decimal('0') or total_tax > Decimal('0')):
-            try:
-                from apps.gst.services.gst_calculator import GSTCalculator
-                c_state = str(seller_state or buyer_state)
-                p_state = str(buyer_state or seller_state)
-                res = GSTCalculator.calculate_taxes(
-                    company_state_code=c_state,
-                    party_state_code=p_state,
-                    taxable_amount=taxable,
-                    gst_rate=rate if rate > Decimal('0') else Decimal('18.00')
-                )
-                return {
-                    'cgst': res['cgst'],
-                    'sgst': res['sgst'],
-                    'igst': res['igst']
-                }
-            except Exception:
-                pass
+            from apps.gst.services.gst_calculator import GSTCalculator
+            c_state = str(seller_state or buyer_state)
+            p_state = str(buyer_state or seller_state)
+            # Fail closed: never swallow GST calculation exceptions
+            res = GSTCalculator.calculate_taxes(
+                company_state_code=c_state,
+                party_state_code=p_state,
+                taxable_amount=taxable if taxable > Decimal('0') else total_tax,
+                gst_rate=rate if rate > Decimal('0') else Decimal('18.00')
+            )
+            return {
+                'cgst': res['cgst'],
+                'sgst': res['sgst'],
+                'igst': res['igst']
+            }
 
-        # If neither is available, preserve total_tax as IGST for backward compatibility
-        return {'cgst': Decimal('0.0'), 'sgst': Decimal('0.0'), 'igst': total_tax}
+        if total_tax == Decimal('0.0'):
+            return {'cgst': Decimal('0.0'), 'sgst': Decimal('0.0'), 'igst': Decimal('0.0')}
+
+        if payload.get('treatment') == 'INTERSTATE':
+            return {'cgst': Decimal('0.0'), 'sgst': Decimal('0.0'), 'igst': total_tax}
+
+        half = (total_tax / Decimal('2')).quantize(Decimal('0.01'))
+        return {'cgst': half, 'sgst': total_tax - half, 'igst': Decimal('0.0')}
 
     def evaluate_state(self) -> Dict[str, Any]:
         """
@@ -331,7 +339,7 @@ class DE_CRDT:
         self,
         seller_identity: str = "SELLER",
         buyer_identity: str = "BUYER",
-        canonical_tx_hash: str = "TBD_CANONICAL_HASH",
+        canonical_tx_hash: Optional[str] = None,
         previous_commitment_hash: Any = None
     ) -> str:
         """
@@ -344,7 +352,7 @@ class DE_CRDT:
 
         seller = seller_identity if seller_identity != "SELLER" else base_payload.get("source_company_id", "SELLER")
         buyer = buyer_identity if buyer_identity != "BUYER" else base_payload.get("destination_company_id", "BUYER")
-        tx_hash = canonical_tx_hash if canonical_tx_hash != "TBD_CANONICAL_HASH" else roots["transaction_state_root"]
+        tx_hash = canonical_tx_hash if (canonical_tx_hash and canonical_tx_hash != "TBD_CANONICAL_HASH") else roots["transaction_state_root"]
 
         commitment = CrossLedgerCommitment(
             transaction_id=self.transaction_id,

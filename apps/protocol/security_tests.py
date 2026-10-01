@@ -1,4 +1,7 @@
 import os, sys
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 if not os.environ.get('DJANGO_SETTINGS_MODULE'):
     os.environ['DJANGO_SETTINGS_MODULE'] = 'config.settings'
 import django
@@ -6,13 +9,13 @@ django.setup()
 from decimal import Decimal
 import time
 
-from .operation import AccountingOperation, OperationType
-from .crdt import DE_CRDT
-from .handshake import EdiStateMachine, EdiState, IllegalStateTransitionError
-from .qr_bootstrap import QRSessionManager, QRBootstrapPayload, SecurityViolation
-from .crypto import ProtocolCrypto, MerkleTree, Ed25519Signer
-from .invariants import InvariantEngine, AccountingInvariantViolation
-from .sync_service import SyncService, MultiTenantSecurityError
+from apps.protocol.operation import AccountingOperation, OperationType
+from apps.protocol.crdt import DE_CRDT
+from apps.protocol.handshake import EdiStateMachine, EdiState, IllegalStateTransitionError
+from apps.protocol.qr_bootstrap import QRSessionManager, QRBootstrapPayload, SecurityViolation
+from apps.protocol.crypto import ProtocolCrypto, MerkleTree, Ed25519Signer
+from apps.protocol.invariants import InvariantEngine, AccountingInvariantViolation
+from apps.protocol.sync_service import SyncService, MultiTenantSecurityError
 
 def run_threat_simulations():
     print("=========================================================")

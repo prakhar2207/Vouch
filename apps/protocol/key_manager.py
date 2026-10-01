@@ -21,10 +21,26 @@ class KeyEnvelope:
     valid_until: Optional[float] = None
     is_revoked: bool = False
 
+_default_key_manager = None
+
 class ProtocolKeyManager:
     """
     Manages asymmetric Ed25519 cryptographic keys, key rotation, and revocation lists.
     """
+    @classmethod
+    def get_default(cls) -> 'ProtocolKeyManager':
+        global _default_key_manager
+        if _default_key_manager is None:
+            _default_key_manager = cls()
+        return _default_key_manager
+
+    @classmethod
+    def get_active_public_key(cls, replica_id: str) -> Optional[str]:
+        try:
+            return cls.get_default().get_public_key(replica_id)
+        except Exception:
+            return None
+
     def __init__(self):
         self._keys: Dict[str, KeyEnvelope] = {} # key_id -> KeyEnvelope
         self._active_keys_by_replica: Dict[str, str] = {} # replica_id -> current key_id

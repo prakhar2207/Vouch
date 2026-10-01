@@ -35,26 +35,21 @@ class CompensationEngine:
         ratio = quantity_rejected / line.quantity
         taxable_reduction = round(line.taxable_amount * ratio, 2)
         
-        # Integrate Authoritative Vouch GST Engine
-        try:
-            from apps.gst.services.gst_calculator import GSTCalculator
-            seller_state = transaction.source_entity.state_code or (transaction.source_entity.identity_value[:2] if len(transaction.source_entity.identity_value) >= 2 else "27")
-            buyer_state = transaction.destination_entity.state_code or (transaction.destination_entity.identity_value[:2] if len(transaction.destination_entity.identity_value) >= 2 else "27")
-            gst_res = GSTCalculator.calculate_taxes(
-                company_state_code=seller_state,
-                party_state_code=buyer_state,
-                taxable_amount=taxable_reduction,
-                gst_rate=line.tax_rate_percent
-            )
-            tax_reduction = gst_res['total_tax']
-            cgst_reduction = gst_res['cgst']
-            sgst_reduction = gst_res['sgst']
-            igst_reduction = gst_res['igst']
-        except Exception:
-            tax_reduction = round(taxable_reduction * (line.tax_rate_percent / Decimal('100')), 2)
-            cgst_reduction = Decimal('0.0')
-            sgst_reduction = Decimal('0.0')
-            igst_reduction = tax_reduction
+        # Authoritative Vouch GST Engine (Fail-Closed)
+        from apps.gst.services.gst_calculator import GSTCalculator
+        seller_state = transaction.source_entity.state_code or (transaction.source_entity.identity_value[:2] if len(transaction.source_entity.identity_value) >= 2 else "27")
+        buyer_state = transaction.destination_entity.state_code or (transaction.destination_entity.identity_value[:2] if len(transaction.destination_entity.identity_value) >= 2 else "27")
+        
+        gst_res = GSTCalculator.calculate_taxes(
+            company_state_code=seller_state,
+            party_state_code=buyer_state,
+            taxable_amount=taxable_reduction,
+            gst_rate=line.tax_rate_percent
+        )
+        tax_reduction = gst_res['total_tax']
+        cgst_reduction = gst_res['cgst']
+        sgst_reduction = gst_res['sgst']
+        igst_reduction = gst_res['igst']
 
         payload = {
             "line_id": line_id,
@@ -102,27 +97,21 @@ class CompensationEngine:
         unit_price_diff = new_unit_price - line.unit_price
         taxable_delta = round(unit_price_diff * line.quantity, 2)
         
-        # Authoritative GST Engine
-        try:
-            from apps.gst.services.gst_calculator import GSTCalculator
-            seller_state = transaction.source_entity.state_code or (transaction.source_entity.identity_value[:2] if len(transaction.source_entity.identity_value) >= 2 else "27")
-            buyer_state = transaction.destination_entity.state_code or (transaction.destination_entity.identity_value[:2] if len(transaction.destination_entity.identity_value) >= 2 else "27")
-            gst_res = GSTCalculator.calculate_taxes(
-                company_state_code=seller_state,
-                party_state_code=buyer_state,
-                taxable_amount=abs(taxable_delta),
-                gst_rate=line.tax_rate_percent
-            )
-            sign = 1 if taxable_delta >= 0 else -1
-            tax_delta = gst_res['total_tax'] * sign
-            cgst_delta = gst_res['cgst'] * sign
-            sgst_delta = gst_res['sgst'] * sign
-            igst_delta = gst_res['igst'] * sign
-        except Exception:
-            tax_delta = round(taxable_delta * (line.tax_rate_percent / Decimal('100')), 2)
-            cgst_delta = Decimal('0.0')
-            sgst_delta = Decimal('0.0')
-            igst_delta = tax_delta
+        # Authoritative GST Engine (Fail-Closed)
+        from apps.gst.services.gst_calculator import GSTCalculator
+        seller_state = transaction.source_entity.state_code or (transaction.source_entity.identity_value[:2] if len(transaction.source_entity.identity_value) >= 2 else "27")
+        buyer_state = transaction.destination_entity.state_code or (transaction.destination_entity.identity_value[:2] if len(transaction.destination_entity.identity_value) >= 2 else "27")
+        gst_res = GSTCalculator.calculate_taxes(
+            company_state_code=seller_state,
+            party_state_code=buyer_state,
+            taxable_amount=abs(taxable_delta),
+            gst_rate=line.tax_rate_percent
+        )
+        sign = 1 if taxable_delta >= 0 else -1
+        tax_delta = gst_res['total_tax'] * sign
+        cgst_delta = gst_res['cgst'] * sign
+        sgst_delta = gst_res['sgst'] * sign
+        igst_delta = gst_res['igst'] * sign
 
         payload = {
             "line_id": line_id,

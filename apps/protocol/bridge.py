@@ -147,14 +147,71 @@ class LedgerBridge:
             is_customer=is_seller
         )
 
-        # 2. Match / Provision Products
+        # 2. Match / Provision Products with Versioned Semantic Resolution
+        from .models import EntityMapping
+        from .mapping import SemanticMappingEngine, MappingConfidence, ApprovalState
+
+        source_id = str(canonical_tx.source_entity.identity_value)
+        dest_id = str(canonical_tx.destination_entity.identity_value)
+
+        # Pre-fetch candidate local catalog items for semantic matching
+        local_catalog = list(Product.objects.filter(company=company).values('id', 'name', 'sku', 'hsn_code', 'unit', 'gst_rate'))
+
         product_map: Dict[str, Product] = {}
+        conversion_multipliers: Dict[str, Decimal] = {}
         items_data: List[Dict[str, Any]] = []
 
         for line in canonical_tx.items:
-            prod = Product.objects.filter(company=company, sku__iexact=line.sku).first()
+            prod = None
+            conversion_multiplier = Decimal('1.0')
+
+            # Tier 1: Check existing APPROVED versioned EntityMapping in database
+            mapping = EntityMapping.objects.filter(
+                source_company_id=source_id,
+                destination_company_id=dest_id,
+                foreign_sku=line.sku,
+                approval_state=ApprovalState.APPROVED.value
+            ).order_by('-mapping_version').first()
+
+            if mapping:
+                prod = Product.objects.filter(company=company, sku__iexact=mapping.local_sku).first()
+                if mapping.conversion_multiplier and mapping.conversion_multiplier != 1.0:
+                    conversion_multiplier = Decimal(str(mapping.conversion_multiplier))
+
+            # Tier 2: Exact local SKU / Name match
+            if not prod:
+                prod = Product.objects.filter(company=company, sku__iexact=line.sku).first()
             if not prod:
                 prod = Product.objects.filter(company=company, name__iexact=line.name).first()
+
+            # Tier 3: Bounded Semantic Resolution Pipeline (Levenshtein / Jaccard / HSN Token)
+            if not prod and local_catalog:
+                semantic_res = SemanticMappingEngine.match_product(
+                    foreign_sku=line.sku,
+                    foreign_name=line.name,
+                    foreign_hsn=line.hsn_code,
+                    catalog_items=local_catalog
+                )
+                if semantic_res:
+                    matched_item, score, confidence = semantic_res
+                    prod = Product.objects.filter(company=company, id=matched_item['id']).first()
+                    if prod:
+                        EntityMapping.objects.get_or_create(
+                            source_company_id=source_id,
+                            destination_company_id=dest_id,
+                            foreign_sku=line.sku,
+                            mapping_version=1,
+                            defaults={
+                                "mapping_id": f"MAP-{uuid.uuid4().hex[:12].upper()}",
+                                "local_sku": prod.sku,
+                                "confidence_level": confidence.value,
+                                "approval_state": ApprovalState.APPROVED.value if score >= 0.90 else ApprovalState.PENDING.value,
+                                "conversion_multiplier": 1.0,
+                                "hsn_override": line.hsn_code
+                            }
+                        )
+
+            # Tier 4: Auto-provision new product if no match exists
             if not prod:
                 prod = Product.objects.create(
                     company=company,
@@ -166,16 +223,36 @@ class LedgerBridge:
                     selling_price=line.unit_price,
                     purchase_price=line.unit_price
                 )
+                EntityMapping.objects.get_or_create(
+                    source_company_id=source_id,
+                    destination_company_id=dest_id,
+                    foreign_sku=line.sku,
+                    mapping_version=1,
+                    defaults={
+                        "mapping_id": f"MAP-{uuid.uuid4().hex[:12].upper()}",
+                        "local_sku": prod.sku,
+                        "confidence_level": MappingConfidence.MANUAL.value,
+                        "approval_state": ApprovalState.APPROVED.value,
+                        "conversion_multiplier": 1.0,
+                        "hsn_override": line.hsn_code
+                    }
+                )
+
             product_map[line.line_id] = prod
+            conversion_multipliers[line.line_id] = conversion_multiplier
+
+            effective_qty = line.quantity * conversion_multiplier
+            effective_rate = (line.unit_price / conversion_multiplier).quantize(Decimal('0.01')) if conversion_multiplier != Decimal('1.0') else line.unit_price
+
             items_data.append({
                 'product_id': prod.id,
                 'product_name': prod.name,
-                'quantity': line.quantity,
-                'rate': line.unit_price,
+                'quantity': effective_qty,
+                'rate': effective_rate,
                 'discount_percent': Decimal('0.00'),
                 'hsn_code': line.hsn_code,
                 'gst_rate': line.tax_rate_percent,
-                'unit': line.unit
+                'unit': prod.unit or line.unit
             })
 
         posted_vouchers: List[Voucher] = []
@@ -218,9 +295,27 @@ class LedgerBridge:
             VoucherService.post_voucher(base_voucher, process_stock=True, force_duplicate=True)
             posted_vouchers.append(base_voucher)
 
+        # Collect referenced rejection op IDs to prevent duplicate voucher creation
+        referenced_rejections = {
+            op.payload.get('reference_rejection_op')
+            for op in converged_operations
+            if op.operation_type in (OperationType.CREDIT_NOTE_ISSUED, OperationType.DEBIT_NOTE_ISSUED)
+            and op.payload.get('reference_rejection_op')
+        }
+
         # 4. Process Subsequent Compensating & Financial Operations in Causal Order
         for op in converged_operations:
+            # If a reciprocal Credit/Debit Note exists for this rejection, let the reciprocal note create the voucher
+            if op.operation_type == OperationType.ITEM_REJECTED and op.operation_id in referenced_rejections:
+                continue
+
             if op.operation_type in (OperationType.ITEM_REJECTED, OperationType.CREDIT_NOTE_ISSUED, OperationType.DEBIT_NOTE_ISSUED):
+                # Party role check: Seller posts CREDIT_NOTE; Buyer posts DEBIT_NOTE
+                if is_seller and op.operation_type == OperationType.DEBIT_NOTE_ISSUED:
+                    continue
+                if not is_seller and op.operation_type == OperationType.CREDIT_NOTE_ISSUED:
+                    continue
+
                 payload = op.payload
                 qty = Decimal(str(payload.get('quantity', 0)))
                 taxable = Decimal(str(payload.get('taxable_amount', 0)))
@@ -229,10 +324,12 @@ class LedgerBridge:
                 if not prod or qty <= 0:
                     continue
 
-                rate = (taxable / qty).quantize(Decimal('0.01')) if qty > 0 else taxable
+                mult = conversion_multipliers.get(line_id, Decimal('1.0'))
+                effective_corr_qty = qty * mult
+                rate = (taxable / effective_corr_qty).quantize(Decimal('0.01')) if effective_corr_qty > 0 else taxable
                 corr_item_data = [{
                     'product_id': prod.id,
-                    'quantity': qty,
+                    'quantity': effective_corr_qty,
                     'rate': rate,
                     'discount_percent': Decimal('0.00'),
                     'gst_rate': prod.gst_rate or Decimal('18.00'),

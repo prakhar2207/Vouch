@@ -1,4 +1,5 @@
 import logging
+import hashlib
 from typing import List, Dict, Any, Optional, Set
 from .operation import AccountingOperation, OperationType
 from .crdt import DE_CRDT
@@ -33,9 +34,9 @@ class SyncService:
         authorized_counterparty_ids: Optional[Set[str]] = None,
         seller_identity: str = "SELLER",
         buyer_identity: str = "BUYER",
-        canonical_tx_hash: str = "TBD_CANONICAL_HASH",
+        canonical_tx_hash: Optional[str] = None,
         previous_commitment_hash: Any = None,
-        verify_signatures: bool = False,
+        verify_signatures: bool = True,
         public_keys_map: Optional[Dict[str, str]] = None,
         company: Any = None,
         canonical_tx: Optional[CanonicalTransaction] = None,
@@ -43,19 +44,35 @@ class SyncService:
         persist_to_db: bool = False
     ) -> Dict[str, Any]:
         """
-        Idempotent 2-way synchronization endpoint:
+        Production 2-way synchronization endpoint:
         1. Validates multi-tenant isolation and counterparty authorization.
-        2. Reconstructs server and client causal DAGs.
-        3. Enforces cryptographic signatures (fail-closed Ed25519).
+        2. Validates canonical transaction hash integrity.
+        3. Enforces cryptographic signatures (fail-closed Ed25519; mandatory in production).
         4. Validates causal parent completeness.
         5. Performs deterministic CRDT merge.
-        6. Runs automated atomic compensation pipeline (Item Rejection -> Reciprocal Credit Note).
+        6. Runs automated atomic compensation pipeline (Item Rejection / Price Adjustments).
         7. Evaluates double-entry and tax invariants.
         8. Calculates semantic delta.
         9. Computes independent Seller and Buyer Merkle state roots & commitment hash.
-        10. Optionally executes Vouch Ledger Bridge to post physical vouchers and entries.
-        11. Returns missing server operations for 2-way client sync.
+        10. Executes Authoritative Vouch Ledger Bridge (fails closed on bridge error).
+        11. Persists to database atomically (fails closed on persistence error).
+        12. Returns missing server operations for 2-way client sync.
         """
+        # 0. Canonical Transaction Hash Integrity Verification
+        if canonical_tx_hash == "TBD_CANONICAL_HASH":
+            return {
+                "status": "SYNC_REJECTED",
+                "reason": "Invalid canonical transaction hash: placeholder 'TBD_CANONICAL_HASH' is forbidden in production."
+            }
+
+        computed_tx_hash = canonical_tx.canonical_hash if (canonical_tx and hasattr(canonical_tx, 'canonical_hash')) else None
+        if computed_tx_hash and canonical_tx_hash:
+            if canonical_tx_hash != computed_tx_hash:
+                return {
+                    "status": "SYNC_REJECTED",
+                    "reason": f"Canonical transaction hash mismatch: claimed {canonical_tx_hash} != calculated {computed_tx_hash}"
+                }
+        effective_tx_hash = computed_tx_hash or canonical_tx_hash or f"TX-HASH-{hashlib.sha256(transaction_id.encode('utf-8')).hexdigest()[:16]}"
         # 1. Server-Side Multi-Tenant Authorization Check
         if authorized_counterparty_ids is not None:
             if authenticated_tenant_id not in authorized_counterparty_ids:
@@ -89,16 +106,28 @@ class SyncService:
             op_copy.pop('payload_hash', None)
             op = AccountingOperation(**op_copy)
 
-            # Strict digital signature verification
-            if verify_signatures and public_keys_map and op.signature:
-                pub_key = public_keys_map.get(op.replica_id)
-                if pub_key:
-                    sig_valid = ProtocolCrypto.verify(op.payload_hash, op.signature, pub_key)
-                    if not sig_valid:
-                        return {
-                            "status": "SYNC_REJECTED",
-                            "reason": f"Cryptographic signature check failed on operation {op.operation_id}"
-                        }
+            # Strict Fail-Closed Digital Signature Verification
+            if verify_signatures:
+                if not op.signature:
+                    return {
+                        "status": "SYNC_REJECTED",
+                        "reason": f"Operation {op.operation_id} from replica {op.replica_id} is unsigned. Production requires valid Ed25519 signatures."
+                    }
+                pub_key = (public_keys_map or {}).get(op.replica_id)
+                if not pub_key:
+                    from .key_manager import ProtocolKeyManager
+                    pub_key = ProtocolKeyManager.get_active_public_key(op.replica_id)
+                if not pub_key:
+                    return {
+                        "status": "SYNC_REJECTED",
+                        "reason": f"No active public key found for replica {op.replica_id} to verify operation {op.operation_id}."
+                    }
+                sig_valid = ProtocolCrypto.verify(op.payload_hash, op.signature, pub_key)
+                if not sig_valid:
+                    return {
+                        "status": "SYNC_REJECTED",
+                        "reason": f"Cryptographic signature check failed on operation {op.operation_id}."
+                    }
 
             client_crdt.apply_operation(op)
 
@@ -188,7 +217,7 @@ class SyncService:
         commitment_hash = merged_crdt.generate_state_commitment(
             seller_identity=seller_identity,
             buyer_identity=buyer_identity,
-            canonical_tx_hash=canonical_tx_hash,
+            canonical_tx_hash=effective_tx_hash,
             previous_commitment_hash=previous_commitment_hash
         )
 
@@ -205,6 +234,14 @@ class SyncService:
             except Exception as e:
                 logger.error(f"LedgerBridge execution error: {e}", exc_info=True)
                 bridge_result = {"status": "BRIDGE_FAILED", "error": str(e)}
+
+            if not bridge_result or bridge_result.get("status") != "BRIDGE_SUCCESS":
+                return {
+                    "status": "BRIDGE_FAILED",
+                    "transaction_id": transaction_id,
+                    "error": bridge_result.get("error", "LedgerBridge execution failed") if bridge_result else "Bridge execution returned null",
+                    "bridge_result": bridge_result
+                }
 
         # 12. Persist Merged State to Django ORM (if requested)
         if persist_to_db:
@@ -250,7 +287,12 @@ class SyncService:
                         }
                     )
             except Exception as e:
-                logger.warning(f"Protocol database persistence notice: {e}")
+                logger.error(f"Protocol database persistence failure: {e}", exc_info=True)
+                return {
+                    "status": "PERSISTENCE_FAILED",
+                    "transaction_id": transaction_id,
+                    "error": f"Failed to persist protocol state to database: {str(e)}"
+                }
 
         return {
             "status": "SYNC_SUCCESS",
@@ -262,3 +304,14 @@ class SyncService:
             "semantic_delta": semantic_delta.summary() if semantic_delta and semantic_delta.has_divergence else None,
             "bridge_result": bridge_result
         }
+
+
+class TestSyncService:
+    """
+    Test harness synchronization service that disables mandatory signature checks
+    strictly for unit testing and offline mocking.
+    """
+    @classmethod
+    def process_sync_payload(cls, *args, **kwargs):
+        kwargs['verify_signatures'] = False
+        return SyncService.process_sync_payload(*args, **kwargs)

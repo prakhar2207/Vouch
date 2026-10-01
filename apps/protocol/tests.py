@@ -19,6 +19,7 @@ from apps.protocol.sync_service import SyncService, MultiTenantSecurityError
 from apps.protocol.handshake import EdiStateMachine, EdiState, IllegalStateTransitionError
 from apps.protocol.models import EdiSession
 from apps.protocol.crypto import ProtocolCrypto, Ed25519Signer, CrossLedgerCommitment, CryptographicSecurityError
+from apps.protocol.key_manager import ProtocolKeyManager, ReplayProtectionEngine, SecurityViolationError
 
 class ProtocolLedgerBridgeTests(TestCase):
     def setUp(self):
@@ -197,6 +198,10 @@ class ProtocolSyncAndStateMachineTests(TestCase):
     def test_sync_service_atomic_compensation(self):
         """Verifies SyncService automatically generates reciprocal Credit Note on Item Rejection."""
         tx_id = f"TX-{uuid.uuid4().hex[:8].upper()}"
+        km = ProtocolKeyManager.get_default()
+        seller_env = km.generate_keypair("SELLER")
+        buyer_env = km.generate_keypair("BUYER")
+
         base_op = AccountingOperation(
             operation_id="OP-BASE",
             transaction_id=tx_id,
@@ -204,7 +209,7 @@ class ProtocolSyncAndStateMachineTests(TestCase):
             operation_type=OperationType.TRANSACTION_ISSUED,
             payload={"grand_total": 1180.0, "total_tax": 180.0, "taxable_amount": 1000.0, "quantity": 10.0},
             logical_timestamp=1
-        )
+        ).sign(seller_env.private_key_hex)
 
         rej_op = AccountingOperation(
             operation_id="OP-REJ",
@@ -214,7 +219,7 @@ class ProtocolSyncAndStateMachineTests(TestCase):
             payload={"quantity": 2.0, "taxable_amount": 200.0, "tax_amount": 36.0, "line_id": "L1"},
             logical_timestamp=2,
             parents=["OP-BASE"]
-        )
+        ).sign(buyer_env.private_key_hex)
 
         res = SyncService.process_sync_payload(
             transaction_id=tx_id,
@@ -427,31 +432,52 @@ class AdvancedProtocolMechanismsTests(TestCase):
             rpe.validate_and_consume("NODE-1", "NONCE-002", now - 400)
 
     def test_protocol_sync_api_view(self):
-        """Tests POST /api/v1/protocol/sync/ REST endpoint."""
-        from django.test import Client
-        c = Client()
+        """Tests POST /api/v1/protocol/sync/ REST endpoint enforcing auth and signatures."""
+        from rest_framework.test import APIClient
+        c = APIClient()
+
+        # 1. Anonymous access is strictly rejected
+        anon_resp = c.post('/api/v1/protocol/sync/', data={"transaction_id": "TX-API-TEST-001"}, format='json')
+        self.assertEqual(anon_resp.status_code, 401)
+
+        # 2. Authenticated access with Ed25519-signed operation succeeds
+        c.force_authenticate(user=self.user)
+        km = ProtocolKeyManager.get_default()
+        cli_env = km.generate_keypair("CLI-TEST-01")
+
+        op_data = {
+            "operation_id": "OP-API-001",
+            "transaction_id": "TX-API-TEST-001",
+            "replica_id": "CLI-TEST-01",
+            "operation_type": "TRANSACTION_ISSUED",
+            "payload": {
+                "grand_total": 1180.0,
+                "taxable_amount": 1000.0,
+                "total_tax": 180.0,
+                "cgst_amount": 90.0,
+                "sgst_amount": 90.0
+            },
+            "logical_timestamp": 1,
+            "parents": []
+        }
+        test_op = AccountingOperation(
+            operation_id=op_data["operation_id"],
+            transaction_id=op_data["transaction_id"],
+            replica_id=op_data["replica_id"],
+            operation_type=OperationType.TRANSACTION_ISSUED,
+            payload=op_data["payload"],
+            logical_timestamp=op_data["logical_timestamp"],
+            parents=op_data["parents"]
+        )
+        op_data["signature"] = ProtocolCrypto.sign(test_op.payload_hash, cli_env.private_key_hex)
+
         payload = {
             "transaction_id": "TX-API-TEST-001",
             "client_replica_id": "CLI-TEST-01",
-            "client_operations": [
-                {
-                    "operation_id": "OP-API-001",
-                    "transaction_id": "TX-API-TEST-001",
-                    "replica_id": "CLI-TEST-01",
-                    "operation_type": "TRANSACTION_ISSUED",
-                    "payload": {
-                        "grand_total": 1180.0,
-                        "taxable_amount": 1000.0,
-                        "total_tax": 180.0,
-                        "cgst_amount": 90.0,
-                        "sgst_amount": 90.0
-                    },
-                    "logical_timestamp": 1,
-                    "parents": []
-                }
-            ]
+            "company_id": str(self.company.id),
+            "client_operations": [op_data]
         }
-        resp = c.post('/api/v1/protocol/sync/', data=payload, content_type='application/json')
+        resp = c.post('/api/v1/protocol/sync/', data=payload, format='json')
         self.assertEqual(resp.status_code, 200)
         resp_data = resp.json()
         self.assertEqual(resp_data['status'], 'SYNC_SUCCESS')

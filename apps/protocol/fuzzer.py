@@ -1,11 +1,14 @@
 import os, sys, random
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 from decimal import Decimal
 from typing import List, Dict, Any
 
-from .operation import AccountingOperation, OperationType, OperationClass
-from .crdt import DE_CRDT
-from .invariants import InvariantEngine
-from .compensation import CompensationEngine
+from apps.protocol.operation import AccountingOperation, OperationType, OperationClass
+from apps.protocol.crdt import DE_CRDT
+from apps.protocol.invariants import InvariantEngine
+from apps.protocol.compensation import CompensationEngine
 
 def generate_random_fuzz():
     print("==================================================================")
