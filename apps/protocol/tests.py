@@ -447,6 +447,18 @@ class AdvancedProtocolMechanismsTests(TestCase):
         km = ProtocolKeyManager.get_default()
         cli_env = km.generate_keypair("CLI-TEST-01")
 
+        from apps.protocol.models import AuthorizedDevice
+        AuthorizedDevice.objects.get_or_create(
+            device_id="CLI-DEV-01",
+            defaults={
+                "replica_id": "CLI-TEST-01",
+                "company": self.company,
+                "public_key_hex": cli_env.public_key_hex,
+                "key_id": cli_env.key_id,
+                "status": "ACTIVE"
+            }
+        )
+
         op_data = {
             "operation_id": "OP-API-001",
             "transaction_id": "TX-API-TEST-001",
@@ -549,4 +561,197 @@ class AdvancedProtocolMechanismsTests(TestCase):
         self.assertEqual(sync_resp.status_code, 400)
         self.assertEqual(sync_resp.json()["status"], "SYNC_REJECTED")
         self.assertIn("REVOKED", sync_resp.json()["reason"])
+
+    def test_unregistered_device_rejection(self):
+        """Verifies that an unknown, unregistered replica device is rejected fail-closed."""
+        c = APIClient()
+        c.force_authenticate(user=self.user)
+        sync_payload = {
+            "transaction_id": "TX-UNREG-01",
+            "client_replica_id": "REP-UNKNOWN-GHOST-DEVICE",
+            "company_id": str(self.company.id),
+            "canonical_tx_hash": "HASH-UNREG-01",
+            "client_operations": []
+        }
+        res = c.post('/api/v1/protocol/sync/', data=sync_payload, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json()["status"], "SYNC_REJECTED")
+        self.assertIn("Unregistered device", res.json()["reason"])
+
+    def test_device_cross_company_isolation(self):
+        """Verifies that a device registered to Company B cannot submit operations for Company A."""
+        from apps.protocol.models import AuthorizedDevice
+        c = APIClient()
+        c.force_authenticate(user=self.user)
+
+        other_company = Company.objects.create(name="Rival Enterprise 99", gstin="27RIVAAAA1234A1Z")
+        priv_k, pub_k = ProtocolCrypto.generate_keypair()
+        AuthorizedDevice.objects.create(
+            device_id="DEV-RIVAL-01",
+            replica_id="REP-RIVAL-01",
+            company=other_company,
+            public_key_hex=pub_k,
+            key_id="KID-RIVAL-01",
+            status="ACTIVE"
+        )
+
+        sync_payload = {
+            "transaction_id": "TX-CROSS-01",
+            "client_replica_id": "REP-RIVAL-01",
+            "company_id": str(self.company.id),
+            "canonical_tx_hash": "HASH-CROSS-01",
+            "client_operations": []
+        }
+        res = c.post('/api/v1/protocol/sync/', data=sync_payload, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json()["status"], "SYNC_REJECTED")
+        self.assertIn("not an authorized device for company", res.json()["reason"])
+
+    def test_device_rotation_api(self):
+        """Verifies POST /api/v1/protocol/devices/rotate/ replaces key and maintains active authorization."""
+        from apps.protocol.models import AuthorizedDevice
+        c = APIClient()
+        c.force_authenticate(user=self.user)
+
+        priv_orig, pub_orig = ProtocolCrypto.generate_keypair()
+        priv_new, pub_new = ProtocolCrypto.generate_keypair()
+
+        AuthorizedDevice.objects.create(
+            device_id="DEV-ROTATE-TEST",
+            replica_id="REP-ROTATE-TEST",
+            company=self.company,
+            public_key_hex=pub_orig,
+            key_id="KID-OLD-01",
+            status="ACTIVE"
+        )
+
+        rotate_payload = {
+            "device_id": "DEV-ROTATE-TEST",
+            "new_public_key_hex": pub_new,
+            "new_key_id": "KID-NEW-02",
+            "company_id": str(self.company.id)
+        }
+        res = c.post('/api/v1/protocol/devices/rotate/', data=rotate_payload, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["status"], "ROTATED")
+
+        device = AuthorizedDevice.objects.get(device_id="DEV-ROTATE-TEST")
+        self.assertEqual(device.public_key_hex, pub_new)
+        self.assertEqual(device.key_id, "KID-NEW-02")
+        self.assertEqual(device.status, "ACTIVE")
+
+    def test_canonical_transaction_reconstruction_and_tamper_detection(self):
+        """Verifies that the server reconstructs CanonicalTransaction and rejects claimed hash mismatches."""
+        from apps.protocol.models import AuthorizedDevice
+        from apps.protocol.schema import CanonicalTransaction
+        c = APIClient()
+        c.force_authenticate(user=self.user)
+
+        priv_k, pub_k = ProtocolCrypto.generate_keypair()
+        AuthorizedDevice.objects.create(
+            device_id="DEV-CANON-01",
+            replica_id="REP-CANON-01",
+            company=self.company,
+            public_key_hex=pub_k,
+            key_id="KID-CANON-01",
+            status="ACTIVE"
+        )
+
+        raw_canonical = {
+            "protocol_version": "1.0",
+            "transaction_id": "TX-CANON-01",
+            "transaction_type": "SALE",
+            "state_version": 1,
+            "issued_at": "2026-10-01T10:00:00",
+            "source_entity": {
+                "type": "GSTIN",
+                "value": str(self.company.gstin or self.company.id),
+                "name": self.company.name,
+                "state_code": "27"
+            },
+            "destination_entity": {
+                "type": "GSTIN",
+                "value": "27BBBBB5678B1Z6",
+                "name": "Buyer Corp",
+                "state_code": "27"
+            },
+            "items": [
+                {
+                    "line_id": "L1",
+                    "sku": "ITEM-1",
+                    "name": "Item 1",
+                    "hsn_code": "1234",
+                    "quantity": "10.00",
+                    "unit": "PCS",
+                    "unit_price": "100.00",
+                    "discount_amount": "0.00",
+                    "taxable_amount": "1000.00",
+                    "tax_rate_percent": "18.00"
+                }
+            ],
+            "tax_summary": {
+                "cgst": "90.00",
+                "sgst": "90.00",
+                "igst": "0.00",
+                "cess": "0.00",
+                "total_tax": "180.00"
+            },
+            "totals": {
+                "subtotal": "1000.00",
+                "total_tax": "180.00",
+                "shipping": "0.00",
+                "discount": "0.00",
+                "grand_total": "1180.00"
+            },
+            "causal_dependencies": []
+        }
+        reconstructed = CanonicalTransaction.from_dict(raw_canonical)
+        true_hash = reconstructed.canonical_hash
+
+        op_data = {
+            "operation_id": "OP-CANON-01",
+            "transaction_id": "TX-CANON-01",
+            "replica_id": "REP-CANON-01",
+            "operation_type": "TRANSACTION_ISSUED",
+            "payload": {"grand_total": 1180.0, "taxable_amount": 1000.0, "total_tax": 180.0},
+            "logical_timestamp": 1,
+            "parents": []
+        }
+        op = AccountingOperation(
+            operation_id=op_data["operation_id"],
+            transaction_id=op_data["transaction_id"],
+            replica_id=op_data["replica_id"],
+            operation_type=OperationType.TRANSACTION_ISSUED,
+            payload=op_data["payload"],
+            logical_timestamp=1,
+            parents=[]
+        )
+        op_data["signature"] = ProtocolCrypto.sign(op.payload_hash, priv_k)
+
+        # 1. Attacker sends tampered/claimed hash mismatch
+        bad_payload = {
+            "transaction_id": "TX-CANON-01",
+            "client_replica_id": "REP-CANON-01",
+            "company_id": str(self.company.id),
+            "canonical_transaction": raw_canonical,
+            "canonical_tx_hash": "FORGED_HASH_1234567890",
+            "client_operations": [op_data]
+        }
+        bad_res = c.post('/api/v1/protocol/sync/', data=bad_payload, format='json')
+        self.assertEqual(bad_res.status_code, 400)
+        self.assertEqual(bad_res.json()["status"], "SYNC_REJECTED")
+        self.assertIn("Canonical transaction hash mismatch", bad_res.json()["reason"])
+
+        # 2. Honest client sends genuine canonical transaction & verified hash -> Success
+        good_payload = {
+            "transaction_id": "TX-CANON-01",
+            "client_replica_id": "REP-CANON-01",
+            "company_id": str(self.company.id),
+            "canonical_transaction": raw_canonical,
+            "canonical_tx_hash": true_hash,
+            "client_operations": [op_data]
+        }
+        good_res = c.post('/api/v1/protocol/sync/', data=good_payload, format='json')
+        self.assertEqual(good_res.status_code, 200)
+        self.assertEqual(good_res.json()["status"], "SYNC_SUCCESS")
 

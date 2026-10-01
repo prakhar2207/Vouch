@@ -65,28 +65,52 @@ class SyncService:
                     f"Access Denied: Tenant {authenticated_tenant_id} is not an authorized counterparty for transaction {transaction_id}"
                 )
 
-        # 2. Canonical Transaction Hash Integrity Verification
+        # 2. Canonical Transaction Hash Integrity Verification & Server-Side Reconstruction
         if canonical_tx_hash == "TBD_CANONICAL_HASH":
             return {
                 "status": "SYNC_REJECTED",
                 "reason": "Invalid canonical transaction hash: placeholder 'TBD_CANONICAL_HASH' is forbidden in production."
             }
 
-        computed_tx_hash = canonical_tx.canonical_hash if (canonical_tx and hasattr(canonical_tx, 'canonical_hash')) else None
-        if computed_tx_hash and canonical_tx_hash:
-            if canonical_tx_hash != computed_tx_hash:
+        # If canonical_tx is not provided directly, attempt server-side reconstruction
+        if canonical_tx is None:
+            try:
+                from .models import ProtocolTransaction
+                db_ptx = ProtocolTransaction.objects.filter(transaction_id=transaction_id).first()
+                if db_ptx and db_ptx.canonical_payload:
+                    canonical_tx = CanonicalTransaction.from_dict(db_ptx.canonical_payload)
+            except Exception:
+                pass
+
+        computed_tx_hash = None
+        if canonical_tx:
+            if hasattr(canonical_tx, 'validate_invariants'):
+                try:
+                    canonical_tx.validate_invariants()
+                except Exception as inv_err:
+                    return {
+                        "status": "SYNC_REJECTED",
+                        "reason": f"Canonical transaction invariant violation: {inv_err}"
+                    }
+            if hasattr(canonical_tx, 'canonical_hash'):
+                computed_tx_hash = canonical_tx.canonical_hash
+
+        if computed_tx_hash:
+            if canonical_tx_hash and canonical_tx_hash != computed_tx_hash:
                 return {
                     "status": "SYNC_REJECTED",
                     "reason": f"Canonical transaction hash mismatch: claimed {canonical_tx_hash} != calculated {computed_tx_hash}"
                 }
-        effective_tx_hash = computed_tx_hash or canonical_tx_hash
-        if not effective_tx_hash:
-            return {
-                "status": "SYNC_REJECTED",
-                "reason": "Missing canonical transaction payload or deterministic canonical_tx_hash. Transaction-ID hash fallbacks are strictly forbidden before state commitment."
-            }
+            effective_tx_hash = computed_tx_hash
+        else:
+            if not canonical_tx_hash:
+                return {
+                    "status": "SYNC_REJECTED",
+                    "reason": "Missing canonical transaction payload or deterministic canonical_tx_hash. Transaction-ID hash fallbacks are strictly forbidden before state commitment."
+                }
+            effective_tx_hash = canonical_tx_hash
 
-        # 2. Reconstruct Server CRDT from local database state
+        # 3. Reconstruct Server CRDT from local database state
         server_crdt = DE_CRDT(
             replica_id="SERVER",
             transaction_id=transaction_id,
@@ -95,18 +119,21 @@ class SyncService:
         for op in server_operations:
             server_crdt.apply_operation(op)
 
-        # 3. Reconstruct Client CRDT from incoming payload
+        # 4. Cryptographic Hardware Device & Replica Binding
+        client_dev = None
         if company:
-            try:
-                from .models import AuthorizedDevice
-                client_dev = AuthorizedDevice.objects.filter(company=company, replica_id=client_replica_id).first()
-                if client_dev and client_dev.status == "REVOKED":
-                    return {
-                        "status": "SYNC_REJECTED",
-                        "reason": f"Client replica device {client_replica_id} has been REVOKED for company {company.name}."
-                    }
-            except Exception:
-                pass
+            from .models import AuthorizedDevice
+            client_dev = AuthorizedDevice.objects.filter(company=company, replica_id=client_replica_id).first()
+            if not client_dev:
+                return {
+                    "status": "SYNC_REJECTED",
+                    "reason": f"Unregistered device: Replica {client_replica_id} is not an authorized device for company {company.name}."
+                }
+            if client_dev.status != "ACTIVE":
+                return {
+                    "status": "SYNC_REJECTED",
+                    "reason": f"Unauthorized device status: Device {client_replica_id} has status '{client_dev.status}' (must be ACTIVE)."
+                }
 
         client_crdt = DE_CRDT(
             replica_id=client_replica_id,
@@ -124,17 +151,26 @@ class SyncService:
             op_copy.pop('payload_hash', None)
             op = AccountingOperation(**op_copy)
 
+            op_dev = None
             if company:
-                try:
-                    from .models import AuthorizedDevice
-                    op_dev = AuthorizedDevice.objects.filter(company=company, replica_id=op.replica_id).first()
-                    if op_dev and op_dev.status == "REVOKED":
+                from .models import AuthorizedDevice
+                op_dev = AuthorizedDevice.objects.filter(replica_id=op.replica_id).first()
+                if not op_dev:
+                    if not (public_keys_map and op.replica_id in public_keys_map):
                         return {
                             "status": "SYNC_REJECTED",
-                            "reason": f"Replica device {op.replica_id} has been REVOKED for company {company.name}."
+                            "reason": f"Operation from unauthorized replica: {op.replica_id} is not registered in system."
                         }
-                except Exception:
-                    pass
+                elif op_dev.status != "ACTIVE":
+                    return {
+                        "status": "SYNC_REJECTED",
+                        "reason": f"Replica device {op.replica_id} has status '{op_dev.status}' (must be ACTIVE)."
+                    }
+                elif op.replica_id == client_replica_id and op_dev.company_id != company.id:
+                    return {
+                        "status": "SYNC_REJECTED",
+                        "reason": f"Device {op.replica_id} is registered to a different company than authenticated tenant."
+                    }
 
             # Strict Fail-Closed Digital Signature Verification
             if verify_signatures:
@@ -143,10 +179,17 @@ class SyncService:
                         "status": "SYNC_REJECTED",
                         "reason": f"Operation {op.operation_id} from replica {op.replica_id} is unsigned. Production requires valid Ed25519 signatures."
                     }
-                pub_key = (public_keys_map or {}).get(op.replica_id)
-                if not pub_key:
+                
+                # Public key resolution: pinned database device key takes authoritative priority
+                pub_key = None
+                if op_dev:
+                    pub_key = op_dev.public_key_hex
+                elif public_keys_map and op.replica_id in public_keys_map:
+                    pub_key = public_keys_map[op.replica_id]
+                else:
                     from .key_manager import ProtocolKeyManager
                     pub_key = ProtocolKeyManager.get_active_public_key(op.replica_id)
+
                 if not pub_key:
                     return {
                         "status": "SYNC_REJECTED",

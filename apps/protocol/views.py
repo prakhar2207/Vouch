@@ -75,6 +75,18 @@ class ProtocolSyncAPIView(APIView):
                 signature=db_op.signature
             ))
 
+        canonical_tx_dict = data.get("canonical_transaction")
+        canonical_tx = None
+        if canonical_tx_dict:
+            try:
+                from .schema import CanonicalTransaction
+                canonical_tx = CanonicalTransaction.from_dict(canonical_tx_dict)
+            except Exception as ex:
+                return Response({
+                    "status": "SYNC_REJECTED",
+                    "reason": f"Malformed canonical_transaction payload: {ex}"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             sync_result = SyncService.process_sync_payload(
                 transaction_id=tx_id,
@@ -85,6 +97,7 @@ class ProtocolSyncAPIView(APIView):
                 seller_identity=str(company.gstin or company.id),
                 buyer_identity=data.get("buyer_identity", "BUYER"),
                 canonical_tx_hash=data.get("canonical_tx_hash"),
+                canonical_tx=canonical_tx,
                 verify_signatures=True,
                 company=company,
                 persist_to_db=True,
@@ -265,3 +278,115 @@ class ProtocolDeviceRegistrationAPIView(APIView):
             "device_status": device.status,
             "company_id": str(company.id)
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+class ProtocolDeviceRotationAPIView(APIView):
+    """
+    Cryptographic Key Rotation Endpoint for Authorized Devices.
+    Replaces the device's public key with a new active key while preserving audit continuity.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        data = request.data
+        device_id = data.get("device_id")
+        new_public_key_hex = data.get("new_public_key_hex")
+        new_key_id = data.get("new_key_id") or f"KID-{uuid.uuid4().hex[:12].upper()}"
+        company_id = data.get("company_id")
+
+        if not (device_id and new_public_key_hex):
+            return Response(
+                {"error": "device_id and new_public_key_hex are required.", "status": "INVALID_PAYLOAD"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = request.user
+        device_qs = AuthorizedDevice.objects.filter(device_id=device_id)
+        if not getattr(user, 'is_superuser', False):
+            user_company_ids = user.companies.values_list('company_id', flat=True)
+            device_qs = device_qs.filter(company_id__in=user_company_ids)
+
+        device = device_qs.first()
+        if not device:
+            return Response(
+                {"error": "Device not found or you are not authorized to manage it.", "status": "DEVICE_NOT_FOUND"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if device.status == "REVOKED":
+            return Response(
+                {"error": "Cannot rotate key: Device has been permanently REVOKED.", "status": "DEVICE_REVOKED"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Update public key and key ID
+        device.public_key_hex = new_public_key_hex
+        device.key_id = new_key_id
+        device.status = "ACTIVE"
+        device.save(update_fields=['public_key_hex', 'key_id', 'status', 'last_seen_at'])
+
+        # Update in-memory ProtocolKeyManager
+        from .key_manager import ProtocolKeyManager
+        ProtocolKeyManager.get_default().register_public_key(
+            key_id=new_key_id,
+            replica_id=device.replica_id,
+            public_key_hex=new_public_key_hex
+        )
+
+        return Response({
+            "status": "ROTATED",
+            "device_id": device.device_id,
+            "replica_id": device.replica_id,
+            "new_key_id": device.key_id,
+            "device_status": device.status
+        }, status=status.HTTP_200_OK)
+
+
+class ProtocolDeviceRevocationAPIView(APIView):
+    """
+    Cryptographic Device Revocation Endpoint.
+    Instantly disables a lost, stolen, or decommissioned client device.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        data = request.data
+        device_id = data.get("device_id")
+        replica_id = data.get("replica_id")
+
+        if not (device_id or replica_id):
+            return Response(
+                {"error": "device_id or replica_id is required.", "status": "INVALID_PAYLOAD"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = request.user
+        device_qs = AuthorizedDevice.objects.all()
+        if device_id:
+            device_qs = device_qs.filter(device_id=device_id)
+        if replica_id:
+            device_qs = device_qs.filter(replica_id=replica_id)
+
+        if not getattr(user, 'is_superuser', False):
+            user_company_ids = user.companies.values_list('company_id', flat=True)
+            device_qs = device_qs.filter(company_id__in=user_company_ids)
+
+        device = device_qs.first()
+        if not device:
+            return Response(
+                {"error": "Device not found or you are not authorized to revoke it.", "status": "DEVICE_NOT_FOUND"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        device.status = "REVOKED"
+        device.save(update_fields=['status', 'last_seen_at'])
+
+        from .key_manager import ProtocolKeyManager
+        ProtocolKeyManager.get_default().revoke_key(device.key_id)
+
+        return Response({
+            "status": "REVOKED",
+            "device_id": device.device_id,
+            "replica_id": device.replica_id,
+            "message": f"Device {device.device_id} has been permanently revoked."
+        }, status=status.HTTP_200_OK)

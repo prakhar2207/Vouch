@@ -78,10 +78,12 @@ class NetworkPartitionSimulator:
         return pending
 
 
-def run_chaos_fuzzing():
+def run_chaos_fuzzing(seed: int = 42):
+    random.seed(seed)
     print("================================================================================")
     print("   VOUCH DISTRIBUTED ACCOUNTING: MULTI-REPLICA CHAOS & PARTITION FUZZER         ")
     print("================================================================================")
+    print(f"Deterministic Chaos Seed Initialized: {seed}")
     print("Stress-testing deterministic convergence across 3, 5, 8, and 10 distributed replicas.")
     print("Simulating adversarial network partitions, packet drop (25-40%), and causal DAG races.\n")
 

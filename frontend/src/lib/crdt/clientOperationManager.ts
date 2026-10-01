@@ -1,5 +1,7 @@
 import { offlineDb, type ClientAccountingOperation, type OutboxItem, type InboxItem, type SyncedVoucher } from "../db/offlineDb";
 import { ClientKeyManager } from "./clientKeyManager";
+import { canonicalJsonStringify, computeCanonicalSha256, getCanonicalOperationDict } from "./canonicalJson";
+import { buildCanonicalTransaction, hashCanonicalTransaction, type CanonicalTransactionEnvelope } from "./canonicalTransaction";
 import { getAccessToken } from "@/utils/auth";
 import { API_BASE_URL } from "@/utils/api";
 
@@ -9,6 +11,8 @@ export interface VoucherMutationParams {
   voucherDate: string;
   payload: any;
   transactionId?: string;
+  sourceEntity?: { type?: string; value: string; name: string; state_code?: string };
+  destinationEntity?: { type?: string; value: string; name: string; state_code?: string };
 }
 
 export class ClientOperationManager {
@@ -25,6 +29,8 @@ export class ClientOperationManager {
    * Generates a Canonical Transaction, creates a signed AccountingOperation,
    * stores to IndexedDB operationLog, updates local projections (vouchers, products, ledgers),
    * and queues to Outbox for protocol CRDT merge.
+   * 
+   * Strict fail-closed: zero fallback to unsigned operations or fake signatures.
    */
   public static async recordLocalVoucherMutation(params: VoucherMutationParams): Promise<{
     localId: string;
@@ -40,7 +46,7 @@ export class ClientOperationManager {
 
     const transactionId = params.transactionId || `TX-${params.voucherType.toUpperCase()}-${localId.substring(0, 10).toUpperCase()}`;
 
-    // 1. Determine causal parents
+    // 1. Determine causal parents from existing operations for this transaction
     const existingOps = await offlineDb.operationLog
       .where("transactionId")
       .equals(transactionId)
@@ -70,16 +76,55 @@ export class ClientOperationManager {
       operationType = "JOURNAL_CREATED";
     }
 
-    // 3. Compute deterministic Canonical Transaction Hash
-    const canonicalEnvelope = {
-      protocol_version: "1.0",
+    // 3. Build RFC 8785 Compliant Canonical Transaction Envelope
+    const rawItems = params.payload.items || [];
+    const canonicalTx = buildCanonicalTransaction({
       transaction_id: transactionId,
-      transaction_type: params.voucherType.toUpperCase(),
-      company_id: params.companyId,
+      transaction_type: params.voucherType,
       issued_at: params.voucherDate,
-      payload: params.payload
-    };
-    const canonicalTxHash = await this.sha256(JSON.stringify(canonicalEnvelope));
+      source_entity: {
+        type: params.sourceEntity?.type || "GSTIN",
+        value: params.sourceEntity?.value || params.companyId,
+        name: params.sourceEntity?.name || "Self Enterprise",
+        state_code: params.sourceEntity?.state_code || null
+      },
+      destination_entity: {
+        type: params.destinationEntity?.type || "GSTIN",
+        value: params.destinationEntity?.value || params.payload.party_gstin || params.payload.party_ledger_id || "PARTY-UNSPECIFIED",
+        name: params.destinationEntity?.name || params.payload.party_name || "Counterparty",
+        state_code: params.destinationEntity?.state_code || params.payload.party_state_code || null
+      },
+      items: rawItems.map((it: any, i: number) => ({
+        line_id: it.line_id || `L${i + 1}`,
+        sku: it.sku || it.product_sku || it.product_id || `ITEM-${i + 1}`,
+        name: it.name || it.product_name || "Line Item",
+        hsn_code: it.hsn_code || "0000",
+        quantity: it.quantity || 1,
+        unit: it.unit || "PCS",
+        unit_price: it.rate || it.unit_price || 0,
+        discount_amount: it.discount_amount || 0,
+        taxable_amount: it.taxable_amount || ((it.quantity || 1) * (it.rate || it.unit_price || 0)),
+        tax_rate_percent: it.gst_rate || it.tax_rate_percent || 18
+      })),
+      tax_summary: {
+        cgst: params.payload.cgst_amount || 0,
+        sgst: params.payload.sgst_amount || 0,
+        igst: params.payload.igst_amount || 0,
+        cess: params.payload.cess_amount || 0,
+        total_tax: params.payload.total_tax || params.payload.tax_amount || 0
+      },
+      totals: {
+        subtotal: params.payload.subtotal || params.payload.taxable_amount || 0,
+        total_tax: params.payload.total_tax || params.payload.tax_amount || 0,
+        shipping: params.payload.shipping_charges || params.payload.cartage_amount || 0,
+        discount: params.payload.discount_amount || params.payload.total_discount || 0,
+        grand_total: params.payload.grand_total || params.payload.total_amount || 0
+      },
+      causal_dependencies: parents
+    });
+
+    // Compute deterministic SHA-256 hash of canonical transaction
+    const canonicalTxHash = await hashCanonicalTransaction(canonicalTx);
 
     // 4. Construct AccountingOperation and sign with Ed25519
     const randomHex = Math.random().toString(36).substring(2, 10).toUpperCase();
@@ -90,27 +135,29 @@ export class ClientOperationManager {
       company_id: params.companyId,
       voucher_type: params.voucherType,
       voucher_date: params.voucherDate,
-      canonical_tx_hash: canonicalTxHash
+      canonical_tx_hash: canonicalTxHash,
+      canonical_transaction: canonicalTx
     };
 
-    const opContentToHash = JSON.stringify({
-      operationId,
-      transactionId,
-      replicaId,
-      operationType,
+    // Construct canonical operation dictionary matching server-side Python AccountingOperation.payload_hash
+    const canonicalOpDict = getCanonicalOperationDict({
+      operation_id: operationId,
+      transaction_id: transactionId,
+      replica_id: replicaId,
+      operation_type: operationType,
       payload: opPayload,
-      logicalTimestamp,
-      parents
+      logical_timestamp: logicalTimestamp,
+      parents,
+      operation_class: operationClass,
+      tenant_id: params.companyId
     });
-    const payloadHash = await this.sha256(opContentToHash);
 
-    // Cryptographic Ed25519 signing using ClientKeyManager
-    let signature = "";
-    try {
-      signature = await ClientKeyManager.signPayloadHash(payloadHash);
-    } catch (sigErr) {
-      console.warn("Could not sign operation with Ed25519; proceeding with digest hash:", sigErr);
-      signature = payloadHash;
+    const payloadHash = await computeCanonicalSha256(canonicalOpDict);
+
+    // Cryptographic Ed25519 signing using ClientKeyManager (FAIL-CLOSED: NEVER FALLBACK)
+    const signature = await ClientKeyManager.signPayloadHash(payloadHash);
+    if (!signature || signature.length !== 128) {
+      throw new Error("Cryptographic Signing Failed: Generated invalid signature length.");
     }
 
     const op: ClientAccountingOperation = {
@@ -146,7 +193,8 @@ export class ClientOperationManager {
       companyId: params.companyId,
       voucherType: params.voucherType,
       voucherDate: params.voucherDate,
-      payload: params.payload
+      payload: params.payload,
+      canonicalTx
     });
 
     // 7. Notify other tabs & UI via BroadcastChannel & DOM events
@@ -176,11 +224,12 @@ export class ClientOperationManager {
     voucherType: string;
     voucherDate: string;
     payload: any;
+    canonicalTx: CanonicalTransactionEnvelope;
   }) {
     try {
       const p = params.payload;
-      const totalAmount = Number(p.total_amount || p.grand_total || p.totalAmount || 0);
-      const partyName = p.party_name || p.partyName || p.customer_name || p.supplier_name || "Party";
+      const totalAmount = Number(p.total_amount || p.grand_total || p.totalAmount || params.canonicalTx.totals.grand_total || 0);
+      const partyName = p.party_name || p.partyName || p.customer_name || p.supplier_name || params.canonicalTx.destination_entity.name || "Party";
       const partyLedgerId = p.party_ledger_id || p.partyLedgerId || p.party_id || null;
 
       // Projection 1: Local SyncedVoucher
@@ -201,21 +250,29 @@ export class ClientOperationManager {
       await offlineDb.syncedVouchers.put(projectedVoucher);
 
       // Projection 2: Local Product Inventory Movements
-      const items = p.items || [];
-      if (Array.isArray(items)) {
-        for (const item of items) {
-          const productId = item.product_id || item.productId;
-          const qty = Number(item.quantity || 0);
-          if (productId && qty > 0) {
-            const product = await offlineDb.syncedProducts.get(productId);
-            if (product) {
-              const delta = params.voucherType.toUpperCase() === "SALES" ? -qty : (params.voucherType.toUpperCase() === "PURCHASE" ? qty : 0);
-              const newStock = Math.max(0, (product.currentStock || 0) + delta);
-              await offlineDb.syncedProducts.update(productId, {
-                currentStock: newStock,
-                serverUpdatedAt: Date.now()
-              });
+      const items = params.canonicalTx.items || [];
+      const vType = params.voucherType.toUpperCase();
+      for (const line of items) {
+        const qty = Number(line.quantity || 0);
+        if (qty > 0) {
+          const product = await offlineDb.syncedProducts
+            .where("sku")
+            .equalsIgnoreCase(line.sku)
+            .first();
+
+          if (product && product.id) {
+            let delta = 0;
+            if (vType === "SALES" || vType === "DEBIT_NOTE") {
+              delta = -qty;
+            } else if (vType === "PURCHASE" || vType === "CREDIT_NOTE") {
+              delta = qty;
             }
+
+            const newStock = Math.max(0, (product.currentStock || 0) + delta);
+            await offlineDb.syncedProducts.update(product.id, {
+              currentStock: newStock,
+              serverUpdatedAt: Date.now()
+            });
           }
         }
       }
@@ -224,8 +281,8 @@ export class ClientOperationManager {
       if (partyLedgerId) {
         const ledger = await offlineDb.syncedLedgers.get(partyLedgerId);
         if (ledger) {
-          const isSales = params.voucherType.toUpperCase() === "SALES";
-          const isPurchase = params.voucherType.toUpperCase() === "PURCHASE";
+          const isSales = vType === "SALES" || vType === "DEBIT_NOTE";
+          const isPurchase = vType === "PURCHASE" || vType === "CREDIT_NOTE";
           const delta = isSales ? totalAmount : (isPurchase ? -totalAmount : 0);
           await offlineDb.syncedLedgers.update(partyLedgerId, {
             currentBalance: (ledger.currentBalance || 0) + delta,
@@ -295,7 +352,8 @@ export class ClientOperationManager {
 
       const firstOp = ops[0];
       const companyId = firstOp.payload?.company_id || firstOp.payload?.company || "";
-      const canonicalTxHash = firstOp.payload?.canonical_tx_hash || await this.sha256(`TX-${txId}`);
+      const canonicalTx = firstOp.payload?.canonical_transaction;
+      const canonicalTxHash = firstOp.payload?.canonical_tx_hash;
 
       // Ensure device is registered with server
       if (companyId && token) {
@@ -311,11 +369,12 @@ export class ClientOperationManager {
       }
 
       try {
-        const payload = {
+        const payload: Record<string, any> = {
           transaction_id: txId,
           client_replica_id: replicaId,
           company_id: companyId,
           canonical_tx_hash: canonicalTxHash,
+          canonical_transaction: canonicalTx,
           client_operations: ops.map(o => ({
             operation_id: o.operationId,
             transaction_id: o.transactionId,
@@ -427,20 +486,5 @@ export class ClientOperationManager {
     }
 
     return { syncedCount: totalSynced, receivedCount: totalReceived, status: "SYNC_DONE" };
-  }
-
-  private static async sha256(message: string): Promise<string> {
-    if (typeof crypto !== "undefined" && crypto.subtle) {
-      const msgBuffer = new TextEncoder().encode(message);
-      const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
-    }
-    let hash = 0;
-    for (let i = 0; i < message.length; i++) {
-      hash = (hash << 5) - hash + message.charCodeAt(i);
-      hash |= 0;
-    }
-    return Math.abs(hash).toString(16).padStart(64, "0");
   }
 }

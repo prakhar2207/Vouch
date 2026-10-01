@@ -87,6 +87,22 @@ def run_real_accounting_e2e():
     seller_env = km.generate_keypair(seller_replica_id)
     buyer_env = km.generate_keypair(buyer_replica_id)
 
+    from apps.protocol.models import AuthorizedDevice
+    AuthorizedDevice.objects.create(
+        device_id=f"DEV-{seller_replica_id}",
+        replica_id=seller_replica_id,
+        company=seller_company,
+        public_key_hex=seller_env.public_key_hex,
+        status="ACTIVE"
+    )
+    AuthorizedDevice.objects.create(
+        device_id=f"DEV-{buyer_replica_id}",
+        replica_id=buyer_replica_id,
+        company=buyer_company,
+        public_key_hex=buyer_env.public_key_hex,
+        status="ACTIVE"
+    )
+
     print(f"  -> Seller Company: {seller_company.name} (GSTIN: {seller_company.gstin})")
     print(f"  -> Buyer Company:  {buyer_company.name} (GSTIN: {buyer_company.gstin})")
     print(f"  -> Seller Ed25519 PubKey: {seller_env.public_key_hex[:24]}...")
@@ -199,7 +215,7 @@ def run_real_accounting_e2e():
 
     sync_result = SyncService.process_sync_payload(
         transaction_id=tx_id,
-        client_replica_id=buyer_replica_id,
+        client_replica_id=seller_replica_id,
         client_operations=client_ops,
         server_operations=server_ops,
         authenticated_tenant_id=str(seller_company.id),

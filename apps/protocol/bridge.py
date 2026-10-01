@@ -132,6 +132,28 @@ class LedgerBridge:
                 "vouchers_count": len(existing_exec.posted_vouchers)
             }
 
+        # Concurrency barrier: Lock company row to serialize simultaneous bridge workers
+        Company.objects.select_for_update().filter(id=company.id).first()
+
+        # Re-check under row lock
+        existing_exec = ProtocolBridgeExecution.objects.filter(
+            idempotency_key=idempotency_key,
+            status="SUCCESS"
+        ).first()
+
+        if existing_exec:
+            logger.info(f"LedgerBridge: returning cached idempotent execution (post-lock) for {canonical_tx.transaction_id}")
+            return {
+                "status": "BRIDGE_SUCCESS",
+                "idempotent_cached": True,
+                "company_id": str(company.id),
+                "company_name": company.name,
+                "role": existing_exec.role,
+                "base_voucher_number": existing_exec.base_voucher_number,
+                "posted_vouchers": existing_exec.posted_vouchers,
+                "vouchers_count": len(existing_exec.posted_vouchers)
+            }
+
         # 0. Resolve created_by user
         if not user:
             from apps.accounts.models import User
@@ -230,16 +252,20 @@ class LedgerBridge:
 
             # Tier 4: Auto-provision new product if no match exists
             if not prod:
-                prod = Product.objects.create(
-                    company=company,
-                    name=line.name,
-                    sku=line.sku,
-                    hsn_code=line.hsn_code,
-                    gst_rate=line.tax_rate_percent,
-                    unit=line.unit,
-                    selling_price=line.unit_price,
-                    purchase_price=line.unit_price
-                )
+                prod = Product.objects.filter(company=company, sku=line.sku).first()
+                if not prod:
+                    prod, _ = Product.objects.get_or_create(
+                        company=company,
+                        sku=line.sku,
+                        defaults={
+                            "name": line.name,
+                            "hsn_code": line.hsn_code,
+                            "gst_rate": line.tax_rate_percent,
+                            "unit": line.unit,
+                            "selling_price": line.unit_price,
+                            "purchase_price": line.unit_price
+                        }
+                    )
                 EntityMapping.objects.get_or_create(
                     source_company_id=source_id,
                     destination_company_id=dest_id,
@@ -281,7 +307,17 @@ class LedgerBridge:
             external_invoice_number=canonical_tx.transaction_id
         ).first()
 
-        v_date = canonical_tx.issued_at.date() if canonical_tx.issued_at else timezone.now().date()
+        if isinstance(canonical_tx.issued_at, (int, float)):
+            from datetime import datetime
+            v_date = datetime.fromtimestamp(canonical_tx.issued_at, tz=timezone.get_current_timezone()).date()
+        elif hasattr(canonical_tx.issued_at, 'date'):
+            v_date = canonical_tx.issued_at.date()
+        elif isinstance(canonical_tx.issued_at, str):
+            from django.utils.dateparse import parse_date, parse_datetime
+            parsed_dt = parse_datetime(canonical_tx.issued_at)
+            v_date = parsed_dt.date() if parsed_dt else (parse_date(canonical_tx.issued_at) or timezone.now().date())
+        else:
+            v_date = timezone.now().date()
 
         if not base_voucher:
             if is_seller:

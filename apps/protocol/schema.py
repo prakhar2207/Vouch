@@ -157,13 +157,94 @@ class CanonicalTransaction:
             "causal_dependencies": list(self.causal_dependencies)
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'CanonicalTransaction':
+        """Reconstructs and normalizes a CanonicalTransaction from a dictionary payload."""
+        from .canonical_json import canonical_json_dumps
+        
+        src = data.get("source_entity", {})
+        source_entity = ProtocolEntity(
+            identity_type=src.get("type") or src.get("identity_type", "GSTIN"),
+            identity_value=str(src.get("value") or src.get("identity_value", "")),
+            name=str(src.get("name", "")),
+            state_code=src.get("state_code")
+        )
+
+        dst = data.get("destination_entity", {})
+        destination_entity = ProtocolEntity(
+            identity_type=dst.get("type") or dst.get("identity_type", "GSTIN"),
+            identity_value=str(dst.get("value") or dst.get("identity_value", "")),
+            name=str(dst.get("name", "")),
+            state_code=dst.get("state_code")
+        )
+
+        items = [
+            TransactionLine(
+                line_id=str(item.get("line_id", f"L{idx+1}")),
+                sku=str(item.get("sku", "")),
+                name=str(item.get("name", "")),
+                hsn_code=str(item.get("hsn_code", "")),
+                quantity=Decimal(str(item.get("quantity", "0.0"))),
+                unit=str(item.get("unit", "PCS")),
+                unit_price=Decimal(str(item.get("unit_price", "0.0"))),
+                discount_amount=Decimal(str(item.get("discount_amount", "0.0"))),
+                taxable_amount=Decimal(str(item.get("taxable_amount", "0.0"))),
+                tax_rate_percent=Decimal(str(item.get("tax_rate_percent", "0.0")))
+            )
+            for idx, item in enumerate(data.get("items", []))
+        ]
+
+        ts = data.get("tax_summary", {})
+        tax_summary = TaxSummary(
+            cgst_amount=Decimal(str(ts.get("cgst", ts.get("cgst_amount", "0.0")))),
+            sgst_amount=Decimal(str(ts.get("sgst", ts.get("sgst_amount", "0.0")))),
+            igst_amount=Decimal(str(ts.get("igst", ts.get("igst_amount", "0.0")))),
+            cess_amount=Decimal(str(ts.get("cess", ts.get("cess_amount", "0.0"))))
+        )
+
+        tot = data.get("totals", {})
+        totals = TransactionTotals(
+            subtotal=Decimal(str(tot.get("subtotal", "0.0"))),
+            total_tax=Decimal(str(tot.get("total_tax", "0.0"))),
+            shipping_charges=Decimal(str(tot.get("shipping", tot.get("shipping_charges", "0.0")))),
+            total_discount=Decimal(str(tot.get("discount", tot.get("total_discount", "0.0")))),
+            grand_total=Decimal(str(tot.get("grand_total", "0.0")))
+        )
+
+        issued_at_raw = data.get("issued_at")
+        if isinstance(issued_at_raw, str):
+            try:
+                issued_at = datetime.fromisoformat(issued_at_raw)
+            except Exception:
+                issued_at = datetime.now()
+        elif isinstance(issued_at_raw, datetime):
+            issued_at = issued_at_raw
+        else:
+            issued_at = datetime.now()
+
+        tx = cls(
+            protocol_version=str(data.get("protocol_version", "1.0")),
+            transaction_id=str(data.get("transaction_id", "")),
+            transaction_type=str(data.get("transaction_type", "SALE")),
+            state_version=int(data.get("state_version", 1)),
+            issued_at=issued_at,
+            source_entity=source_entity,
+            destination_entity=destination_entity,
+            items=items,
+            tax_summary=tax_summary,
+            totals=totals,
+            causal_dependencies=data.get("causal_dependencies", [])
+        )
+        return tx
+
     @property
     def canonical_hash(self) -> str:
         """
         Computes deterministic SHA-256 digest over normalized canonical fields.
         Guarantees that both parties compute the exact same identity hash.
         """
-        import hashlib, json
-        canonical_json = json.dumps(self.to_dict(), sort_keys=True, separators=(',', ':'))
+        import hashlib
+        from .canonical_json import canonical_json_dumps
+        canonical_json = canonical_json_dumps(self.to_dict())
         return hashlib.sha256(canonical_json.encode('utf-8')).hexdigest()
 

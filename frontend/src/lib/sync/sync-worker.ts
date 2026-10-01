@@ -151,9 +151,32 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
     const protoResult = await ClientOperationManager.syncOutboxWithServer(API_BASE_URL);
     processedCount += protoResult.syncedCount;
 
+    // 3. Purge fully migrated and synced legacy vouchers to eliminate dual-path overhead
+    await purgeLegacyOfflineVouchers();
+
     return { processed: processedCount, failed: failedCount };
   } finally {
     isSyncInProgress = false;
+  }
+}
+
+/**
+ * Purges legacy OfflineVoucher records once they have been migrated
+ * into authoritative protocol CRDT operations and acknowledged by the server.
+ */
+export async function purgeLegacyOfflineVouchers(): Promise<number> {
+  try {
+    const syncedIds = await offlineDb.vouchers
+      .where("status")
+      .equals("SYNCED")
+      .primaryKeys();
+    if (syncedIds.length > 0) {
+      await offlineDb.vouchers.bulkDelete(syncedIds as number[]);
+    }
+    return syncedIds.length;
+  } catch (err) {
+    console.warn("Failed to purge legacy synced vouchers:", err);
+    return 0;
   }
 }
 

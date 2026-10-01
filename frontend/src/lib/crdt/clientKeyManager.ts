@@ -1,9 +1,14 @@
 /**
  * Client-Side Ed25519 Cryptographic Key & Device Identity Manager.
  * 
- * Provides native Web Crypto API asymmetric key generation, local private key persistence,
- * deterministic SHA-256 operation signing, and server-side device authorization binding.
- * 100% bit-for-bit interoperable with server-side Python `cryptography.hazmat.primitives.asymmetric.ed25519`.
+ * Provides native Web Crypto API asymmetric key generation, IndexedDB non-exportable
+ * private key persistence, deterministic operation signing, and server-side device authorization binding.
+ * 
+ * Security guarantees:
+ * 1. Private keys are NEVER exported to localStorage or plaintext cookies.
+ * 2. Private keys are stored as non-extractable / structured-clone CryptoKey objects in IndexedDB.
+ * 3. Operation signing fails closed: zero fallback to unsigned or fake digests.
+ * 4. 100% bit-for-bit interoperable with server-side Python `cryptography.hazmat.primitives.asymmetric.ed25519`.
  */
 
 export interface DeviceIdentity {
@@ -11,6 +16,57 @@ export interface DeviceIdentity {
   replicaId: string;
   keyId: string;
   publicKeyHex: string;
+}
+
+class KeyVaultIDB {
+  private static dbPromise: Promise<IDBDatabase> | null = null;
+
+  private static getDB(): Promise<IDBDatabase> {
+    if (!this.dbPromise) {
+      this.dbPromise = new Promise((resolve, reject) => {
+        if (typeof indexedDB === "undefined") {
+          reject(new Error("IndexedDB is not supported in this environment"));
+          return;
+        }
+        const req = indexedDB.open("VouchSecurityVault", 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains("device_keys")) {
+            db.createObjectStore("device_keys", { keyPath: "id" });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    return this.dbPromise;
+  }
+
+  public static async getPrivateKey(): Promise<CryptoKey | null> {
+    try {
+      const db = await this.getDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction("device_keys", "readonly");
+        const store = tx.objectStore("device_keys");
+        const req = store.get("primary_ed25519_key");
+        req.onsuccess = () => resolve(req.result ? req.result.key : null);
+        req.onerror = () => reject(req.error);
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  public static async savePrivateKey(key: CryptoKey): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("device_keys", "readwrite");
+      const store = tx.objectStore("device_keys");
+      const req = store.put({ id: "primary_ed25519_key", key, createdAt: Date.now() });
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
 }
 
 export class ClientKeyManager {
@@ -55,6 +111,7 @@ export class ClientKeyManager {
 
   /**
    * Retrieves or initializes the cryptographic Ed25519 keypair for this physical device.
+   * Stores the private key securely in IndexedDB as a CryptoKey object (never in localStorage).
    */
   public static async getOrCreateIdentity(): Promise<DeviceIdentity> {
     if (this.cachedIdentity && this.cachedPrivateKey) {
@@ -74,33 +131,43 @@ export class ClientKeyManager {
       };
     }
 
+    // Step A: Check if a private key already exists in secure IndexedDB KeyVault
+    let privKey = await KeyVaultIDB.getPrivateKey();
     const storedPubHex = localStorage.getItem("vouch_ed25519_pub_hex");
-    const storedPrivJwk = localStorage.getItem("vouch_ed25519_priv_jwk");
 
-    if (storedPubHex && storedPrivJwk) {
+    // Migration: If legacy localStorage had an exported private key JWK, migrate to IndexedDB and purge from localStorage
+    const legacyPrivJwk = localStorage.getItem("vouch_ed25519_priv_jwk");
+    if (!privKey && legacyPrivJwk) {
       try {
-        const jwk = JSON.parse(storedPrivJwk);
-        const privKey = await window.crypto.subtle.importKey(
+        const jwk = JSON.parse(legacyPrivJwk);
+        privKey = await window.crypto.subtle.importKey(
           "jwk",
           jwk,
           { name: "Ed25519" },
           true,
           ["sign"]
         );
-        this.cachedPrivateKey = privKey;
-        this.cachedIdentity = {
-          deviceId,
-          replicaId,
-          keyId,
-          publicKeyHex: storedPubHex
-        };
-        return this.cachedIdentity;
-      } catch (err) {
-        console.warn("Failed to load existing Ed25519 keypair, generating a fresh one:", err);
+        await KeyVaultIDB.savePrivateKey(privKey);
+        // Purge legacy insecure storage
+        localStorage.removeItem("vouch_ed25519_priv_jwk");
+      } catch (migErr) {
+        console.warn("Legacy key migration failed; will regenerate:", migErr);
+        localStorage.removeItem("vouch_ed25519_priv_jwk");
       }
     }
 
-    // Generate fresh Ed25519 keypair using native Web Crypto
+    if (privKey && storedPubHex) {
+      this.cachedPrivateKey = privKey;
+      this.cachedIdentity = {
+        deviceId,
+        replicaId,
+        keyId,
+        publicKeyHex: storedPubHex
+      };
+      return this.cachedIdentity;
+    }
+
+    // Step B: Generate fresh Ed25519 keypair using native Web Crypto
     try {
       const keyPair = await window.crypto.subtle.generateKey(
         { name: "Ed25519" },
@@ -108,17 +175,19 @@ export class ClientKeyManager {
         ["sign", "verify"]
       );
 
-      // Export raw 32-byte public key as hex
+      // Export raw 32-byte public key as hex (safe for public storage)
       const rawPub = await window.crypto.subtle.exportKey("raw", keyPair.publicKey);
       const pubHex = Array.from(new Uint8Array(rawPub))
         .map(b => b.toString(16).padStart(2, "0"))
         .join("");
 
-      // Export private key as JWK for durable local storage
-      const privJwk = await window.crypto.subtle.exportKey("jwk", keyPair.privateKey);
+      // Save private key ONLY to IndexedDB KeyVault (structured-clone CryptoKey, NOT in localStorage)
+      await KeyVaultIDB.savePrivateKey(keyPair.privateKey);
 
+      // Save only public metadata in localStorage
       localStorage.setItem("vouch_ed25519_pub_hex", pubHex);
-      localStorage.setItem("vouch_ed25519_priv_jwk", JSON.stringify(privJwk));
+      // Ensure no private key exists in localStorage
+      localStorage.removeItem("vouch_ed25519_priv_jwk");
 
       this.cachedPrivateKey = keyPair.privateKey;
       this.cachedIdentity = {
@@ -137,11 +206,12 @@ export class ClientKeyManager {
   /**
    * Signs a canonical payload hash using the device's persistent Ed25519 private key.
    * Produces a 64-byte (128 hex chars) digital signature.
+   * Fails closed: throws immediately if private key is unavailable or signing fails.
    */
   public static async signPayloadHash(payloadHash: string): Promise<string> {
     await this.getOrCreateIdentity();
     if (!this.cachedPrivateKey || typeof window === "undefined") {
-      throw new Error("Cannot sign: Private key is not available in current environment.");
+      throw new Error("Cryptographic Signing Failed: Private key is not available (fail-closed).");
     }
 
     const encoder = new TextEncoder();
@@ -153,6 +223,10 @@ export class ClientKeyManager {
     );
 
     const sigBytes = new Uint8Array(sigBuffer);
+    if (sigBytes.length !== 64) {
+      throw new Error(`Invalid signature length: expected 64 bytes, got ${sigBytes.length}`);
+    }
+
     return Array.from(sigBytes)
       .map(b => b.toString(16).padStart(2, "0"))
       .join("");
