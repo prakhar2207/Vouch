@@ -278,6 +278,152 @@ export class ClientKeyManager {
     }
   }
 
+  /**
+   * Performs client-initiated cryptographic key rotation.
+   * Generates a fresh Ed25519 keypair, signs a cryptographic rotation proof
+   * with the existing active key, submits to /api/v1/protocol/devices/rotate/,
+   * and upon server commitment, atomically commits the new key to IndexedDB KeyVault.
+   */
+  public static async rotateKeyWithServer(params: {
+    companyId: string;
+    accessToken?: string;
+    apiBaseUrl?: string;
+  }): Promise<{
+    rotated: boolean;
+    newKeyId?: string;
+    newPublicKeyHex?: string;
+    error?: string;
+  }> {
+    try {
+      if (typeof window === "undefined" || !window.crypto || !window.crypto.subtle) {
+        return { rotated: false, error: "Web Crypto is not available" };
+      }
+
+      // Step 1: Ensure current identity and private key exist
+      const currentIdentity = await this.getOrCreateIdentity();
+      if (!this.cachedPrivateKey) {
+        return { rotated: false, error: "Current active private key not available for signing rotation proof." };
+      }
+
+      // Step 2: Generate fresh new Ed25519 keypair
+      const newKeyPair = await window.crypto.subtle.generateKey(
+        { name: "Ed25519" },
+        true,
+        ["sign", "verify"]
+      );
+
+      const rawNewPub = await window.crypto.subtle.exportKey("raw", newKeyPair.publicKey);
+      const newPubHex = Array.from(new Uint8Array(rawNewPub))
+        .map(b => b.toString(16).padStart(2, "0"))
+        .join("");
+      const newKeyId = `KID-${this.generateRandomHex(12).toUpperCase()}`;
+
+      // Step 3: Sign rotation proof with CURRENT active private key
+      // Message format: ROTATE:{device_id}:{new_public_key_hex}:{new_key_id}
+      const rotationMsg = `ROTATE:${currentIdentity.deviceId}:${newPubHex}:${newKeyId}`;
+      const rotationSignature = await this.signPayloadHash(rotationMsg);
+
+      // Step 4: Dispatch to server rotation API endpoint
+      const baseUrl = params.apiBaseUrl || "";
+      const url = `${baseUrl}/api/v1/protocol/devices/rotate/`;
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      if (params.accessToken) {
+        headers["Authorization"] = `Bearer ${params.accessToken}`;
+      }
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          device_id: currentIdentity.deviceId,
+          new_public_key_hex: newPubHex,
+          new_key_id: newKeyId,
+          rotation_signature: rotationSignature,
+          company_id: params.companyId
+        })
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        return { rotated: false, error: `HTTP ${res.status}: ${errText}` };
+      }
+
+      const resData = await res.json();
+      if (resData.status !== "ROTATED") {
+        return { rotated: false, error: resData.error || `Server returned status: ${resData.status}` };
+      }
+
+      // Step 5: Atomically commit new key to IndexedDB KeyVault & localStorage metadata
+      await KeyVaultIDB.savePrivateKey(newKeyPair.privateKey);
+      localStorage.setItem("vouch_ed25519_pub_hex", newPubHex);
+      localStorage.setItem("vouch_ed25519_key_id", newKeyId);
+
+      this.cachedPrivateKey = newKeyPair.privateKey;
+      this.cachedIdentity = {
+        deviceId: currentIdentity.deviceId,
+        replicaId: currentIdentity.replicaId,
+        keyId: newKeyId,
+        publicKeyHex: newPubHex
+      };
+
+      return {
+        rotated: true,
+        newKeyId,
+        newPublicKeyHex: newPubHex
+      };
+    } catch (err: any) {
+      return { rotated: false, error: err?.message || "Key rotation error" };
+    }
+  }
+
+  /**
+   * Performs an authoritative security audit of client-side cryptographic storage.
+   * Verifies hardware/browser crypto availability, IndexedDB custody, and zero localStorage leakage.
+   */
+  public static async auditSecurityVault(): Promise<{
+    secure: boolean;
+    hasIndexedDBKey: boolean;
+    zeroLocalStorageLeak: boolean;
+    webCryptoSupported: boolean;
+    deviceId: string;
+    replicaId: string;
+    keyId: string;
+    publicKeyHex: string;
+    errors: string[];
+  }> {
+    const errors: string[] = [];
+    const webCryptoSupported = typeof window !== "undefined" && !!window.crypto && !!window.crypto.subtle;
+    if (!webCryptoSupported) {
+      errors.push("Web Crypto API (subtle) is unavailable in this environment.");
+    }
+
+    const legacyPrivJwk = typeof window !== "undefined" ? localStorage.getItem("vouch_ed25519_priv_jwk") : null;
+    const zeroLocalStorageLeak = legacyPrivJwk === null;
+    if (!zeroLocalStorageLeak) {
+      errors.push("Security Violation: Insecure private key JWK found in localStorage.");
+    }
+
+    const privKey = await KeyVaultIDB.getPrivateKey();
+    const hasIndexedDBKey = privKey !== null;
+
+    const identity = await this.getOrCreateIdentity();
+
+    return {
+      secure: webCryptoSupported && zeroLocalStorageLeak && hasIndexedDBKey,
+      hasIndexedDBKey,
+      zeroLocalStorageLeak,
+      webCryptoSupported,
+      deviceId: identity.deviceId,
+      replicaId: identity.replicaId,
+      keyId: identity.keyId,
+      publicKeyHex: identity.publicKeyHex,
+      errors
+    };
+  }
+
   private static generateRandomHex(length: number): string {
     if (typeof window !== "undefined" && window.crypto && window.crypto.getRandomValues) {
       const bytes = new Uint8Array(Math.ceil(length / 2));

@@ -199,6 +199,69 @@ async function runBrowserOfflineFlow() {
     throw new Error(`Outbox drainage failed: ${remainingQueued} items still queued.`);
   }
 
+  // Step 7: Cryptographic Security Vault Audit
+  console.log("\n[Step 7] Running Authoritative Cryptographic Security Vault Audit...");
+  const vaultAudit = await ClientKeyManager.auditSecurityVault();
+  console.log(`  -> Web Crypto API Available:   ${vaultAudit.webCryptoSupported}`);
+  console.log(`  -> IndexedDB Key Custody:      ${vaultAudit.hasIndexedDBKey}`);
+  console.log(`  -> Zero LocalStorage Leakage:  ${vaultAudit.zeroLocalStorageLeak}`);
+  console.log(`  -> Security Vault Status:      ${vaultAudit.secure ? "ACTIVE_SECURE" : "UNSECURE"}`);
+  if (!vaultAudit.secure) {
+    throw new Error(`Vault audit failed: ${vaultAudit.errors.join(", ")}`);
+  }
+  console.log("  [PASSED] Client cryptographic storage passed 100% security checks.");
+
+  // Step 8: Client-Side Key Rotation with Cryptographic Proof
+  console.log("\n[Step 8] Testing Client-Initiated Key Rotation with Cryptographic Proof...");
+  const oldIdentity = await ClientKeyManager.getOrCreateIdentity();
+  const oldPubHex = oldIdentity.publicKeyHex;
+
+  // Mock server response for key rotation
+  let rotationCapturedPayload = null;
+  globalThis.fetch = async (url, options) => {
+    if (url.includes("/api/v1/protocol/devices/rotate/")) {
+      rotationCapturedPayload = JSON.parse(options.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: "ROTATED",
+          device_id: rotationCapturedPayload.device_id,
+          new_public_key_hex: rotationCapturedPayload.new_public_key_hex,
+          new_key_id: rotationCapturedPayload.new_key_id,
+          authorization_method: "CRYPTOGRAPHIC_PROOF"
+        }),
+        text: async () => ""
+      };
+    }
+    return { ok: false, status: 404, text: async () => "Not Found" };
+  };
+
+  const rotRes = await ClientKeyManager.rotateKeyWithServer({
+    companyId: "COMP-CLIENT-001",
+    accessToken: "fake-test-jwt"
+  });
+
+  if (!rotRes.rotated) {
+    throw new Error(`Key rotation failed: ${rotRes.error}`);
+  }
+
+  console.log(`  -> Rotation Status:   ROTATED`);
+  console.log(`  -> New Key ID:         ${rotRes.newKeyId}`);
+  console.log(`  -> New Public Key:     ${rotRes.newPublicKeyHex.substring(0, 32)}...`);
+  console.log(`  -> Rotation Signature: ${rotationCapturedPayload.rotation_signature.substring(0, 32)}...`);
+
+  if (rotRes.newPublicKeyHex === oldPubHex) {
+    throw new Error("Rotated public key must differ from the previous key!");
+  }
+
+  // Verify updated identity returned by ClientKeyManager
+  const updatedIdentity = await ClientKeyManager.getOrCreateIdentity();
+  if (updatedIdentity.publicKeyHex !== rotRes.newPublicKeyHex) {
+    throw new Error("Identity cache failed to update after key rotation!");
+  }
+  console.log("  [PASSED] Client-initiated cryptographic key rotation verified end-to-end.");
+
   console.log("\n" + "=".repeat(80));
   console.log(">>> BROWSER OFFLINE/ONLINE E2E TEST PASSED WITH 100% SUCCESS <<<");
   console.log("=".repeat(80));

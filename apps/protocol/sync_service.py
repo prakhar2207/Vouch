@@ -141,6 +141,11 @@ class SyncService:
         participant_company_ids = set()
         if company:
             participant_company_ids.add(str(company.id))
+        if db_ptx:
+            if getattr(db_ptx, 'source_company_id', None):
+                participant_company_ids.add(str(db_ptx.source_company_id))
+            if getattr(db_ptx, 'destination_company_id', None):
+                participant_company_ids.add(str(db_ptx.destination_company_id))
         if canonical_tx:
             from apps.companies.models import Company
             for ent in [getattr(canonical_tx, 'source_entity', None), getattr(canonical_tx, 'destination_entity', None)]:
