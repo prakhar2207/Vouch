@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'apps.companies',
     'apps.ledgers',
     'apps.accounting',
+    'apps.protocol',
     'apps.inventory',
     'apps.gst',
     'apps.analytics',
