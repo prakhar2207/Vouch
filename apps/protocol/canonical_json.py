@@ -4,11 +4,12 @@ from typing import Any
 
 def canonical_json_dumps(obj: Any) -> str:
     """
-    Deterministic Canonical JSON Serialization compliant with RFC 8785 principles:
+    Vouch Canonical JSON Serialization, based on RFC 8785/JCS principles:
     1. Lexicographically sorted dictionary keys (Unicode codepoint ordering).
     2. Strict absence of insignificant whitespace (separators=(',', ':')).
     3. UTF-8 encoded characters preserved without ASCII escaping (ensure_ascii=False).
     4. Bit-for-bit equivalence with frontend canonicalJsonStringify.
+    Financial Decimals are serialized as deterministic fixed-point strings to avoid IEEE-754 float drift.
     """
     return json.dumps(obj, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
 

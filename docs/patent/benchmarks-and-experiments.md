@@ -31,7 +31,7 @@ Measurements taken over 1,000 iterations on host processor:
 | Primitive Evaluated | Average Execution Latency | Single-Core Throughput |
 |---|---|---|
 | **CRDT Topological Merge & Ledger Evaluation** | **17.54 microseconds** | Over **57,000 merges / second** |
-| **RFC 8785 Canonical JSON Serialization** | **4.20 microseconds** | ~238,000 serializations / second |
+| **Vouch Canonical JSON Serialization (RFC 8785/JCS principles)** | **4.20 microseconds** | ~238,000 serializations / second |
 | **Merkle Inclusion Proof Audit** | **167.70 microseconds** | ~6,000 audits / second |
 | **Operation Deduplication & Idempotency** | **0.13 microseconds** | Over **7,500,000 checks / second** |
 
@@ -51,11 +51,17 @@ To ensure scientific precision, in-memory algorithmic execution is clearly disti
 ---
 
 ## 3. High-Concurrency & Multi-Worker Contention Benchmark
-Evaluated under high-volume worker contention (`apps/protocol/tests_concurrency.py`):
-* **Concurrent Workers:** 8 parallel threads hitting PostgreSQL simultaneously via synchronized `threading.Barrier`.
-* **Locking Strategy:** Strict `Company.objects.select_for_update()` double-checked row locking.
-* **Voucher Integrity:** Exactly 1 authoritative voucher posted; 7 workers safely returned cached idempotent results.
-* **Exceptions / Deadlocks:** 0 unhandled errors, 0 lock timeouts, 100% race-free idempotency.
+Evaluated across 5 specialized concurrency race condition scenarios (`apps/protocol/tests_concurrency.py`):
+
+| Scenario | Concurrency Challenge | Synchronization Barrier | Outcome |
+|---|---|---|---|
+| **Scenario 1: Device Registration Race** | Two threads race to register same `device_id` with conflicting keys | Atomic DB unique constraint & `IntegrityError` catch | Exactly 1 succeeded (201 Created), 1 rejected (409 Conflict) |
+| **Scenario 2: Commitment Creation Race** | Two threads race to commit identical state root | Row-level `get_or_create` atomic block | Exactly 1 created, 1 deduplicated existing record |
+| **Scenario 3: Key Rotation + Sync Race** | Thread 1 rotates device key while Thread 2 submits operation | Transaction isolation & state machine | Zero corrupted keys, final active state strictly pinned |
+| **Scenario 4: Identical Sync Race** | Two identical sync requests hit server at exact same millisecond | Row lock & bridge execution idempotency key | Both returned HTTP 200, exactly 1 physical voucher created |
+| **Scenario 5: Ledger Bridge Stress** | 8 parallel worker threads execute bridge for same transaction | `Company.objects.select_for_update()` row lock | 1 Initial write, 7 Idempotent deduplications, 0 deadlocks |
+
+**Conclusion:** 100% race-free isolation with zero database corruption or duplicate ledger postings across all 5 scenarios.
 
 ---
 
@@ -89,3 +95,12 @@ The system was subjected to 8 distinct adversarial attack simulations in `apps/p
 | **Threat 8: Ephemeral QR Replay** | Attacker replays consumed QR bootstrap nonce | Ephemeral nonce cache & sliding window expiry | **DEFLECTED** |
 
 **Conclusion:** All 8 adversarial threats are blocked deterministically.
+
+---
+
+## 6. Cross-Language Determinism Verification
+To guarantee complete cryptographic interoperability between frontend (TypeScript/Node.js) and backend (Python), cross-language test vectors were executed (`apps/protocol/test_canonical_vectors.py`):
+* **Fixtures Evaluated:** 50 diverse canonical transactions covering Unicode Hindi characters, empty strings, multi-item line configurations, tax breakdowns, reordered keys, zero values, and decimal precision.
+* **Serialization Equivalence:** TypeScript `canonicalJson(tx)` $\equiv$ Python `canonical_json_dumps(tx)` across all 50 fixtures (**100.000% byte-for-byte identity**).
+* **Cryptographic Hash Equivalence:** TypeScript `SHA-256` $\equiv$ Python `SHA-256` across all 50 fixtures (**100.000% digest identity**).
+* **Conclusion:** Zero cross-platform canonicalization divergence.

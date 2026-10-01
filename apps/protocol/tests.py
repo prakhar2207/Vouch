@@ -485,11 +485,61 @@ class AdvancedProtocolMechanismsTests(TestCase):
         )
         op_data["signature"] = ProtocolCrypto.sign(test_op.payload_hash, cli_env.private_key_hex)
 
+        raw_canonical = {
+            "protocol_version": "1.0",
+            "transaction_id": "TX-API-TEST-001",
+            "transaction_type": "SALE",
+            "state_version": 1,
+            "issued_at": "2026-10-01T10:00:00",
+            "source_entity": {
+                "type": "GSTIN",
+                "value": str(self.company.gstin or self.company.id),
+                "name": self.company.name,
+                "state_code": "27"
+            },
+            "destination_entity": {
+                "type": "GSTIN",
+                "value": "27BBBBB5678B1Z6",
+                "name": "Buyer Corp",
+                "state_code": "27"
+            },
+            "items": [
+                {
+                    "line_id": "L1",
+                    "sku": "VALVE-01",
+                    "name": "Industrial Valve",
+                    "hsn_code": "8481",
+                    "quantity": "10.00",
+                    "unit": "PCS",
+                    "unit_price": "100.00",
+                    "discount_amount": "0.00",
+                    "taxable_amount": "1000.00",
+                    "tax_rate_percent": "18.00"
+                }
+            ],
+            "tax_summary": {
+                "cgst": "90.00",
+                "sgst": "90.00",
+                "igst": "0.00",
+                "cess": "0.00",
+                "total_tax": "180.00"
+            },
+            "totals": {
+                "subtotal": "1000.00",
+                "total_tax": "180.00",
+                "shipping": "0.00",
+                "discount": "0.00",
+                "grand_total": "1180.00"
+            },
+            "causal_dependencies": []
+        }
+        reconstructed = CanonicalTransaction.from_dict(raw_canonical)
         payload = {
             "transaction_id": "TX-API-TEST-001",
             "client_replica_id": "CLI-TEST-01",
             "company_id": str(self.company.id),
-            "canonical_tx_hash": "HASH-TX-API-001",
+            "canonical_tx_hash": reconstructed.canonical_hash,
+            "canonical_transaction": raw_canonical,
             "client_operations": [op_data]
         }
         resp = c.post('/api/v1/protocol/sync/', data=payload, format='json')
@@ -754,4 +804,142 @@ class AdvancedProtocolMechanismsTests(TestCase):
         good_res = c.post('/api/v1/protocol/sync/', data=good_payload, format='json')
         self.assertEqual(good_res.status_code, 200)
         self.assertEqual(good_res.json()["status"], "SYNC_SUCCESS")
+
+    def test_device_duplicate_registration_rejected_409(self):
+        """Verifies POST /api/v1/protocol/devices/register/ returns 409 Conflict when device_id already exists."""
+        from apps.protocol.models import AuthorizedDevice
+        c = APIClient()
+        c.force_authenticate(user=self.user)
+
+        priv_k, pub_k = ProtocolCrypto.generate_keypair()
+        reg_payload = {
+            "device_id": "DEV-EXISTS-409",
+            "replica_id": "REP-EXISTS-409",
+            "public_key_hex": pub_k,
+            "device_name": "Terminal Alpha",
+            "company_id": str(self.company.id)
+        }
+        # First registration: 201 Created
+        res1 = c.post('/api/v1/protocol/devices/register/', data=reg_payload, format='json')
+        self.assertEqual(res1.status_code, 201)
+
+        # Second registration with same device_id: 409 Conflict
+        res2 = c.post('/api/v1/protocol/devices/register/', data=reg_payload, format='json')
+        self.assertEqual(res2.status_code, 409)
+        self.assertEqual(res2.json()["status"], "DEVICE_ALREADY_REGISTERED")
+
+        # Third registration with different device_id but same replica_id: 409 Conflict
+        priv_k2, pub_k2 = ProtocolCrypto.generate_keypair()
+        reg_payload2 = {
+            "device_id": "DEV-DIFFERENT-409",
+            "replica_id": "REP-EXISTS-409",
+            "public_key_hex": pub_k2,
+            "device_name": "Terminal Beta",
+            "company_id": str(self.company.id)
+        }
+        res3 = c.post('/api/v1/protocol/devices/register/', data=reg_payload2, format='json')
+        self.assertEqual(res3.status_code, 409)
+        self.assertEqual(res3.json()["status"], "REPLICA_ALREADY_BOUND")
+
+    def test_new_transaction_missing_canonical_payload_rejected(self):
+        """Verifies that a brand-new transaction cannot be created with just an arbitrary hash assertion."""
+        from apps.protocol.models import AuthorizedDevice
+        c = APIClient()
+        c.force_authenticate(user=self.user)
+
+        priv_k, pub_k = ProtocolCrypto.generate_keypair()
+        AuthorizedDevice.objects.get_or_create(
+            device_id="DEV-NOCANON-01",
+            defaults={
+                "replica_id": "REP-NOCANON-01",
+                "company": self.company,
+                "public_key_hex": pub_k,
+                "status": "ACTIVE"
+            }
+        )
+
+        payload = {
+            "transaction_id": "TX-BRAND-NEW-UNKNOWN",
+            "client_replica_id": "REP-NOCANON-01",
+            "company_id": str(self.company.id),
+            "canonical_tx_hash": "ARBITRARY_HASH_CLAIM",
+            "client_operations": []
+        }
+        res = c.post('/api/v1/protocol/sync/', data=payload, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json()["status"], "SYNC_REJECTED")
+        self.assertIn("requires a complete canonical_transaction payload", res.json()["reason"])
+
+    def test_unauthorized_third_party_replica_operation_rejected(self):
+        """Verifies that an operation signed by a third-party company device is rejected from transaction sync."""
+        from apps.protocol.models import AuthorizedDevice
+        c = APIClient()
+        c.force_authenticate(user=self.user)
+
+        # Local device for self.company
+        priv_loc, pub_loc = ProtocolCrypto.generate_keypair()
+        AuthorizedDevice.objects.get_or_create(
+            device_id="DEV-LOCAL-AUTH",
+            defaults={"replica_id": "REP-LOCAL-AUTH", "company": self.company, "public_key_hex": pub_loc, "status": "ACTIVE"}
+        )
+
+        # Rogue third-party company
+        rogue_company = Company.objects.create(name="Third Party Spy Corp", gstin="27SPYCO1234A1Z9")
+        priv_rogue, pub_rogue = ProtocolCrypto.generate_keypair()
+        AuthorizedDevice.objects.create(
+            device_id="DEV-ROGUE-01",
+            replica_id="REP-ROGUE-01",
+            company=rogue_company,
+            public_key_hex=pub_rogue,
+            status="ACTIVE"
+        )
+
+        raw_canonical = {
+            "protocol_version": "1.0",
+            "transaction_id": "TX-INTERCEPT-01",
+            "transaction_type": "SALE",
+            "state_version": 1,
+            "issued_at": "2026-10-01T10:00:00",
+            "source_entity": {"type": "GSTIN", "value": self.company.gstin, "name": self.company.name, "state_code": "27"},
+            "destination_entity": {"type": "GSTIN", "value": "27BBBBB5678B1Z6", "name": "Buyer Corp", "state_code": "27"},
+            "items": [{"line_id": "L1", "sku": "ITEM-1", "name": "Item", "hsn_code": "8481", "quantity": "1.00", "unit": "PCS", "unit_price": "100.00", "discount_amount": "0.00", "taxable_amount": "100.00", "tax_rate_percent": "18.00"}],
+            "tax_summary": {"cgst": "9.00", "sgst": "9.00", "igst": "0.00", "cess": "0.00", "total_tax": "18.00"},
+            "totals": {"subtotal": "100.00", "total_tax": "18.00", "shipping": "0.00", "discount": "0.00", "grand_total": "118.00"},
+            "causal_dependencies": []
+        }
+        reconstructed = CanonicalTransaction.from_dict(raw_canonical)
+
+        # Rogue operation signed by rogue replica
+        rogue_op_data = {
+            "operation_id": "OP-ROGUE-01",
+            "transaction_id": "TX-INTERCEPT-01",
+            "replica_id": "REP-ROGUE-01",
+            "operation_type": "PAYMENT_ALLOCATED",
+            "payload": {"amount": 500.0, "payment_reference": "ROGUE-PAY"},
+            "logical_timestamp": 2,
+            "parents": []
+        }
+        rogue_op = AccountingOperation(
+            operation_id=rogue_op_data["operation_id"],
+            transaction_id=rogue_op_data["transaction_id"],
+            replica_id=rogue_op_data["replica_id"],
+            operation_type=OperationType.PAYMENT_ALLOCATED,
+            payload=rogue_op_data["payload"],
+            logical_timestamp=2,
+            parents=[]
+        )
+        rogue_op_data["signature"] = ProtocolCrypto.sign(rogue_op.payload_hash, priv_rogue)
+
+        sync_payload = {
+            "transaction_id": "TX-INTERCEPT-01",
+            "client_replica_id": "REP-LOCAL-AUTH",
+            "company_id": str(self.company.id),
+            "canonical_transaction": raw_canonical,
+            "canonical_tx_hash": reconstructed.canonical_hash,
+            "client_operations": [rogue_op_data]
+        }
+        res = c.post('/api/v1/protocol/sync/', data=sync_payload, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json()["status"], "SYNC_REJECTED")
+        self.assertIn("not a participant in transaction", res.json()["reason"])
 

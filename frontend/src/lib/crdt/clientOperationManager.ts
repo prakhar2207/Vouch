@@ -268,9 +268,12 @@ export class ClientOperationManager {
               delta = qty;
             }
 
-            const newStock = Math.max(0, (product.currentStock || 0) + delta);
+            const rawStock = (product.currentStock || 0) + delta;
+            if (rawStock < 0) {
+              console.warn(`[Inventory Invariant Warning] Product ${product.id} stock projected negative (${rawStock}). Retaining exact arithmetic state for accounting review without clamp masking.`);
+            }
             await offlineDb.syncedProducts.update(product.id, {
-              currentStock: newStock,
+              currentStock: rawStock,
               serverUpdatedAt: Date.now()
             });
           }

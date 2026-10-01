@@ -1,5 +1,5 @@
 /**
- * Deterministic Canonical JSON Serializer (compliant with RFC 8785 / JCS principles).
+ * Vouch Canonical JSON Serialization, based on RFC 8785 / JCS principles.
  * 
  * Guarantees bit-for-bit exact stringification and SHA-256 hashing across TypeScript and Python:
  * 1. Object keys are sorted lexicographically by UTF-16 code units.

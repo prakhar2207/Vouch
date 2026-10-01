@@ -65,61 +65,7 @@ class SyncService:
                     f"Access Denied: Tenant {authenticated_tenant_id} is not an authorized counterparty for transaction {transaction_id}"
                 )
 
-        # 2. Canonical Transaction Hash Integrity Verification & Server-Side Reconstruction
-        if canonical_tx_hash == "TBD_CANONICAL_HASH":
-            return {
-                "status": "SYNC_REJECTED",
-                "reason": "Invalid canonical transaction hash: placeholder 'TBD_CANONICAL_HASH' is forbidden in production."
-            }
-
-        # If canonical_tx is not provided directly, attempt server-side reconstruction
-        if canonical_tx is None:
-            try:
-                from .models import ProtocolTransaction
-                db_ptx = ProtocolTransaction.objects.filter(transaction_id=transaction_id).first()
-                if db_ptx and db_ptx.canonical_payload:
-                    canonical_tx = CanonicalTransaction.from_dict(db_ptx.canonical_payload)
-            except Exception:
-                pass
-
-        computed_tx_hash = None
-        if canonical_tx:
-            if hasattr(canonical_tx, 'validate_invariants'):
-                try:
-                    canonical_tx.validate_invariants()
-                except Exception as inv_err:
-                    return {
-                        "status": "SYNC_REJECTED",
-                        "reason": f"Canonical transaction invariant violation: {inv_err}"
-                    }
-            if hasattr(canonical_tx, 'canonical_hash'):
-                computed_tx_hash = canonical_tx.canonical_hash
-
-        if computed_tx_hash:
-            if canonical_tx_hash and canonical_tx_hash != computed_tx_hash:
-                return {
-                    "status": "SYNC_REJECTED",
-                    "reason": f"Canonical transaction hash mismatch: claimed {canonical_tx_hash} != calculated {computed_tx_hash}"
-                }
-            effective_tx_hash = computed_tx_hash
-        else:
-            if not canonical_tx_hash:
-                return {
-                    "status": "SYNC_REJECTED",
-                    "reason": "Missing canonical transaction payload or deterministic canonical_tx_hash. Transaction-ID hash fallbacks are strictly forbidden before state commitment."
-                }
-            effective_tx_hash = canonical_tx_hash
-
-        # 3. Reconstruct Server CRDT from local database state
-        server_crdt = DE_CRDT(
-            replica_id="SERVER",
-            transaction_id=transaction_id,
-            tenant_id=authenticated_tenant_id
-        )
-        for op in server_operations:
-            server_crdt.apply_operation(op)
-
-        # 4. Cryptographic Hardware Device & Replica Binding
+        # 2. Cryptographic Hardware Device & Replica Binding (Device Authentication First)
         client_dev = None
         if company:
             from .models import AuthorizedDevice
@@ -134,6 +80,91 @@ class SyncService:
                     "status": "SYNC_REJECTED",
                     "reason": f"Unauthorized device status: Device {client_replica_id} has status '{client_dev.status}' (must be ACTIVE)."
                 }
+
+        # 3. Canonical Transaction Hash Integrity Verification & Server-Side Reconstruction
+        if canonical_tx_hash == "TBD_CANONICAL_HASH":
+            return {
+                "status": "SYNC_REJECTED",
+                "reason": "Invalid canonical transaction hash: placeholder 'TBD_CANONICAL_HASH' is forbidden in production."
+            }
+
+        db_ptx = None
+        if canonical_tx is None:
+            try:
+                from .models import ProtocolTransaction
+                db_ptx = ProtocolTransaction.objects.filter(transaction_id=transaction_id).first()
+                if db_ptx and db_ptx.canonical_payload:
+                    canonical_tx = CanonicalTransaction.from_dict(db_ptx.canonical_payload)
+            except Exception as ex:
+                logger.warning(f"Failed to reconstruct canonical_tx from DB: {ex}")
+
+        # If transaction is brand-new, canonical_tx is strictly required
+        if canonical_tx is None:
+            if company is not None or not canonical_tx_hash:
+                return {
+                    "status": "SYNC_REJECTED",
+                    "reason": f"New transaction '{transaction_id}' requires a complete canonical_transaction payload for server-side invariant validation and hash computation. Pure hash assertions are rejected."
+                }
+            effective_tx_hash = canonical_tx_hash
+        else:
+            # Validate canonical invariants
+            if hasattr(canonical_tx, 'validate_invariants'):
+                try:
+                    canonical_tx.validate_invariants()
+                except Exception as inv_err:
+                    return {
+                        "status": "SYNC_REJECTED",
+                        "reason": f"Canonical transaction invariant violation: {inv_err}"
+                    }
+
+            computed_tx_hash = canonical_tx.canonical_hash if hasattr(canonical_tx, 'canonical_hash') else None
+            if not computed_tx_hash:
+                return {
+                    "status": "SYNC_REJECTED",
+                    "reason": "Failed to compute deterministic canonical transaction hash."
+                }
+
+            if canonical_tx_hash and canonical_tx_hash != computed_tx_hash:
+                return {
+                    "status": "SYNC_REJECTED",
+                    "reason": f"Canonical transaction hash mismatch: claimed {canonical_tx_hash} != calculated {computed_tx_hash}"
+                }
+            effective_tx_hash = computed_tx_hash
+
+        # 4. Reconstruct Server CRDT from local database state
+        server_crdt = DE_CRDT(
+            replica_id="SERVER",
+            transaction_id=transaction_id,
+            tenant_id=authenticated_tenant_id
+        )
+        for op in server_operations:
+            server_crdt.apply_operation(op)
+
+        # Resolve authorized participant companies for this transaction
+        participant_company_ids = set()
+        if company:
+            participant_company_ids.add(str(company.id))
+        if canonical_tx:
+            from apps.companies.models import Company
+            for ent in [getattr(canonical_tx, 'source_entity', None), getattr(canonical_tx, 'destination_entity', None)]:
+                if not ent:
+                    continue
+                val_str = str(getattr(ent, 'identity_value', '') or '').strip()
+                name_str = str(getattr(ent, 'name', '') or '').strip()
+                if val_str:
+                    try:
+                        for co in Company.objects.filter(gstin__iexact=val_str):
+                            participant_company_ids.add(str(co.id))
+                        for co in Company.objects.filter(id=val_str):
+                            participant_company_ids.add(str(co.id))
+                    except Exception:
+                        pass
+                if name_str:
+                    try:
+                        for co in Company.objects.filter(name__iexact=name_str):
+                            participant_company_ids.add(str(co.id))
+                    except Exception:
+                        pass
 
         client_crdt = DE_CRDT(
             replica_id=client_replica_id,
@@ -166,11 +197,21 @@ class SyncService:
                         "status": "SYNC_REJECTED",
                         "reason": f"Replica device {op.replica_id} has status '{op_dev.status}' (must be ACTIVE)."
                     }
-                elif op.replica_id == client_replica_id and op_dev.company_id != company.id:
-                    return {
-                        "status": "SYNC_REJECTED",
-                        "reason": f"Device {op.replica_id} is registered to a different company than authenticated tenant."
-                    }
+                elif op.replica_id == client_replica_id:
+                    # LOCAL OPERATION: Device must strictly belong to authenticated company submitting the sync
+                    if op_dev.company_id != company.id:
+                        return {
+                            "status": "SYNC_REJECTED",
+                            "reason": f"Local device {op.replica_id} is registered to a different company than authenticated tenant."
+                        }
+                else:
+                    # COUNTERPARTY OPERATION: Must belong to an authorized transaction participant
+                    if participant_company_ids and str(op_dev.company_id) not in participant_company_ids:
+                        if not (public_keys_map and op.replica_id in public_keys_map):
+                            return {
+                                "status": "SYNC_REJECTED",
+                                "reason": f"Operation {op.operation_id} from replica {op.replica_id} belongs to unauthorized company '{op_dev.company.name}', which is not a participant in transaction {transaction_id}."
+                            }
 
             # Strict Fail-Closed Digital Signature Verification
             if verify_signatures:

@@ -5,6 +5,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from apps.companies.models import Company
+from django.db import IntegrityError
 from .sync_service import SyncService, MultiTenantSecurityError
 from .handshake import EdiStateMachine, EdiState
 import uuid
@@ -248,19 +249,52 @@ class ProtocolDeviceRegistrationAPIView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Register or update AuthorizedDevice
-        device, created = AuthorizedDevice.objects.update_or_create(
-            device_id=device_id,
-            defaults={
-                "replica_id": replica_id,
-                "company": company,
-                "registered_by": user,
-                "device_name": device_name,
-                "public_key_hex": public_key_hex,
-                "key_id": key_id,
-                "status": "ACTIVE"
-            }
-        )
+        # Check if device_id is already registered (cannot overwrite via registration endpoint)
+        existing_device = AuthorizedDevice.objects.filter(device_id=device_id).first()
+        if existing_device:
+            return Response(
+                {
+                    "error": f"Device '{device_id}' is already registered. To rotate its cryptographic key, use the authorized key rotation endpoint (/api/v1/protocol/devices/rotate/).",
+                    "status": "DEVICE_ALREADY_REGISTERED",
+                    "device_id": device_id,
+                    "existing_status": existing_device.status
+                },
+                status=status.HTTP_409_CONFLICT
+            )
+
+        # Check if replica_id is already bound to another device
+        existing_replica = AuthorizedDevice.objects.filter(replica_id=replica_id).first()
+        if existing_replica:
+            return Response(
+                {
+                    "error": f"Replica ID '{replica_id}' is already bound to device '{existing_replica.device_id}'. Replica identities cannot be reassigned.",
+                    "status": "REPLICA_ALREADY_BOUND",
+                    "replica_id": replica_id
+                },
+                status=status.HTTP_409_CONFLICT
+            )
+
+        # Register new AuthorizedDevice with concurrent race protection
+        try:
+            device = AuthorizedDevice.objects.create(
+                device_id=device_id,
+                replica_id=replica_id,
+                company=company,
+                registered_by=user,
+                device_name=device_name,
+                public_key_hex=public_key_hex,
+                key_id=key_id,
+                status="ACTIVE"
+            )
+        except IntegrityError:
+            return Response(
+                {
+                    "error": f"Device '{device_id}' or Replica '{replica_id}' was just registered by a concurrent process.",
+                    "status": "DEVICE_ALREADY_REGISTERED",
+                    "device_id": device_id
+                },
+                status=status.HTTP_409_CONFLICT
+            )
 
         # Register in in-memory ProtocolKeyManager as well
         from .key_manager import ProtocolKeyManager
@@ -277,7 +311,7 @@ class ProtocolDeviceRegistrationAPIView(APIView):
             "key_id": device.key_id,
             "device_status": device.status,
             "company_id": str(company.id)
-        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+        }, status=status.HTTP_201_CREATED)
 
 
 class ProtocolDeviceRotationAPIView(APIView):
