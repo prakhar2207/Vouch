@@ -1,101 +1,133 @@
 import hashlib
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from decimal import Decimal
+
 from .operation import AccountingOperation, OperationType
 from .invariants import InvariantEngine
+from .causal_dag import CausalDAG
+from .crypto import MerkleTree, CrossLedgerCommitment
 
 class DE_CRDT:
     """
-    Double-Entry Conflict-Free Replicated Data Type.
-    Merges offline accounting operations and projects them into verifiable states.
+    Double-Entry Conflict-Free Replicated Data Type (DE-CRDT).
+    Coordinates distributed accounting operations over a Causal DAG,
+    computes deterministic double-entry states, validates financial invariants,
+    and produces 4-way Merkle state roots for cross-ledger cryptographic commitment.
     """
-    def __init__(self, replica_id: str):
+
+    def __init__(self, replica_id: str, transaction_id: str = "TX-DEFAULT", tenant_id: str = "DEFAULT_TENANT"):
         self.replica_id = replica_id
-        self.operations: Dict[str, AccountingOperation] = {}
+        self.transaction_id = transaction_id
+        self.tenant_id = tenant_id
+        self.dag = CausalDAG(transaction_id)
         
+    @property
+    def operations(self) -> Dict[str, AccountingOperation]:
+        """Provides backward-compatible dict access to admitted operations."""
+        return self.dag.operations
+
     def apply_operation(self, op: AccountingOperation):
-        """Idempotently adds an operation to the local graph."""
-        if op.operation_id not in self.operations:
-            self.operations[op.operation_id] = op
+        """Idempotently adds an operation to the causal DAG."""
+        # Align DAG transaction_id if default
+        if self.dag.transaction_id == "TX-DEFAULT" and op.transaction_id != "TX-DEFAULT":
+            self.transaction_id = op.transaction_id
+            self.dag.transaction_id = op.transaction_id
+        self.dag.add_operation(op)
 
     def merge(self, other: 'DE_CRDT') -> 'DE_CRDT':
         """
-        Mathematical merge of two replicas.
-        Guarantees Commutativity: Merge(A, B) == Merge(B, A)
+        Deterministic mathematical union of two causal operation graphs.
+        Guarantees Commutativity (Merge(A, B) == Merge(B, A)),
+        Idempotency (Merge(A, A) == A), and Associativity.
         """
-        merged = DE_CRDT(f"MERGED_{self.replica_id}_{other.replica_id}")
-        for op in self.operations.values():
+        target_tx_id = self.transaction_id if self.transaction_id != "TX-DEFAULT" else other.transaction_id
+        merged = DE_CRDT(
+            replica_id=f"MERGED_{self.replica_id}_{other.replica_id}",
+            transaction_id=target_tx_id,
+            tenant_id=self.tenant_id
+        )
+        
+        # Collect all operations (including admitted and queued orphans)
+        all_ops = list(self.dag.operations.values()) + list(self.dag.orphans.values()) + \
+                  list(other.dag.operations.values()) + list(other.dag.orphans.values())
+        
+        # Sort by timestamp so root parents are fed first to DAG
+        all_ops.sort(key=lambda x: (x.logical_timestamp, x.operation_id))
+        
+        for op in all_ops:
             merged.apply_operation(op)
-        for op in other.operations.values():
-            merged.apply_operation(op)
+            
         return merged
 
     def _causal_sort(self) -> List[AccountingOperation]:
-        """
-        Sorts operations topologically with deterministic tiebreaking.
-        Two operations with the same logical_timestamp from different replicas
-        are tiebroken by operation_id to guarantee Merge(A,B) == Merge(B,A).
-        """
-        return sorted(self.operations.values(), key=lambda x: (x.logical_timestamp, x.operation_id))
+        """Returns operations in strictly valid causal topological order."""
+        return self.dag.topological_sort()
 
     def evaluate_state(self) -> Dict[str, Any]:
         """
-        Projects the operation graph into a double-entry accounting state.
-        This calculates the final effect of all compensating operations.
+        Projects the causal operation graph into a complete, balanced accounting state:
+        Double-Entry Ledgers, Tax Components, Grand Totals, and Inventory.
         """
         ops = self._causal_sort()
         
-        state = {
+        state: Dict[str, Any] = {
             'ledgers': {
                 'AccountsReceivable': {'debit': Decimal('0.0'), 'credit': Decimal('0.0')},
                 'SalesAccount': {'debit': Decimal('0.0'), 'credit': Decimal('0.0')},
                 'TaxAccount': {'debit': Decimal('0.0'), 'credit': Decimal('0.0')}
             },
+            'inventory_lines': {},
+            'total_quantity': Decimal('0.0'),
             'taxable_amount': Decimal('0.0'),
             'total_tax': Decimal('0.0'),
             'total_charges': Decimal('0.0'),
             'total_discount': Decimal('0.0'),
             'grand_total': Decimal('0.0'),
+            'round_off': Decimal('0.0'),
             'cgst': Decimal('0.0'),
             'sgst': Decimal('0.0'),
-            'igst': Decimal('0.0')
+            'igst': Decimal('0.0'),
+            'allocated_payment': Decimal('0.0'),
+            'invoice_grand_total': Decimal('0.0')
         }
 
         for op in ops:
             payload = op.payload
             
-            if op.operation_type == OperationType.TRANSACTION_ISSUED:
+            if op.operation_type in (OperationType.TRANSACTION_ISSUED, OperationType.INVOICE_ISSUED):
                 gt = Decimal(str(payload.get('grand_total', 0)))
                 tax = Decimal(str(payload.get('total_tax', 0)))
                 taxable = Decimal(str(payload.get('taxable_amount', 0)))
+                qty = Decimal(str(payload.get('quantity', 0)))
                 
                 state['grand_total'] += gt
+                state['invoice_grand_total'] += gt
                 state['total_tax'] += tax
-                state['igst'] += tax  # Simplified to IGST for POC
+                state['igst'] += tax
                 state['taxable_amount'] += taxable
+                state['total_quantity'] += qty
                 
-                # Base Invoice Ledgers
                 state['ledgers']['AccountsReceivable']['debit'] += gt
                 state['ledgers']['SalesAccount']['credit'] += taxable
                 state['ledgers']['TaxAccount']['credit'] += tax
                 
             elif op.operation_type in (OperationType.ITEM_REJECTED, OperationType.CREDIT_NOTE_ISSUED):
-                # Deterministic Compensating Operation (Reversal/Credit)
                 amt = Decimal(str(payload.get('taxable_amount', payload.get('amount', 0))))
                 tax = Decimal(str(payload.get('tax_amount', 0)))
                 gt = amt + tax
+                qty = Decimal(str(payload.get('quantity', 0)))
                 
                 state['grand_total'] -= gt
                 state['total_tax'] -= tax
                 state['igst'] -= tax
                 state['taxable_amount'] -= amt
+                state['total_quantity'] -= qty
                 
-                # Reversal Ledgers (Credit Note equivalent)
                 state['ledgers']['AccountsReceivable']['credit'] += gt
                 state['ledgers']['SalesAccount']['debit'] += amt
                 state['ledgers']['TaxAccount']['debit'] += tax
 
-            elif op.operation_type == OperationType.DEBIT_NOTE_ISSUED:
+            elif op.operation_type in (OperationType.DEBIT_NOTE_ISSUED, OperationType.DEBIT_NOTE_CREATED):
                 amt = Decimal(str(payload.get('taxable_amount', payload.get('amount', 0))))
                 tax = Decimal(str(payload.get('tax_amount', 0)))
                 gt = amt + tax
@@ -139,19 +171,58 @@ class DE_CRDT:
                 if 'CashAccount' not in state['ledgers']:
                     state['ledgers']['CashAccount'] = {'debit': Decimal('0.0'), 'credit': Decimal('0.0')}
                 state['ledgers']['CashAccount']['debit'] += amt
+                state['allocated_payment'] += amt
 
             elif op.operation_type == OperationType.ITEM_ACCEPTED:
-                pass  # Confirmation op, no ledger balance mutation
+                pass # Acknowledged without financial mutation
 
         return state
         
     def validate_convergence(self) -> bool:
-        """
-        Passes the evaluated state through the rigid Invariant Engine.
-        Must return True before a database commit is allowed.
-        """
+        """Evaluates state and validates all double-entry and tax invariants."""
         state = self.evaluate_state()
         return InvariantEngine.evaluate_converged_state(state)
+
+    def compute_merkle_state_roots(self) -> Dict[str, str]:
+        """
+        Builds formal Merkle trees for the 4 distinct accounting subsystems:
+        1. Operation State Root (O_n)
+        2. Ledger State Root (L_n)
+        3. Inventory State Root (I_n)
+        4. Transaction State Root (T_n)
+        """
+        ops = self._causal_sort()
+        state = self.evaluate_state()
+        
+        # 1. Operation Root
+        op_leaves = [op.payload_hash for op in ops]
+        op_root = MerkleTree(op_leaves).root
+
+        # 2. Ledger Root
+        ledger_leaves = [
+            f"{acct}:{data['debit']}:{data['credit']}"
+            for acct, data in sorted(state['ledgers'].items())
+        ]
+        ledger_root = MerkleTree(ledger_leaves).root
+
+        # 3. Inventory Root
+        inv_leaves = [f"TOTAL_QTY:{state['total_quantity']}"]
+        inv_root = MerkleTree(inv_leaves).root
+
+        # 4. Transaction Baseline Root
+        tx_leaves = [
+            f"TX_ID:{self.transaction_id}",
+            f"GT:{state['grand_total']}",
+            f"TAX:{state['total_tax']}"
+        ]
+        tx_root = MerkleTree(tx_leaves).root
+
+        return {
+            "operation_state_root": op_root,
+            "ledger_state_root": ledger_root,
+            "inventory_state_root": inv_root,
+            "transaction_state_root": tx_root
+        }
 
     def generate_state_commitment(
         self,
@@ -161,34 +232,26 @@ class DE_CRDT:
         previous_commitment_hash: Any = None
     ) -> str:
         """
-        Calculates the Cross-Ledger State Commitment (CLSC) hash for the graph.
+        Calculates the Cross-Ledger State Commitment ($C_n$) hash binding the 4 Merkle state roots.
         """
-        import json
-        from .crypto import CrossLedgerCommitment
-        
-        # 1. Operation State Root (O_n)
+        roots = self.compute_merkle_state_roots()
         ops = self._causal_sort()
-        ops_str = json.dumps([op.to_dict() for op in ops], sort_keys=True)
-        operation_state_root = hashlib.sha256(ops_str.encode('utf-8')).hexdigest()
-        
-        # 2. Extract context from base operation (Assume first operation is TRANSACTION_ISSUED)
         base_op = ops[0] if ops else None
-        tx_id = base_op.transaction_id if base_op else "UNKNOWN"
         base_payload = base_op.payload if base_op else {}
-        
+
         seller = seller_identity if seller_identity != "SELLER" else base_payload.get("source_company_id", "SELLER")
         buyer = buyer_identity if buyer_identity != "BUYER" else base_payload.get("destination_company_id", "BUYER")
-        tx_hash = canonical_tx_hash if canonical_tx_hash != "TBD_CANONICAL_HASH" else base_payload.get("canonical_tx_hash", "TBD_CANONICAL_HASH")
-        
-        # 3. Generate final commitment
+        tx_hash = canonical_tx_hash if canonical_tx_hash != "TBD_CANONICAL_HASH" else roots["transaction_state_root"]
+
         commitment = CrossLedgerCommitment(
-            transaction_id=tx_id,
-            canonical_tx_hash=tx_hash,
-            operation_state_root=operation_state_root,
+            transaction_id=self.transaction_id,
+            transaction_state_root=tx_hash,
+            operation_state_root=roots["operation_state_root"],
+            ledger_state_root=roots["ledger_state_root"],
+            inventory_state_root=roots["inventory_state_root"],
             seller_identity=seller,
             buyer_identity=buyer,
             protocol_version="1.0",
             previous_commitment_hash=previous_commitment_hash
         )
         return commitment.calculate_hash()
-

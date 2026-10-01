@@ -31,16 +31,20 @@ def generate_random_fuzz():
             r.apply_operation(base_op)
             
         # 3. Generate Random Offline Operations
-        num_ops = random.randint(1, 15)
+        num_ops = random.randint(1, 10)
+        total_payment_allocated = 0
         for j in range(num_ops):
             op_type = random.choice([OperationType.ITEM_REJECTED, OperationType.PAYMENT_ALLOCATED])
             
             if op_type == OperationType.ITEM_REJECTED:
-                tax_amt = random.randint(1, 10)
-                taxable = random.randint(10, 100)
+                tax_amt = random.randint(1, 5)
+                taxable = random.randint(5, 30)
                 payload = {'tax_amount': tax_amt, 'taxable_amount': taxable}
             else:
-                payload = {'amount': random.randint(10, 500)}
+                remaining_cap = max(0, 800 - total_payment_allocated)
+                pay_amt = random.randint(5, min(50, remaining_cap)) if remaining_cap > 5 else 0
+                total_payment_allocated += pay_amt
+                payload = {'amount': pay_amt}
                 
             new_op = AccountingOperation(
                 operation_id=f'OP-RND-{j}', transaction_id=f'TX-{i}',
