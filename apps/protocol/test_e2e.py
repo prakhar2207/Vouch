@@ -92,12 +92,13 @@ def run_e2e():
     # PHASE 13: Django Persistence Integration
     # -----------------------------------------------------------
     print("\n[Phase 13] Persisting final converged state to Django Database...")
+    unique_tx_id = f"TX-E2E-{int(time.time())}"
     db_tx = ProtocolTransaction.objects.create(
-        transaction_id=tx.transaction_id, transaction_type='SALE', source_company_id='SELLER-01', destination_company_id='BUYER-02', canonical_payload={"test": "data"}
+        transaction_id=unique_tx_id, transaction_type='SALE', source_company_id='SELLER-01', destination_company_id='BUYER-02', canonical_payload={"test": "data"}
     )
-    ProtocolOperation.objects.create(operation_id='OP-BASE', transaction=db_tx, replica_id='SELLER-01', operation_type='TRANSACTION_ISSUED', payload={}, logical_timestamp=1, payload_hash='hash1')
-    ProtocolOperation.objects.create(operation_id=op_reject.operation_id, transaction=db_tx, replica_id='BUYER-02', operation_type='ITEM_REJECTED', payload=op_reject.payload, logical_timestamp=2, payload_hash=op_reject.payload_hash)
-    CryptographicCommitment.objects.create(transaction=db_tx, commitment_hash=sync_result['state_commitment'], operation_state_root='root_hash')
+    ProtocolOperation.objects.create(operation_id=f'OP-BASE-{int(time.time())}', transaction=db_tx, replica_id='SELLER-01', operation_type='TRANSACTION_ISSUED', payload={}, logical_timestamp=1, payload_hash='hash1')
+    ProtocolOperation.objects.create(operation_id=f'{op_reject.operation_id}-{int(time.time())}', transaction=db_tx, replica_id='BUYER-02', operation_type='ITEM_REJECTED', payload=op_reject.payload, logical_timestamp=2, payload_hash=op_reject.payload_hash)
+    CryptographicCommitment.objects.create(transaction=db_tx, commitment_hash=f"{sync_result['state_commitment']}-{int(time.time())}", operation_state_root='root_hash')
     
     session.advance(EdiState.COMMITTED)
     print("  -> Physical Database Write Successful.")

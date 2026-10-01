@@ -24,7 +24,7 @@ class InvariantEngine:
             total_debit += balances.get('debit', Decimal('0.0'))
             total_credit += balances.get('credit', Decimal('0.0'))
             
-        if abs(total_debit - total_credit) > Decimal('0.05'):
+        if abs(total_debit - total_credit) > Decimal('0.01'):
             raise AccountingInvariantViolation(
                 f"Double-entry violation: Total Debits ({total_debit}) != Total Credits ({total_credit})"
             )
@@ -40,7 +40,7 @@ class InvariantEngine:
     ) -> bool:
         """Enforces GrandTotal = TaxableAmount + TotalTax + Charges - Discount"""
         expected_total = taxable + tax + charges - discount
-        if abs(expected_total - grand_total) > Decimal('0.05'):
+        if abs(expected_total - grand_total) > Decimal('0.01'):
             raise AccountingInvariantViolation(
                 f"Invoice total violation: Algebra yields {expected_total}, but header claims {grand_total}"
             )
@@ -50,7 +50,7 @@ class InvariantEngine:
     def validate_tax_components(total_tax: Decimal, cgst: Decimal, sgst: Decimal, igst: Decimal) -> bool:
         """Enforces TotalTax = CGST + SGST + IGST"""
         component_sum = cgst + sgst + igst
-        if abs(component_sum - total_tax) > Decimal('0.05'):
+        if abs(component_sum - total_tax) > Decimal('0.01'):
             raise AccountingInvariantViolation(
                 f"Tax breakdown violation: Components sum to {component_sum} != Total Tax {total_tax}"
             )

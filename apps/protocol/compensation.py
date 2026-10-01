@@ -1,5 +1,5 @@
 from decimal import Decimal
-import uuid
+import hashlib
 
 from .schema import CanonicalTransaction
 from .operation import AccountingOperation, OperationType
@@ -50,9 +50,14 @@ class CompensationEngine:
             "tax_amount": float(tax_reduction)
         }
 
-        # 4. Generate Immutable Operation
+        # 4. Generate Deterministic Operation ID
+        # CRITICAL: Both replicas must derive the exact same ID for the same semantic delta.
+        # F(Delta) = F(Delta) regardless of which replica discovers the discrepancy first.
+        deterministic_seed = f"{transaction.transaction_id}|{line_id}|{float(quantity_rejected)}|ITEM_REJECTED|{parent_operation_id}"
+        deterministic_id = f"OP-COMP-{hashlib.sha256(deterministic_seed.encode()).hexdigest()[:8].upper()}"
+
         return AccountingOperation(
-            operation_id=f"OP-COMP-{uuid.uuid4().hex[:8].upper()}",
+            operation_id=deterministic_id,
             transaction_id=transaction.transaction_id,
             replica_id=replica_id,
             operation_type=OperationType.ITEM_REJECTED,

@@ -44,6 +44,7 @@ class CrossLedgerCommitment:
         a single, non-repudiable hash.
         """
         components = [
+            self.transaction_id,
             self.canonical_tx_hash,
             self.operation_state_root,
             self.seller_identity,

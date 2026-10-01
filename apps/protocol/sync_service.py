@@ -28,13 +28,14 @@ class SyncService:
         # 2. Reconstruct Client CRDT from incoming payload
         client_crdt = DE_CRDT(client_replica_id)
         for op_dict in client_operations:
+            # Work on a copy to avoid mutating the caller's data
+            op_copy = {**op_dict}
             # Rehydrate string enums back to OperationType if necessary
-            if isinstance(op_dict.get('operation_type'), str):
-                op_dict['operation_type'] = OperationType(op_dict['operation_type'])
+            if isinstance(op_copy.get('operation_type'), str):
+                op_copy['operation_type'] = OperationType(op_copy['operation_type'])
                 
-            
-            op_dict.pop('payload_hash', None)
-            op = AccountingOperation(**op_dict)
+            op_copy.pop('payload_hash', None)
+            op = AccountingOperation(**op_copy)
             client_crdt.apply_operation(op)
 
         # 3. Deterministic CRDT Merge

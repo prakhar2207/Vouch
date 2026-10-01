@@ -32,10 +32,11 @@ class DE_CRDT:
 
     def _causal_sort(self) -> List[AccountingOperation]:
         """
-        Sorts operations topologically.
-        (Simplified to logical_timestamp for Phase 4)
+        Sorts operations topologically with deterministic tiebreaking.
+        Two operations with the same logical_timestamp from different replicas
+        are tiebroken by operation_id to guarantee Merge(A,B) == Merge(B,A).
         """
-        return sorted(self.operations.values(), key=lambda x: x.logical_timestamp)
+        return sorted(self.operations.values(), key=lambda x: (x.logical_timestamp, x.operation_id))
 
     def evaluate_state(self) -> Dict[str, Any]:
         """
