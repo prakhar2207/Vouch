@@ -310,15 +310,22 @@ class CorsAndSyncSprintTestCase(TestCase):
             created_by=self.user_a
         )
 
-        # Anonymous client (no authentication)
+        # Anonymous client without token is rejected with 403 Forbidden
         anon_client = APIClient()
-        response = anon_client.get(f'/api/v1/accounting/vouchers/public/{sales_voucher.id}/')
+        unauth_resp = anon_client.get(f'/api/v1/accounting/vouchers/public/{sales_voucher.id}/')
+        self.assertEqual(unauth_resp.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Anonymous client with valid secure claim token succeeds
+        from apps.accounting.services.invoice_notification_service import InvoiceNotificationService
+        token = InvoiceNotificationService.generate_claim_token(sales_voucher)
+        response = anon_client.get(f'/api/v1/accounting/vouchers/public/{sales_voucher.id}/?token={token}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data.get('success'))
         data = response.data.get('data')
         self.assertEqual(data['voucher_number'], 'INV-TEST-001')
         self.assertEqual(data['company']['name'], 'Vouch Apex Technologies')
         self.assertEqual(data['buyer_details']['buyer_name'], 'Alpha Retailers Mumbai')
+
 
     def test_public_voucher_detail_rejects_non_sales_vouchers(self):
         """Public endpoint strictly rejects non-sales vouchers (e.g. PURCHASE, PAYMENT) with 404."""

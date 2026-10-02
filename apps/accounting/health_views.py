@@ -94,3 +94,60 @@ class FindingFixExecuteAPIView(APIView):
             return Response({"error": str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"error": f"Failed to apply fix: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class FindingRejectAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, *args, **kwargs):
+        """
+        Accountant rejects an AI suggestion with an optional reason.
+        """
+        company = get_authorized_company(request)
+        finding = get_object_or_404(AccountingFinding, id=pk, company=company)
+        reason = request.data.get('reason', '')
+        try:
+            res = FindingFixService.reject_finding(finding, user=request.user, reason=reason)
+            return Response(res, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            return Response({"error": str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": f"Failed to reject finding: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class FindingEditAndExecuteAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, *args, **kwargs):
+        """
+        Accountant overrides suggested parameters and executes the fix.
+        """
+        company = get_authorized_company(request)
+        finding = get_object_or_404(AccountingFinding, id=pk, company=company)
+        override_params = request.data.get('override_params', {})
+        try:
+            res = FindingFixService.edit_and_execute_fix(finding, user=request.user, override_params=override_params)
+            return Response(res, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            return Response({"error": str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": f"Failed to edit and apply fix: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class FindingReverseAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, *args, **kwargs):
+        """
+        Accountant reverses a previously applied AI fix, cancelling correction vouchers.
+        """
+        company = get_authorized_company(request)
+        finding = get_object_or_404(AccountingFinding, id=pk, company=company)
+        try:
+            res = FindingFixService.reverse_fix(finding, user=request.user)
+            return Response(res, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            return Response({"error": str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": f"Failed to reverse fix: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+

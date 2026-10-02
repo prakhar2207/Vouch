@@ -31,7 +31,8 @@ def get_company_id(instance):
 @receiver(post_save, sender=Ledger)
 @receiver(post_save, sender=Product)
 def emit_sync_event_on_save(sender, instance, created, **kwargs):
-    # Ignore specific models or bulk operations if needed
+    if kwargs.get('raw'):
+        return
     company_id = get_company_id(instance)
     operation = 'CREATE' if created else 'UPDATE'
     log_sync_event(company_id, sender.__name__.upper(), instance.id, operation)

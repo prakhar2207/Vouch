@@ -109,6 +109,10 @@ urlpatterns = [
     path('health/diagnose-balance/', apps.accounting.health_views.DiagnoseBalanceAPIView.as_view(), name='diagnose_balance'),
     path('health/findings/<uuid:pk>/preview/', apps.accounting.health_views.FindingFixPreviewAPIView.as_view(), name='finding_fix_preview'),
     path('health/findings/<uuid:pk>/fix/', apps.accounting.health_views.FindingFixExecuteAPIView.as_view(), name='finding_fix_execute'),
+    path('health/findings/<uuid:pk>/reject/', apps.accounting.health_views.FindingRejectAPIView.as_view(), name='finding_reject'),
+    path('health/findings/<uuid:pk>/edit/', apps.accounting.health_views.FindingEditAndExecuteAPIView.as_view(), name='finding_edit_execute'),
+    path('health/findings/<uuid:pk>/reverse/', apps.accounting.health_views.FindingReverseAPIView.as_view(), name='finding_reverse'),
+
 
     # Offline-First Batch Sync (Accounting Namespace)
     path('sync/bootstrap/', apps.accounting.sync_views.SyncBootstrapAPIView.as_view(), name='accounting_sync_bootstrap'),

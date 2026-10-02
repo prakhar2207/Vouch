@@ -395,7 +395,12 @@ class FindingFixService:
             finding.is_resolved = True
             finding.resolved_at = timezone.now()
             finding.resolved_by = user
-            finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
+            if finding.evidence is None:
+                finding.evidence = {}
+            finding.evidence['created_voucher_id'] = str(new_voucher.id)
+            finding.evidence['reversal_voucher_id'] = str(rev_vch.id)
+            finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by', 'evidence'])
+
 
             AuditService.log_action(
                 company=finding.company,
@@ -751,3 +756,97 @@ class FindingFixService:
 
         else:
             raise ValidationError(f"Unsupported fix action '{fix_action}'.")
+
+    @classmethod
+    @transaction.atomic
+    def reject_finding(cls, finding: AccountingFinding, user=None, reason: str = "") -> Dict[str, Any]:
+        """
+        Accountant rejects the AI finding suggestion.
+        Marks finding resolved with explicit rejection metadata so the AI does not re-suggest it.
+        """
+        if finding.is_resolved:
+            raise ValidationError("This finding is already resolved.")
+
+        evidence = finding.evidence or {}
+        evidence["rejection_status"] = "REJECTED"
+        evidence["rejection_reason"] = reason or "Rejected by user."
+        evidence["rejected_by"] = user.email if user else "SYSTEM"
+        evidence["rejected_at"] = timezone.now().isoformat()
+
+        finding.evidence = evidence
+        finding.is_resolved = True
+        finding.resolved_at = timezone.now()
+        finding.resolved_by = user
+        finding.save(update_fields=['evidence', 'is_resolved', 'resolved_at', 'resolved_by'])
+
+        AuditService.log_action(
+            company=finding.company,
+            user=user,
+            action='REJECT_AI_SUGGESTION',
+            model_name='AccountingFinding',
+            record_id=finding.id,
+            changes={"rejection_reason": reason}
+        )
+
+        return {
+            "status": "REJECTED",
+            "message": f"AI suggestion '{finding.title}' was rejected.",
+            "finding_id": str(finding.id),
+            "reason": reason
+        }
+
+    @classmethod
+    @transaction.atomic
+    def edit_and_execute_fix(cls, finding: AccountingFinding, user=None, override_params: dict = None) -> Dict[str, Any]:
+        """
+        Accountant edits proposed parameters (e.g. party, amount) and then approves the fix.
+        """
+        if finding.is_resolved:
+            raise ValidationError("This finding is already resolved.")
+
+        if override_params:
+            evidence = finding.evidence or {}
+            evidence.update(override_params)
+            evidence["accountant_edited"] = True
+            finding.evidence = evidence
+            finding.save(update_fields=['evidence'])
+
+        return cls.execute_fix(finding, user=user)
+
+    @classmethod
+    @transaction.atomic
+    def reverse_fix(cls, finding: AccountingFinding, user=None) -> Dict[str, Any]:
+        """
+        Accountant reverses an applied fix.
+        Cancels/reverses the correction voucher and restores finding to unreviewed status.
+        """
+        if not finding.is_resolved:
+            raise ValidationError("Cannot reverse a finding that has not been resolved.")
+
+        evidence = finding.evidence or {}
+        correction_vch_id = evidence.get('created_voucher_id') or evidence.get('correction_voucher_id')
+        if correction_vch_id:
+            corr_vch = Voucher.objects.filter(id=correction_vch_id, company=finding.company).first()
+            if corr_vch and corr_vch.status == 'POSTED':
+                VoucherService.cancel_voucher(corr_vch, user=user)
+
+        finding.is_resolved = False
+        finding.resolved_at = None
+        finding.resolved_by = None
+        finding.evidence["reversed_at"] = timezone.now().isoformat()
+        finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by', 'evidence'])
+
+        AuditService.log_action(
+            company=finding.company,
+            user=user,
+            action='REVERSE_AI_FIX',
+            model_name='AccountingFinding',
+            record_id=finding.id,
+            changes={"action": "REVERSED"}
+        )
+
+        return {
+            "status": "REVERSED",
+            "message": f"Successfully reversed fix for '{finding.title}'.",
+            "finding_id": str(finding.id)
+        }

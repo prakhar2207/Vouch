@@ -33,6 +33,10 @@ if DEBUG:
     ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['*'])
 else:
     default_hosts = [
+        'api.vouch.in',
+        'app.vouch.in',
+        'vouch.in',
+        'www.vouch.in',
         'vouch-api-752s.onrender.com',
         'localhost',
         '127.0.0.1',
@@ -40,7 +44,11 @@ else:
     render_hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
     if render_hostname and render_hostname not in default_hosts:
         default_hosts.append(render_hostname)
-    ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=default_hosts)
+    configured_hosts = env.list('ALLOWED_HOSTS', default=default_hosts)
+    # Security Invariant: Never permit wildcard '*' in production
+    ALLOWED_HOSTS = [h.strip() for h in configured_hosts if h.strip() and h.strip() != '*']
+    if not ALLOWED_HOSTS:
+        raise ValueError("Production deployment error: ALLOWED_HOSTS cannot be empty or contain wildcard '*' when DEBUG=False.")
 
 # Application definition
 INSTALLED_APPS = [
@@ -101,6 +109,7 @@ if 'test' in sys.argv:
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
+    'apps.common.logging.RequestCorrelationMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -243,6 +252,9 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://127\.0\.0\.1:[0-9]+$",
 ]
 
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOW_CREDENTIALS = True
+
 # Parse and normalize CORS origins (strip whitespace and trailing slashes)
 _raw_cors_origins = env.list('CORS_ALLOWED_ORIGINS', default=[
     'https://vouch-pi-one.vercel.app',
@@ -342,3 +354,57 @@ FRONTEND_URL = env('FRONTEND_URL', default='https://vouch-pi-one.vercel.app' if 
 VAPID_PUBLIC_KEY = os.environ.get('VAPID_PUBLIC_KEY', '')
 VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', '')
 VAPID_SUBJECT = os.environ.get('VAPID_SUBJECT', 'mailto:admin@vouchapp.in')
+
+# Production Structured Observability & PII Masking
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'filters': {
+        'pii_masking': {
+            '()': 'apps.common.logging.PIIMaskingFilter',
+        },
+    },
+    'formatters': {
+        'structured_json': {
+            '()': 'apps.common.logging.StructuredJSONFormatter',
+        },
+        'standard': {
+            'format': '%(asctime)s [%(levelname)s] [%(name)s] %(message)s'
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'structured_json' if not DEBUG else 'standard',
+            'filters': ['pii_masking'],
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'vouch': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'vouch.observability': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'vouch.access': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+    },
+}
+

@@ -50,7 +50,13 @@ class DatabaseBackupService:
         return f.decrypt(encrypted_bytes)
 
     @classmethod
-    def perform_backup(cls, upload_s3: bool = True, encrypt: bool = True, output_dir: str = None) -> dict:
+    def perform_backup(
+        cls,
+        upload_s3: bool = True,
+        encrypt: bool = True,
+        output_dir: str = None,
+        company_id: str = None
+    ) -> dict:
         """
         Executes a complete, consistent database backup.
         Returns dictionary with backup metadata.
@@ -76,7 +82,7 @@ class DatabaseBackupService:
         try:
             # 2. Dump Database
             if 'postgresql' in engine:
-                cls._dump_postgresql(db_settings, raw_dump_path)
+                cls._dump_postgresql(db_settings, raw_dump_path, company_id=company_id)
             elif 'sqlite' in engine:
                 cls._dump_sqlite(db_name, raw_dump_path)
             else:
@@ -164,10 +170,10 @@ class DatabaseBackupService:
             }
 
     @classmethod
-    def _dump_postgresql(cls, db_settings: dict, output_file: Path):
+    def _dump_postgresql(cls, db_settings: dict, output_file: Path, company_id: str = None):
         """Dumps PostgreSQL database via pg_dump, or falls back to Django serialized dump if pg_dump is not in PATH."""
         pg_dump_bin = shutil.which('pg_dump')
-        if pg_dump_bin:
+        if pg_dump_bin and not company_id:
             host = db_settings.get('HOST', 'localhost')
             port = str(db_settings.get('PORT', '5432'))
             user = db_settings.get('USER', 'postgres')
@@ -193,18 +199,57 @@ class DatabaseBackupService:
             if res.returncode != 0:
                 raise RuntimeError(f"pg_dump failed (code {res.returncode}): {res.stderr}")
         else:
-            logger.info("[Backup] pg_dump not found in system PATH. Using resilient chunked batch serializer.")
+            logger.info("[Backup] Using resilient chunked batch serializer.")
             from django.apps import apps
             from django.core.serializers import serialize
+            MODEL_DEPENDENCY_ORDER = [
+                'company', 'user', 'usercompany', 'warehouse',
+                'productcategory', 'product', 'ledgergroup', 'ledger',
+                'financialyear', 'vouchersequence', 'voucher',
+                'voucheritem', 'ledgerentry', 'paymentallocation',
+                'inventoryentry', 'protocoltransaction',
+                'protocoloperation', 'cryptographiccommitment',
+                'entitymapping'
+            ]
+            all_models = [
+                m for m in apps.get_models()
+                if m._meta.app_label not in ['contenttypes', 'sessions', 'admin', 'auth', 'token_blacklist']
+                and m._meta.model_name not in ['syncevent', 'auditlog', 'permission']
+                and hasattr(m, 'objects')
+            ]
+            def model_priority(m):
+                name = m._meta.model_name.lower()
+                try:
+                    return MODEL_DEPENDENCY_ORDER.index(name)
+                except ValueError:
+                    return 999
+            all_models.sort(key=model_priority)
+
             with open(output_file, 'w', encoding='utf-8') as f:
                 f.write('[\n')
                 first = True
-                for model in apps.get_models():
-                    if model._meta.app_label in ['contenttypes', 'sessions', 'admin']:
-                        continue
-                    count = model.objects.count()
+                for model in all_models:
+                    qs = model.objects.all()
+                    if company_id:
+                        if model._meta.model_name == 'company':
+                            qs = qs.filter(id=company_id)
+                        elif any(f.name == 'company' for f in model._meta.fields):
+                            qs = qs.filter(company_id=company_id)
+                        elif model._meta.model_name == 'protocoltransaction':
+                            qs = qs.filter(source_company_id=str(company_id))
+                        elif model._meta.model_name in ['protocoloperation', 'cryptographiccommitment']:
+                            qs = qs.filter(transaction__source_company_id=str(company_id))
+                        elif model._meta.model_name == 'voucheritem':
+                            qs = qs.filter(voucher__company_id=company_id)
+                        elif model._meta.model_name == 'user':
+                            qs = qs.filter(companies__company_id=company_id)
+                            if not qs.exists():
+                                qs = model.objects.none()
+                        else:
+                            continue
+                    count = qs.count()
                     for i in range(0, count, 500):
-                        batch = list(model.objects.all()[i:i+500])
+                        batch = list(qs[i:i+500])
                         if not batch:
                             continue
                         serialized = serialize('json', batch)
@@ -360,15 +405,33 @@ class DatabaseBackupService:
                 for obj in deserialized_objects:
                     record_count += 1
             else:
-                with transaction.atomic(using=target_db_alias):
-                    for deserialized_obj in deserialized_objects:
+                pending = list(deserialized_objects)
+                last_pending_count = -1
+                last_errors = []
+                for pass_num in range(4):
+                    if not pending:
+                        break
+                    next_pending = []
+                    last_errors = []
+                    for deserialized_obj in pending:
                         try:
-                            deserialized_obj.save(using=target_db_alias)
+                            with transaction.atomic(using=target_db_alias):
+                                deserialized_obj.save(using=target_db_alias)
                             record_count += 1
                         except Exception as e:
-                            error_count += 1
-                            if len(errors) < 10:
-                                errors.append(f"{deserialized_obj.object}: {str(e)}")
+                            next_pending.append(deserialized_obj)
+                            last_errors.append((deserialized_obj, e))
+                    if len(next_pending) == len(pending):
+                        # No further records could be resolved
+                        break
+                    pending = next_pending
+
+                for deserialized_obj, err in last_errors:
+                    error_count += 1
+                    if len(errors) < 10:
+                        model_name = deserialized_obj.object.__class__.__name__
+                        pk = getattr(deserialized_obj.object, 'pk', '?')
+                        errors.append(f"{model_name} ({pk}): {str(err)}")
 
             elapsed = round(time.time() - start_time, 2)
             cls._log_audit_event(
