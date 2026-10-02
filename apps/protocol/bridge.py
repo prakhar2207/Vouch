@@ -469,7 +469,9 @@ class LedgerBridge:
                         try:
                             PaymentAllocationService.auto_allocate_voucher(pay_voucher, preferred_invoice_id=str(base_voucher.id))
                         except Exception as e:
-                            logger.warning(f"Payment allocation warning: {e}")
+                            logger.error(f"Payment allocation failure for voucher {pay_voucher.voucher_number}: {e}", exc_info=True)
+                            pay_voucher.notes = f"ALLOCATION_PENDING: Auto-allocation failed ({str(e)[:150]}). Manual reconciliation required."
+                            pay_voucher.save(update_fields=['notes'])
                     posted_vouchers.append(pay_voucher)
 
         posted_numbers = [v.voucher_number for v in posted_vouchers]
@@ -485,7 +487,11 @@ class LedgerBridge:
                 status="SUCCESS"
             )
         except Exception as e:
-            logger.warning(f"Could not persist ProtocolBridgeExecution audit: {e}")
+            logger.error(f"FATAL: ProtocolBridgeExecution persistence failed for {canonical_tx.transaction_id}: {e}", exc_info=True)
+            raise LedgerBridgeError(
+                f"Protocol bridge atomicity violation: Failed to persist durable ProtocolBridgeExecution record ({e}). "
+                f"Rolling back complete converged transaction to prevent inconsistent distributed state."
+            ) from e
 
         return {
             "status": "BRIDGE_SUCCESS",

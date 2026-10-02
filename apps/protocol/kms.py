@@ -189,10 +189,23 @@ def get_kms() -> BaseKMS:
     Returns singleton KMS instance configured for the active deployment environment.
     - VOUCH_KMS_PROVIDER='LOCAL' (default in dev/test): LocalSoftwareKMS
     - VOUCH_KMS_PROVIDER in ['AWS', 'GCP', 'AZURE', 'PKCS11']: CloudKMSProvider (FAIL-CLOSED)
+    
+    Production Security Gate:
+    If settings.DEBUG is False and not running test suite, VOUCH_KMS_PROVIDER cannot be 'LOCAL'.
     """
     global _kms_instance
     if _kms_instance is None:
+        import sys
+        from django.conf import settings
         provider = os.environ.get("VOUCH_KMS_PROVIDER", "LOCAL").strip().upper()
+
+        is_testing = 'test' in sys.argv or getattr(settings, 'TESTING', False)
+        if not getattr(settings, 'DEBUG', True) and provider == "LOCAL" and not is_testing:
+            raise KMSSigningError(
+                "Production Security Gate: VOUCH_KMS_PROVIDER cannot be 'LOCAL' when DEBUG=False. "
+                "Hardware HSM / Cloud KMS (AWS, GCP, AZURE, PKCS11) is strictly required for cryptographic non-repudiation."
+            )
+
         if provider == "LOCAL":
             _kms_instance = LocalSoftwareKMS()
         else:

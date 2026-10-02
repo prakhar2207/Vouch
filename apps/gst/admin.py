@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import CompanyGSTConfig, EWayBillRecord, EInvoiceRecord, GSTTaxpayerCache
+from .models import CompanyGSTConfig, EWayBillRecord, EInvoiceRecord, GSTTaxpayerCache, GSTFilingRecord
 
 @admin.register(CompanyGSTConfig)
 class CompanyGSTConfigAdmin(admin.ModelAdmin):
@@ -22,3 +22,9 @@ class EInvoiceRecordAdmin(admin.ModelAdmin):
 class GSTTaxpayerCacheAdmin(admin.ModelAdmin):
     list_display = ('gstin', 'trade_name', 'legal_name', 'state_name', 'status', 'taxpayer_type', 'updated_at')
     search_fields = ('gstin', 'legal_name', 'trade_name')
+
+@admin.register(GSTFilingRecord)
+class GSTFilingRecordAdmin(admin.ModelAdmin):
+    list_display = ('company', 'return_type', 'return_period', 'status', 'arn', 'total_taxable_value', 'total_tax_amount', 'submitted_at')
+    list_filter = ('return_type', 'status', 'filing_mode')
+    search_fields = ('company__name', 'arn', 'return_period')

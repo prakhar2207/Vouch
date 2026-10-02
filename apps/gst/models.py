@@ -3,6 +3,7 @@ from django.db import models
 from django.conf import settings
 from apps.companies.models import Company
 from apps.accounting.models import Voucher
+from apps.gst.encryption import EncryptedTextField
 
 
 
@@ -20,20 +21,20 @@ class CompanyGSTConfig(models.Model):
     provider = models.CharField(max_length=30, choices=PROVIDER_CHOICES, default='MOCK')
     is_sandbox = models.BooleanField(default=True)
     
-    # API Gateway Credentials
-    api_key = models.CharField(max_length=255, blank=True, default='')
-    api_secret = models.CharField(max_length=255, blank=True, default='')
+    # API Gateway Credentials (Fernet AES-256 Encrypted at Rest)
+    api_key = EncryptedTextField(blank=True, default='')
+    api_secret = EncryptedTextField(blank=True, default='')
     
-    # E-Way Bill NIC Credentials
+    # E-Way Bill NIC Credentials (Fernet AES-256 Encrypted at Rest)
     eway_username = models.CharField(max_length=100, blank=True, default='')
-    eway_password = models.CharField(max_length=255, blank=True, default='')
+    eway_password = EncryptedTextField(blank=True, default='')
     
-    # E-Invoice NIC / IRP Credentials
+    # E-Invoice NIC / IRP Credentials (Fernet AES-256 Encrypted at Rest)
     einvoice_username = models.CharField(max_length=100, blank=True, default='')
-    einvoice_password = models.CharField(max_length=255, blank=True, default='')
+    einvoice_password = EncryptedTextField(blank=True, default='')
     
-    # Session / Bearer Token Cache
-    auth_token = models.TextField(blank=True, default='')
+    # Session / Bearer Token Cache (Fernet AES-256 Encrypted at Rest)
+    auth_token = EncryptedTextField(blank=True, default='')
     token_expires_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -232,4 +233,59 @@ class GSTR2BRecord(models.Model):
 
     def __str__(self):
         return f"{self.supplier_gstin} - {self.invoice_number} (₹{self.invoice_value}) - {self.match_status}"
+
+
+class GSTFilingRecord(models.Model):
+    """
+    Authoritative persistence for GST Return filings, portal submissions, and offline exports.
+    Tracks state machine from DRAFT through SUBMITTED, FILED, or RECONCILIATION_REQUIRED.
+    """
+    STATUS_CHOICES = (
+        ('DRAFT', 'Draft'),
+        ('VALIDATING', 'Validating'),
+        ('SUBMITTING', 'Submitting to Portal'),
+        ('SUBMITTED', 'Submitted'),
+        ('FILED', 'Filed'),
+        ('FAILED', 'Filing Failed'),
+        ('RECONCILIATION_REQUIRED', 'Reconciliation Required'),
+    )
+
+    RETURN_TYPE_CHOICES = (
+        ('GSTR1', 'GSTR-1 (Outward Supplies)'),
+        ('GSTR3B', 'GSTR-3B (Monthly Summary Return)'),
+        ('GSTR9', 'GSTR-9 (Annual Return)'),
+        ('CMP08', 'CMP-08 (Composition Scheme)'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gst_filings')
+    return_type = models.CharField(max_length=20, choices=RETURN_TYPE_CHOICES, default='GSTR1')
+    return_period = models.CharField(max_length=20, db_index=True)  # e.g., "082026", "2026-08", "2025-26"
+    financial_year = models.CharField(max_length=15, blank=True, default='')
+
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='FILED')
+    arn = models.CharField(max_length=50, blank=True, default='', db_index=True)  # Application Reference Number
+    provider_reference = models.CharField(max_length=100, blank=True, default='')
+    payload_hash = models.CharField(max_length=64, blank=True, default='')
+
+    total_taxable_value = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    total_tax_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    invoices_count = models.PositiveIntegerField(default=0)
+
+    filing_mode = models.CharField(max_length=30, default='DIRECT_PORTAL')  # DIRECT_PORTAL, OFFLINE_JSON, MANUAL
+    response_snapshot = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True, default='')
+
+    submitted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-submitted_at']
+        indexes = [
+            models.Index(fields=['company', 'return_type', 'return_period']),
+        ]
+
+    def __str__(self):
+        return f"{self.company.name} - {self.return_type} ({self.return_period}) [{self.status}] ARN: {self.arn or 'N/A'}"
 

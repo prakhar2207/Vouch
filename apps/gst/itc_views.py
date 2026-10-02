@@ -7,30 +7,16 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
+from rest_framework.exceptions import PermissionDenied, NotFound
+
 from apps.companies.models import Company
 from apps.accounting.models import Voucher
+from apps.accounts.permissions import get_authorized_company, user_has_company_roles
 from apps.gst.models import GSTR2BImport, GSTR2BRecord
 from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
 from apps.gst.services.itc_notification_service import ITCNotificationService
 
 logger = logging.getLogger(__name__)
-
-
-def get_requested_company(request) -> Company:
-    """Helper to extract active company from request headers or query params."""
-    company_id = (
-        request.headers.get('X-Company-ID')
-        or request.headers.get('company-id')
-        or request.query_params.get('company_id')
-        or request.data.get('company_id')
-    )
-    if not company_id:
-        # Fall back to user's first accessible company
-        company = request.user.companies.first()
-        if not company:
-            raise ValueError("No company found for this user.")
-        return company
-    return Company.objects.get(id=company_id)
 
 
 class GSTR2BUploadView(APIView):
@@ -42,10 +28,10 @@ class GSTR2BUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request, *args, **kwargs):
-        try:
-            company = get_requested_company(request)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        company = get_authorized_company(request)
+
+        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']):
+            return Response({'error': 'Permission denied: Insufficient role to upload GSTR-2B.'}, status=status.HTTP_403_FORBIDDEN)
 
         file_obj = request.FILES.get('file')
         return_period = request.data.get('return_period', '').strip()
@@ -125,10 +111,7 @@ class ITCReconciliationListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        try:
-            company = get_requested_company(request)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        company = get_authorized_company(request)
 
         filter_status = request.query_params.get('status', 'ALL').upper()
         return_period = request.query_params.get('return_period')
@@ -264,8 +247,12 @@ class ITCSmartPaymentHoldView(APIView):
         if not voucher_id:
             return Response({'error': 'voucher_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
+        company = get_authorized_company(request)
+
+        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']):
+            return Response({'error': 'Permission denied: Insufficient role to modify payment hold.'}, status=status.HTTP_403_FORBIDDEN)
+
         try:
-            company = get_requested_company(request)
             voucher = Voucher.objects.defer('attachment_data', 'attachment_mime').get(id=voucher_id, company=company)
         except Voucher.DoesNotExist:
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -299,8 +286,8 @@ class ITCVendorNoticeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, voucher_id, *args, **kwargs):
+        company = get_authorized_company(request)
         try:
-            company = get_requested_company(request)
             voucher = Voucher.objects.select_related('party_ledger').prefetch_related('items').defer('attachment_data', 'attachment_mime').get(id=voucher_id, company=company)
         except Voucher.DoesNotExist:
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -318,10 +305,7 @@ class ITCSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        try:
-            company = get_requested_company(request)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        company = get_authorized_company(request)
 
         period = request.query_params.get('return_period')
         stats = ITCReconciliationService.get_summary_stats(company, return_period=period)
@@ -340,10 +324,10 @@ class ITCRunReconciliationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        try:
-            company = get_requested_company(request)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        company = get_authorized_company(request)
+
+        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']):
+            return Response({'error': 'Permission denied: Insufficient role to run reconciliation.'}, status=status.HTTP_403_FORBIDDEN)
 
         period = request.data.get('return_period')
         stats = ITCReconciliationService.reconcile_period(company, return_period=period)

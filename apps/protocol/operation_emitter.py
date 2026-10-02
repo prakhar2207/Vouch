@@ -125,6 +125,15 @@ class ProtocolOperationEmitter:
                 tenant_id=company_id
             )
 
+            # Cryptographically sign the server-authored operation via KMS
+            from .kms import get_kms
+            kms = get_kms()
+            try:
+                sig = kms.sign(key_id=acct_op.replica_id, message=acct_op.payload_hash.encode('utf-8'))
+            except Exception as e:
+                logger.warning(f"KMS signing warning for op {op_id}: {e}")
+                sig = None
+
             db_op = ProtocolOperation.objects.create(
                 operation_id=acct_op.operation_id,
                 transaction=ptx,
@@ -133,7 +142,8 @@ class ProtocolOperationEmitter:
                 payload=dict(acct_op.payload),
                 logical_timestamp=acct_op.logical_timestamp,
                 parents=list(acct_op.parents),
-                payload_hash=acct_op.payload_hash
+                payload_hash=acct_op.payload_hash,
+                signature=sig
             )
 
             logger.info(f"Emitted ProtocolOperation {op_id} for Voucher {voucher.voucher_number} ({action})")

@@ -231,6 +231,35 @@ class GSTPortalService:
             except Exception as e:
                 logger.exception(f"Direct live GSTR-1 upload failed: {e}")
 
+        # Persist durable filing record in database
+        try:
+            from apps.gst.models import GSTFilingRecord
+            from decimal import Decimal
+            period_val = gstr1_data.get("fp", "") or datetime.now().strftime("%m%Y")
+            GSTFilingRecord.objects.update_or_create(
+                company=company,
+                return_type='GSTR1',
+                return_period=period_val,
+                defaults={
+                    'status': 'SUBMITTED',
+                    'arn': ref_id,
+                    'provider_reference': ref_id,
+                    'filing_mode': 'DIRECT_PORTAL',
+                    'total_taxable_value': Decimal(str(round(total_taxable, 2))),
+                    'total_tax_amount': Decimal(str(round(total_tax, 2))),
+                    'invoices_count': total_b2b_invs + len(b2cs_list),
+                    'response_snapshot': {
+                        "reference_id": ref_id,
+                        "b2b_count": total_b2b_invs,
+                        "b2cs_count": len(b2cs_list),
+                        "cdnr_count": total_cdnr_notes,
+                        "hsn_count": len(hsn_list)
+                    }
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Could not persist GSTFilingRecord for direct upload: {e}")
+
         # Sandbox Environment Response
         return {
             "success": True,

@@ -189,3 +189,144 @@ class GSTIntegrationTests(TestCase):
         self.assertEqual(len(gstr1["b2b"]), 1)
         self.assertEqual(gstr1["b2b"][0]["ctin"], "24AABCC1234D1Z8")
         self.assertEqual(gstr1["b2b"][0]["inv"][0]["inum"], "INV/26-27/0051")
+
+    def test_05_gst_credential_envelope_encryption(self):
+        """Test Fernet AES-256 envelope encryption at rest for GST credentials."""
+        from apps.gst.encryption import ENCRYPTION_PREFIX, encrypt_gst_credential, decrypt_gst_credential
+        from django.db import connection
+
+        raw_secret = "super_secret_portal_key_xyz_9988"
+        raw_password = "nic_portal_password_secure!@#"
+
+        config, _ = CompanyGSTConfig.objects.get_or_create(company=self.company)
+        config.api_secret = raw_secret
+        config.eway_password = raw_password
+        config.save()
+
+        # 1. Verify that raw database column contains ciphertext starting with enc:v1:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT api_secret, eway_password FROM gst_companygstconfig WHERE id = %s OR id = %s", [str(config.id), config.id.hex])
+            row = cursor.fetchone()
+            self.assertIsNotNone(row)
+            db_secret, db_password = row[0], row[1]
+
+        self.assertTrue(db_secret.startswith(ENCRYPTION_PREFIX))
+        self.assertTrue(db_password.startswith(ENCRYPTION_PREFIX))
+        self.assertNotIn(raw_secret, db_secret)
+        self.assertNotIn(raw_password, db_password)
+
+        # 2. Verify that Python ORM transparently decrypts the ciphertext
+        config.refresh_from_db()
+        self.assertEqual(config.api_secret, raw_secret)
+        self.assertEqual(config.eway_password, raw_password)
+
+        # 3. Verify backward compatibility: legacy unencrypted values are returned as-is
+        self.assertEqual(decrypt_gst_credential("legacy_plaintext"), "legacy_plaintext")
+
+    def test_06_cross_tenant_itc_authorization_barrier(self):
+        """Test strict cross-tenant isolation on ITC endpoints: unauthorized user cannot access Company B."""
+        from apps.companies.models import UserCompany
+        from rest_framework.test import APIClient
+
+        # Setup Company A membership for self.user
+        UserCompany.objects.create(user=self.user, company=self.company, role='ADMIN')
+
+        # Create separate victim Company B with separate user
+        attacker_user = User.objects.create_user(email='attacker@example.com', password='attackerpass123')
+        victim_company = Company.objects.create(
+            name="Victim Enterprises Pvt Ltd",
+            gstin="27AAACV9999Z1Z5",
+            state_code="27",
+            state_name="Maharashtra"
+        )
+        # Attacker is ONLY a member of Company A
+        UserCompany.objects.create(user=attacker_user, company=self.company, role='ADMIN')
+
+        client = APIClient()
+        client.force_authenticate(user=attacker_user)
+
+        # Attacker attempts to upload GSTR-2B for Victim Company B
+        res_upload = client.post(
+            '/api/v1/gst/itc/upload-2b/',
+            data={'json_data': '{"b2b": []}', 'return_period': '082026'},
+            HTTP_X_COMPANY_ID=str(victim_company.id),
+            format='json'
+        )
+        self.assertEqual(res_upload.status_code, 403)
+
+        # Attacker attempts to read ITC list of Victim Company B
+        res_list = client.get(
+            '/api/v1/gst/itc/reconciliation/',
+            HTTP_X_COMPANY_ID=str(victim_company.id)
+        )
+        self.assertEqual(res_list.status_code, 403)
+
+        # Attacker attempts to apply Smart Payment Hold on Victim Company B
+        res_hold = client.post(
+            '/api/v1/gst/itc/hold-gst/',
+            data={'voucher_id': '00000000-0000-0000-0000-000000000000', 'held_amount': 5000},
+            HTTP_X_COMPANY_ID=str(victim_company.id),
+            format='json'
+        )
+        self.assertEqual(res_hold.status_code, 403)
+
+    def test_07_gst_filing_record_durable_persistence(self):
+        """Test that marking a GST return as filed authoritatively creates a durable GSTFilingRecord."""
+        from apps.companies.models import UserCompany
+        from apps.gst.models import GSTFilingRecord
+        from rest_framework.test import APIClient
+
+        UserCompany.objects.create(user=self.user, company=self.company, role='CA')
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+
+        post_res = client.post(
+            f'/api/v1/gst/returns/mark-filed/{self.company.id}/',
+            data={
+                'period': '082026',
+                'return_type': 'GSTR1',
+                'total_taxable_value': '150000.00',
+                'total_tax_amount': '27000.00'
+            },
+            format='json'
+        )
+        self.assertEqual(post_res.status_code, 200)
+        self.assertTrue(post_res.data['success'])
+        self.assertEqual(post_res.data['status'], 'FILED')
+        self.assertTrue(post_res.data['arn'].startswith('ARN-'))
+
+        # Check database persistence
+        filing = GSTFilingRecord.objects.filter(
+            company=self.company,
+            return_period='082026',
+            return_type='GSTR1'
+        ).first()
+        self.assertIsNotNone(filing)
+        self.assertEqual(filing.status, 'FILED')
+        self.assertEqual(filing.total_taxable_value, Decimal('150000.00'))
+        self.assertEqual(filing.submitted_by, self.user)
+
+        # Check GET history
+        get_res = client.get(f'/api/v1/gst/returns/mark-filed/{self.company.id}/')
+        self.assertEqual(get_res.status_code, 200)
+        self.assertEqual(len(get_res.data['filings']), 1)
+        self.assertEqual(get_res.data['filings'][0]['return_period'], '082026')
+
+    def test_08_gst_credential_rbac_protection(self):
+        """Test that VIEWER role is strictly blocked from modifying company GST credentials."""
+        from apps.companies.models import UserCompany
+        from rest_framework.test import APIClient
+
+        viewer_user = User.objects.create_user(email='viewer@example.com', password='viewerpassword123')
+        UserCompany.objects.create(user=viewer_user, company=self.company, role='VIEWER')
+
+        client = APIClient()
+        client.force_authenticate(user=viewer_user)
+
+        res = client.post(
+            f'/api/v1/gst/config/{self.company.id}/',
+            data={'api_secret': 'malicious_override_attempt'},
+            format='json'
+        )
+        self.assertEqual(res.status_code, 403)
+

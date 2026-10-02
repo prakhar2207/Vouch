@@ -8,12 +8,13 @@ from rest_framework import status
 
 from apps.companies.models import Company
 from apps.accounting.models import Voucher
-from apps.gst.models import CompanyGSTConfig, EWayBillRecord
+from apps.accounts.permissions import user_has_company_roles, get_authorized_company
+from apps.gst.models import CompanyGSTConfig, EWayBillRecord, GSTFilingRecord
 from apps.gst.services.gstin_lookup_service import GSTINLookupService
 from apps.gst.services.eway_bill_service import EWayBillService
 from apps.gst.services.gstr_report_service import GSTRReportService
 from apps.gst.services.gst_sandbox_service import GSTPortalService
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, PermissionDenied
 
 def get_company_or_404(user, company_id):
     try:
@@ -78,6 +79,9 @@ class CompanyGSTConfigAPIView(APIView):
 
     def post(self, request, company_id):
         company = get_company_or_404(request.user, company_id)
+        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER']):
+            return Response({"success": False, "error": "Permission denied: Only Company Admins and Owners can manage GST credentials."}, status=status.HTTP_403_FORBIDDEN)
+
         config, _ = CompanyGSTConfig.objects.get_or_create(company=company)
         data = request.data
 
@@ -293,19 +297,78 @@ class GSTR9AnnualSummaryAPIView(APIView):
 
 class GSTRMarkPeriodFiledAPIView(APIView):
     """
-    POST /api/v1/gst/returns/mark-filed/<uuid:company_id>/
-    Tags the period as FILED without hard-locking vouchers.
+    GET/POST /api/v1/gst/returns/mark-filed/<uuid:company_id>/
+    Durable recording and query of GST return filing state machine.
     """
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, company_id):
+    def get(self, request, company_id):
         company = get_company_or_404(request.user, company_id)
-        period = request.data.get('period', 'Current Period')
+        filings = GSTFilingRecord.objects.filter(company=company).order_by('-submitted_at')[:24]
+        return Response({
+            "success": True,
+            "filings": [{
+                "id": str(f.id),
+                "return_type": f.return_type,
+                "return_period": f.return_period,
+                "financial_year": f.financial_year,
+                "status": f.status,
+                "arn": f.arn,
+                "provider_reference": f.provider_reference,
+                "total_taxable_value": float(f.total_taxable_value),
+                "total_tax_amount": float(f.total_tax_amount),
+                "filing_mode": f.filing_mode,
+                "submitted_at": f.submitted_at.strftime('%Y-%m-%d %H:%M:%S'),
+                "submitted_by": f.submitted_by.email if f.submitted_by else None,
+            } for f in filings]
+        })
+
+    def post(self, request, company_id):
+        from decimal import Decimal
+        from django.utils import timezone
+        import hashlib
+
+        company = get_company_or_404(request.user, company_id)
+        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER', 'CA']):
+            return Response({"success": False, "error": "Permission denied: Only Admin, Owner, or CA can mark returns as filed."}, status=status.HTTP_403_FORBIDDEN)
+
+        period = request.data.get('period') or request.data.get('return_period') or 'Current Period'
+        return_type = request.data.get('return_type', 'GSTR1').upper()
+        arn = request.data.get('arn', '').strip()
+        filing_mode = request.data.get('filing_mode', 'MANUAL').upper()
+        taxable_value = Decimal(str(request.data.get('total_taxable_value', '0.00')))
+        tax_amount = Decimal(str(request.data.get('total_tax_amount', '0.00')))
+
+        if not arn:
+            ts_str = timezone.now().strftime('%Y%m%d%H%M%S')
+            h = hashlib.sha256(f"{company.id}:{period}:{ts_str}".encode()).hexdigest()[:8].upper()
+            arn = f"ARN-{company.gstin[:4] if company.gstin else 'VOUC'}-{period.replace('-', '')}-{h}"
+
+        record, _ = GSTFilingRecord.objects.update_or_create(
+            company=company,
+            return_type=return_type,
+            return_period=period,
+            defaults={
+                'status': 'FILED',
+                'arn': arn,
+                'filing_mode': filing_mode,
+                'total_taxable_value': taxable_value,
+                'total_tax_amount': tax_amount,
+                'submitted_by': request.user,
+                'response_snapshot': request.data if isinstance(request.data, dict) else {},
+            }
+        )
+
         return Response({
             "success": True,
             "message": f"GST return for period '{period}' successfully recorded as FILED.",
-            "period": period,
-            "filing_mode": "FLEXIBLE",
+            "filing_id": str(record.id),
+            "arn": record.arn,
+            "return_type": record.return_type,
+            "return_period": record.return_period,
+            "status": record.status,
+            "filing_mode": record.filing_mode,
+            "submitted_at": record.submitted_at.strftime('%Y-%m-%d %H:%M:%S'),
         })
 
 
