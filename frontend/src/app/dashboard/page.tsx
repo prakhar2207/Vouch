@@ -417,8 +417,9 @@ export default function Dashboard() {
   const momComparison = forecast?.monthly_comparison?.mom_comparison;
   const currentMonthData = forecast?.monthly_comparison?.current_month;
 
-  // Tri-partite financial calculations
-  const netWorkingCapital = (kpis.cash_and_bank || 0) + (kpis.money_to_collect || 0) - (kpis.bills_to_pay || 0);
+  // Tri-partite financial calculations (Standard GAAP NWC = Current Assets [Cash + Debtors + Stock] - Current Liabilities [Creditors])
+  const netWorkingCapital = (kpis.cash_and_bank || 0) + (kpis.money_to_collect || 0) + (kpis.total_stock_value || 0) - (kpis.bills_to_pay || 0);
+  const liquidCashGap = (kpis.cash_and_bank || 0) + (kpis.money_to_collect || 0) - (kpis.bills_to_pay || 0);
 
   // Filtered transactions for quick search and type filtering
   const filteredVouchers = vouchers.filter((v: any) => {
@@ -650,7 +651,7 @@ export default function Dashboard() {
               </div>
             </Link>
 
-            {/* 4. Net Working Capital Buffer */}
+            {/* 4. Net Working Capital (True Accounting NWC: Assets - Payables) */}
             <div className="relative bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs overflow-hidden block">
               <div className={`absolute top-0 left-0 right-0 h-1 ${
                 netWorkingCapital >= 0
@@ -668,14 +669,23 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className={`text-xl sm:text-2xl font-black font-mono tracking-tight ${
-                netWorkingCapital >= 0 ? "text-foreground" : "text-rose-600 dark:text-rose-400"
+                netWorkingCapital >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
               }`}>
-                ₹{netWorkingCapital.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                {netWorkingCapital >= 0 ? "+" : ""}₹{netWorkingCapital.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
               </div>
               <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
-                <span>(Cash + Collect - Pay)</span>
+                <span title="(Cash + Debtors + Stock - Payables)">(Assets − Payables)</span>
                 <span className={`font-semibold ${netWorkingCapital >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
-                  {netWorkingCapital >= 0 ? "Positive Buffer" : "Cash Deficit Risk"}
+                  {netWorkingCapital >= 0 ? "Healthy Surplus" : "Working Capital Deficit"}
+                </span>
+              </div>
+              <div className="mt-1.5 pt-1.5 border-t border-border/30 text-[11px] text-muted-foreground flex items-center justify-between">
+                <span>Liquid Runway:</span>
+                <span className={`font-mono font-semibold ${liquidCashGap >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                  {liquidCashGap >= 0 ? "+" : ""}₹{(liquidCashGap / 100000).toFixed(2)}L
+                  <span className="text-muted-foreground font-normal ml-1 font-sans">
+                    {liquidCashGap < 0 ? "(Stock backed)" : ""}
+                  </span>
                 </span>
               </div>
             </div>
