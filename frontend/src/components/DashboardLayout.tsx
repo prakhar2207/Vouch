@@ -167,11 +167,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       />
 
       {/* TOP NAVIGATION BAR */}
-      <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-card/90 backdrop-blur-xl shadow-2xs print:hidden">
-        <div className="w-full px-3 sm:px-4 xl:px-5 2xl:px-6 h-14 flex items-center justify-between gap-1.5 lg:gap-2 xl:gap-2.5 min-w-0">
+      <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-card/90 backdrop-blur-xl shadow-2xs print:hidden overflow-x-clip">
+        <div className="w-full max-w-[100vw] px-2.5 sm:px-3.5 xl:px-4 2xl:px-5 h-14 flex items-center justify-between gap-1 sm:gap-1.5 min-w-0">
           
           {/* Left Section: Brand & Primary Nav */}
-          <div className="flex items-center gap-1.5 xl:gap-2 2xl:gap-3 min-w-0 shrink-0">
+          <div className="flex items-center gap-1 xl:gap-1.5 2xl:gap-2 min-w-0">
             {/* Mobile / Tablet Hamburger Button */}
             <button
               onClick={() => setIsMobileNavOpen(true)}
@@ -194,7 +194,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
 
             {/* Desktop Navigation Links — Important Direct Links + Dropdowns for Reports & More */}
-            <nav className="hidden lg:flex items-center gap-0.5 xl:gap-1 shrink-0">
+            <nav className="hidden lg:flex items-center gap-0.5 xl:gap-1">
               {/* 1. SALES */}
               <Link
                 id="tour-sales-nav"
@@ -240,11 +240,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <span>Cash & Bank</span>
               </Link>
 
-              {/* 4. INVENTORY */}
+              {/* 4. INVENTORY (Visible on XL+, accessible in More dropdown on smaller screens) */}
               <Link
                 id="tour-inventory-nav"
                 href="/inventory"
-                className={`px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                className={`hidden xl:flex px-2 xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] transition-all items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                   isInventoryActive
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60 font-medium"
@@ -255,11 +255,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <span>Inventory</span>
               </Link>
 
-              {/* 5. PARTIES (Visible on XL+, also available in More dropdown for smaller screens) */}
+              {/* 5. PARTIES (Visible on 2XL+, accessible in More dropdown on smaller screens) */}
               <Link
                 id="tour-parties-nav"
                 href="/parties"
-                className={`hidden xl:flex px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] transition-all items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                className={`hidden 2xl:flex px-2 xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] transition-all items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                   isPartiesActive
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60 font-medium"
@@ -456,6 +456,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       Tools & Operations
                     </div>
                     <Link
+                      href="/inventory"
+                      onClick={() => setIsMoreOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Inventory & Stock</div>
+                        <div className="text-[11px] text-muted-foreground">Products, categories & batch tracking</div>
+                      </div>
+                    </Link>
+                    <Link
                       href="/parties"
                       onClick={() => setIsMoreOpen(false)}
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
@@ -564,27 +574,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
 
           {/* Right Section: Workspace Context, Quick Search & Utilities */}
-          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto pr-1">
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto pr-0.5">
             
-            {/* Mode Pill: Accountant vs Business Mode */}
+            {/* Mode Indicator & Quick Toggle: Fixed 36x36px icon button (No text expansion, prevents navbar overflow in both modes) */}
             <button
               type="button"
               onClick={toggleAccountantMode}
-              className={`hidden sm:inline-flex items-center gap-1.5 px-2 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer shadow-2xs min-h-[36px] shrink-0 ${
+              className={`hidden sm:flex items-center justify-center p-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer shadow-2xs min-h-[36px] min-w-[36px] shrink-0 ${
                 isAccountantMode
                   ? "bg-primary/15 text-primary border-primary/30 hover:bg-primary/25"
                   : "bg-muted/30 text-muted-foreground border-border/50 hover:bg-muted/60 hover:text-foreground"
               }`}
               title={
                 isAccountantMode
-                  ? "Accountant Mode Active (Double-Entry Matrix, Journal Grids, Full Audit). Click to switch to Simplified Business Mode."
-                  : "Business Mode Active (Simplified Everyday Billing & Cash Flow). Click to switch to Professional Accountant Mode."
+                  ? "Accountant Mode Active (Double-entry journal enabled). Click to switch to Business Mode."
+                  : "Business Mode Active (Simplified billing). Click to switch to Accountant Mode."
               }
+              aria-label={isAccountantMode ? "Accountant Mode Active. Click to switch to Business Mode." : "Business Mode Active. Click to switch to Accountant Mode."}
             >
-              <Scale className={`w-3.5 h-3.5 ${isAccountantMode ? "text-primary" : "text-muted-foreground"}`} />
-              <span className="hidden 2xl:inline">
-                {isAccountantMode ? "Accountant" : "Business"}
-              </span>
+              <Scale className={`w-4 h-4 ${isAccountantMode ? "text-primary" : "text-muted-foreground"}`} />
             </button>
 
             {/* Company Switcher Pill */}
@@ -601,7 +609,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <div className="w-5 h-5 rounded-md bg-gradient-to-br from-primary/20 to-primary/10 border border-primary/25 flex items-center justify-center text-[10px] font-bold text-primary shrink-0 uppercase">
                   {(activeCompany?.name || "C")[0]}
                 </div>
-                <span className="font-semibold text-xs text-foreground truncate max-w-[70px] lg:max-w-[80px] xl:max-w-[100px] 2xl:max-w-[150px]">
+                <span className="font-semibold text-xs text-foreground truncate max-w-[70px] lg:max-w-[75px] xl:max-w-[90px] 2xl:max-w-[110px]">
                   {activeCompany?.name || "Company"}
                 </span>
                 <ChevronDown className={`w-3 h-3 text-muted-foreground/70 shrink-0 transition-transform duration-150 ${isCompanyDropdownOpen ? "rotate-180" : ""}`} />
@@ -660,10 +668,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div ref={fyRef} className="relative hidden md:block shrink-0">
               <button
                 onClick={() => setIsFYDropdownOpen(!isFYDropdownOpen)}
-                className="flex items-center gap-1.5 px-2 xl:px-2.5 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
+                className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
                 title="Change Financial Year or Period (Alt + F2)"
               >
-                <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0 hidden 2xl:block" />
                 <span className="font-mono tabular-nums text-xs font-semibold text-foreground whitespace-nowrap">
                   {activeFY ? (activeFY.code || activeFY.name) : "FY 26-27"}
                 </span>
@@ -737,16 +744,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               aria-label="Quick Search"
             >
               <Search className="w-4 h-4 text-muted-foreground shrink-0" />
-            </button>
-
-            {/* Help Icon Button (F1) */}
-            <button
-              id="tour-help-btn"
-              onClick={() => setIsHelpOpen(true)}
-              className="hidden 2xl:inline-flex p-2 text-muted-foreground hover:text-foreground rounded-xl hover:bg-muted/60 transition-colors cursor-pointer min-h-[36px] min-w-[36px] items-center justify-center shrink-0"
-              title="Keyboard Shortcuts & Help (F1)"
-            >
-              <HelpCircle className="w-4 h-4 shrink-0" />
             </button>
 
             {/* Tally Calculator Quick Access (Alt+N or Ctrl+N) */}
