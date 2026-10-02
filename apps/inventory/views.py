@@ -569,7 +569,6 @@ class ParsePriceListPdfAPIView(APIView):
             if not has_access:
                 return Response({"success": False, "error": "Unauthorized access to this company."}, status=403)
 
-            custom_api_key = request.headers.get('X-Gemini-Key') or request.data.get('gemini_api_key')
             filename = request.data.get('filename', '')
             brand = request.data.get('brand', '')
             scan_mode = request.data.get('scan_mode', 'auto')
@@ -594,7 +593,6 @@ class ParsePriceListPdfAPIView(APIView):
 
             result = PriceListService.parse_pdf_price_list(
                 raw_bytes, 
-                custom_api_key=custom_api_key, 
                 filename=filename, 
                 user_brand=brand,
                 scan_mode=scan_mode

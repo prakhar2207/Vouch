@@ -4,6 +4,7 @@ import re
 import json
 import base64
 from datetime import datetime
+from django.conf import settings
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
@@ -71,7 +72,7 @@ def parse_words_to_number(text: str) -> float:
 
 class InvoiceOCRService:
     @staticmethod
-    def extract_from_base64(base64_data: str, mime_type: str = "image/png", custom_api_key: Optional[str] = None, scan_mode: str = "auto") -> dict:
+    def extract_from_base64(base64_data: str, mime_type: str = "image/png", scan_mode: str = "auto") -> dict:
         """
         Extracts invoice header & line-item details using a Smart Hybrid Multi-Tier architecture:
         Tier 1: Google Gemini Dual-Engine:
@@ -101,11 +102,12 @@ class InvoiceOCRService:
             raw_bytes = b''
 
         is_pdf = raw_bytes and ("pdf" in mime_type or raw_bytes[:4] == b'%PDF')
+        last_gemini_error = ""
 
         # -------------------------------------------------------------
         # TIER 1: Try Gemini Vision AI Dual-Engine
         # -------------------------------------------------------------
-        active_key = (custom_api_key or "").strip() or os.environ.get("GEMINI_API_KEY")
+        active_key = os.environ.get("GEMINI_API_KEY", "").strip() or getattr(settings, "GEMINI_API_KEY", "")
         if active_key and raw_bytes:
             import time
             import random

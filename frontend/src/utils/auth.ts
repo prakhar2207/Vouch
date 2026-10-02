@@ -34,7 +34,6 @@ export const removeTokens = () => {
     try {
       localStorage.removeItem('vouch_active_company_id');
       localStorage.removeItem('vouch_user');
-      localStorage.removeItem('vouch_gemini_key');
     } catch {}
   }
 };

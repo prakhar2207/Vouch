@@ -280,3 +280,126 @@ class DatabaseBackupService:
             )
         except Exception:
             pass
+
+    @classmethod
+    def unpack_backup(cls, backup_path: Path) -> bytes:
+        """Decrypts and decompresses a backup file into its raw representation."""
+        backup_path = Path(backup_path)
+        with open(backup_path, 'rb') as f:
+            data = f.read()
+
+        # 1. Attempt decryption if ends with .enc or if Fernet payload
+        if backup_path.suffix == '.enc' or data.startswith(b'gAAAAA'):
+            try:
+                data = cls.decrypt_data(data)
+            except Exception as e:
+                logger.error(f"[Backup] Failed to decrypt backup: {e}")
+                raise
+
+        # 2. Decompress if gzip magic header
+        if data.startswith(b'\x1f\x8b'):
+            data = gzip.decompress(data)
+
+        return data
+
+    @classmethod
+    def restore_backup(
+        cls,
+        backup_path: Path,
+        target_db_alias: str = 'default',
+        dry_run: bool = False
+    ) -> dict:
+        """
+        Restores a backup archive (decryption + decompression + data load).
+        Supports:
+        1. Django JSON serialized fixture streams
+        2. Raw PostgreSQL / SQLite SQL dump streams
+        3. Raw SQLite binary databases
+        """
+        import io
+        from django.db import connections, transaction
+        from django.core.serializers import deserialize
+
+        start_time = time.time()
+        backup_path = Path(backup_path)
+        if not backup_path.exists():
+            raise FileNotFoundError(f"Backup file not found: {backup_path}")
+
+        raw_bytes = cls.unpack_backup(backup_path)
+
+        # Check type
+        is_sqlite_binary = raw_bytes.startswith(b'SQLite format 3\x00')
+        is_json = raw_bytes.strip().startswith(b'[')
+
+        record_count = 0
+        error_count = 0
+        errors = []
+
+        if is_sqlite_binary:
+            target_db_file = connections[target_db_alias].settings_dict.get('NAME')
+            if not target_db_file or 'sqlite' not in connections[target_db_alias].settings_dict.get('ENGINE', ''):
+                raise ValueError("Cannot restore SQLite binary backup into non-SQLite target database.")
+            if not dry_run:
+                with open(target_db_file, 'wb') as f:
+                    f.write(raw_bytes)
+            elapsed = round(time.time() - start_time, 2)
+            return {
+                "success": True,
+                "backup_type": "SQLITE_BINARY",
+                "bytes_restored": len(raw_bytes),
+                "elapsed_seconds": elapsed,
+                "dry_run": dry_run
+            }
+
+        elif is_json:
+            # Django JSON fixture stream
+            json_str = raw_bytes.decode('utf-8')
+            deserialized_objects = deserialize('json', json_str, using=target_db_alias, ignorenonexistent=True)
+
+            if dry_run:
+                for obj in deserialized_objects:
+                    record_count += 1
+            else:
+                with transaction.atomic(using=target_db_alias):
+                    for deserialized_obj in deserialized_objects:
+                        try:
+                            deserialized_obj.save(using=target_db_alias)
+                            record_count += 1
+                        except Exception as e:
+                            error_count += 1
+                            if len(errors) < 10:
+                                errors.append(f"{deserialized_obj.object}: {str(e)}")
+
+            elapsed = round(time.time() - start_time, 2)
+            cls._log_audit_event(
+                status='RESTORE_SUCCESS' if error_count == 0 else 'RESTORE_PARTIAL',
+                file_name=backup_path.name,
+                records_restored=record_count,
+                error_count=error_count,
+                elapsed_sec=elapsed,
+                dry_run=dry_run
+            )
+            return {
+                "success": error_count == 0,
+                "backup_type": "DJANGO_JSON_FIXTURE",
+                "records_restored": record_count,
+                "errors": errors,
+                "error_count": error_count,
+                "elapsed_seconds": elapsed,
+                "dry_run": dry_run
+            }
+
+        else:
+            # Raw SQL dump
+            sql_text = raw_bytes.decode('utf-8')
+            if not dry_run:
+                with connections[target_db_alias].cursor() as cursor:
+                    cursor.execute(sql_text)
+            elapsed = round(time.time() - start_time, 2)
+            return {
+                "success": True,
+                "backup_type": "SQL_SCRIPT",
+                "bytes_restored": len(raw_bytes),
+                "elapsed_seconds": elapsed,
+                "dry_run": dry_run
+            }

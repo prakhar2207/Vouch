@@ -257,8 +257,13 @@ export default function PrintInvoicePage() {
           res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/`, { headers });
         }
       } else {
-        // Public viewing for recipients without an account (e.g. via QR scan)
-        res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/`);
+        // Public viewing for recipients with a valid share or claim token (e.g. via QR scan or share link)
+        const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+        const shareToken = urlParams?.get('token') || urlParams?.get('share_token') || urlParams?.get('claim_token') || '';
+        const publicUrl = shareToken
+          ? `${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/?token=${encodeURIComponent(shareToken)}`
+          : `${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/`;
+        res = await axios.get(publicUrl);
       }
 
       if (res?.data?.data) {

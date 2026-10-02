@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from django.db import transaction
+from django.conf import settings
 from apps.companies.models import Company
 from apps.inventory.models import Product, ProductCategory
 
@@ -175,7 +176,7 @@ class PriceListService:
         return active_section or "Standard"
 
     @staticmethod
-    def parse_pdf_price_list(file_obj, custom_api_key: str = None, filename: str = "", user_brand: str = "", scan_mode: str = "auto"):
+    def parse_pdf_price_list(file_obj, filename: str = "", user_brand: str = "", scan_mode: str = "auto"):
         """
         Parses manufacturer/distributor price list PDFs using a two-tier resilient pipeline:
         Tier 1: High-speed multi-column deterministic tokenizer with custom CID font decoding (works offline, 0.2s latency)
@@ -359,7 +360,7 @@ class PriceListService:
         # -------------------------------------------------------------
         # Tier 2: Gemini Vision AI Dual-Engine (for scanned/photo PDFs or unparsed catalogs)
         # -------------------------------------------------------------
-        active_key = (custom_api_key or "").strip() or os.environ.get("GEMINI_API_KEY")
+        active_key = os.environ.get("GEMINI_API_KEY", "").strip() or getattr(settings, "GEMINI_API_KEY", "")
         if active_key:
             # Safe page slicing: if PDF has > 8 pages, slice first 8 pages to avoid Render 100s proxy timeout & OOM
             gemini_bytes = raw_bytes

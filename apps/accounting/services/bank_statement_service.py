@@ -1098,8 +1098,7 @@ class BankStatementService:
         cls,
         file_bytes: bytes,
         filename: str,
-        mime_type: str = "image/png",
-        custom_api_key: Optional[str] = None
+        mime_type: str = "image/png"
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
         Processes scanned PDFs or document photos using Pillow image preprocessing
@@ -1108,6 +1107,7 @@ class BankStatementService:
         import os
         import json
         from PIL import Image
+        from django.conf import settings
 
         valid_rows = []
         errors = []
@@ -1129,11 +1129,11 @@ class BankStatementService:
         else:
             pages_to_process.append((1, file_bytes, mime_type))
 
-        active_key = (custom_api_key or "").strip() or os.environ.get("GEMINI_API_KEY")
+        active_key = os.environ.get("GEMINI_API_KEY", "").strip() or getattr(settings, "GEMINI_API_KEY", "")
         if not active_key:
             errors.append({
                 "row": 0,
-                "error": "Scanned document detected. Configure a Gemini Vision API Key in Settings or pass X-Gemini-Key to extract.",
+                "error": "Scanned document detected. Gemini Vision API Key is not configured on the server.",
                 "raw": ""
             })
             return [], errors
@@ -1280,8 +1280,7 @@ class BankStatementService:
         bank_ledger: Ledger,
         file_bytes: bytes,
         filename: str,
-        user=None,
-        custom_api_key: Optional[str] = None
+        user=None
     ) -> Dict[str, Any]:
         """
         Primary entry point for bank statement ingestion.
@@ -1342,7 +1341,7 @@ class BankStatementService:
             valid_rows, errors = cls.parse_pdf(file_bytes)
             if len(valid_rows) == 0:
                 scanned_rows, scanned_errs = cls.parse_scanned_pdf_or_image(
-                    file_bytes, filename, mime_type="application/pdf", custom_api_key=custom_api_key
+                    file_bytes, filename, mime_type="application/pdf"
                 )
                 if len(scanned_rows) > 0:
                     valid_rows = scanned_rows
@@ -1357,7 +1356,7 @@ class BankStatementService:
             elif filename_lower.endswith('.webp'):
                 mime = "image/webp"
             valid_rows, errors = cls.parse_scanned_pdf_or_image(
-                file_bytes, filename, mime_type=mime, custom_api_key=custom_api_key
+                file_bytes, filename, mime_type=mime
             )
 
         # Filter out boilerplate / guideline rows and strip trailing disclaimers

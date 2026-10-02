@@ -264,7 +264,6 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'x-financial-year-id',
     'financial-year-id',
     'x-period',
-    'x-gemini-key',
     'x-csrftoken',
     'x-requested-with',
     'authorization',
@@ -339,7 +338,7 @@ FRONTEND_URL = env('FRONTEND_URL', default='https://vouch-pi-one.vercel.app' if 
 
 
 
-# Web Push VAPID Settings
-VAPID_PUBLIC_KEY = os.environ.get('VAPID_PUBLIC_KEY', 'BLxUiyEt2OhZPc4ZOVb1g7COOEC6ZPd_xvpphq1VRbRu7hW4c1orNH-5kk_DK_6LMqhSykh6DBiO8Nbq4bph2os')
-VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', 'ppmCrKhbqaLogL6RYRhZal6Aau6jRh2ilvIuR2G2wFQ')
-VAPID_SUBJECT = os.environ.get('VAPID_SUBJECT', 'mailto:admin@vouch.com')
+# Web Push VAPID Settings (Environment Driven - Zero Hardcoded Private Keys)
+VAPID_PUBLIC_KEY = os.environ.get('VAPID_PUBLIC_KEY', '')
+VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', '')
+VAPID_SUBJECT = os.environ.get('VAPID_SUBJECT', 'mailto:admin@vouchapp.in')

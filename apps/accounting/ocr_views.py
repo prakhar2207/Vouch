@@ -24,7 +24,6 @@ class OCRExtractAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        custom_api_key = request.headers.get('X-Gemini-Key') or request.data.get('gemini_api_key')
         scan_mode = request.data.get('scan_mode', 'auto')
 
         is_async = (request.data.get('async') is True or request.query_params.get('async', '').lower() == 'true')
@@ -33,7 +32,6 @@ class OCRExtractAPIView(APIView):
             task = ocr_invoice_extract_task.delay(
                 file_base64,
                 mime_type=mime_type,
-                custom_api_key=custom_api_key,
                 scan_mode=scan_mode
             )
             return Response({
@@ -47,7 +45,6 @@ class OCRExtractAPIView(APIView):
             extracted_data = InvoiceOCRService.extract_from_base64(
                 file_base64, 
                 mime_type, 
-                custom_api_key=custom_api_key,
                 scan_mode=scan_mode
             )
             return Response({

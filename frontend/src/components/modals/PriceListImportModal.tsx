@@ -18,7 +18,6 @@ import {
   Percent,
   Calendar,
   Sparkles,
-  KeyRound,
 } from "lucide-react";
 
 interface PriceListItem {
@@ -66,15 +65,6 @@ export default function PriceListImportModal({
   const PAGE_SIZE = 100;
   const [filterSearch, setFilterSearch] = useState("");
   const [discountPercent, setDiscountPercent] = useState<number>(30);
-  const [geminiApiKey, setGeminiApiKey] = useState("");
-  const [showKeyInput, setShowKeyInput] = useState(false);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const savedKey = localStorage.getItem("vouch_gemini_key") || "";
-      if (savedKey) setGeminiApiKey(savedKey);
-    }
-  }, []);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];
@@ -233,17 +223,9 @@ export default function PriceListImportModal({
         toast.success(`Extracted ${items.length} items from spreadsheet`);
       } else if (fileName.endsWith(".pdf")) {
         const token = getAccessToken();
-        const effectiveGeminiKey =
-          geminiApiKey.trim() ||
-          (typeof window !== "undefined" ? localStorage.getItem("vouch_gemini_key") || "" : "");
-
         const headers: Record<string, string> = {
           Authorization: `Bearer ${token}`,
         };
-
-        if (effectiveGeminiKey) {
-          headers["X-Gemini-Key"] = effectiveGeminiKey;
-        }
 
         // Calculate fast SHA-256 fingerprint of the file for local instant caching
         const buffer = await selectedFile.arrayBuffer();
@@ -297,7 +279,6 @@ export default function PriceListImportModal({
               file_base64: base64Data,
               filename: selectedFile.name,
               brand: brand.trim(),
-              gemini_api_key: effectiveGeminiKey || undefined,
               scan_mode: "printed",
             },
             { headers, timeout: 120000 }
@@ -310,9 +291,6 @@ export default function PriceListImportModal({
           formData.append("scan_mode", "printed");
           if (brand.trim()) {
             formData.append("brand", brand.trim());
-          }
-          if (effectiveGeminiKey) {
-            formData.append("gemini_api_key", effectiveGeminiKey);
           }
 
           res = await axios.post(
@@ -577,52 +555,14 @@ export default function PriceListImportModal({
             </div>
           </div>
 
-          {/* Vision OCR / Gemini Key Accordion */}
-          <div className="p-3 bg-purple-500/10 border border-purple-500/25 rounded-xl space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-purple-400" />
-                <span className="text-xs font-bold text-purple-400">Smart Document Scanner Available</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowKeyInput(!showKeyInput)}
-                className="text-[11px] text-purple-400 hover:text-purple-300 underline cursor-pointer flex items-center gap-1"
-              >
-                <KeyRound className="w-3 h-3" />
-                <span>{showKeyInput ? "Hide Key" : "Configure Custom Key"}</span>
-              </button>
+          {/* Smart Document Scanner Notice */}
+          <div className="p-3 bg-purple-500/10 border border-purple-500/25 rounded-xl space-y-1">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-purple-400" />
+              <span className="text-xs font-bold text-purple-400">Server-Side Smart Document Scanner Enabled</span>
             </div>
-            {showKeyInput && (
-              <div className="pt-1 flex items-center gap-2">
-                <input
-                  type="password"
-                  placeholder="Paste custom API key (optional)"
-                  value={geminiApiKey}
-                  onChange={(e) => {
-                    setGeminiApiKey(e.target.value);
-                    if (typeof window !== "undefined") {
-                      localStorage.setItem("vouch_gemini_key", e.target.value);
-                    }
-                  }}
-                  className="w-full bg-background border border-purple-500/40 text-foreground px-3 py-1.5 rounded-lg text-xs font-mono outline-none focus:ring-1 focus:ring-purple-500"
-                />
-                {geminiApiKey && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setGeminiApiKey("");
-                      if (typeof window !== "undefined") localStorage.removeItem("vouch_gemini_key");
-                    }}
-                    className="text-xs text-muted-foreground hover:text-rose-400 px-2"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-            )}
             <p className="text-[10px] text-muted-foreground">
-              Automatic Vision OCR reads multi-column scanned catalogs and complex table formats. Also works offline with high-speed built-in industrial tokenizer.
+              Automatic Vision OCR reads multi-column scanned catalogs and complex table formats securely via enterprise server credentials. Also works offline with high-speed built-in industrial tokenizer.
             </p>
           </div>
 

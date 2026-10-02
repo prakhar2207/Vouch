@@ -60,10 +60,11 @@ def rebuild_company_balances_task(self, company_id: str, user_id: str = None):
 
 
 @shared_task(bind=True, max_retries=1, default_retry_delay=60)
-def ocr_invoice_extract_task(self, file_base64: str, mime_type: str = 'image/png', custom_api_key: str = None, scan_mode: str = 'auto'):
+def ocr_invoice_extract_task(self, file_base64: str, mime_type: str = 'image/png', scan_mode: str = 'auto', **kwargs):
     """
     Asynchronous Celery task for AI Bill Scanner (Gemini OCR).
     Offloads heavy multimodal computer vision and structured entity extraction.
+    Uses authoritative server-managed AI credentials.
     """
     from apps.accounting.services.ocr_service import InvoiceOCRService
 
@@ -72,7 +73,6 @@ def ocr_invoice_extract_task(self, file_base64: str, mime_type: str = 'image/png
         extracted_data = InvoiceOCRService.extract_from_base64(
             file_base64,
             mime_type=mime_type,
-            custom_api_key=custom_api_key,
             scan_mode=scan_mode
         )
         return {

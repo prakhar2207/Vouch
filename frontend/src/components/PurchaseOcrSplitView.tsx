@@ -109,16 +109,6 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
   const [mobileTab, setMobileTab] = useState<'DOCUMENT' | 'FORM'>('FORM');
   const [autoFilled, setAutoFilled] = useState<boolean>(false);
 
-  // Gemini API Key State (synchronized with localStorage vouch_gemini_key)
-  const [geminiApiKey, setGeminiApiKey] = useState<string>("");
-  const [showApiKeyAccordion, setShowApiKeyAccordion] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const savedKey = localStorage.getItem("vouch_gemini_key") || "";
-      if (savedKey) setGeminiApiKey(savedKey);
-    }
-  }, []);
 
   // Inventory Category Allocation State
   const [categories, setCategories] = useState<any[]>([]);
@@ -297,13 +287,9 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         }
 
         const token = getAccessToken();
-        const effectiveKey = geminiApiKey?.trim() || (typeof window !== "undefined" ? localStorage.getItem("vouch_gemini_key") || "" : "");
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (token) {
           headers["Authorization"] = `Bearer ${token}`;
-        }
-        if (effectiveKey) {
-          headers["X-Gemini-Key"] = effectiveKey;
         }
 
         const res = await axios.post(
@@ -311,7 +297,6 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           {
             file_base64: base64,
             mime_type: mime,
-            gemini_api_key: effectiveKey || undefined,
             scan_mode: activeMode,
           },
           { headers, timeout: 120000 }
@@ -631,53 +616,11 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setShowApiKeyAccordion(!showApiKeyAccordion)}
-          className="text-xs text-purple-600 dark:text-purple-400 hover:underline flex items-center gap-1.5 cursor-pointer self-end md:self-auto font-medium"
-        >
-          <span>🔑</span>
-          <span>{showApiKeyAccordion ? "Hide Key Settings" : geminiApiKey ? "Custom Key Configured ✓" : "Configure Custom Key"}</span>
-        </button>
-      </div>
-
-      {/* Collapsible API Key Configuration */}
-      {showApiKeyAccordion && (
-        <div className="p-3.5 bg-purple-500/5 dark:bg-purple-500/10 border border-purple-500/25 rounded-2xl space-y-2">
-          <div className="flex items-center justify-between text-xs text-purple-700 dark:text-purple-300 font-semibold">
-            <span>Custom Scanner API Key (saved in browser):</span>
-            {geminiApiKey && (
-              <button
-                type="button"
-                onClick={() => {
-                  setGeminiApiKey("");
-                  if (typeof window !== "undefined") localStorage.removeItem("vouch_gemini_key");
-                }}
-                className="text-[11px] text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 cursor-pointer font-bold"
-              >
-                Clear Key
-              </button>
-            )}
-          </div>
-          <input
-            type="password"
-            placeholder="Paste your custom API Key here..."
-            value={geminiApiKey}
-            onChange={(e) => {
-              const val = e.target.value.trim();
-              setGeminiApiKey(val);
-              if (typeof window !== "undefined") {
-                if (val) localStorage.setItem("vouch_gemini_key", val);
-                else localStorage.removeItem("vouch_gemini_key");
-              }
-            }}
-            className="w-full bg-background border border-purple-500/35 text-foreground px-3 py-2 rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-purple-500"
-          />
-          <p className="text-[10px] text-muted-foreground">
-            Optional custom key for high-volume bill scanning and price list imports.
-          </p>
+        <div className="text-xs text-muted-foreground flex items-center gap-1.5 self-end md:self-auto font-medium">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
+          <span>Enterprise AI Engine Ready</span>
         </div>
-      )}
+      </div>
 
       {/* Upload Banner */}
       {!fileBase64 && (

@@ -679,6 +679,63 @@ def serialize_voucher_detail(voucher, include_attachment=False, user=None):
     }
 
 
+def verify_public_voucher_access(voucher, user=None, token=None):
+    """
+    Verifies if a request is authorized to view public voucher details.
+    Must satisfy one of:
+    1. Authenticated user belonging to the billing company (seller).
+    2. Authenticated user belonging to the billed company (buyer) or superuser.
+    3. Valid cryptographic share token (DocumentShareService) for this voucher.
+    4. Valid cryptographic claim token (InvoiceNotificationService / django.signing) for this voucher.
+    """
+    if user and user.is_authenticated:
+        if getattr(user, 'is_superuser', False):
+            return True, "SUPERUSER"
+        user_companies = set(user.companies.values_list('company_id', flat=True)) if hasattr(user, 'companies') else set()
+        if voucher.company_id in user_companies:
+            return True, "SELLER"
+        
+        can_download, _, comp_type = check_invoice_download_permission(user, voucher)
+        if can_download or comp_type in ["BUYER", "SELLER"]:
+            return True, comp_type or "BUYER"
+
+    if token:
+        clean_token = str(token).strip()
+        # 1. Document Share Token
+        try:
+            from apps.documents.services.share_service import DocumentShareService
+            share = DocumentShareService.resolve_share(clean_token)
+            if share and share.document_snapshot:
+                snap = share.document_snapshot
+                if str(snap.voucher_id) == str(voucher.id) or str(snap.source_id) == str(voucher.id):
+                    return True, "SHARE_TOKEN"
+        except Exception:
+            pass
+
+        # 2. Cryptographic Claim Token (InvoiceNotificationService)
+        try:
+            from apps.accounting.services.invoice_notification_service import InvoiceNotificationService
+            claim_data = InvoiceNotificationService.verify_claim_token(clean_token)
+            if claim_data and str(claim_data.get('voucher_id')) == str(voucher.id):
+                return True, "CLAIM_TOKEN"
+        except Exception:
+            pass
+
+        # 3. Direct Django Signing with CLAIM_TOKEN_SALT
+        try:
+            from django.core import signing
+            from apps.accounting.services.invoice_notification_service import CLAIM_TOKEN_SALT
+            payload = signing.loads(clean_token, salt=CLAIM_TOKEN_SALT, max_age=60 * 60 * 24 * 30)
+            if isinstance(payload, dict) and str(payload.get('voucher_id')) == str(voucher.id):
+                return True, "SIGNED_CLAIM_TOKEN"
+            elif str(payload) == str(voucher.id):
+                return True, "SIGNED_CLAIM_TOKEN"
+        except Exception:
+            pass
+
+    return False, "Access denied. A valid secure share or claim token is required to view this voucher publicly."
+
+
 class PublicVoucherDetailAPIView(APIView):
     permission_classes = [AllowAny]
 
@@ -691,9 +748,25 @@ class PublicVoucherDetailAPIView(APIView):
             if not voucher or voucher.voucher_type != 'SALES':
                 return Response({"success": False, "error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
             
+            token = (
+                request.query_params.get('token') or 
+                request.query_params.get('share_token') or 
+                request.query_params.get('claim_token') or 
+                request.headers.get('X-Share-Token') or 
+                request.headers.get('X-Claim-Token')
+            )
             user = request.user if request.user and request.user.is_authenticated else None
+
+            is_authorized, reason = verify_public_voucher_access(voucher, user=user, token=token)
+            if not is_authorized:
+                return Response({
+                    "success": False,
+                    "error": "Access denied. A valid secure share or claim token is required to view this voucher.",
+                    "code": "SECURE_TOKEN_REQUIRED"
+                }, status=status.HTTP_403_FORBIDDEN)
+
             data = serialize_voucher_detail(voucher, include_attachment=False, user=user)
-            return Response({"success": True, "data": data})
+            return Response({"success": True, "data": data, "access_type": reason})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -710,8 +783,30 @@ class VoucherDownloadPermissionAPIView(APIView):
             if not voucher:
                 return Response({"success": False, "error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
 
+            token = (
+                request.query_params.get('token') or 
+                request.query_params.get('share_token') or 
+                request.query_params.get('claim_token') or 
+                request.headers.get('X-Share-Token') or 
+                request.headers.get('X-Claim-Token')
+            )
             user = request.user if request.user and request.user.is_authenticated else None
+
+            is_authorized, auth_reason = verify_public_voucher_access(voucher, user=user, token=token)
+            if not is_authorized:
+                return Response({
+                    "success": False,
+                    "can_download": False,
+                    "error": "Access denied. A valid secure share or claim token is required.",
+                    "code": "SECURE_TOKEN_REQUIRED"
+                }, status=status.HTTP_403_FORBIDDEN)
+
             can_download, reason, comp_type = check_invoice_download_permission(user, voucher)
+            if not can_download and auth_reason in ["SHARE_TOKEN", "CLAIM_TOKEN", "SIGNED_CLAIM_TOKEN"]:
+                can_download = True
+                reason = f"Authorized via secure {auth_reason.lower()}."
+                comp_type = "RECIPIENT_SHARED"
+
             return Response({
                 "success": True,
                 "can_download": can_download,

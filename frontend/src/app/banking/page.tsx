@@ -550,10 +550,6 @@ export default function BankingPage() {
     setIsUploading(true);
     try {
       const headers: Record<string, string> = { ...getHeaders() };
-      const geminiKey = typeof window !== "undefined" ? localStorage.getItem("vouch_gemini_key") : null;
-      if (geminiKey) {
-        headers["X-Gemini-Key"] = geminiKey;
-      }
       const formData = new FormData();
       formData.append("file", uploadFile);
       formData.append("bank_ledger_id", selectedBankId);
