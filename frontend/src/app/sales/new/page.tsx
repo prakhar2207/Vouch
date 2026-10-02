@@ -9,7 +9,25 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useShortcuts } from '@/context/ShortcutContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
 import { useToast } from '@/context/ToastContext';
-import { ChevronDown, ScanBarcode, AlertTriangle, CheckCircle2, ArrowRight, Hash, Plus, Calculator, Sparkles, RefreshCw } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  ScanBarcode,
+  AlertTriangle,
+  CheckCircle2,
+  ArrowRight,
+  Hash,
+  Plus,
+  Calculator,
+  Sparkles,
+  RefreshCw,
+  Truck,
+  QrCode,
+  Sliders,
+  DollarSign,
+  FileText,
+  User,
+} from 'lucide-react';
 import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
 
@@ -39,16 +57,39 @@ export default function SalesPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   
-  // Ad-hoc Walk-in / Cash Customer Details
+  // Progressive disclosure accordion state
+  const [activeAccordion, setActiveAccordion] = useState<string | null>(null);
+
+  // 1. Walk-in / Cash Customer Details
   const [buyerName, setBuyerName] = useState('');
   const [buyerPhone, setBuyerPhone] = useState('');
   const [buyerAddress, setBuyerAddress] = useState('');
   const [buyerGstin, setBuyerGstin] = useState('');
   const [buyerStateCode, setBuyerStateCode] = useState('');
-  const [showBuyerDetails, setShowBuyerDetails] = useState(false);
   
-  // Cartage / Freight Outward
+  // 2. Transport & E-Way Bill Details
+  const [transporterName, setTransporterName] = useState('');
+  const [transporterId, setTransporterId] = useState('');
+  const [vehicleNumber, setVehicleNumber] = useState('');
+  const [transportDocNo, setTransportDocNo] = useState('');
+  const [transportDocDate, setTransportDocDate] = useState('');
+  const [transportMode, setTransportMode] = useState('ROAD');
+  const [distanceKm, setDistanceKm] = useState('');
+
+  // 3. Additional Charges & Discount
   const [cartageAmount, setCartageAmount] = useState<number | string>('');
+  const [additionalDiscount, setAdditionalDiscount] = useState<number | string>('');
+
+  // 4. Bank & UPI QR on Bill
+  const [selectedBankLedgerId, setSelectedBankLedgerId] = useState('');
+  const [upiId, setUpiId] = useState('');
+
+  // 5. Terms, Order Ref & Remarks
+  const [narration, setNarration] = useState('');
+  const [creditDays, setCreditDays] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [poNumber, setPoNumber] = useState('');
+  const [poDate, setPoDate] = useState('');
   
   const [categories, setCategories] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
@@ -336,7 +377,7 @@ export default function SalesPage() {
       party.name?.toLowerCase().includes('cash')
     );
     if (isCashOrBank) {
-      setShowBuyerDetails(true);
+      setActiveAccordion('buyer');
     }
 
     // Auto-populate customer's default discount across all line items
@@ -458,6 +499,30 @@ export default function SalesPage() {
       if (igstLedgerId) payload.igst_ledger_id = igstLedgerId;
       if (cartageAmount && Number(cartageAmount) > 0) {
         payload.cartage_amount = Number(cartageAmount);
+      }
+      if (additionalDiscount && Number(additionalDiscount) > 0) {
+        payload.discount_amount = Number(additionalDiscount);
+      }
+      if (narration.trim()) payload.narration = narration.trim();
+      if (dueDate) payload.due_date = dueDate;
+      if (poNumber.trim()) payload.po_number = poNumber.trim();
+      if (poDate) payload.po_date = poDate;
+      if (vehicleNumber.trim() || transporterName.trim() || transporterId.trim() || transportDocNo.trim()) {
+        payload.transport_details = {
+          transporter_name: transporterName.trim(),
+          transporter_id: transporterId.trim().toUpperCase(),
+          vehicle_number: vehicleNumber.trim().toUpperCase(),
+          transport_doc_no: transportDocNo.trim(),
+          transport_doc_date: transportDocDate,
+          transport_mode: transportMode,
+          distance_km: distanceKm ? Number(distanceKm) : undefined,
+        };
+      }
+      if (selectedBankLedgerId) {
+        payload.bank_ledger_id = selectedBankLedgerId;
+      }
+      if (upiId.trim()) {
+        payload.upi_id = upiId.trim();
       }
       
       try {
@@ -969,12 +1034,13 @@ export default function SalesPage() {
       return sum + (taxable * (Number(item.gst_rate)/100));
   }, 0);
   const cartageVal = Number(cartageAmount) || 0;
-  const unroundedGrandTotal = allItems.reduce((sum, item) => {
+  const additionalDiscVal = Number(additionalDiscount) || 0;
+  const unroundedGrandTotal = Math.max(0, allItems.reduce((sum, item) => {
     const gross = Number(item.quantity) * Number(item.rate);
     const discount = gross * (Number(item.discount_percent)/100);
     const taxable = gross - discount;
     return sum + taxable + (taxable * (Number(item.gst_rate)/100));
-  }, 0) + cartageVal;
+  }, 0) + cartageVal - additionalDiscVal);
 
   let grandTotal = 0;
   let roundOff = 0;
@@ -1384,70 +1450,6 @@ export default function SalesPage() {
                     <option key={l.id} value={l.id}>{l.name}</option>
                   ))}
                 </select>
-              </div>
-            )}
-          </div>
-
-          {/* Ad-hoc Buyer Details Subform for Cash / Walk-in Customers */}
-          <div className="mt-5 pt-4 border-t border-border">
-            <div 
-              className="flex items-center justify-between cursor-pointer select-none bg-muted/40 hover:bg-muted/70 p-3.5 rounded-xl border border-border/80 transition-all shadow-xs"
-              onClick={() => setShowBuyerDetails(!showBuyerDetails)}
-            >
-              <div className="flex items-center gap-2.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                <span className="text-sm font-semibold text-foreground">Buyer Details (Optional — Cash / Counter Walk-in)</span>
-                <span className="text-[11px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-md font-mono font-medium">
-                  Prints on bill without creating a Debtor
-                </span>
-              </div>
-              <span className="text-xs text-muted-foreground hover:text-foreground font-medium">
-                {showBuyerDetails ? '▲ Hide Details' : '▼ Enter Walk-in Details'}
-              </span>
-            </div>
-
-            {showBuyerDetails && (
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-muted/30 border border-border rounded-xl">
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Walk-in Buyer Name</label>
-                  <input
-                    type="text"
-                    value={buyerName}
-                    onChange={e => setBuyerName(e.target.value)}
-                    placeholder="e.g. Ramesh Kumar"
-                    className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-muted-foreground"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Mobile / Phone</label>
-                  <input
-                    type="text"
-                    value={buyerPhone}
-                    onChange={e => setBuyerPhone(e.target.value)}
-                    placeholder="e.g. 9876543210"
-                    className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-muted-foreground"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">GSTIN (Optional)</label>
-                  <input
-                    type="text"
-                    value={buyerGstin}
-                    onChange={e => setBuyerGstin(e.target.value.toUpperCase())}
-                    placeholder="Unregistered or 15-digit GSTIN"
-                    className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none uppercase font-mono placeholder:text-muted-foreground"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Billing Address / City</label>
-                  <input
-                    type="text"
-                    value={buyerAddress}
-                    onChange={e => setBuyerAddress(e.target.value)}
-                    placeholder="City, State"
-                    className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-muted-foreground"
-                  />
-                </div>
               </div>
             )}
           </div>
@@ -2152,11 +2154,457 @@ export default function SalesPage() {
             </div>
         </div>
 
+        {/* ========================================================= */}
+        {/* Progressive Disclosure: Additional & Statutory Invoicing */}
+        {/* ========================================================= */}
+        <div className="bg-card border border-border/80 rounded-xl shadow-xs overflow-hidden">
+          <div className="p-4 bg-muted/30 border-b border-border/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
+                <Sliders className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-foreground">Advanced Invoicing Options</h3>
+                <p className="text-xs text-muted-foreground">Click to add transport, bank QR, notes, or walk-in info</p>
+              </div>
+            </div>
+            <div className="text-xs text-muted-foreground font-medium">
+              Optional statutory & commercial fields
+            </div>
+          </div>
+
+          <div className="divide-y divide-border/50">
+            
+            {/* Accordion 1: Walk-in / Cash Counter Buyer Details */}
+            <div className="transition-colors">
+              <button
+                type="button"
+                onClick={() => setActiveAccordion(activeAccordion === 'buyer' ? null : 'buyer')}
+                className="w-full p-4 flex items-center justify-between hover:bg-muted/30 transition-colors text-left cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <User className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+                      <span>Walk-in Buyer Details</span>
+                      {buyerName && (
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                          ✓ {buyerName}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Print buyer name & phone on bill without creating a ledger</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground font-medium hidden sm:inline">
+                    {activeAccordion === 'buyer' ? 'Collapse' : 'Expand'}
+                  </span>
+                  {activeAccordion === 'buyer' ? (
+                    <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </div>
+              </button>
+
+              {activeAccordion === 'buyer' && (
+                <div className="p-4 bg-muted/15 border-t border-border/40 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-in fade-in-50 duration-150">
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Buyer Name</label>
+                    <input
+                      type="text"
+                      value={buyerName}
+                      onChange={e => setBuyerName(e.target.value)}
+                      placeholder="e.g. Ramesh Kumar"
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Mobile / Phone</label>
+                    <input
+                      type="text"
+                      value={buyerPhone}
+                      onChange={e => setBuyerPhone(e.target.value)}
+                      placeholder="e.g. 9876543210"
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">GSTIN (Optional)</label>
+                    <input
+                      type="text"
+                      value={buyerGstin}
+                      onChange={e => setBuyerGstin(e.target.value.toUpperCase())}
+                      placeholder="15-character GSTIN"
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none uppercase font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Address / City</label>
+                    <input
+                      type="text"
+                      value={buyerAddress}
+                      onChange={e => setBuyerAddress(e.target.value)}
+                      placeholder="City, State"
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Accordion 2: Transportation & E-Way Bill */}
+            <div className="transition-colors">
+              <button
+                type="button"
+                onClick={() => setActiveAccordion(activeAccordion === 'transport' ? null : 'transport')}
+                className="w-full p-4 flex items-center justify-between hover:bg-muted/30 transition-colors text-left cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                    <Truck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+                      <span>Transport & E-Way Bill</span>
+                      {vehicleNumber && (
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 font-mono">
+                          ✓ {vehicleNumber}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Transporter details, vehicle number, and dispatch mode (Rule 138)</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground font-medium hidden sm:inline">
+                    {activeAccordion === 'transport' ? 'Collapse' : 'Expand'}
+                  </span>
+                  {activeAccordion === 'transport' ? (
+                    <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </div>
+              </button>
+
+              {activeAccordion === 'transport' && (
+                <div className="p-4 bg-muted/15 border-t border-border/40 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 animate-in fade-in-50 duration-150">
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Vehicle Number</label>
+                    <input
+                      type="text"
+                      value={vehicleNumber}
+                      onChange={e => setVehicleNumber(e.target.value.toUpperCase())}
+                      placeholder="e.g. MH04AB1234"
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none uppercase font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Transporter Name</label>
+                    <input
+                      type="text"
+                      value={transporterName}
+                      onChange={e => setTransporterName(e.target.value)}
+                      placeholder="e.g. VRL Logistics"
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Transporter ID (GSTIN)</label>
+                    <input
+                      type="text"
+                      value={transporterId}
+                      onChange={e => setTransporterId(e.target.value.toUpperCase())}
+                      placeholder="15-character GSTIN"
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none uppercase font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Transport Doc / LR No.</label>
+                    <input
+                      type="text"
+                      value={transportDocNo}
+                      onChange={e => setTransportDocNo(e.target.value)}
+                      placeholder="e.g. LR-98214"
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">LR Document Date</label>
+                    <input
+                      type="date"
+                      value={transportDocDate}
+                      onChange={e => setTransportDocDate(e.target.value)}
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Transport Mode</label>
+                    <select
+                      value={transportMode}
+                      onChange={e => setTransportMode(e.target.value)}
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none"
+                    >
+                      <option value="ROAD">Road</option>
+                      <option value="RAIL">Rail</option>
+                      <option value="AIR">Air</option>
+                      <option value="SHIP">Ship</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Accordion 3: Freight Outward & Additional Discount */}
+            <div className="transition-colors">
+              <button
+                type="button"
+                onClick={() => setActiveAccordion(activeAccordion === 'charges' ? null : 'charges')}
+                className="w-full p-4 flex items-center justify-between hover:bg-muted/30 transition-colors text-left cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    <DollarSign className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+                      <span>Freight & Cash Discount</span>
+                      {(Number(cartageAmount) > 0 || Number(additionalDiscount) > 0) && (
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-mono">
+                          {Number(cartageAmount) > 0 ? `+₹${cartageAmount} Cartage ` : ''}
+                          {Number(additionalDiscount) > 0 ? `-₹${additionalDiscount} Disc` : ''}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Cartage outward additions and special cash discounts</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground font-medium hidden sm:inline">
+                    {activeAccordion === 'charges' ? 'Collapse' : 'Expand'}
+                  </span>
+                  {activeAccordion === 'charges' ? (
+                    <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </div>
+              </button>
+
+              {activeAccordion === 'charges' && (
+                <div className="p-4 bg-muted/15 border-t border-border/40 grid grid-cols-1 sm:grid-cols-2 gap-4 animate-in fade-in-50 duration-150">
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      Cartage / Freight Outward (₹)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={cartageAmount}
+                      onChange={e => setCartageAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono"
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Added to invoice total as freight charges.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      Special Cash Discount / Rebate (₹)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={additionalDiscount}
+                      onChange={e => setAdditionalDiscount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono"
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Subtracted from invoice grand total.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Accordion 4: Bank Details & Instant UPI QR Code */}
+            <div className="transition-colors">
+              <button
+                type="button"
+                onClick={() => setActiveAccordion(activeAccordion === 'bank' ? null : 'bank')}
+                className="w-full p-4 flex items-center justify-between hover:bg-muted/30 transition-colors text-left cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                    <QrCode className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+                      <span>Bank Details & UPI Dynamic QR Code</span>
+                      {(selectedBankLedgerId || upiId) && (
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                          ✓ Linked
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Print bank accounts and NPCI-compliant UPI QR for instant invoice collections</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground font-medium hidden sm:inline">
+                    {activeAccordion === 'bank' ? 'Collapse' : 'Expand'}
+                  </span>
+                  {activeAccordion === 'bank' ? (
+                    <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </div>
+              </button>
+
+              {activeAccordion === 'bank' && (
+                <div className="p-4 bg-muted/15 border-t border-border/40 grid grid-cols-1 sm:grid-cols-2 gap-4 animate-in fade-in-50 duration-150">
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      Select Bank Account
+                    </label>
+                    <select
+                      value={selectedBankLedgerId}
+                      onChange={e => setSelectedBankLedgerId(e.target.value)}
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none"
+                    >
+                      <option value="">-- Use Default Company Bank --</option>
+                      {ledgers
+                        .filter(l => l.ledger_type === 'BANK' || l.group?.toLowerCase().includes('bank') || l.name?.toLowerCase().includes('bank'))
+                        .map(l => (
+                          <option key={l.id} value={l.id}>
+                            {l.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      UPI ID / VPA for Dynamic QR
+                    </label>
+                    <input
+                      type="text"
+                      value={upiId}
+                      onChange={e => setUpiId(e.target.value)}
+                      placeholder="e.g. billing@okhdfcbank"
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono"
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Customer scans QR code to pay exact invoice total instantly.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Accordion 5: Terms, Order Reference & Narration */}
+            <div className="transition-colors">
+              <button
+                type="button"
+                onClick={() => setActiveAccordion(activeAccordion === 'terms' ? null : 'terms')}
+                className="w-full p-4 flex items-center justify-between hover:bg-muted/30 transition-colors text-left cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400">
+                    <FileText className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+                      <span>Terms, Order Reference & Narration</span>
+                      {(poNumber || narration || dueDate) && (
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20">
+                          ✓ Notes Added
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Buyer purchase order number, payment terms, and voucher remarks</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground font-medium hidden sm:inline">
+                    {activeAccordion === 'terms' ? 'Collapse' : 'Expand'}
+                  </span>
+                  {activeAccordion === 'terms' ? (
+                    <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </div>
+              </button>
+
+              {activeAccordion === 'terms' && (
+                <div className="p-4 bg-muted/15 border-t border-border/40 grid grid-cols-1 sm:grid-cols-3 gap-4 animate-in fade-in-50 duration-150">
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      Buyer Purchase Order (PO) #
+                    </label>
+                    <input
+                      type="text"
+                      value={poNumber}
+                      onChange={e => setPoNumber(e.target.value)}
+                      placeholder="e.g. PO-2026-881"
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      PO Date
+                    </label>
+                    <input
+                      type="date"
+                      value={poDate}
+                      onChange={e => setPoDate(e.target.value)}
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      Payment Due Date
+                    </label>
+                    <input
+                      type="date"
+                      value={dueDate}
+                      onChange={e => setDueDate(e.target.value)}
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono"
+                    />
+                  </div>
+                  <div className="sm:col-span-3">
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      Voucher Narration / Terms & Conditions
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={narration}
+                      onChange={e => setNarration(e.target.value)}
+                      placeholder="Special instructions, delivery terms, or voucher narration..."
+                      className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+
         {/* Totals Section */}
         <div className="flex justify-end">
             <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-sm p-6 space-y-3">
                 <div className="flex justify-between text-muted-foreground text-sm">
-                    <span>Gross Total</span>
+                    <span>Gross Subtotal</span>
                     <span className="font-mono tabular-nums font-semibold text-foreground">₹{grossTotal.toFixed(2)}</span>
                 </div>
                 {isInterState ? (
@@ -2176,21 +2624,18 @@ export default function SalesPage() {
                         </div>
                     </>
                 )}
-                <div className="flex justify-between items-center text-muted-foreground text-sm">
-                    <span>Cartage / Freight Outward</span>
-                    <div className="flex items-center gap-1.5">
-                        <span className="text-muted-foreground font-mono text-sm">₹</span>
-                        <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={cartageAmount}
-                            onChange={(e) => setCartageAmount(e.target.value)}
-                            placeholder="0.00"
-                            className="w-32 bg-background border border-border text-foreground text-right px-3 py-1.5 rounded-lg font-mono tabular-nums font-semibold text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
-                        />
-                    </div>
-                </div>
+                {Number(cartageAmount) > 0 && (
+                  <div className="flex justify-between items-center text-muted-foreground text-sm">
+                      <span>Cartage / Freight Outward</span>
+                      <span className="font-mono tabular-nums font-semibold text-foreground">+₹{Number(cartageAmount).toFixed(2)}</span>
+                  </div>
+                )}
+                {Number(additionalDiscount) > 0 && (
+                  <div className="flex justify-between items-center text-emerald-600 dark:text-emerald-400 text-sm">
+                      <span>Special Cash Discount</span>
+                      <span className="font-mono tabular-nums font-semibold">-₹{Number(additionalDiscount).toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-muted-foreground text-sm">
                     <span>Round Off</span>
                     <span className={roundOff < 0 ? "text-emerald-500 font-mono tabular-nums font-semibold" : roundOff > 0 ? "text-amber-500 font-mono tabular-nums font-semibold" : "text-muted-foreground font-mono tabular-nums"}>

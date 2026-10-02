@@ -39,6 +39,9 @@ import {
   Building2,
   Calendar,
   Wallet,
+  ShieldCheck,
+  Search,
+  Filter,
 } from "lucide-react";
 
 function getVoucherTypeBadgeClass(type: string): string {
@@ -109,6 +112,8 @@ export default function Dashboard() {
   const [syncMessage, setSyncMessage] = useState("");
   const [pendingMutations, setPendingMutations] = useState(0);
   const [isOnline, setIsOnline] = useState(true);
+  const [voucherFilter, setVoucherFilter] = useState<string>("ALL");
+  const [voucherSearch, setVoucherSearch] = useState<string>("");
 
   const { activeCompany, companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
@@ -412,9 +417,27 @@ export default function Dashboard() {
   const momComparison = forecast?.monthly_comparison?.mom_comparison;
   const currentMonthData = forecast?.monthly_comparison?.current_month;
 
+  // Tri-partite financial calculations
+  const netWorkingCapital = (kpis.cash_and_bank || 0) + (kpis.money_to_collect || 0) - (kpis.bills_to_pay || 0);
+
+  // Filtered transactions for quick search and type filtering
+  const filteredVouchers = vouchers.filter((v: any) => {
+    const vType = (v.voucherType || v.voucher_type || v.type || "GENERAL").toUpperCase();
+    if (voucherFilter !== "ALL" && vType !== voucherFilter) {
+      return false;
+    }
+    if (voucherSearch.trim()) {
+      const q = voucherSearch.toLowerCase();
+      const voucherNo = String(v.voucherNumber || v.voucher_number || "").toLowerCase();
+      const party = String(v.partyName || v.party_name || v.narration || "").toLowerCase();
+      return voucherNo.includes(q) || party.includes(q);
+    }
+    return true;
+  });
+
   return (
     <DashboardLayout>
-      <div className="space-y-6 pb-16 max-w-[1600px] mx-auto overflow-x-hidden w-full">
+      <div className="space-y-8 pb-16 max-w-[1600px] mx-auto overflow-x-hidden w-full">
         
         {/* ========================================================= */}
         {/* Top Header & Actions Bar (Fully Responsive)             */}
@@ -463,7 +486,7 @@ export default function Dashboard() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-muted-foreground">
-              <span>Operational Overview</span>
+              <span>Financial Cockpit</span>
               {activeFY && (
                 <>
                   <span>•</span>
@@ -476,7 +499,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Action Button Cluster with keyboard shortcuts */}
+          {/* Quick Action Button Cluster */}
           <div className="flex flex-wrap items-center gap-2">
             <Link
               id="tour-sales-btn"
@@ -524,14 +547,6 @@ export default function Dashboard() {
               </kbd>
             </Link>
 
-            <Link
-              href="/analytics"
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 border border-purple-500/30 transition-all cursor-pointer"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-purple-500" />
-              <span>Analytics Hub</span>
-            </Link>
-
             <button
               onClick={() => setIsHelpOpen(true)}
               className="p-2 text-muted-foreground hover:text-foreground rounded-xl border border-border/60 hover:bg-muted transition-colors cursor-pointer"
@@ -543,583 +558,666 @@ export default function Dashboard() {
         </div>
 
         {/* ========================================================= */}
-        {/* Core Business Vitals (5 Responsive Cards)                 */}
+        {/* PILLAR 1: 💰 MONEY (Liquidity & Working Capital)          */}
         {/* ========================================================= */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5 sm:gap-4">
-          
-          {/* Card 1: Total Sales & Today */}
-          <Link
-            href="/sales"
-            className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-emerald-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
-          >
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 to-teal-500" />
-            <div className="flex items-center justify-between text-muted-foreground mb-2">
-              <span className="text-xs font-semibold uppercase tracking-wider">Total Sales</span>
-              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 group-hover:scale-105 transition-transform">
-                <Receipt className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-foreground">
-              ₹{(kpis.total_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
-              <span>Today: <strong className="text-foreground font-mono">₹{(kpis.today_sales || 0).toLocaleString("en-IN")}</strong></span>
-              <span className="group-hover:translate-x-0.5 transition-transform text-emerald-600 dark:text-emerald-400 font-medium">
-                {kpis.sales_vouchers_count || 0} bills →
-              </span>
-            </div>
-          </Link>
-
-          {/* Card 2: Sundry Debtors (Money to Collect) */}
-          <Link
-            href="/parties"
-            className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-teal-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
-          >
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-teal-500 to-cyan-500" />
-            <div className="flex items-center justify-between text-muted-foreground mb-2">
-              <span className="text-xs font-semibold uppercase tracking-wider">To Collect</span>
-              <div className="p-2 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 group-hover:scale-105 transition-transform">
-                <Users className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-teal-600 dark:text-teal-400">
-              ₹{(kpis.money_to_collect || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
-              <span>Customers owe</span>
-              <span className="group-hover:translate-x-0.5 transition-transform text-teal-600 dark:text-teal-400 font-medium">
-                Ledger →
-              </span>
-            </div>
-          </Link>
-
-          {/* Card 3: Sundry Creditors (Bills to Pay) */}
-          <Link
-            href="/parties"
-            className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-rose-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
-          >
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-rose-500 to-orange-500" />
-            <div className="flex items-center justify-between text-muted-foreground mb-2">
-              <span className="text-xs font-semibold uppercase tracking-wider">Bills to Pay</span>
-              <div className="p-2 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 group-hover:scale-105 transition-transform">
-                <FileText className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-rose-600 dark:text-rose-400">
-              ₹{(kpis.bills_to_pay || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
-              <span>Due to suppliers</span>
-              <span className="group-hover:translate-x-0.5 transition-transform text-rose-600 dark:text-rose-400 font-medium">
-                Pay →
-              </span>
-            </div>
-          </Link>
-
-          {/* Card 4: Liquid Funds (Cash & Bank) */}
-          <Link
-            href="/ledgers"
-            className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-blue-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
-          >
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-500" />
-            <div className="flex items-center justify-between text-muted-foreground mb-2">
-              <span className="text-xs font-semibold uppercase tracking-wider">Cash & Bank</span>
-              <div className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 group-hover:scale-105 transition-transform">
+        <section className="space-y-3.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
                 <Wallet className="w-4 h-4" />
               </div>
-            </div>
-            <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-foreground">
-              ₹{(kpis.cash_and_bank || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
-              <span>Liquid funds</span>
-              <span className="group-hover:translate-x-0.5 transition-transform text-blue-600 dark:text-blue-400 font-medium">
-                Accounts →
-              </span>
-            </div>
-          </Link>
-
-          {/* Card 5: Inventory Valuation */}
-          <Link
-            href="/inventory"
-            className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-purple-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block sm:col-span-2 lg:col-span-1"
-          >
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-purple-500 to-violet-500" />
-            <div className="flex items-center justify-between text-muted-foreground mb-2">
-              <span className="text-xs font-semibold uppercase tracking-wider">Stock Value</span>
-              <div className="p-2 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 group-hover:scale-105 transition-transform">
-                <Boxes className="w-4 h-4" />
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-foreground">Money & Working Capital</h2>
+                <p className="text-xs text-muted-foreground">Liquid cash, customer receivables, and supplier liabilities</p>
               </div>
             </div>
-            <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-purple-600 dark:text-purple-400">
-              ₹{(kpis.total_stock_value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
-              <span>{kpis.total_in_stock_items || 0} active items</span>
-              <span className="group-hover:translate-x-0.5 transition-transform text-purple-600 dark:text-purple-400 font-medium">
-                Stock →
-              </span>
-            </div>
-          </Link>
-        </div>
+            <Link
+              href="/ledgers"
+              className="text-xs text-primary hover:underline font-semibold flex items-center gap-1"
+            >
+              <span>View Ledgers</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
 
-        {/* ========================================================= */}
-        {/* Executive AI Pace & Forecast Teaser Banner                */}
-        {/* ========================================================= */}
-        <div className="relative overflow-hidden rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-500/5 via-card to-blue-500/5 p-4 sm:p-5">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/25">
-                  <Sparkles className="w-3.5 h-3.5 text-purple-500" />
-                  <span>AI Business Intelligence</span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+            {/* 1. Cash & Bank */}
+            <Link
+              href="/ledgers"
+              className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-blue-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
+            >
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-500" />
+              <div className="flex items-center justify-between text-muted-foreground mb-2">
+                <span className="text-xs font-semibold uppercase tracking-wider">Cash & Bank</span>
+                <div className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 group-hover:scale-105 transition-transform">
+                  <Wallet className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-foreground">
+                ₹{(kpis.cash_and_bank || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              </div>
+              <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+                <span>Available liquidity</span>
+                <span className="group-hover:translate-x-0.5 transition-transform text-blue-600 dark:text-blue-400 font-medium">
+                  Bank accounts →
                 </span>
-                {momComparison && (
-                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${
-                    momComparison.pace_status === "BEATING_LAST_MONTH"
-                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                  }`}>
-                    {momComparison.pace_status === "BEATING_LAST_MONTH" ? (
-                      <TrendingUp className="w-3 h-3" />
-                    ) : (
-                      <TrendingDown className="w-3 h-3" />
-                    )}
-                    <span>{momComparison.percentage_change >= 0 ? "+" : ""}{momComparison.percentage_change}% vs Last Month</span>
-                  </span>
-                )}
               </div>
+            </Link>
 
-              <div className="text-sm sm:text-base font-semibold text-foreground">
-                {currentMonthData ? (
-                  <span>
-                    Projected Month Total: <strong className="font-mono text-purple-600 dark:text-purple-400">₹{currentMonthData.projected_month_total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
-                    <span className="text-muted-foreground font-normal text-xs sm:text-sm ml-2">
-                      (MTD: ₹{formatCurrencyShort(currentMonthData.mtd_actual_sales)} + Projected: ₹{formatCurrencyShort(currentMonthData.remaining_projected_sales)})
-                    </span>
-                  </span>
-                ) : (
-                  <span>Multi-factor sales forecasting, stock valuation, and customer RFM analytics</span>
-                )}
+            {/* 2. Sundry Debtors (Money to Collect) */}
+            <Link
+              href="/parties"
+              className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-teal-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
+            >
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-teal-500 to-emerald-500" />
+              <div className="flex items-center justify-between text-muted-foreground mb-2">
+                <span className="text-xs font-semibold uppercase tracking-wider">Money to Collect</span>
+                <div className="p-2 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 group-hover:scale-105 transition-transform">
+                  <Users className="w-4 h-4" />
+                </div>
               </div>
+              <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-teal-600 dark:text-teal-400">
+                ₹{(kpis.money_to_collect || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              </div>
+              <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+                <span>Customer receivables</span>
+                <span className="group-hover:translate-x-0.5 transition-transform text-teal-600 dark:text-teal-400 font-medium">
+                  Receive (F6) →
+                </span>
+              </div>
+            </Link>
 
-              <p className="text-xs text-muted-foreground max-w-3xl">
-                {momComparison?.summary || "Comprehensive multi-factor predictive modeling with day-of-week profiles, seasonality, and customer repeat purchase analysis."}
-              </p>
-            </div>
+            {/* 3. Sundry Creditors (Bills to Pay) */}
+            <Link
+              href="/parties"
+              className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-rose-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
+            >
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-rose-500 to-orange-500" />
+              <div className="flex items-center justify-between text-muted-foreground mb-2">
+                <span className="text-xs font-semibold uppercase tracking-wider">Bills to Pay</span>
+                <div className="p-2 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 group-hover:scale-105 transition-transform">
+                  <FileText className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-rose-600 dark:text-rose-400">
+                ₹{(kpis.bills_to_pay || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              </div>
+              <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+                <span>Supplier liabilities</span>
+                <span className="group-hover:translate-x-0.5 transition-transform text-rose-600 dark:text-rose-400 font-medium">
+                  Pay (F5) →
+                </span>
+              </div>
+            </Link>
 
-            <div className="flex items-center gap-3 shrink-0">
-              <Link
-                href="/analytics"
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white shadow-sm transition-all cursor-pointer group"
-              >
-                <span>Open Dedicated Analytics Hub</span>
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-              </Link>
-            </div>
-          </div>
-        </div>
-
-        {/* ========================================================= */}
-        {/* Actionable Health & Needs Attention Grid                  */}
-        {/* ========================================================= */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          
-          {/* Books Health Status Card */}
-          <div className="bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col justify-between">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                  healthReport ? (
-                    (healthReport?.health_score ?? 100) >= 90
-                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                      : (healthReport?.health_score ?? 100) >= 70
-                      ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                      : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                  ) : "bg-muted text-muted-foreground"
+            {/* 4. Net Working Capital Buffer */}
+            <div className="relative bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs overflow-hidden block">
+              <div className={`absolute top-0 left-0 right-0 h-1 ${
+                netWorkingCapital >= 0
+                  ? "bg-gradient-to-r from-emerald-500 to-teal-500"
+                  : "bg-gradient-to-r from-rose-500 to-amber-500"
+              }`} />
+              <div className="flex items-center justify-between text-muted-foreground mb-2">
+                <span className="text-xs font-semibold uppercase tracking-wider">Working Capital</span>
+                <div className={`p-2 rounded-xl ${
+                  netWorkingCapital >= 0
+                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
                 }`}>
-                  {healthReport && (healthReport?.health_score ?? 100) >= 90 ? (
-                    <CheckCircle2 className="w-5 h-5" />
-                  ) : healthReport ? (
-                    <AlertTriangle className="w-5 h-5" />
-                  ) : (
-                    <Activity className="w-5 h-5" />
-                  )}
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-foreground">
-                    {healthReport ? (
-                      (healthReport?.health_score ?? 100) >= 90
-                        ? "Your books are in great shape"
-                        : `${healthReport.metrics?.critical_findings_count || 1} issues require review`
-                    ) : (
-                      "Accounting Integrity"
-                    )}
-                  </h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {healthReport ? (
-                      `Integrity Score: ${healthReport.health_score || 100}% · ${healthReport.health_status || "HEALTHY"}`
-                    ) : (
-                      "Automated background audit for debit-credit parity and reconciliation"
-                    )}
-                  </p>
+                  <DollarSign className="w-4 h-4" />
                 </div>
               </div>
-
-              <Link
-                href="/health"
-                className="px-3 py-1.5 rounded-lg border border-border/60 bg-muted/50 hover:bg-muted text-foreground text-xs font-semibold flex items-center gap-1 transition-colors shrink-0"
-              >
-                <span>Audit</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </Link>
+              <div className={`text-xl sm:text-2xl font-black font-mono tracking-tight ${
+                netWorkingCapital >= 0 ? "text-foreground" : "text-rose-600 dark:text-rose-400"
+              }`}>
+                ₹{netWorkingCapital.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              </div>
+              <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+                <span>(Cash + Collect - Pay)</span>
+                <span className={`font-semibold ${netWorkingCapital >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+                  {netWorkingCapital >= 0 ? "Positive Buffer" : "Cash Deficit Risk"}
+                </span>
+              </div>
             </div>
+          </div>
+        </section>
 
-            <div className="mt-4 pt-3 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
-              <span>Debit = Credit Balance Parity</span>
-              <span className="font-semibold text-emerald-600 dark:text-emerald-400">Verified</span>
+        {/* ========================================================= */}
+        {/* PILLAR 2: 📈 PERFORMANCE (Revenue, Run-Rate & Projections)  */}
+        {/* ========================================================= */}
+        <section className="space-y-3.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-foreground">Performance & Projections</h2>
+                <p className="text-xs text-muted-foreground">Sales pacing, run-rate forecast, and top customer segments</p>
+              </div>
+            </div>
+            <Link
+              href="/analytics"
+              className="text-xs text-primary hover:underline font-semibold flex items-center gap-1"
+            >
+              <span>Analytics Hub</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+
+          {/* Forecast & Sales Pace Banner */}
+          <div className="relative overflow-hidden rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-500/5 via-card to-blue-500/5 p-4 sm:p-5">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/25">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+                    <span>Sales Pace & Projections</span>
+                  </span>
+                  {momComparison && (
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${
+                      momComparison.pace_status === "BEATING_LAST_MONTH"
+                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                        : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                    }`}>
+                      {momComparison.pace_status === "BEATING_LAST_MONTH" ? (
+                        <TrendingUp className="w-3 h-3" />
+                      ) : (
+                        <TrendingDown className="w-3 h-3" />
+                      )}
+                      <span>{momComparison.percentage_change >= 0 ? "+" : ""}{momComparison.percentage_change}% vs Last Month</span>
+                    </span>
+                  )}
+                </div>
+
+                <div className="text-sm sm:text-base font-semibold text-foreground">
+                  {currentMonthData ? (
+                    <span>
+                      Projected Month Total: <strong className="font-mono text-purple-600 dark:text-purple-400">₹{currentMonthData.projected_month_total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                      <span className="text-muted-foreground font-normal text-xs sm:text-sm ml-2">
+                        (MTD Actual: ₹{formatCurrencyShort(currentMonthData.mtd_actual_sales)} + Projected: ₹{formatCurrencyShort(currentMonthData.remaining_projected_sales)})
+                      </span>
+                    </span>
+                  ) : (
+                    <span>Real-time sales tracking, stock movement, and customer purchasing cycles</span>
+                  )}
+                </div>
+
+                <p className="text-xs text-muted-foreground max-w-3xl">
+                  {momComparison?.summary || "Automated sales projections based on daily sales velocity, seasonal trends, and customer reorder patterns."}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 shrink-0">
+                <Link
+                  href="/analytics"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white shadow-sm transition-all cursor-pointer group"
+                >
+                  <span>Detailed Analytics</span>
+                  <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                </Link>
+              </div>
             </div>
           </div>
 
-          {/* Attention Center / Alerts */}
-          <div className="bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between mb-2.5">
-                <h3 className="text-sm font-bold text-foreground flex items-center gap-1.5">
-                  <span>Operational Alerts</span>
-                  {alerts.length > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400">
-                      {alerts.length}
-                    </span>
-                  )}
-                </h3>
-                <Link href="/health" className="text-xs text-muted-foreground hover:text-foreground font-medium transition-colors">
-                  All alerts →
+          {/* Performance Sub-Grid: Sales, Purchases, Stock & Best Customers */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            {/* Left 3 Stats (7 Cols) */}
+            <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              {/* Total Sales */}
+              <Link
+                href="/sales"
+                className="bg-card hover:bg-card/80 border border-border/60 hover:border-emerald-500/40 rounded-2xl p-4 shadow-xs transition-all cursor-pointer block"
+              >
+                <div className="flex items-center justify-between text-muted-foreground mb-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wider">Total Sales</span>
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <Receipt className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-foreground">
+                  ₹{(kpis.total_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </div>
+                <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Today: <strong className="text-foreground font-mono">₹{(kpis.today_sales || 0).toLocaleString("en-IN")}</strong></span>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                    {kpis.sales_vouchers_count || 0} bills →
+                  </span>
+                </div>
+              </Link>
+
+              {/* Total Purchases */}
+              <Link
+                href="/purchases"
+                className="bg-card hover:bg-card/80 border border-border/60 hover:border-blue-500/40 rounded-2xl p-4 shadow-xs transition-all cursor-pointer block"
+              >
+                <div className="flex items-center justify-between text-muted-foreground mb-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wider">Purchases</span>
+                  <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                    <ShoppingCart className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-foreground">
+                  ₹{(kpis.total_purchases || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </div>
+                <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Suppliers billed</span>
+                  <span className="text-blue-600 dark:text-blue-400 font-medium">
+                    {kpis.purchase_vouchers_count || 0} bills →
+                  </span>
+                </div>
+              </Link>
+
+              {/* Stock Valuation */}
+              <Link
+                href="/inventory"
+                className="bg-card hover:bg-card/80 border border-border/60 hover:border-purple-500/40 rounded-2xl p-4 shadow-xs transition-all cursor-pointer block"
+              >
+                <div className="flex items-center justify-between text-muted-foreground mb-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wider">Inventory</span>
+                  <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                    <Boxes className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-foreground">
+                  ₹{(kpis.total_stock_value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </div>
+                <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>In stock items</span>
+                  <span className="text-purple-600 dark:text-purple-400 font-medium">
+                    {kpis.total_in_stock_items || 0} items →
+                  </span>
+                </div>
+              </Link>
+            </div>
+
+            {/* Right Column: Best Customers (5 Cols) */}
+            <div className="lg:col-span-5 bg-card border border-border/60 rounded-2xl p-4 shadow-xs space-y-3 flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs sm:text-sm font-bold text-foreground">Top Customers</h3>
+                  <p className="text-[11px] text-muted-foreground">Leading revenue and order volume</p>
+                </div>
+                <Link href="/parties" className="text-xs text-muted-foreground hover:text-foreground font-medium transition-colors">
+                  View all →
                 </Link>
               </div>
 
-              <div className="space-y-2">
-                {alerts.length > 0 ? (
-                  alerts.slice(0, 3).map((alert: any, idx: number) => (
-                    <div
-                      key={idx}
-                      className="flex items-center gap-2.5 text-xs text-foreground bg-muted/30 px-3 py-2 rounded-xl border border-border/40"
-                    >
-                      <span className={`w-2 h-2 rounded-full shrink-0 ${
-                        alert.message?.toLowerCase().includes("overdue")
-                          ? "bg-rose-500"
-                          : alert.message?.toLowerCase().includes("low stock")
-                          ? "bg-amber-500"
-                          : "bg-blue-500"
-                      }`} />
-                      <span className="truncate">{alert.message}</span>
-                    </div>
-                  ))
+              <div className="space-y-1.5 flex-1">
+                {rfmList.length > 0 ? (
+                  rfmList.slice(0, 3).map((customer: any, idx: number) => {
+                    const segName = customer.segment || "Standard";
+                    return (
+                      <div
+                        key={idx}
+                        className="p-2.5 rounded-xl bg-muted/20 hover:bg-muted/50 border border-border/40 transition-colors flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-foreground truncate">
+                            {customer.party_ledger__name || "Customer"}
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold border ${getCustomerTierBadgeClass(segName)}`}>
+                              {segName}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground font-mono">
+                              {customer.frequency} orders
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="text-xs font-black font-mono text-foreground">
+                            ₹{Number(customer.monetary).toLocaleString("en-IN", { minimumFractionDigits: 0 })}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
                 ) : (
-                  <div className="text-xs text-muted-foreground bg-muted/20 px-3 py-3 rounded-xl border border-dashed border-border/50 text-center">
-                    ✓ All clear. No overdue invoices or urgent stock shortages.
+                  <div className="py-4 flex flex-col items-center justify-center border border-dashed border-border/60 rounded-xl text-center p-3">
+                    <Users className="w-5 h-5 text-muted-foreground/40 mb-1" />
+                    <div className="text-xs font-medium text-muted-foreground">No customer transactions yet</div>
                   </div>
                 )}
               </div>
             </div>
+          </div>
+        </section>
 
-            <div className="mt-3 pt-2 text-[11px] text-muted-foreground flex items-center justify-between">
-              <span>System Watchdog</span>
-              <span>Active</span>
+        {/* ========================================================= */}
+        {/* PILLAR 3: ⚠️ ATTENTION (The FIX Loop: Audits & Alerts)     */}
+        {/* ========================================================= */}
+        <section className="space-y-3.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-foreground">Attention & Action Required</h2>
+                <p className="text-xs text-muted-foreground">Accounting integrity, reconciliation queue, and operational flags</p>
+              </div>
+            </div>
+            <Link
+              href="/health"
+              className="text-xs text-primary hover:underline font-semibold flex items-center gap-1"
+            >
+              <span>Audit Hub</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Books Health Status Card */}
+            <div className="bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col justify-between">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                    healthReport ? (
+                      (healthReport?.health_score ?? 100) >= 90
+                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                        : (healthReport?.health_score ?? 100) >= 70
+                        ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                        : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                    ) : "bg-muted text-muted-foreground"
+                  }`}>
+                    {healthReport && (healthReport?.health_score ?? 100) >= 90 ? (
+                      <CheckCircle2 className="w-5 h-5" />
+                    ) : healthReport ? (
+                      <AlertTriangle className="w-5 h-5" />
+                    ) : (
+                      <ShieldCheck className="w-5 h-5" />
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground">
+                      {healthReport ? (
+                        (healthReport?.health_score ?? 100) >= 90
+                          ? "Accounting Books in Great Shape"
+                          : `${healthReport.metrics?.critical_findings_count || 1} issues require review`
+                      ) : (
+                        "Accounting Integrity Verified"
+                      )}
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {healthReport ? (
+                        `Integrity Score: ${healthReport.health_score || 100}% · Status: ${healthReport.health_status || "HEALTHY"}`
+                      ) : (
+                        "Continuous background verification for debit-credit parity and trial balance"
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <Link
+                  href="/health"
+                  className="px-3 py-1.5 rounded-lg border border-border/60 bg-muted/50 hover:bg-muted text-foreground text-xs font-semibold flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
+                >
+                  <span>Review Audit</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Debit = Credit Balance Parity</span>
+                </span>
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">Verified</span>
+              </div>
+            </div>
+
+            {/* Operational Alerts / Priority Queue */}
+            <div className="bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2.5">
+                  <h3 className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                    <span>Operational Alerts</span>
+                    {alerts.length > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                        {alerts.length}
+                      </span>
+                    )}
+                  </h3>
+                  <Link href="/health" className="text-xs text-muted-foreground hover:text-foreground font-medium transition-colors">
+                    All alerts →
+                  </Link>
+                </div>
+
+                <div className="space-y-2">
+                  {alerts.length > 0 ? (
+                    alerts.slice(0, 3).map((alert: any, idx: number) => (
+                      <div
+                        key={idx}
+                        className="flex items-center gap-2.5 text-xs text-foreground bg-muted/30 px-3 py-2 rounded-xl border border-border/40"
+                      >
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${
+                          alert.message?.toLowerCase().includes("overdue")
+                            ? "bg-rose-500"
+                            : alert.message?.toLowerCase().includes("low stock")
+                            ? "bg-amber-500"
+                            : "bg-blue-500"
+                        }`} />
+                        <span className="truncate">{alert.message}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-xs text-muted-foreground bg-muted/20 px-3 py-3 rounded-xl border border-dashed border-border/50 text-center">
+                      ✓ All clear. No overdue invoices or urgent stock shortages.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-3 pt-2 text-[11px] text-muted-foreground flex items-center justify-between">
+                <span>Health Monitoring</span>
+                <span className="font-medium text-emerald-600 dark:text-emerald-400">Active</span>
+              </div>
             </div>
           </div>
-        </div>
+        </section>
 
         {/* ========================================================= */}
-        {/* Quick Launchpad Shortcuts                                 */}
+        {/* RECENT TRANSACTIONS (DO & REVIEW) with Search & Filter   */}
         {/* ========================================================= */}
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-            Quick Launchpad
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Link
-              href="/sales/new"
-              className="bg-card hover:bg-muted/50 border border-border/60 hover:border-emerald-500/40 rounded-xl p-3 sm:p-4 transition-all flex items-center gap-3 group"
-            >
-              <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 group-hover:scale-105 transition-transform">
-                <Receipt className="w-5 h-5" />
+        <section className="bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm sm:text-base font-bold text-foreground">Recent Transactions</h2>
+              <p className="text-xs text-muted-foreground">Search and review posted vouchers in your books</p>
+            </div>
+            
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Search Bar */}
+              <div className="relative min-w-[200px] flex-1 sm:flex-initial">
+                <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Search voucher or party..."
+                  value={voucherSearch}
+                  onChange={(e) => setVoucherSearch(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-muted/50 border border-border/60 rounded-xl text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:bg-background transition-all"
+                />
               </div>
-              <div className="min-w-0">
-                <div className="text-xs sm:text-sm font-bold text-foreground truncate">Sales Bill</div>
-                <div className="text-[11px] text-muted-foreground font-mono">Press F8</div>
-              </div>
-            </Link>
 
-            <Link
-              href="/purchases/new"
-              className="bg-card hover:bg-muted/50 border border-border/60 hover:border-blue-500/40 rounded-xl p-3 sm:p-4 transition-all flex items-center gap-3 group"
-            >
-              <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 group-hover:scale-105 transition-transform">
-                <ShoppingCart className="w-5 h-5" />
+              {/* Type Filter Buttons */}
+              <div className="inline-flex items-center bg-muted/40 p-0.5 rounded-xl border border-border/50 text-xs">
+                {(["ALL", "SALES", "PURCHASE", "RECEIPT", "PAYMENT"] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setVoucherFilter(t)}
+                    className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                      voucherFilter === t
+                        ? "bg-card text-foreground shadow-xs font-bold"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {t === "ALL" ? "All" : t.charAt(0) + t.slice(1).toLowerCase()}
+                  </button>
+                ))}
               </div>
-              <div className="min-w-0">
-                <div className="text-xs sm:text-sm font-bold text-foreground truncate">Purchase Bill</div>
-                <div className="text-[11px] text-muted-foreground font-mono">Press F9</div>
-              </div>
-            </Link>
 
-            <Link
-              href="/parties"
-              className="bg-card hover:bg-muted/50 border border-border/60 hover:border-teal-500/40 rounded-xl p-3 sm:p-4 transition-all flex items-center gap-3 group"
-            >
-              <div className="p-2.5 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 group-hover:scale-105 transition-transform">
-                <Users className="w-5 h-5" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-xs sm:text-sm font-bold text-foreground truncate">Parties & Ledgers</div>
-                <div className="text-[11px] text-muted-foreground">Customers & Suppliers</div>
-              </div>
-            </Link>
-
-            <Link
-              href="/inventory"
-              className="bg-card hover:bg-muted/50 border border-border/60 hover:border-purple-500/40 rounded-xl p-3 sm:p-4 transition-all flex items-center gap-3 group"
-            >
-              <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 group-hover:scale-105 transition-transform">
-                <Boxes className="w-5 h-5" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-xs sm:text-sm font-bold text-foreground truncate">Stock Items</div>
-                <div className="text-[11px] text-muted-foreground">Catalog & Pricing</div>
-              </div>
-            </Link>
-          </div>
-        </div>
-
-        {/* ========================================================= */}
-        {/* Balanced Operational Hub: Recent Activity & Top Customers */}
-        {/* ========================================================= */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          
-          {/* Left Column (7 cols): Recent Transactions Table (Mobile Cards + Desktop Table) */}
-          <div className="lg:col-span-8 bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-sm sm:text-base font-bold text-foreground">Recent Transactions</h2>
-                <p className="text-xs text-muted-foreground">Latest vouchers posted in your books</p>
-              </div>
               <Link
                 href="/vouchers"
-                className="text-xs text-primary hover:underline font-semibold flex items-center gap-1"
+                className="text-xs text-primary hover:underline font-semibold flex items-center gap-1 pl-1"
               >
-                <span>View All Vouchers</span>
+                <span>View All</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </Link>
             </div>
+          </div>
 
-            {/* Mobile View (<640px): Responsive Cards (No sideways scroll required) */}
-            <div className="block sm:hidden space-y-2.5">
-              {vouchers.slice(0, 6).map((v) => {
-                const voucherNo = v.voucherNumber || v.voucher_number || "—";
-                const rawDate = v.voucherDate || v.voucher_date || v.date;
-                const formattedDate = rawDate
-                  ? (() => {
-                      try {
-                        const d = new Date(rawDate);
-                        return isNaN(d.getTime())
-                          ? rawDate
-                          : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-                      } catch {
-                        return rawDate;
-                      }
-                    })()
-                  : "—";
-                const vType = (v.voucherType || v.voucher_type || v.type || "GENERAL").toUpperCase();
-                const partyName = v.partyName || v.party_name || v.narration || "General Entry";
-                const rawAmount = v.totalAmount !== undefined && v.totalAmount !== null
-                  ? v.totalAmount
-                  : (v.total_amount !== undefined && v.total_amount !== null ? v.total_amount : 0);
-                const amount = Number(rawAmount) || 0;
+          {/* Mobile View (<640px): Responsive Cards (No sideways scroll required) */}
+          <div className="block sm:hidden space-y-2.5">
+            {filteredVouchers.slice(0, 8).map((v) => {
+              const voucherNo = v.voucherNumber || v.voucher_number || "—";
+              const rawDate = v.voucherDate || v.voucher_date || v.date;
+              const formattedDate = rawDate
+                ? (() => {
+                    try {
+                      const d = new Date(rawDate);
+                      return isNaN(d.getTime())
+                        ? rawDate
+                        : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+                    } catch {
+                      return rawDate;
+                    }
+                  })()
+                : "—";
+              const vType = (v.voucherType || v.voucher_type || v.type || "GENERAL").toUpperCase();
+              const partyName = v.partyName || v.party_name || v.narration || "General Entry";
+              const rawAmount = v.totalAmount !== undefined && v.totalAmount !== null
+                ? v.totalAmount
+                : (v.total_amount !== undefined && v.total_amount !== null ? v.total_amount : 0);
+              const amount = Number(rawAmount) || 0;
 
-                return (
-                  <div
-                    key={v.id || voucherNo}
-                    onClick={() => router.push(`/vouchers?search=${encodeURIComponent(voucherNo !== "—" ? voucherNo : "")}`)}
-                    className="p-3 rounded-xl bg-muted/30 border border-border/50 hover:bg-muted/60 transition-colors cursor-pointer space-y-1.5"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase border ${getVoucherTypeBadgeClass(vType)}`}>
+              return (
+                <div
+                  key={v.id || voucherNo}
+                  onClick={() => router.push(`/vouchers?search=${encodeURIComponent(voucherNo !== "—" ? voucherNo : "")}`)}
+                  className="p-3 rounded-xl bg-muted/30 border border-border/50 hover:bg-muted/60 transition-colors cursor-pointer space-y-1.5"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase border ${getVoucherTypeBadgeClass(vType)}`}>
+                        {vType}
+                      </span>
+                      <span className="font-mono text-xs font-semibold text-foreground">
+                        {voucherNo}
+                      </span>
+                    </div>
+                    <span className="font-mono text-sm font-bold text-foreground">
+                      ₹{amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
+                    <span className="truncate max-w-[180px] font-medium text-foreground">
+                      {partyName}
+                    </span>
+                    <span className="font-mono text-[11px] shrink-0">
+                      {formattedDate}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+
+            {filteredVouchers.length === 0 && (
+              <div className="py-8 text-center text-muted-foreground text-xs border border-dashed border-border/60 rounded-xl">
+                {voucherSearch || voucherFilter !== "ALL"
+                  ? "No vouchers match your filter."
+                  : "No vouchers recorded yet."}
+              </div>
+            )}
+          </div>
+
+          {/* Tablet & Desktop View (>=640px): Clean Table */}
+          <div className="hidden sm:block overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-border/60 text-muted-foreground">
+                  <th className="py-2.5 font-semibold">Voucher #</th>
+                  <th className="py-2.5 font-semibold">Date</th>
+                  <th className="py-2.5 font-semibold">Type</th>
+                  <th className="py-2.5 font-semibold">Party / Details</th>
+                  <th className="py-2.5 font-semibold">Status</th>
+                  <th className="py-2.5 font-semibold text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/30">
+                {filteredVouchers.slice(0, 10).map((v) => {
+                  const voucherNo = v.voucherNumber || v.voucher_number || "—";
+                  const rawDate = v.voucherDate || v.voucher_date || v.date;
+                  const formattedDate = rawDate
+                    ? (() => {
+                        try {
+                          const d = new Date(rawDate);
+                          return isNaN(d.getTime())
+                            ? rawDate
+                            : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+                        } catch {
+                          return rawDate;
+                        }
+                      })()
+                    : "—";
+                  const vType = (v.voucherType || v.voucher_type || v.type || "GENERAL").toUpperCase();
+                  const partyName = v.partyName || v.party_name || v.narration || "General Entry";
+                  const status = v.status || "POSTED";
+                  const rawAmount = v.totalAmount !== undefined && v.totalAmount !== null
+                    ? v.totalAmount
+                    : (v.total_amount !== undefined && v.total_amount !== null ? v.total_amount : 0);
+                  const amount = Number(rawAmount) || 0;
+
+                  return (
+                    <tr
+                      key={v.id || voucherNo}
+                      onClick={() => router.push(`/vouchers?search=${encodeURIComponent(voucherNo !== "—" ? voucherNo : "")}`)}
+                      className="hover:bg-muted/40 transition-colors cursor-pointer group"
+                    >
+                      <td className="py-3 font-mono tabular-nums font-semibold text-foreground group-hover:text-primary transition-colors">
+                        {voucherNo}
+                      </td>
+                      <td className="py-3 text-muted-foreground font-mono tabular-nums">
+                        {formattedDate}
+                      </td>
+                      <td className="py-3">
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold uppercase border ${getVoucherTypeBadgeClass(vType)}`}>
                           {vType}
                         </span>
-                        <span className="font-mono text-xs font-semibold text-foreground">
-                          {voucherNo}
-                        </span>
-                      </div>
-                      <span className="font-mono text-sm font-bold text-foreground">
-                        ₹{amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
-                      <span className="truncate max-w-[180px] font-medium text-foreground">
+                      </td>
+                      <td className="py-3 text-foreground font-medium max-w-[200px] truncate" title={partyName}>
                         {partyName}
-                      </span>
-                      <span className="font-mono text-[11px] shrink-0">
-                        {formattedDate}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {!hasTransactions && (
-                <div className="py-8 text-center text-muted-foreground text-xs border border-dashed border-border/60 rounded-xl">
-                  No vouchers recorded yet.
-                </div>
-              )}
-            </div>
-
-            {/* Tablet & Desktop View (>=640px): Clean Table */}
-            <div className="hidden sm:block overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-border/60 text-muted-foreground">
-                    <th className="py-2.5 font-semibold">Voucher #</th>
-                    <th className="py-2.5 font-semibold">Date</th>
-                    <th className="py-2.5 font-semibold">Type</th>
-                    <th className="py-2.5 font-semibold">Party / Details</th>
-                    <th className="py-2.5 font-semibold">Status</th>
-                    <th className="py-2.5 font-semibold text-right">Amount</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/30">
-                  {vouchers.slice(0, 7).map((v) => {
-                    const voucherNo = v.voucherNumber || v.voucher_number || "—";
-                    const rawDate = v.voucherDate || v.voucher_date || v.date;
-                    const formattedDate = rawDate
-                      ? (() => {
-                          try {
-                            const d = new Date(rawDate);
-                            return isNaN(d.getTime())
-                              ? rawDate
-                              : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-                          } catch {
-                            return rawDate;
-                          }
-                        })()
-                      : "—";
-                    const vType = (v.voucherType || v.voucher_type || v.type || "GENERAL").toUpperCase();
-                    const partyName = v.partyName || v.party_name || v.narration || "General Entry";
-                    const status = v.status || "POSTED";
-                    const rawAmount = v.totalAmount !== undefined && v.totalAmount !== null
-                      ? v.totalAmount
-                      : (v.total_amount !== undefined && v.total_amount !== null ? v.total_amount : 0);
-                    const amount = Number(rawAmount) || 0;
-
-                    return (
-                      <tr
-                        key={v.id || voucherNo}
-                        onClick={() => router.push(`/vouchers?search=${encodeURIComponent(voucherNo !== "—" ? voucherNo : "")}`)}
-                        className="hover:bg-muted/40 transition-colors cursor-pointer group"
-                      >
-                        <td className="py-3 font-mono tabular-nums font-semibold text-foreground group-hover:text-primary transition-colors">
-                          {voucherNo}
-                        </td>
-                        <td className="py-3 text-muted-foreground font-mono tabular-nums">
-                          {formattedDate}
-                        </td>
-                        <td className="py-3">
-                          <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold uppercase border ${getVoucherTypeBadgeClass(vType)}`}>
-                            {vType}
-                          </span>
-                        </td>
-                        <td className="py-3 text-foreground font-medium max-w-[200px] truncate" title={partyName}>
-                          {partyName}
-                        </td>
-                        <td className="py-3">
-                          <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${getVoucherStatusBadgeClass(status)}`}>
-                            {status}
-                          </span>
-                        </td>
-                        <td className="py-3 text-right font-mono tabular-nums font-bold text-foreground">
-                          ₹{amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {!hasTransactions && (
-                    <tr>
-                      <td colSpan={6} className="py-8 text-center text-muted-foreground text-xs">
-                        No vouchers posted yet. Press <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F8</kbd> for Sales or <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F9</kbd> for Purchases.
+                      </td>
+                      <td className="py-3">
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${getVoucherStatusBadgeClass(status)}`}>
+                          {status}
+                        </span>
+                      </td>
+                      <td className="py-3 text-right font-mono tabular-nums font-bold text-foreground">
+                        ₹{amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </td>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Right Column (4 cols): Best Customers & Relationships */}
-          <div className="lg:col-span-4 bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4 flex flex-col">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-sm sm:text-base font-bold text-foreground">Best Customers</h2>
-                <p className="text-xs text-muted-foreground">By sales revenue & volume</p>
-              </div>
-              <Link href="/parties" className="text-xs text-muted-foreground hover:text-foreground font-medium transition-colors">
-                View all →
-              </Link>
-            </div>
-
-            <div className="space-y-2 flex-1">
-              {rfmList.length > 0 ? (
-                rfmList.slice(0, 5).map((customer: any, idx: number) => {
-                  const segName = customer.segment || "Standard";
-                  return (
-                    <div
-                      key={idx}
-                      className="p-3 rounded-xl bg-muted/20 hover:bg-muted/50 border border-border/40 transition-colors flex items-center justify-between gap-2"
-                    >
-                      <div className="min-w-0">
-                        <div className="text-xs font-bold text-foreground truncate">
-                          {customer.party_ledger__name || "Customer"}
-                        </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className={`px-1.5 py-0.2 rounded text-[10px] font-semibold border ${getCustomerTierBadgeClass(segName)}`}>
-                            {segName}
-                          </span>
-                          <span className="text-[11px] text-muted-foreground font-mono">
-                            {customer.frequency} orders
-                          </span>
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <div className="text-xs font-black font-mono text-foreground">
-                          ₹{Number(customer.monetary).toLocaleString("en-IN", { minimumFractionDigits: 0 })}
-                        </div>
-                      </div>
-                    </div>
                   );
-                })
-              ) : (
-                <div className="h-40 flex flex-col items-center justify-center border border-dashed border-border/60 rounded-xl text-center p-4 space-y-1">
-                  <Users className="w-6 h-6 text-muted-foreground/40" />
-                  <div className="text-xs font-medium text-muted-foreground">No customer transactions yet</div>
-                  <div className="text-[11px] text-muted-foreground/80">
-                    Customers will be categorized here as invoices are posted.
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="pt-2 border-t border-border/40">
-              <Link
-                href="/analytics?tab=customers"
-                className="w-full py-2 px-3 rounded-xl bg-muted/40 hover:bg-muted text-foreground text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-              >
-                <span>Full RFM Segmentation & Cohorts</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </Link>
-            </div>
+                })}
+                {filteredVouchers.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-muted-foreground text-xs">
+                      {voucherSearch || voucherFilter !== "ALL" ? (
+                        <span>No transactions match the selected filter.</span>
+                      ) : (
+                        <span>
+                          No vouchers posted yet. Press <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F8</kbd> for Sales or <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border/60 font-semibold">F9</kbd> for Purchases.
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
-        </div>
+        </section>
       </div>
     </DashboardLayout>
   );

@@ -24,6 +24,7 @@ import {
   LogOut,
   Sparkles,
   FileText,
+  FilePlus,
   BarChart3,
   CheckCircle2,
   Lock,
@@ -34,12 +35,20 @@ import {
   ShieldAlert,
   Activity,
   Landmark,
-
   Check,
   Plus,
   Calculator,
+  Receipt,
+  ShoppingCart,
+  TrendingUp,
+  Boxes,
+  Users,
+  AlertTriangle,
+  FolderKanban,
+  Sliders,
 } from "lucide-react";
 import SyncStatusBadge from "./SyncStatusBadge";
+import UniversalNewModal from "./UniversalNewModal";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -47,18 +56,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isUniversalNewOpen, setIsUniversalNewOpen] = useState(false);
+  const [isAccountantMode, setIsAccountantMode] = useState(false);
 
-  // Dropdown states
-  const [isSalesDropdownOpen, setIsSalesDropdownOpen] = useState(false);
-  const [isMoreDropdownOpen, setIsMoreDropdownOpen] = useState(false);
+  // 5 Mental Model Dropdown States: DO, KNOW, FIX, AUTOMATE, CONTROL
+  const [isDoOpen, setIsDoOpen] = useState(false);
+  const [isKnowOpen, setIsKnowOpen] = useState(false);
+  const [isFixOpen, setIsFixOpen] = useState(false);
+  const [isAutomateOpen, setIsAutomateOpen] = useState(false);
+  const [isControlOpen, setIsControlOpen] = useState(false);
+
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isFYDropdownOpen, setIsFYDropdownOpen] = useState(false);
   const [isCompanyDropdownOpen, setIsCompanyDropdownOpen] = useState(false);
-  const [isGstDropdownOpen, setIsGstDropdownOpen] = useState(false);
 
-  const salesRef = useRef<HTMLDivElement>(null);
-  const gstRef = useRef<HTMLDivElement>(null);
-  const moreRef = useRef<HTMLDivElement>(null);
+  const doRef = useRef<HTMLDivElement>(null);
+  const knowRef = useRef<HTMLDivElement>(null);
+  const fixRef = useRef<HTMLDivElement>(null);
+  const automateRef = useRef<HTMLDivElement>(null);
+  const controlRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const fyRef = useRef<HTMLDivElement>(null);
   const companyRef = useRef<HTMLDivElement>(null);
@@ -68,6 +84,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { displayPeriod, setIsPeriodModalOpen, setIsSplitModalOpen } = useAccountingPeriod();
   const { activeCompany, availableCompanies, setActiveCompany } = useCompany();
   const { user, role, isAdmin, isOwner, isCA, isEmployee, isViewer, canManageSettings } = useRole();
+
+  // Initialize Accountant Mode preference
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsAccountantMode(localStorage.getItem("vouch_accountant_mode") === "true");
+    }
+  }, []);
 
   // Superadmin isolation: platform superadmin only sees the Superadmin Command Center, never company dashboards
   useEffect(() => {
@@ -79,9 +102,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Close dropdowns on route change
   useEffect(() => {
     setIsMobileNavOpen(false);
-    setIsSalesDropdownOpen(false);
-    setIsGstDropdownOpen(false);
-    setIsMoreDropdownOpen(false);
+    setIsDoOpen(false);
+    setIsKnowOpen(false);
+    setIsFixOpen(false);
+    setIsAutomateOpen(false);
+    setIsControlOpen(false);
     setIsUserMenuOpen(false);
     setIsFYDropdownOpen(false);
     setIsCompanyDropdownOpen(false);
@@ -90,24 +115,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Click away listener for dropdowns
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (salesRef.current && !salesRef.current.contains(e.target as Node)) {
-        setIsSalesDropdownOpen(false);
-      }
-      if (gstRef.current && !gstRef.current.contains(e.target as Node)) {
-        setIsGstDropdownOpen(false);
-      }
-      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
-        setIsMoreDropdownOpen(false);
-      }
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
-        setIsUserMenuOpen(false);
-      }
-      if (fyRef.current && !fyRef.current.contains(e.target as Node)) {
-        setIsFYDropdownOpen(false);
-      }
-      if (companyRef.current && !companyRef.current.contains(e.target as Node)) {
-        setIsCompanyDropdownOpen(false);
-      }
+      const target = e.target as Node;
+      if (doRef.current && !doRef.current.contains(target)) setIsDoOpen(false);
+      if (knowRef.current && !knowRef.current.contains(target)) setIsKnowOpen(false);
+      if (fixRef.current && !fixRef.current.contains(target)) setIsFixOpen(false);
+      if (automateRef.current && !automateRef.current.contains(target)) setIsAutomateOpen(false);
+      if (controlRef.current && !controlRef.current.contains(target)) setIsControlOpen(false);
+      if (userMenuRef.current && !userMenuRef.current.contains(target)) setIsUserMenuOpen(false);
+      if (fyRef.current && !fyRef.current.contains(target)) setIsFYDropdownOpen(false);
+      if (companyRef.current && !companyRef.current.contains(target)) setIsCompanyDropdownOpen(false);
     };
 
     document.addEventListener("mousedown", handleClickOutside);
@@ -127,6 +143,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     },
     { enableOnFormTags: true }
   );
+
+  useHotkeys(
+    ["c", "n"],
+    (e) => {
+      e.preventDefault();
+      setIsUniversalNewOpen(true);
+    },
+    { enableOnFormTags: false }
+  );
+
 
   const isSalesActive = pathname.startsWith("/sales");
   const isPurchasesActive = pathname.startsWith("/purchases");
@@ -175,463 +201,454 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </Link>
             </div>
 
-            {/* Desktop Navigation Links */}
-            <nav className="hidden lg:flex items-center gap-0.5 xl:gap-0.5 2xl:gap-1 shrink-0">
-              {/* Dashboard */}
-              <Link
-                id="tour-dashboard-link"
-                href="/dashboard"
-                className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
-                  pathname === "/dashboard"
-                    ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                }`}
-              >
-                Dashboard
-              </Link>
-
-              {/* Sales Dropdown */}
-              <div ref={salesRef} className="relative shrink-0">
+            {/* Desktop Navigation Links — 5 Mental Models: DO, KNOW, FIX, AUTOMATE, CONTROL */}
+            <nav className="hidden lg:flex items-center gap-0.5 xl:gap-1 shrink-0">
+              {/* 1. DO Dropdown (Sales, Purchases, Payments, Stock, Parties) */}
+              <div ref={doRef} className="relative shrink-0">
                 <button
-                  id="tour-sales-btn"
+                  id="tour-do-btn"
                   onClick={() => {
-                    setIsSalesDropdownOpen(!isSalesDropdownOpen);
-                    setIsGstDropdownOpen(false);
-                    setIsMoreDropdownOpen(false);
+                    setIsDoOpen(!isDoOpen);
+                    setIsKnowOpen(false);
+                    setIsFixOpen(false);
+                    setIsAutomateOpen(false);
+                    setIsControlOpen(false);
                   }}
-                  className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
-                    isSalesActive
+                  className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                    pathname.startsWith("/sales") || pathname.startsWith("/purchases") || pathname.startsWith("/parties") || pathname.startsWith("/inventory") || (pathname.startsWith("/vouchers") && !pathname.startsWith("/vouchers/grid"))
                       ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                   }`}
                 >
-                  <span>Sales</span>
-                  <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform duration-150 ${isSalesDropdownOpen ? "rotate-180" : ""}`} />
+                  <Receipt className="w-3.5 h-3.5" />
+                  <span>Do</span>
+                  <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform duration-150 ${isDoOpen ? "rotate-180" : ""}`} />
                 </button>
 
-                {isSalesDropdownOpen && (
-                  <div className="absolute left-0 top-full mt-1.5 w-64 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95">
+                {isDoOpen && (
+                  <div className="absolute left-0 top-full mt-1.5 w-64 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95 space-y-1">
+                    <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                      Transactions & Day-to-Day
+                    </div>
                     <Link
                       href="/sales"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsSalesDropdownOpen(false)}
+                      onClick={() => setIsDoOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
                     >
                       <div>
-                        <div className="font-medium flex items-center gap-1.5 text-xs sm:text-sm">
-                          <span>Sales Invoices (GST)</span>
+                        <div className="font-semibold text-foreground flex items-center gap-1.5">
+                          <span>Sales Invoices</span>
                           <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.2 rounded font-mono font-semibold">F8</span>
                         </div>
-                        <div className="text-[11px] text-muted-foreground mt-0.5">Official GST tax invoices</div>
+                        <div className="text-[11px] text-muted-foreground">GST tax bills & customer sales</div>
                       </div>
                     </Link>
                     <Link
                       href="/sales/proforma"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsSalesDropdownOpen(false)}
+                      onClick={() => setIsDoOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
                     >
                       <div>
-                        <div className="font-medium text-blue-500 dark:text-blue-400 flex items-center gap-1.5 text-xs sm:text-sm">
-                          <span>Proforma & Quotations</span>
-                          <span className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 px-1.5 py-0.2 rounded font-semibold">1-Click GST</span>
-                        </div>
-                        <div className="text-[11px] text-muted-foreground mt-0.5">Estimates, quotes & proforma bills</div>
+                        <div className="font-semibold text-blue-500 dark:text-blue-400">Proformas & Estimates</div>
+                        <div className="text-[11px] text-muted-foreground">Quotations & 1-click GST convert</div>
                       </div>
                     </Link>
-
-                    <div className="border-t border-border/40 my-1.5"></div>
-
-                    <div className="grid grid-cols-2 gap-1.5 pt-0.5">
-                      <Link
-                        href="/sales/new"
-                        className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-                        onClick={() => setIsSalesDropdownOpen(false)}
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>+ Invoice</span>
-                      </Link>
-                      <Link
-                        href="/sales/proforma/new"
-                        className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-colors"
-                        onClick={() => setIsSalesDropdownOpen(false)}
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>+ Quotation</span>
-                      </Link>
-                    </div>
+                    <Link
+                      href="/purchases"
+                      onClick={() => setIsDoOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground flex items-center gap-1.5">
+                          <span>Purchases & Vendor Bills</span>
+                          <span className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 px-1.5 py-0.2 rounded font-mono font-semibold">F9</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">Inward supplies & ITC tracking</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/vouchers"
+                      onClick={() => setIsDoOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Payments & Receipts</div>
+                        <div className="text-[11px] text-muted-foreground">Customer collections & supplier payout</div>
+                      </div>
+                    </Link>
+                    <div className="border-t border-border/40 my-1"></div>
+                    <Link
+                      href="/inventory"
+                      onClick={() => setIsDoOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Inventory & Products</div>
+                        <div className="text-[11px] text-muted-foreground">Items, stock alerts, & barcodes</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/parties"
+                      onClick={() => setIsDoOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Parties & Contacts</div>
+                        <div className="text-[11px] text-muted-foreground">Customer & supplier directories</div>
+                      </div>
+                    </Link>
                   </div>
                 )}
               </div>
 
-              {/* Purchases */}
-              <Link
-                id="tour-purchase-btn"
-                href="/purchases"
-                className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
-                  isPurchasesActive
-                    ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                }`}
-              >
-                Purchases
-              </Link>
-
-              {/* Parties */}
-              <Link
-                id="tour-parties-link"
-                href="/parties"
-                className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
-                  pathname.startsWith("/parties")
-                    ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                }`}
-              >
-                Parties
-              </Link>
-
-              {/* Inventory */}
-              <Link
-                id="tour-inventory-link"
-                href="/inventory"
-                className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
-                  pathname.startsWith("/inventory")
-                    ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                }`}
-              >
-                Inventory
-              </Link>
-
-              {/* Banking (visible on xl+, comfortable access in More on lg) */}
-              <Link
-                id="tour-banking-link"
-                href="/banking"
-                className={`hidden xl:inline-flex px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap ${
-                  pathname.startsWith("/banking")
-                    ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                }`}
-              >
-                Banking
-              </Link>
-
-              {/* Analytics Hub (visible on xl+, comfortable access in More on lg) */}
-              <Link
-                id="tour-analytics-link"
-                href="/analytics"
-                className={`hidden xl:inline-flex px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all whitespace-nowrap items-center gap-1 xl:gap-1.5 ${
-                  pathname.startsWith("/analytics")
-                    ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                }`}
-              >
-                <span>Analytics</span>
-                <span className="hidden 2xl:inline-flex text-[9px] bg-purple-500/15 text-purple-600 dark:text-purple-400 font-bold px-1.5 py-0.2 rounded-full">
-                  AI
-                </span>
-              </Link>
-
-              {/* GST & Tax Dropdown (visible only on ultra-wide screens >= 1800px, otherwise comfortably accessed in More) */}
-              <div ref={gstRef} className="relative shrink-0 hidden min-[1800px]:block">
+              {/* 2. KNOW Dropdown (Dashboard, Reports, Analytics, Ledgers) */}
+              <div ref={knowRef} className="relative shrink-0">
                 <button
-                  id="tour-gst-btn"
+                  id="tour-know-btn"
                   onClick={() => {
-                    setIsGstDropdownOpen(!isGstDropdownOpen);
-                    setIsSalesDropdownOpen(false);
-                    setIsMoreDropdownOpen(false);
+                    setIsKnowOpen(!isKnowOpen);
+                    setIsDoOpen(false);
+                    setIsFixOpen(false);
+                    setIsAutomateOpen(false);
+                    setIsControlOpen(false);
                   }}
-                  className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
-                    pathname.startsWith("/gst")
+                  className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                    pathname === "/dashboard" || pathname.startsWith("/reports") || pathname.startsWith("/analytics") || pathname.startsWith("/ledgers")
                       ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                   }`}
                 >
-                  <span>GST & Tax</span>
-                  <span className="text-[9px] bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.2 rounded-full">
-                    Shield
-                  </span>
-                  <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform duration-150 ${isGstDropdownOpen ? "rotate-180" : ""}`} />
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  <span>Know</span>
+                  <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform duration-150 ${isKnowOpen ? "rotate-180" : ""}`} />
                 </button>
 
-                {isGstDropdownOpen && (
-                  <div className="absolute left-0 top-full mt-1.5 w-72 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95">
+                {isKnowOpen && (
+                  <div className="absolute left-0 top-full mt-1.5 w-64 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95 space-y-1">
+                    <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                      Reports & Business Vitals
+                    </div>
+                    <Link
+                      href="/dashboard"
+                      onClick={() => setIsKnowOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Dashboard</div>
+                        <div className="text-[11px] text-muted-foreground">Money, performance & vitals</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/reports/profit-and-loss"
+                      onClick={() => setIsKnowOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-emerald-600 dark:text-emerald-400">Profit & Loss</div>
+                        <div className="text-[11px] text-muted-foreground">Revenue, direct costs & net margin</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/reports/balance-sheet"
+                      onClick={() => setIsKnowOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Balance Sheet</div>
+                        <div className="text-[11px] text-muted-foreground">Assets, liabilities & capital</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/reports/trial-balance"
+                      onClick={() => setIsKnowOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Trial Balance</div>
+                        <div className="text-[11px] text-muted-foreground">Debit-Credit equilibrium</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/reports/aging"
+                      onClick={() => setIsKnowOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-purple-600 dark:text-purple-400">Aging & Overdues</div>
+                        <div className="text-[11px] text-muted-foreground">45-day MSME collection tracker</div>
+                      </div>
+                    </Link>
+                    <div className="border-t border-border/40 my-1"></div>
+                    <Link
+                      href="/analytics"
+                      onClick={() => setIsKnowOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-purple-600 dark:text-purple-400 flex items-center gap-1.5">
+                          <span>AI Analytics Hub</span>
+                          <span className="text-[9px] bg-purple-500/15 px-1 rounded font-bold">AI</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">Sales forecast & customer clusters</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/ledgers"
+                      onClick={() => setIsKnowOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Chart of Accounts</div>
+                        <div className="text-[11px] text-muted-foreground">Account heads & ledger balances</div>
+                      </div>
+                    </Link>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. FIX Dropdown (Attention, Reconciliation, GST Shield, Health) */}
+              <div ref={fixRef} className="relative shrink-0">
+                <button
+                  id="tour-fix-btn"
+                  onClick={() => {
+                    setIsFixOpen(!isFixOpen);
+                    setIsDoOpen(false);
+                    setIsKnowOpen(false);
+                    setIsAutomateOpen(false);
+                    setIsControlOpen(false);
+                  }}
+                  className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                    pathname.startsWith("/health") || pathname.startsWith("/banking") || pathname.startsWith("/gst")
+                      ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold border border-amber-500/20 shadow-2xs"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                  }`}
+                >
+                  <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Fix</span>
+                  <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform duration-150 ${isFixOpen ? "rotate-180" : ""}`} />
+                </button>
+
+                {isFixOpen && (
+                  <div className="absolute left-0 top-full mt-1.5 w-72 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95 space-y-1">
+                    <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                      Reconciliation & Compliance
+                    </div>
+                    <Link
+                      href="/banking"
+                      onClick={() => setIsFixOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-emerald-600 dark:text-emerald-400">Bank Reconciliation</div>
+                        <div className="text-[11px] text-muted-foreground">Match statement feeds with vouchers</div>
+                      </div>
+                    </Link>
                     <Link
                       href="/gst/itc-shield"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsGstDropdownOpen(false)}
+                      onClick={() => setIsFixOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
                     >
                       <div>
-                        <div className="font-semibold text-rose-500 flex items-center gap-1.5 text-xs sm:text-sm">
-                          <ShieldAlert className="w-3.5 h-3.5" />
+                        <div className="font-semibold text-rose-500 flex items-center gap-1.5">
                           <span>Vendor ITC Risk Shield</span>
-                          <span className="text-[9px] bg-rose-500/20 text-rose-400 px-1 py-0.2 rounded font-bold">New</span>
+                          <span className="text-[9px] bg-rose-500/15 px-1 rounded font-bold">2B</span>
                         </div>
-                        <div className="text-[11px] text-muted-foreground mt-0.5">GSTR-2B match, payment hold & WhatsApp chaser</div>
+                        <div className="text-[11px] text-muted-foreground">Catch missing 2B supplier invoices</div>
                       </div>
                     </Link>
-
                     <Link
-                      href="/gst/returns"
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/70 transition-colors"
-                      onClick={() => setIsGstDropdownOpen(false)}
+                      href="/health"
+                      onClick={() => setIsFixOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
                     >
                       <div>
-                        <div className="font-medium flex items-center gap-1.5 text-xs sm:text-sm">
-                          <FileText className="w-3.5 h-3.5 text-primary" />
-                          <span>GST Returns Center</span>
+                        <div className="font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                          <span>Books Health Audit</span>
+                          <span className="text-[9px] bg-amber-500/15 px-1 rounded font-bold">Diagnostics</span>
                         </div>
-                        <div className="text-[11px] text-muted-foreground mt-0.5">GSTR-1, GSTR-3B tax summary & GSTR-9</div>
+                        <div className="text-[11px] text-muted-foreground">1-Click preview and fix imbalances</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/vouchers/credit-note"
+                      onClick={() => setIsFixOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Returns & Adjustments</div>
+                        <div className="text-[11px] text-muted-foreground">Credit & Debit notes</div>
                       </div>
                     </Link>
                   </div>
                 )}
               </div>
 
-              {/* More Dropdown */}
-              <div ref={moreRef} className="relative shrink-0">
+              {/* 4. AUTOMATE Dropdown (OCR, Direct Invoices, Auto-match) */}
+              <div ref={automateRef} className="relative shrink-0">
                 <button
+                  id="tour-automate-btn"
                   onClick={() => {
-                    setIsMoreDropdownOpen(!isMoreDropdownOpen);
-                    setIsSalesDropdownOpen(false);
-                    setIsGstDropdownOpen(false);
+                    setIsAutomateOpen(!isAutomateOpen);
+                    setIsDoOpen(false);
+                    setIsKnowOpen(false);
+                    setIsFixOpen(false);
+                    setIsControlOpen(false);
                   }}
-                  className={`px-1.5 xl:px-2 2xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
-                    isMoreActive
+                  className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                    pathname.startsWith("/network") || pathname.startsWith("/gst/returns")
+                      ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 font-semibold border border-purple-500/20 shadow-2xs"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+                  <span>Automate</span>
+                  <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform duration-150 ${isAutomateOpen ? "rotate-180" : ""}`} />
+                </button>
+
+                {isAutomateOpen && (
+                  <div className="absolute left-0 top-full mt-1.5 w-64 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95 space-y-1">
+                    <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                      Automation & Efficiency
+                    </div>
+                    <Link
+                      href="/purchases/new?scan=1"
+                      onClick={() => setIsAutomateOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-purple-600 dark:text-purple-400 flex items-center gap-1.5">
+                          <span>Smart Bill Scanner</span>
+                          <span className="text-[9px] bg-purple-500/15 px-1 rounded font-bold">OCR</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">Scan photo/PDF into purchase bill</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/network/inbox"
+                      onClick={() => setIsAutomateOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Direct Supplier Network</div>
+                        <div className="text-[11px] text-muted-foreground">Paperless B2B e-invoices</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/gst/returns"
+                      onClick={() => setIsAutomateOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">GST Filing Center</div>
+                        <div className="text-[11px] text-muted-foreground">GSTR-1 & 3B summary tables</div>
+                      </div>
+                    </Link>
+                  </div>
+                )}
+              </div>
+
+              {/* 5. CONTROL Dropdown (Journal Grid, FY Closing, Audit, Tally Export, Settings) */}
+              <div ref={controlRef} className="relative shrink-0">
+                <button
+                  id="tour-control-btn"
+                  onClick={() => {
+                    setIsControlOpen(!isControlOpen);
+                    setIsDoOpen(false);
+                    setIsKnowOpen(false);
+                    setIsFixOpen(false);
+                    setIsAutomateOpen(false);
+                  }}
+                  className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                    pathname.startsWith("/audit") || pathname.startsWith("/export") || pathname.startsWith("/settings") || pathname.startsWith("/vouchers/grid")
                       ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                   }`}
                 >
-                  <span>More</span>
-                  <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform duration-150 ${isMoreDropdownOpen ? "rotate-180" : ""}`} />
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>Control</span>
+                  <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform duration-150 ${isControlOpen ? "rotate-180" : ""}`} />
                 </button>
 
-                {isMoreDropdownOpen && (
-                  <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1.5 w-[560px] max-w-[calc(100vw-2rem)] max-h-[85vh] overflow-y-auto bg-card/95 backdrop-blur-xl border border-border/40 rounded-2xl shadow-2xl shadow-black/20 p-4 z-50 animate-in fade-in zoom-in-95 grid grid-cols-3 gap-3 divide-x divide-border/30">
-                    
-                    {/* Col 1: Accounting & Entries */}
-                    <div className="space-y-1">
-                      <div className="px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
-                        Accounting & Entries
-                      </div>
-                      <Link
-                        href="/banking"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs text-emerald-600 dark:text-emerald-400">Banking & Feeds</div>
-                          <div className="text-[10px] text-muted-foreground">Statements & reconciliation</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/vouchers"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs">Transactions</div>
-                          <div className="text-[10px] text-muted-foreground">All posted vouchers</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/vouchers/credit-note"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs text-amber-500">Credit / Debit Note</div>
-                          <div className="text-[10px] text-muted-foreground">Sales & purchase returns</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/vouchers/new"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs">Payments & Receipts</div>
-                          <div className="text-[10px] text-muted-foreground">Record money in/out</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/vouchers/grid"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs">Journal Entry</div>
-                          <div className="text-[10px] text-muted-foreground">Manual double-entry</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/ledgers"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs">Chart of Accounts</div>
-                          <div className="text-[10px] text-muted-foreground">Account heads & ledgers</div>
-                        </div>
-                      </Link>
+                {isControlOpen && (
+                  <div className="absolute left-0 top-full mt-1.5 w-64 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95 space-y-1">
+                    <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                      Accounting Controls & Master
                     </div>
-
-                    {/* Col 2: Reports & Statements */}
-                    <div className="pl-3 space-y-1">
-                      <div className="px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
-                        Reports & Statements
+                    <Link
+                      href="/vouchers/grid"
+                      onClick={() => setIsControlOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Journal & Voucher Grid</div>
+                        <div className="text-[11px] text-muted-foreground">High-speed double-entry matrix</div>
                       </div>
-                      <Link
-                        href="/analytics"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
+                    </Link>
+                    {(isAdmin || isOwner || isCA) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsControlOpen(false);
+                          setIsClosingModalOpen(true);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors cursor-pointer"
                       >
-                        <div>
-                          <div className="font-semibold text-xs text-purple-600 dark:text-purple-400 flex items-center gap-1">
-                            <span>Analytics AI Hub</span>
-                            <span className="text-[8px] bg-purple-500/20 text-purple-400 px-1 py-0.2 rounded font-bold">AI</span>
-                          </div>
-                          <div className="text-[10px] text-muted-foreground">Predictive sales & forecasting</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/reports/trial-balance"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs">Trial Balance</div>
-                          <div className="text-[10px] text-muted-foreground">Debit-Credit parity</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/reports/profit-and-loss"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs">Profit & Loss</div>
-                          <div className="text-[10px] text-muted-foreground">Trading & net margin</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/reports/balance-sheet"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs">Balance Sheet</div>
-                          <div className="text-[10px] text-muted-foreground">Assets & liabilities</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/reports/aging"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs text-purple-500">Aging MSME</div>
-                          <div className="text-[10px] text-muted-foreground">45-day overdue tracker</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/export/tally"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs">Export to Tally</div>
-                          <div className="text-[10px] text-muted-foreground">TallyPrime XML sync</div>
-                        </div>
-                      </Link>
-                    </div>
-
-                    {/* Col 3: GST, Tools & Compliance */}
-                    <div className="pl-3 space-y-1">
-                      <div className="px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
-                        GST & Operations
+                        <div className="font-semibold text-amber-600 dark:text-amber-400">Close Financial Year</div>
+                        <div className="text-[11px] text-muted-foreground">Carry forward closing balances</div>
+                      </button>
+                    )}
+                    <Link
+                      href="/export/tally"
+                      onClick={() => setIsControlOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Tally Migration & Export</div>
+                        <div className="text-[11px] text-muted-foreground">TallyPrime XML bridge</div>
                       </div>
-                      <Link
-                        href="/inventory"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs text-blue-600 dark:text-blue-400">Inventory & Stock</div>
-                          <div className="text-[10px] text-muted-foreground">Item batches, valuation & alerts</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/gst/itc-shield"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs text-rose-500 flex items-center gap-1">
-                            <span>ITC Risk Shield</span>
-                            <span className="text-[8px] bg-rose-500/20 text-rose-400 px-1 py-0.2 rounded font-bold">New</span>
-                          </div>
-                          <div className="text-[10px] text-muted-foreground">2B reconcile & WhatsApp</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/gst/returns"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs">GST Returns</div>
-                          <div className="text-[10px] text-muted-foreground">GSTR-1, 3B, 9 filing</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/health"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs">Books Health</div>
-                          <div className="text-[10px] text-muted-foreground">Automated ledger audit</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/audit"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs">Activity Audit</div>
-                          <div className="text-[10px] text-muted-foreground">Tamper-evident logs</div>
-                        </div>
-                      </Link>
-                      <Link
-                        href="/network/inbox"
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors"
-                        onClick={() => setIsMoreDropdownOpen(false)}
-                      >
-                        <div>
-                          <div className="font-semibold text-xs">B2B Network</div>
-                          <div className="text-[10px] text-muted-foreground">Supplier e-invoices</div>
-                        </div>
-                      </Link>
-                      {(isAdmin || isOwner || isCA) && (
-                        <button
-                          onClick={() => {
-                            setIsMoreDropdownOpen(false);
-                            setIsClosingModalOpen(true);
-                          }}
-                          className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors flex items-center justify-between cursor-pointer"
-                        >
-                          <div>
-                            <div className="font-semibold text-xs">Close FY</div>
-                            <div className="text-[10px] text-muted-foreground">Year-end balance transfer</div>
-                          </div>
-                        </button>
-                      )}
-                    </div>
+                    </Link>
+                    <Link
+                      href="/audit"
+                      onClick={() => setIsControlOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Activity Audit Trail</div>
+                        <div className="text-[11px] text-muted-foreground">Tamper-evident system logs</div>
+                      </div>
+                    </Link>
+                    <div className="border-t border-border/40 my-1"></div>
+                    <Link
+                      href="/settings"
+                      onClick={() => setIsControlOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-foreground">Firm & Profile Settings</div>
+                        <div className="text-[11px] text-muted-foreground">GSTIN, bank accounts, sequences</div>
+                      </div>
+                    </Link>
                   </div>
                 )}
               </div>
+
+              {/* Universal + NEW Button (Prominent & Fast) */}
+              <button
+                id="tour-universal-new-btn"
+                type="button"
+                onClick={() => setIsUniversalNewOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm shadow-emerald-600/25 transition-all cursor-pointer shrink-0 ml-1.5 active:scale-95"
+                title="Create Invoice, Bill, Payment or Item (Shortcut: N or C)"
+              >
+                <Plus className="w-4 h-4 stroke-[2.5]" />
+                <span>New</span>
+                <kbd className="hidden 2xl:inline-block px-1 py-0.2 text-[9px] font-mono bg-emerald-700/60 text-emerald-100 rounded">
+                  N
+                </kbd>
+              </button>
             </nav>
           </div>
+
 
           {/* Right Section: Workspace Context, Quick Search & Utilities */}
           <div className="flex items-center gap-1 sm:gap-1.5 xl:gap-2 shrink-0 ml-auto pr-1 sm:pr-1.5">
@@ -879,6 +896,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <Sparkles className="w-3.5 h-3.5 text-blue-400" />
                     <span>Guided Tour</span>
                   </button>
+                  {/* Accountant vs Business Mode Toggle */}
+                  <div className="px-2.5 py-1.5 flex items-center justify-between text-xs rounded-lg hover:bg-muted/70 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <Scale className="w-3.5 h-3.5 text-primary" />
+                      <span>Accountant Mode</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !isAccountantMode;
+                        setIsAccountantMode(next);
+                        if (typeof window !== "undefined") {
+                          localStorage.setItem("vouch_accountant_mode", String(next));
+                          window.dispatchEvent(new CustomEvent("vouch:mode-changed", { detail: { isAccountantMode: next } }));
+                        }
+                      }}
+                      className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer ${isAccountantMode ? "bg-primary" : "bg-muted-foreground/30"}`}
+                      title={isAccountantMode ? "Switch to Simplified Business Mode" : "Switch to Professional Double-Entry Mode"}
+                    >
+                      <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-transform ${isAccountantMode ? "left-4.5" : "left-0.5"}`} />
+                    </button>
+                  </div>
                   <div className="border-t border-border/40 my-1"></div>
                   <button
                     onClick={handleLogout}
@@ -887,6 +926,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <LogOut className="w-3.5 h-3.5" />
                     <span>Logout</span>
                   </button>
+
                 </div>
               )}
             </div>
@@ -1225,11 +1265,72 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden print:overflow-visible print:p-0 print:m-0 print:w-full print:block">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden pb-20 lg:pb-0 print:overflow-visible print:p-0 print:m-0 print:w-full print:block">
         <div className="p-4 sm:p-6 lg:p-8 max-w-[1600px] mx-auto print:p-0 print:m-0 print:max-w-none print:w-full">
           {children}
         </div>
       </main>
+
+      {/* Mobile Bottom Navigation Bar (First-Class Touch Experience) */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-card/95 backdrop-blur-xl border-t border-border/60 lg:hidden px-3 py-1.5 flex items-center justify-around shadow-2xl print:hidden">
+        <Link
+          href="/dashboard"
+          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-lg text-[10px] font-medium transition-colors ${
+            pathname === "/dashboard" ? "text-primary font-bold" : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <BarChart3 className="w-4.5 h-4.5" />
+          <span>Home</span>
+        </Link>
+
+        <Link
+          href="/sales"
+          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-lg text-[10px] font-medium transition-colors ${
+            pathname.startsWith("/sales") ? "text-primary font-bold" : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Receipt className="w-4.5 h-4.5" />
+          <span>Sales</span>
+        </Link>
+
+        {/* Central Hero Universal + New Button */}
+        <button
+          type="button"
+          onClick={() => setIsUniversalNewOpen(true)}
+          className="-mt-5 w-12 h-12 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/35 flex items-center justify-center cursor-pointer transition-transform active:scale-95 shrink-0"
+          aria-label="Universal New Transaction"
+        >
+          <Plus className="w-6 h-6 stroke-[2.5]" />
+        </button>
+
+        <Link
+          href="/health"
+          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-lg text-[10px] font-medium transition-colors ${
+            pathname.startsWith("/health") || pathname.startsWith("/banking") ? "text-amber-600 dark:text-amber-400 font-bold" : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <ShieldAlert className="w-4.5 h-4.5 text-amber-500" />
+          <span>Fix</span>
+        </Link>
+
+        <button
+          type="button"
+          onClick={() => setIsMobileNavOpen(true)}
+          className="flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-lg text-[10px] font-medium text-muted-foreground hover:text-foreground cursor-pointer"
+        >
+          <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+          <span>Menu</span>
+        </button>
+      </nav>
+
+      {/* Universal + New Modal */}
+      <UniversalNewModal
+        isOpen={isUniversalNewOpen}
+        onClose={() => setIsUniversalNewOpen(false)}
+      />
     </div>
   );
 }
+
