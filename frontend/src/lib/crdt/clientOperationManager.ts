@@ -327,10 +327,24 @@ export class ClientOperationManager {
     }
 
     const baseUrl = apiBaseUrl || API_BASE_URL || "";
-    const queued = await offlineDb.outboxQueue
+    const queuedOps = await offlineDb.outboxQueue
       .where("status")
       .equals("QUEUED")
       .toArray();
+      
+    const failedOps = await offlineDb.outboxQueue
+      .where("status")
+      .equals("FAILED")
+      .toArray();
+
+    const eligibleFailedOps = failedOps.filter(item => {
+      const retryCount = item.retryCount || 0;
+      if (retryCount >= 5) return false;
+      const nextRetryAt = item.nextRetryAt || 0;
+      return Date.now() >= nextRetryAt;
+    });
+
+    const queued = [...queuedOps, ...eligibleFailedOps];
 
     if (queued.length === 0) {
       return { syncedCount: 0, receivedCount: 0, status: "IDLE" };
@@ -457,9 +471,11 @@ export class ClientOperationManager {
           } else {
             for (const item of items) {
               if (item.id) {
+                const newRetryCount = (item.retryCount || 0) + 1;
                 await offlineDb.outboxQueue.update(item.id, {
                   status: "FAILED",
-                  retryCount: item.retryCount + 1,
+                  retryCount: newRetryCount,
+                  nextRetryAt: Date.now() + Math.pow(2, newRetryCount) * 1000,
                   lastError: data.reason || `Status: ${data.status}`
                 });
               }
@@ -468,9 +484,11 @@ export class ClientOperationManager {
         } else {
           for (const item of items) {
             if (item.id) {
+              const newRetryCount = (item.retryCount || 0) + 1;
               await offlineDb.outboxQueue.update(item.id, {
                 status: "FAILED",
-                retryCount: item.retryCount + 1,
+                retryCount: newRetryCount,
+                nextRetryAt: Date.now() + Math.pow(2, newRetryCount) * 1000,
                 lastError: `HTTP ${res.status}`
               });
             }
@@ -479,9 +497,11 @@ export class ClientOperationManager {
       } catch (err: any) {
         for (const item of items) {
           if (item.id) {
+            const newRetryCount = (item.retryCount || 0) + 1;
             await offlineDb.outboxQueue.update(item.id, {
               status: "FAILED",
-              retryCount: item.retryCount + 1,
+              retryCount: newRetryCount,
+              nextRetryAt: Date.now() + Math.pow(2, newRetryCount) * 1000,
               lastError: err?.message || "Network Error"
             });
           }

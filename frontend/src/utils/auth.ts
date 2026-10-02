@@ -39,10 +39,20 @@ export const removeTokens = () => {
   }
 };
 
+interface DecodedTokenPayload {
+  exp?: number;
+  user_id?: string;
+  email?: string;
+  role?: string;
+  is_staff?: boolean;
+  is_superuser?: boolean;
+  [key: string]: unknown;
+}
+
 export const isTokenExpired = (token?: string): boolean => {
   if (!token || token === 'undefined' || token === 'null' || token.trim() === '') return true;
   try {
-    const decoded: any = jwtDecode(token);
+    const decoded = jwtDecode<DecodedTokenPayload>(token);
     if (!decoded || !decoded.exp) return true;
     // Buffer by 10 seconds to preempt edge-of-expiry network races
     return decoded.exp * 1000 <= Date.now() + 10000;
@@ -104,7 +114,7 @@ export const getUser = (): AuthUser | null => {
   const token = getAccessToken();
   if (token) {
     try {
-      const decoded: any = jwtDecode(token);
+      const decoded = jwtDecode<DecodedTokenPayload>(token);
       if (decoded) {
         return {
           id: decoded.user_id || '',

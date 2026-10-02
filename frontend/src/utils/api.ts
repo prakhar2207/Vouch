@@ -35,7 +35,7 @@ function getCleanEndpoint(url?: string): string {
   }
 }
 
-function recordAndGuardRequest(config: any) {
+function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
   const endpoint = getCleanEndpoint(config.url);
   const now = Date.now();
   let stats = requestTelemetry.get(endpoint);
@@ -66,14 +66,13 @@ function recordAndGuardRequest(config: any) {
   const isInvalidAuth = !currentAuth || currentAuth === 'Bearer undefined' || currentAuth === 'Bearer null' || currentAuth === 'Bearer ';
 
   if (token && isInvalidAuth) {
-    if (!config.headers) config.headers = {};
+    if (!config.headers) config.headers = {} as InternalAxiosRequestConfig['headers'];
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 }
 
 api.interceptors.request.use(recordAndGuardRequest, (error) => Promise.reject(error));
-axios.interceptors.request.use(recordAndGuardRequest, (error) => Promise.reject(error));
 
 // ---------------------------------------------------------------------------
 // Automatic 401 Unauthorized Session Refresh & Retry Interceptor
@@ -81,10 +80,10 @@ axios.interceptors.request.use(recordAndGuardRequest, (error) => Promise.reject(
 let isRefreshing = false;
 let failedQueue: Array<{
   resolve: (value: string) => void;
-  reject: (reason?: any) => void;
+  reject: (reason?: unknown) => void;
 }> = [];
 
-const processQueue = (error: any, token: string | null = null) => {
+const processQueue = (error: unknown, token: string | null = null) => {
   failedQueue.forEach((prom) => {
     if (error) {
       prom.reject(error);
@@ -123,9 +122,9 @@ async function handleResponseError(error: AxiosError) {
       failedQueue.push({ resolve, reject });
     })
       .then((newToken) => {
-        if (!originalRequest.headers) originalRequest.headers = {} as any;
+        if (!originalRequest.headers) originalRequest.headers = {} as InternalAxiosRequestConfig['headers'];
         originalRequest.headers.Authorization = `Bearer ${newToken}`;
-        return axios(originalRequest);
+        return api(originalRequest);
       })
       .catch((err) => Promise.reject(err));
   }
@@ -144,7 +143,7 @@ async function handleResponseError(error: AxiosError) {
     removeTokens();
     if (typeof window !== 'undefined' && window.location.pathname !== '/login' && !isPublicRoute) {
       console.warn('[AUTH] Session expired and refresh token unavailable, redirecting to /login');
-      window.location.href = '/login?expired=1';
+      window.location.replace('/login?expired=1');
     }
     return Promise.reject(error);
   }
@@ -171,16 +170,16 @@ async function handleResponseError(error: AxiosError) {
     processQueue(null, newAccessToken);
 
     // Update original request with new token and retry seamlessly
-    if (!originalRequest.headers) originalRequest.headers = {} as any;
+    if (!originalRequest.headers) originalRequest.headers = {} as InternalAxiosRequestConfig['headers'];
     originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
 
-    return axios(originalRequest);
+    return api(originalRequest);
   } catch (refreshErr) {
     processQueue(refreshErr, null);
     removeTokens();
     if (typeof window !== 'undefined' && window.location.pathname !== '/login' && !isPublicRoute) {
       console.warn('[AUTH] Refresh token rejected, redirecting to /login');
-      window.location.href = '/login?expired=1';
+      window.location.replace('/login?expired=1');
     }
     return Promise.reject(refreshErr);
   } finally {

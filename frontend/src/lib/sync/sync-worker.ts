@@ -1,8 +1,138 @@
-import { offlineDb, OfflineVoucher, SyncedVoucher, SyncedLedger, SyncedProduct, SyncedBankTransaction, SyncedPaymentAllocation } from "../db/offlineDb";
+import { offlineDb, SyncedVoucher, SyncedLedger, SyncedProduct } from "../db/offlineDb";
 import { LocalAnalyticsEngine } from "../analytics/analytics-engine";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
 import { ClientOperationManager } from "../crdt/clientOperationManager";
+
+interface RawLedgerDto {
+  id: string;
+  company_id?: string;
+  name: string;
+  ledger_type?: string;
+  group?: string;
+  group_name?: string;
+  group_id?: string;
+  nature?: string;
+  gstin?: string;
+  state_code?: string;
+  current_balance?: number | string;
+  opening_balance?: number | string;
+  opening_balance_type?: "DEBIT" | "CREDIT";
+  phone?: string;
+  balance_state?: string;
+  display_amount?: number | string;
+  server_updated_at?: number;
+}
+
+interface RawProductDto {
+  id: string;
+  company_id?: string;
+  name: string;
+  brand?: string;
+  sku?: string;
+  hsn_code?: string;
+  unit?: string;
+  purchase_price?: number | string;
+  sales_price?: number | string;
+  gst_rate?: number | string;
+  current_stock?: number | string;
+  reorder_level?: number | string;
+  server_updated_at?: number;
+}
+
+interface RawVoucherDto {
+  id: string;
+  company_id?: string;
+  financial_year_id?: string | null;
+  voucher_type: string;
+  voucher_number: string;
+  voucher_date: string;
+  due_date?: string | null;
+  dueDate?: string | null;
+  reference_number?: string;
+  party_ledger_id?: string | null;
+  party_name?: string;
+  status: "DRAFT" | "POSTED" | "CANCELLED" | "REVERSED" | "SUPERSEDED" | "CORRECTED";
+  total_amount?: number | string;
+  round_off?: number | string;
+  roundOff?: number | string;
+  payment_status?: "PAID" | "PARTIAL" | "UNPAID" | "ALLOCATED" | "UNALLOCATED";
+  paymentStatus?: "PAID" | "PARTIAL" | "UNPAID" | "ALLOCATED" | "UNALLOCATED";
+  paid_amount?: number | string;
+  paidAmount?: number | string;
+  narration?: string;
+  server_updated_at?: number;
+}
+
+interface RawBankTransactionDto {
+  id: string;
+  company_id?: string;
+  bank_ledger_id: string;
+  bank_ledger_name?: string;
+  transaction_date: string;
+  value_date?: string | null;
+  description: string;
+  normalized_narration: string;
+  reference_number: string;
+  debit_amount?: number | string;
+  credit_amount?: number | string;
+  balance?: number | string | null;
+  status: string;
+  matched_party_id?: string | null;
+  matched_party_name?: string | null;
+  matched_voucher_id?: string | null;
+  matched_voucher_number?: string | null;
+  match_confidence?: number | string;
+  match_notes?: string;
+  server_updated_at?: number;
+}
+
+interface RawPaymentAllocationDto {
+  id: string;
+  company_id?: string;
+  payment_voucher_id: string;
+  invoice_voucher_id: string;
+  allocated_amount?: number | string;
+  server_updated_at?: number;
+}
+
+export interface VoucherIngestInput {
+  id: string;
+  voucherNumber?: string;
+  voucher_number?: string;
+  voucherDate?: string;
+  voucher_date?: string;
+  date?: string;
+  voucherType?: string;
+  voucher_type?: string;
+  type?: string;
+  totalAmount?: number | string;
+  total_amount?: number | string;
+  partyName?: string;
+  party_name?: string;
+  partyLedgerId?: string | null;
+  party_ledger_id?: string | null;
+  dueDate?: string | null;
+  due_date?: string | null;
+  referenceNumber?: string;
+  reference_number?: string;
+  status?: "DRAFT" | "POSTED" | "CANCELLED" | "REVERSED" | "SUPERSEDED" | "CORRECTED";
+  paymentStatus?: "PAID" | "PARTIAL" | "UNPAID" | "ALLOCATED" | "UNALLOCATED";
+  payment_status?: "PAID" | "PARTIAL" | "UNPAID" | "ALLOCATED" | "UNALLOCATED";
+  paidAmount?: number | string;
+  paid_amount?: number | string;
+  narration?: string;
+  serverUpdatedAt?: number;
+  server_updated_at?: number;
+  financialYearId?: string | null;
+  financial_year_id?: string | null;
+}
+
+interface SyncManagerRegistration {
+  sync: {
+    register: (tag: string) => Promise<void>;
+  };
+}
 
 /**
  * Returns a persistent, anonymous device UUID stored in localStorage.
@@ -20,8 +150,9 @@ export function getDeviceId(): string {
   return did;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function queueOfflineVoucher(voucherType: string, payload: any, voucherDate: string) {
-  const companyId = payload.company_id || payload.company || "";
+  const companyId = (payload.company_id || payload.company || "") as string;
   const result = await ClientOperationManager.recordLocalVoucherMutation({
     companyId,
     voucherType,
@@ -39,10 +170,10 @@ const syncChannel = typeof window !== "undefined" && "BroadcastChannel" in windo
   ? new BroadcastChannel("vouch_local_sync")
   : null;
 
-function notifySyncChannel(msg: any) {
+function notifySyncChannel(msg: Record<string, unknown>) {
   try {
     syncChannel?.postMessage(msg);
-  } catch (e) {
+  } catch (_e) {
     // Channel closed or unsupported
   }
 }
@@ -79,7 +210,7 @@ async function withTabLock<T>(lockName: string, fn: () => Promise<T>, fallback: 
  * - Categorization of retryable vs permanent failures
  * - Exponential backoff on retries (max 10 retries)
  */
-const BACKOFF_DELAYS = [2000, 5000, 15000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000];
+export const BACKOFF_DELAYS = [2000, 5000, 15000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000];
 
 export async function executeClientOutboxSync(): Promise<{ processed: number; failed: number }> {
     if (typeof window === "undefined" || !navigator.onLine) return { processed: 0, failed: 0 };
@@ -101,8 +232,8 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
           await offlineDb.vouchers.update(orphan.id, { status: "PENDING" });
         }
       }
-    } catch (e) {
-      console.warn("Failed to reset orphaned syncing vouchers:", e);
+    } catch (_e) {
+      console.warn("Failed to reset orphaned syncing vouchers:", _e);
     }
 
     const allPending = await offlineDb.vouchers
@@ -119,13 +250,11 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
     const token = getAccessToken();
     if (!token) return { processed: 0, failed: 0 };
 
-    const deviceId = getDeviceId();
-
     // 1. Drain legacy OfflineVoucher records into authoritative CRDT operation log
     for (const item of pending) {
       try {
         await offlineDb.vouchers.update(item.id!, { status: "SYNCING" });
-        const companyId = item.payload?.company_id || item.payload?.company || "";
+        const companyId = (item.payload?.company_id || item.payload?.company || "") as string;
         
         await ClientOperationManager.recordLocalVoucherMutation({
           companyId,
@@ -141,7 +270,7 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
           nextRetryAt: undefined
         });
         processedCount++;
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.warn("Failed to migrate legacy voucher to protocol operation:", err);
         failedCount++;
       }
@@ -215,9 +344,9 @@ export async function triggerOutboxSync() {
   if ("serviceWorker" in navigator && "SyncManager" in window) {
     try {
       const registration = await navigator.serviceWorker.ready;
-      await (registration as any).sync.register("vouch-outbox-sync");
+      await (registration as unknown as SyncManagerRegistration).sync.register("vouch-outbox-sync");
       return;
-    } catch (err) {
+    } catch (_err) {
       await executeClientOutboxSync();
     }
   } else {
@@ -320,7 +449,7 @@ export async function pullIncrementalChanges(
         const toPut: SyncedLedger[] = [
           ...(changes.ledgers.created || []),
           ...(changes.ledgers.updated || []),
-        ].map((l: any) => ({
+        ].map((l: RawLedgerDto) => ({
           id: l.id,
           companyId: l.company_id || companyId,
           name: l.name,
@@ -343,7 +472,7 @@ export async function pullIncrementalChanges(
           totalRecords += toPut.length;
         }
         if (changes.ledgers.deleted && changes.ledgers.deleted.length > 0) {
-          const toDel = changes.ledgers.deleted.map((l: any) => l.id);
+          const toDel = changes.ledgers.deleted.map((l: RawLedgerDto) => l.id);
           await offlineDb.syncedLedgers.bulkDelete(toDel);
         }
       }
@@ -353,7 +482,7 @@ export async function pullIncrementalChanges(
         const toPut: SyncedProduct[] = [
           ...(changes.products.created || []),
           ...(changes.products.updated || []),
-        ].map((p: any) => ({
+        ].map((p: RawProductDto) => ({
           id: p.id,
           companyId: p.company_id || companyId,
           name: p.name,
@@ -373,7 +502,7 @@ export async function pullIncrementalChanges(
           totalRecords += toPut.length;
         }
         if (changes.products.deleted && changes.products.deleted.length > 0) {
-          const toDel = changes.products.deleted.map((p: any) => p.id);
+          const toDel = changes.products.deleted.map((p: RawProductDto) => p.id);
           await offlineDb.syncedProducts.bulkDelete(toDel);
         }
       }
@@ -383,7 +512,7 @@ export async function pullIncrementalChanges(
         const toPut: SyncedVoucher[] = [
           ...(changes.vouchers.created || []),
           ...(changes.vouchers.updated || []),
-        ].map((v: any) => ({
+        ].map((v: RawVoucherDto) => ({
           id: v.id,
           companyId: v.company_id || companyId,
           financialYearId: v.financial_year_id,
@@ -452,7 +581,7 @@ export async function pullIncrementalChanges(
         const toPut = [
           ...(changes.bank_transactions.created || []),
           ...(changes.bank_transactions.updated || []),
-        ].map((bt: any) => ({
+        ].map((bt: RawBankTransactionDto) => ({
           id: bt.id,
           companyId: bt.company_id || companyId,
           bankLedgerId: bt.bank_ledger_id,
@@ -479,7 +608,7 @@ export async function pullIncrementalChanges(
           totalRecords += toPut.length;
         }
         if (changes.bank_transactions.deleted && changes.bank_transactions.deleted.length > 0) {
-          const toDel = changes.bank_transactions.deleted.map((bt: any) => bt.id);
+          const toDel = changes.bank_transactions.deleted.map((bt: RawBankTransactionDto) => bt.id);
           await offlineDb.syncedBankTransactions.bulkDelete(toDel);
         }
       }
@@ -489,7 +618,7 @@ export async function pullIncrementalChanges(
         const toPut = [
           ...(changes.payment_allocations.created || []),
           ...(changes.payment_allocations.updated || []),
-        ].map((pa: any) => ({
+        ].map((pa: RawPaymentAllocationDto) => ({
           id: pa.id,
           companyId: pa.company_id || companyId,
           paymentVoucherId: pa.payment_voucher_id,
@@ -502,7 +631,7 @@ export async function pullIncrementalChanges(
           totalRecords += toPut.length;
         }
         if (changes.payment_allocations.deleted && changes.payment_allocations.deleted.length > 0) {
-          const toDel = changes.payment_allocations.deleted.map((pa: any) => pa.id);
+          const toDel = changes.payment_allocations.deleted.map((pa: RawPaymentAllocationDto) => pa.id);
           await offlineDb.syncedPaymentAllocations.bulkDelete(toDel);
         }
       }
@@ -552,13 +681,14 @@ export async function pullIncrementalChanges(
     notifySyncChannel({ type: "SYNC_COMPLETE", companyId, totalRecords });
 
     return { success: true, totalRecords };
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err || "Sync pull failed");
     console.error("Incremental pull failed:", err);
     await offlineDb.syncMeta.update(companyId, {
       syncStatus: "ERROR",
-      errorMessage: err?.message || "Sync pull failed",
+      errorMessage: errorMsg,
     });
-    return { success: false, totalRecords: 0, error: err?.message };
+    return { success: false, totalRecords: 0, error: errorMsg };
   } finally {
     isPullInProgress = false;
   }
@@ -570,7 +700,7 @@ export async function pullIncrementalChanges(
  */
 export async function ingestVoucherLocally(
   companyId: string,
-  voucher: any
+  voucher: VoucherIngestInput
 ): Promise<void> {
   if (!companyId || !voucher || !voucher.id) return;
 
@@ -599,9 +729,9 @@ export async function ingestVoucherLocally(
     referenceNumber: refNum,
     partyLedgerId: pLedgerId,
     partyName: pName,
-    status: sStatus as any,
+    status: (sStatus as SyncedVoucher["status"]) || "POSTED",
     totalAmount: totAmt,
-    paymentStatus: pStatus as any,
+    paymentStatus: (pStatus as SyncedVoucher["paymentStatus"]) || "UNPAID",
     paidAmount: pAmt,
     narration: narr,
     serverUpdatedAt: isNaN(sUpdated) ? Date.now() : sUpdated,

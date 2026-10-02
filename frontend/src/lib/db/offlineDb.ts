@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import Dexie, { type Table } from "dexie";
 
 export interface OfflineVoucher {

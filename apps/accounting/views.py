@@ -2335,6 +2335,13 @@ class UniversalVoucherAPIView(APIView):
             narration = data.get('narration', '')
             manual_vnum = data.get('voucher_number')
 
+            if voucher_type in ['JOURNAL', 'CONTRA', 'CREDIT_NOTE', 'DEBIT_NOTE']:
+                if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER', 'CA']):
+                    return Response({
+                        "success": False,
+                        "error": f"Permission denied: Only Owner, Admin, or CA can create {voucher_type} entries."
+                    }, status=status.HTTP_403_FORBIDDEN)
+
             with transaction.atomic():
                 # Case 1: Structured Items provided (Sales or Purchase)
                 if 'items' in data and len(data['items']) > 0:
@@ -2646,11 +2653,14 @@ class SyncTaxLedgersAPIView(APIView):
             from apps.accounting.services.sales_service import SalesInvoiceService
             if company_id:
                 company = Company.objects.get(id=company_id, users__user=request.user)
+                if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER', 'CA']):
+                    return Response({"success": False, "error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
                 SalesInvoiceService.reassign_misallocated_tax_entries(company)
             else:
                 user_companies = Company.objects.filter(users__user=request.user)
                 for comp in user_companies:
-                    SalesInvoiceService.reassign_misallocated_tax_entries(comp)
+                    if user_has_company_roles(request.user, comp, ['ADMIN', 'OWNER', 'CA']):
+                        SalesInvoiceService.reassign_misallocated_tax_entries(comp)
             return Response({"success": True, "message": "All Input and Output tax ledgers successfully synchronized."})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -2766,6 +2776,9 @@ class RebuildBalancesAPIView(APIView):
                 company = Company.objects.filter(users__user=request.user).first()
             if not company:
                 return Response({"success": False, "error": "Company not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER', 'CA']):
+                return Response({"success": False, "error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
 
             is_async = (request.data.get('async') is True or request.query_params.get('async', '').lower() == 'true')
             if is_async:

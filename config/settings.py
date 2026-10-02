@@ -246,13 +246,6 @@ from corsheaders.defaults import default_headers, default_methods
 CORS_ALLOW_ALL_ORIGINS = env.bool('CORS_ALLOW_ALL_ORIGINS', default=DEBUG)
 CORS_ALLOW_CREDENTIALS = True
 
-# Allow official production domain, local dev ports, and legitimate Vouch branch preview subdomains
-CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^https://vouch-[a-zA-Z0-9-]+\.vercel\.app$",
-    r"^https://vouch-pi-one-[a-zA-Z0-9-]+\.vercel\.app$",
-    r"^http://localhost:[0-9]+$",
-    r"^http://127\.0\.0\.1:[0-9]+$",
-]
 
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
@@ -295,7 +288,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'x-device-id',
     'x-sync-cursor',
 ]
-CORS_EXPOSE_HEADERS = ['*', 'X-Idempotent-Replay', 'X-Idempotency-Key', 'X-Server-Version', 'X-API-Contract', 'Retry-After']
+CORS_EXPOSE_HEADERS = ['X-Idempotent-Replay', 'X-Idempotency-Key', 'X-Server-Version', 'X-API-Contract', 'Retry-After']
 
 CSRF_TRUSTED_ORIGINS = [
     'https://vouch-pi-one.vercel.app',

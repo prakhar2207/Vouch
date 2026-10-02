@@ -7,6 +7,7 @@
     "build": "node scripts/patch-html2canvas.js && next build --webpack",
     "start": "next start",
     "lint": "eslint",
+    "test": "node --test \"src/**/*.test.ts\"",
     "postinstall": "node scripts/patch-html2canvas.js"
   },
   "dependencies": {

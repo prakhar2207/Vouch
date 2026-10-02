@@ -580,6 +580,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   setIsFYDropdownOpen(false);
                   setIsUserMenuOpen(false);
                 }}
+                aria-label={`Switch Company Workspace (Active: ${activeCompany?.name || 'Company'})`}
+                aria-haspopup="true"
+                aria-expanded={isCompanyDropdownOpen}
                 className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
                 title={`Active Company: ${activeCompany?.name || 'Company'}`}
               >
@@ -645,6 +648,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div ref={fyRef} className="relative hidden md:block shrink-0">
               <button
                 onClick={() => setIsFYDropdownOpen(!isFYDropdownOpen)}
+                aria-label={`Financial Year (${activeFY ? (activeFY.code || activeFY.name) : "FY 26-27"})`}
+                aria-haspopup="true"
+                aria-expanded={isFYDropdownOpen}
                 className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
                 title="Change Financial Year or Period (Alt + F2)"
               >
@@ -727,6 +733,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <button
               id="tour-calculator-btn"
               onClick={() => setIsCalculatorOpen(!isCalculatorOpen)}
+              aria-label="Tally Calculator & GST Tools"
+              aria-expanded={isCalculatorOpen}
               className={`p-2 rounded-xl transition-all cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center shrink-0 ${
                 isCalculatorOpen
                   ? "bg-primary/20 text-primary border border-primary/40 shadow-xs"
@@ -751,6 +759,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div ref={userMenuRef} className="relative shrink-0">
               <button
                 onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                aria-label="Account and user preferences menu"
+                aria-haspopup="true"
+                aria-expanded={isUserMenuOpen}
                 className="w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 via-primary/10 to-accent/20 border border-border/60 flex items-center justify-center text-xs font-bold text-foreground hover:ring-2 hover:ring-primary/30 transition-all cursor-pointer shrink-0"
                 title="Account Menu"
               >

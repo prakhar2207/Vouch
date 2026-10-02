@@ -41,7 +41,7 @@ def get_authorized_company(request, company_id=None):
     if cached_map is not None and cache_key in cached_map:
         return cached_map[cache_key]
 
-    company = Company.objects.filter(id=target_id).defer('signature_data', 'logo_data').first()
+    company = Company.objects.filter(id=target_id, is_active=True).defer('signature_data', 'logo_data').first()
     if not company:
         raise NotFound(f"Company with ID '{target_id}' not found.")
 
@@ -159,8 +159,8 @@ class BaseCompanyPermission(BasePermission):
             return False
         company = self.resolve_company(request, view)
         if not company:
-            # If company cannot be resolved at view-level, allow check to proceed to object level or view queryset filter
-            return True
+            # If company cannot be resolved at view-level, deny access
+            return False
         return user_has_company_roles(request.user, company, self.allowed_roles)
 
     def has_object_permission(self, request, view, obj):
@@ -193,6 +193,9 @@ class CanPostVoucher(BaseCompanyPermission):
     allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']
 
 class CanCancelVoucher(BaseCompanyPermission):
+    allowed_roles = ['ADMIN', 'OWNER', 'CA']
+
+class CanCreateJournal(BaseCompanyPermission):
     allowed_roles = ['ADMIN', 'OWNER', 'CA']
 
 class CanManageLedgers(BaseCompanyPermission):
