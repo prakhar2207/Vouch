@@ -49,6 +49,7 @@ import {
 } from "lucide-react";
 import SyncStatusBadge from "./SyncStatusBadge";
 import UniversalNewModal from "./UniversalNewModal";
+import { useAccountantMode } from "@/context/AccountantModeContext";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -57,7 +58,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isUniversalNewOpen, setIsUniversalNewOpen] = useState(false);
-  const [isAccountantMode, setIsAccountantMode] = useState(false);
+  const { isAccountantMode, toggleAccountantMode } = useAccountantMode();
 
   // 5 Mental Model Dropdown States: DO, KNOW, FIX, AUTOMATE, CONTROL
   const [isDoOpen, setIsDoOpen] = useState(false);
@@ -84,13 +85,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { displayPeriod, setIsPeriodModalOpen, setIsSplitModalOpen } = useAccountingPeriod();
   const { activeCompany, availableCompanies, setActiveCompany } = useCompany();
   const { user, role, isAdmin, isOwner, isCA, isEmployee, isViewer, canManageSettings } = useRole();
-
-  // Initialize Accountant Mode preference
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setIsAccountantMode(localStorage.getItem("vouch_accountant_mode") === "true");
-    }
-  }, []);
 
   // Superadmin isolation: platform superadmin only sees the Superadmin Command Center, never company dashboards
   useEffect(() => {
@@ -653,6 +647,27 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {/* Right Section: Workspace Context, Quick Search & Utilities */}
           <div className="flex items-center gap-1 sm:gap-1.5 xl:gap-2 shrink-0 ml-auto pr-1 sm:pr-1.5">
             
+            {/* Mode Pill: Accountant vs Business Mode */}
+            <button
+              type="button"
+              onClick={toggleAccountantMode}
+              className={`hidden sm:inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer shadow-2xs min-h-[36px] shrink-0 ${
+                isAccountantMode
+                  ? "bg-primary/15 text-primary border-primary/30 hover:bg-primary/25"
+                  : "bg-muted/30 text-muted-foreground border-border/50 hover:bg-muted/60 hover:text-foreground"
+              }`}
+              title={
+                isAccountantMode
+                  ? "Accountant Mode Active (Double-Entry Matrix, Journal Grids, Full Audit). Click to switch to Simplified Business Mode."
+                  : "Business Mode Active (Simplified Everyday Billing & Cash Flow). Click to switch to Professional Accountant Mode."
+              }
+            >
+              <Scale className={`w-3.5 h-3.5 ${isAccountantMode ? "text-primary" : "text-muted-foreground"}`} />
+              <span className="hidden xl:inline">
+                {isAccountantMode ? "Accountant" : "Business"}
+              </span>
+            </button>
+
             {/* Company Switcher Pill */}
             <div ref={companyRef} className="relative hidden md:block shrink-0">
               <button
@@ -904,14 +919,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </div>
                     <button
                       type="button"
-                      onClick={() => {
-                        const next = !isAccountantMode;
-                        setIsAccountantMode(next);
-                        if (typeof window !== "undefined") {
-                          localStorage.setItem("vouch_accountant_mode", String(next));
-                          window.dispatchEvent(new CustomEvent("vouch:mode-changed", { detail: { isAccountantMode: next } }));
-                        }
-                      }}
+                      onClick={toggleAccountantMode}
                       className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer ${isAccountantMode ? "bg-primary" : "bg-muted-foreground/30"}`}
                       title={isAccountantMode ? "Switch to Simplified Business Mode" : "Switch to Professional Double-Entry Mode"}
                     >

@@ -27,13 +27,24 @@ import {
   DollarSign,
   FileText,
   User,
+  Scale,
 } from 'lucide-react';
 import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
+import { useAccountantMode } from '@/context/AccountantModeContext';
 
 export default function SalesPage() {
   const router = useRouter();
   const { toast } = useToast();
+  const { isAccountantMode } = useAccountantMode();
+  const [isPostingImpactOpen, setIsPostingImpactOpen] = useState(false);
+
+  useEffect(() => {
+    if (isAccountantMode) {
+      setIsPostingImpactOpen(true);
+    }
+  }, [isAccountantMode]);
+
   const { workingDate, registerSaveHandler, registerAltCCallback, registerDeleteLineHandler, registerEditMasterHandler, setIsCalculatorOpen } = useShortcuts();
   const { activeFY, isReadOnly } = useFinancialYear();
   const [activeRow, setActiveRow] = useState<{ gIndex: number; iIndex: number } | null>(null);
@@ -2647,6 +2658,100 @@ export default function SalesPage() {
                     <span className="font-mono tabular-nums text-2xl text-primary font-black">₹{grandTotal.toFixed(2)}</span>
                 </div>
             </div>
+        </div>
+
+        {/* Double-Entry Posting Impact Accordion (Progressive Disclosure) */}
+        <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setIsPostingImpactOpen(!isPostingImpactOpen)}
+            className="w-full px-5 py-3.5 flex items-center justify-between text-xs font-bold text-foreground hover:bg-muted/50 transition-colors cursor-pointer"
+          >
+            <div className="flex items-center gap-2">
+              <Scale className="w-4 h-4 text-primary" />
+              <span>Accounting Details & Double-Entry Impact</span>
+              {isAccountantMode && (
+                <span className="text-[10px] bg-primary/15 text-primary px-1.5 py-0.5 rounded font-mono font-bold">
+                  Accountant Mode
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 text-muted-foreground font-mono text-[11px]">
+              <span>Balanced: ₹{grandTotal.toFixed(2)} Dr = ₹{grandTotal.toFixed(2)} Cr</span>
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isPostingImpactOpen ? "rotate-180" : ""}`} />
+            </div>
+          </button>
+
+          {isPostingImpactOpen && (
+            <div className="px-5 pb-4 pt-1 border-t border-border/50 space-y-2.5 text-xs">
+              <p className="text-[11px] text-muted-foreground">
+                Automatic double-entry ledger impact calculated for this sales invoice:
+              </p>
+              <div className="rounded-lg border border-border/60 overflow-hidden font-mono text-[11px]">
+                <div className="grid grid-cols-12 bg-muted/70 px-3 py-1.5 font-bold text-muted-foreground uppercase text-[10px]">
+                  <span className="col-span-1">Type</span>
+                  <span className="col-span-7">Ledger Account</span>
+                  <span className="col-span-2 text-right">Debit (Dr)</span>
+                  <span className="col-span-2 text-right">Credit (Cr)</span>
+                </div>
+                {/* 1. Debit Party Ledger */}
+                <div className="grid grid-cols-12 px-3 py-1.5 border-t border-border/40 bg-card items-center">
+                  <span className="col-span-1 font-bold text-blue-500">Dr</span>
+                  <span className="col-span-7 font-sans truncate font-medium text-foreground">
+                    {ledgers.find((l) => l.id === partyLedgerId)?.name || "Customer Account (Sundry Debtors)"}
+                  </span>
+                  <span className="col-span-2 text-right font-bold text-foreground">₹{grandTotal.toFixed(2)}</span>
+                  <span className="col-span-2 text-right text-muted-foreground">-</span>
+                </div>
+                {/* 2. Credit Sales Ledger */}
+                <div className="grid grid-cols-12 px-3 py-1.5 border-t border-border/40 bg-card items-center">
+                  <span className="col-span-1 font-bold text-emerald-500">Cr</span>
+                  <span className="col-span-7 font-sans truncate font-medium text-foreground">
+                    {ledgers.find((l) => l.id === salesLedgerId)?.name || "Domestic Sales Account"}
+                  </span>
+                  <span className="col-span-2 text-right text-muted-foreground">-</span>
+                  <span className="col-span-2 text-right font-bold text-foreground">₹{grossTotal.toFixed(2)}</span>
+                </div>
+                {/* 3. Taxes */}
+                {isInterState ? (
+                  Number(totalTax) > 0 && (
+                    <div className="grid grid-cols-12 px-3 py-1.5 border-t border-border/40 bg-card items-center">
+                      <span className="col-span-1 font-bold text-emerald-500">Cr</span>
+                      <span className="col-span-7 font-sans truncate font-medium text-foreground">Output IGST Payable</span>
+                      <span className="col-span-2 text-right text-muted-foreground">-</span>
+                      <span className="col-span-2 text-right font-bold text-foreground">₹{totalTax.toFixed(2)}</span>
+                    </div>
+                  )
+                ) : (
+                  Number(totalTax) > 0 && (
+                    <>
+                      <div className="grid grid-cols-12 px-3 py-1.5 border-t border-border/40 bg-card items-center">
+                        <span className="col-span-1 font-bold text-emerald-500">Cr</span>
+                        <span className="col-span-7 font-sans truncate font-medium text-foreground">Output CGST Payable</span>
+                        <span className="col-span-2 text-right text-muted-foreground">-</span>
+                        <span className="col-span-2 text-right font-bold text-foreground">₹{(totalTax / 2).toFixed(2)}</span>
+                      </div>
+                      <div className="grid grid-cols-12 px-3 py-1.5 border-t border-border/40 bg-card items-center">
+                        <span className="col-span-1 font-bold text-emerald-500">Cr</span>
+                        <span className="col-span-7 font-sans truncate font-medium text-foreground">Output SGST Payable</span>
+                        <span className="col-span-2 text-right text-muted-foreground">-</span>
+                        <span className="col-span-2 text-right font-bold text-foreground">₹{(totalTax / 2).toFixed(2)}</span>
+                      </div>
+                    </>
+                  )
+                )}
+                {/* 4. Round Off */}
+                {roundOff !== 0 && (
+                  <div className="grid grid-cols-12 px-3 py-1.5 border-t border-border/40 bg-card items-center">
+                    <span className="col-span-1 font-bold text-amber-500">{roundOff < 0 ? "Dr" : "Cr"}</span>
+                    <span className="col-span-7 font-sans truncate font-medium text-foreground">Round Off Account</span>
+                    <span className="col-span-2 text-right font-bold text-foreground">{roundOff < 0 ? `₹${Math.abs(roundOff).toFixed(2)}` : "-"}</span>
+                    <span className="col-span-2 text-right font-bold text-foreground">{roundOff > 0 ? `₹${roundOff.toFixed(2)}` : "-"}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
       </div>

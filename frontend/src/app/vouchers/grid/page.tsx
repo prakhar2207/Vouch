@@ -2,6 +2,7 @@
 import { API_BASE_URL } from '@/utils/api';
 import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense } from "react";
 import axios from "axios";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AgGridReact } from "ag-grid-react";
 import { ColDef, GridApi, GridReadyEvent, AllCommunityModule, ModuleRegistry } from "ag-grid-community";
@@ -576,6 +577,15 @@ function AgGridVoucherEntryContent() {
                 <span>Auto-Balance</span>
               </button>
             )}
+
+            <Link
+              href="/vouchers/new"
+              className="px-2.5 py-1.5 bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg text-xs font-semibold border border-border/60 transition-colors flex items-center gap-1.5 shrink-0"
+              title="Switch to Simplified Payment / Receipt Form"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Simple Form</span>
+            </Link>
 
             <button
               onClick={handleSubmit}

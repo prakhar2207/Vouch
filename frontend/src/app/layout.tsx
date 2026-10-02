@@ -51,6 +51,7 @@ export const metadata: Metadata = {
 import { CompanyProvider } from "@/context/CompanyContext";
 import { FinancialYearProvider } from "@/context/FinancialYearContext";
 import { PeriodProvider } from "@/context/PeriodContext";
+import { AccountantModeProvider } from "@/context/AccountantModeContext";
 import YearEndClosingModal from "@/components/modals/YearEndClosingModal";
 import PeriodModal from "@/components/modals/PeriodModal";
 import SplitCompanyModal from "@/components/modals/SplitCompanyModal";
@@ -70,11 +71,12 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <CompanyProvider>
-            <FinancialYearProvider>
-              <PeriodProvider>
-                <ShortcutProvider>
-                  <ToastProvider>
+          <AccountantModeProvider>
+            <CompanyProvider>
+              <FinancialYearProvider>
+                <PeriodProvider>
+                  <ShortcutProvider>
+                    <ToastProvider>
                     {children}
                     <DateModal />
                     <PeriodModal />
@@ -92,7 +94,8 @@ export default function RootLayout({
               </PeriodProvider>
             </FinancialYearProvider>
           </CompanyProvider>
-        </ThemeProvider>
+        </AccountantModeProvider>
+      </ThemeProvider>
       </body>
     </html>
   );
