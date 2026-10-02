@@ -160,8 +160,8 @@ class DocumentShareService:
 
             grand_total = subtotals.get('grand_total', 0.0)
             voucher_id = snapshot.source_id
-            pdf_url = f"{base_url}/sales/{voucher_id}/print" if voucher_id else share_url
-            claim_url = f"{base_url}/claim?token={voucher_id}" if voucher_id else share_url
+            pdf_url = f"{share_url}?format=pdf"
+            claim_url = f"{base_url}/claim?token={raw_token}"
 
             msg = (
                 f"🧾 *{doc_title} #{doc.get('document_number', '')}*\n\n"

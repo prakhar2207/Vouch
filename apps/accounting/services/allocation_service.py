@@ -2,9 +2,10 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import Sum
 from django.db.models.functions import Coalesce
+from django.utils import timezone
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
-from apps.accounting.models import Voucher, PaymentAllocation
+from apps.accounting.models import Voucher, PaymentAllocation, PaymentAllocationTask
 from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
 
 def quantize_money(amount) -> Decimal:
@@ -182,7 +183,125 @@ class PaymentAllocationService:
             })
             rem_funds -= alloc_amt
 
+        total_allocated = quantize_money(pv.total_amount - rem_funds)
+        rem_funds = quantize_money(rem_funds)
+
+        # Synchronize durable PaymentAllocationTask state if one exists or if a preferred target was set
+        task = PaymentAllocationTask.objects.filter(payment_voucher=pv).first()
+        if not task and (preferred_inv or (rem_funds > Decimal('0.00') and total_allocated > Decimal('0.00'))):
+            PaymentAllocationTask.objects.create(
+                company=pv.company,
+                payment_voucher=pv,
+                preferred_invoice=preferred_inv,
+                target_amount=pv.total_amount,
+                allocated_amount=total_allocated,
+                remaining_amount=rem_funds,
+                status='COMPLETED' if rem_funds == Decimal('0.00') else ('PARTIALLY_ALLOCATED' if total_allocated > Decimal('0.00') else 'PENDING'),
+                resolved_at=timezone.now() if rem_funds == Decimal('0.00') else None,
+            )
+        elif task:
+            task.allocated_amount = total_allocated
+            task.remaining_amount = rem_funds
+            task.status = 'COMPLETED' if rem_funds == Decimal('0.00') else ('PARTIALLY_ALLOCATED' if total_allocated > Decimal('0.00') else 'PENDING')
+            task.resolved_at = timezone.now() if rem_funds == Decimal('0.00') else None
+            task.last_error = None
+            task.save()
+
         return allocations
+
+    @classmethod
+    def record_allocation_task(
+        cls,
+        company: Company = None,
+        payment_voucher: Voucher = None,
+        preferred_invoice: Voucher = None,
+        status: str = 'PENDING',
+        allocated_amount: Decimal = Decimal('0.00'),
+        remaining_amount: Decimal = None,
+        error: str = None,
+        **kwargs
+    ) -> PaymentAllocationTask:
+        """
+        Creates or updates a durable PaymentAllocationTask when background or automated
+        allocation experiences partial success or failure.
+        """
+        pv = payment_voucher or kwargs.get('voucher')
+        if not pv:
+            raise ValueError("payment_voucher is required")
+        comp = company or getattr(pv, 'company', None)
+        err = error or kwargs.get('failure_reason')
+
+        target_amt = quantize_money(pv.total_amount)
+        alloc_amt = quantize_money(allocated_amount)
+        rem_amt = quantize_money(remaining_amount if remaining_amount is not None else (target_amt - alloc_amt))
+
+        task, created = PaymentAllocationTask.objects.get_or_create(
+            payment_voucher=pv,
+            defaults={
+                'company': comp,
+                'preferred_invoice': preferred_invoice,
+                'status': status,
+                'target_amount': target_amt,
+                'allocated_amount': alloc_amt,
+                'remaining_amount': rem_amt,
+                'last_error': err,
+                'resolved_at': timezone.now() if status == 'COMPLETED' else None,
+            }
+        )
+        if not created:
+            task.company = comp
+            if preferred_invoice:
+                task.preferred_invoice = preferred_invoice
+            task.status = status
+            task.target_amount = target_amt
+            task.allocated_amount = alloc_amt
+            task.remaining_amount = rem_amt
+            if err:
+                task.last_error = err
+                task.retry_count += 1
+            if status == 'COMPLETED':
+                task.resolved_at = timezone.now()
+            task.save()
+        return task
+
+    @classmethod
+    def retry_pending_tasks(cls, company: Company = None) -> dict:
+        """
+        Background worker helper: retries payment allocation for all PENDING,
+        PARTIALLY_ALLOCATED, or FAILED tasks.
+        """
+        qs = PaymentAllocationTask.objects.filter(status__in=['PENDING', 'PARTIALLY_ALLOCATED', 'FAILED'])
+        if company:
+            qs = qs.filter(company=company)
+
+        processed = 0
+        succeeded = 0
+        failed = 0
+
+        for task in qs.select_related('payment_voucher', 'preferred_invoice', 'company'):
+            processed += 1
+            try:
+                cls.auto_allocate_voucher(
+                    task.payment_voucher,
+                    preferred_invoice_id=str(task.preferred_invoice_id) if task.preferred_invoice_id else None
+                )
+                task.refresh_from_db()
+                if task.status == 'COMPLETED':
+                    succeeded += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                task.status = 'FAILED'
+                task.last_error = str(e)
+                task.retry_count += 1
+                task.save(update_fields=['status', 'last_error', 'retry_count', 'updated_at'])
+                failed += 1
+
+        return {
+            'processed': processed,
+            'succeeded': succeeded,
+            'failed': failed,
+        }
 
     @classmethod
     @transaction.atomic

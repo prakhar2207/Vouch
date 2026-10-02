@@ -343,3 +343,73 @@ class CorsAndSyncSprintTestCase(TestCase):
         response = anon_client.get(f'/api/v1/accounting/vouchers/public/{purchase_voucher.id}/')
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    # --------------------------------------------------------------------------
+    # 6. SSE Stream Ticket & Security (P0-05)
+    # --------------------------------------------------------------------------
+    def test_sync_stream_ticket_generation_and_consumption(self):
+        """Authenticated client requests stream ticket, which can be consumed exactly once."""
+        self.client.force_authenticate(user=self.user_a)
+        ticket_resp = self.client.post('/api/v1/sync/stream-ticket/', HTTP_X_COMPANY_ID=str(self.comp_a.id))
+        self.assertEqual(ticket_resp.status_code, status.HTTP_200_OK)
+        ticket = ticket_resp.data.get('ticket')
+        self.assertTrue(ticket.startswith('st_'))
+
+        # Consume ticket via unauthenticated SSE connection
+        anon_client = APIClient()
+        stream_resp = anon_client.get(f'/api/v1/sync/stream/?ticket={ticket}')
+        self.assertEqual(stream_resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(stream_resp.get('Content-Type'), 'text/event-stream')
+
+        # Reusing the same burned ticket must fail with 401 Unauthorized
+        reuse_resp = anon_client.get(f'/api/v1/sync/stream/?ticket={ticket}')
+        self.assertEqual(reuse_resp.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertIn('Invalid or expired stream ticket', reuse_resp.data.get('error', ''))
+
+    def test_sync_stream_rejects_jwt_in_url(self):
+        """SSE stream rejects attempts to pass raw JWTs in query parameters."""
+        anon_client = APIClient()
+        fake_jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.fake'
+        response = anon_client.get(f'/api/v1/sync/stream/?token={fake_jwt}')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertIn('Authentication tokens are not accepted in query parameters', response.data.get('error', ''))
+
+    # --------------------------------------------------------------------------
+    # 7. Payment Allocation Task & Partial Success Tracking (P0-06)
+    # --------------------------------------------------------------------------
+    def test_payment_allocation_task_lifecycle_and_integrity_check(self):
+        """Payment allocation failure creates a durable PaymentAllocationTask and exposes it to integrity audits."""
+        from apps.accounting.models import PaymentAllocationTask
+        from apps.accounting.services.allocation_service import PaymentAllocationService
+        from apps.accounting.services.integrity_engine import AccountingIntegrityEngine
+
+        # Create a PAYMENT voucher
+        payment_voucher = Voucher.objects.create(
+            company=self.comp_a,
+            voucher_type='PAYMENT',
+            voucher_number='PAY-TEST-001',
+            voucher_date=timezone.now().date(),
+            party_ledger=self.party_a,
+            total_amount=Decimal('5000.00'),
+            created_by=self.user_a,
+            status='POSTED'
+        )
+
+        # Record allocation task as FAILED due to invoice settlement timeout
+        task = PaymentAllocationService.record_allocation_task(
+            voucher=payment_voucher,
+            status='FAILED',
+            failure_reason='Pending counterparty bill approval',
+            allocated_amount=Decimal('0.00'),
+            unallocated_amount=Decimal('5000.00')
+        )
+        self.assertEqual(task.status, 'FAILED')
+        self.assertEqual(task.retry_count, 0)
+
+        # Verify IntegrityEngine detects this pending/failed allocation
+        findings = AccountingIntegrityEngine.check_payment_allocations(company=self.comp_a)
+        self.assertTrue(len(findings) > 0)
+        self.assertEqual(findings[0].category, 'PAYMENT')
+        self.assertIn('PAY-TEST-001', findings[0].description)
+        self.assertIn('Pending counterparty bill approval', findings[0].description)
+
+

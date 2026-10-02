@@ -760,6 +760,37 @@ class SyncBootstrapAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+class SyncStreamTicketAPIView(APIView):
+    """
+    POST /api/v1/sync/stream-ticket/
+    Generates a cryptographically secure, single-use, 60-second stream ticket
+    for SSE connection authorization.
+    Avoids transmitting long-lived JWT access tokens in browser EventSource query parameters.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_scope = 'sync'
+
+    def post(self, request):
+        import secrets
+        from django.core.cache import cache
+
+        company = get_authorized_company(request, request.data.get('company_id'))
+        ticket = f"st_{secrets.token_urlsafe(32)}"
+        ticket_data = {
+            'user_id': str(request.user.id),
+            'company_id': str(company.id),
+        }
+        # Store in cache with 60 second TTL
+        cache.set(f"sse_ticket:{ticket}", ticket_data, timeout=60)
+
+        return Response({
+            'success': True,
+            'ticket': ticket,
+            'expires_in': 60,
+            'company_id': str(company.id),
+        }, status=status.HTTP_200_OK)
+
+
 class SyncStreamAPIView(APIView):
     """
     GET /api/v1/sync/stream/
@@ -768,32 +799,60 @@ class SyncStreamAPIView(APIView):
     to connected Desktop (Tauri/Electron), Mobile (React Native/Flutter), and Web clients.
     
     Accepts:
+      - ticket: single-use 60s stream ticket generated via POST /api/v1/sync/stream-ticket/ (preferred for browser EventSource)
+      - Authorization: Bearer <JWT> header (for backend, CLI, or non-browser SSE clients)
       - company_id: query parameter or X-Company-ID header
       - cursor / Last-Event-ID: starting sync cursor (monotonically increasing integer)
-      - token: optional query param for native browser EventSource authorization
+      
+    SECURITY INVARIANT:
+      Strictly rejects long-lived JWTs in URL query parameters (?token=) to prevent token leakage in logs and history.
     """
     permission_classes = [AllowAny]
     throttle_scope = 'sync'
 
     def get(self, request, *args, **kwargs):
-        # 1. Resolve Authentication (Supports standard Bearer header OR query param 'token' for EventSource)
-        user = request.user
-        if not user or not user.is_authenticated:
-            token_str = request.query_params.get('token')
-            if token_str:
-                try:
-                    access = AccessToken(token_str)
-                    from apps.accounts.models import User
-                    user = User.objects.get(id=access['user_id'])
-                    request.user = user
-                except Exception:
-                    return Response({"error": "Invalid or expired authentication token."}, status=status.HTTP_401_UNAUTHORIZED)
-            else:
-                return Response({"error": "Authentication credentials were not provided."}, status=status.HTTP_401_UNAUTHORIZED)
+        # 1. Resolve Authentication
+        from django.core.cache import cache
+        from apps.accounts.models import User
+
+        if request.query_params.get('token') or request.query_params.get('auth_token'):
+            return Response(
+                {"error": "Authentication tokens are not accepted in query parameters. Use an Authorization header or request a single-use stream ticket via POST /api/v1/sync/stream-ticket/."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        ticket = request.query_params.get('ticket')
+        user = None
+        ticket_company_id = None
+
+        if ticket:
+            cache_key = f"sse_ticket:{ticket}"
+            ticket_data = cache.get(cache_key)
+            if not ticket_data:
+                return Response(
+                    {"error": "Invalid or expired stream ticket. Please request a new ticket via /api/v1/sync/stream-ticket/."},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            # SINGLE-USE: Burn immediately upon consumption
+            cache.delete(cache_key)
+            try:
+                user = User.objects.get(id=ticket_data['user_id'])
+                request.user = user
+                ticket_company_id = ticket_data.get('company_id')
+            except Exception:
+                return Response({"error": "User associated with stream ticket no longer exists."}, status=status.HTTP_401_UNAUTHORIZED)
+        elif request.user and request.user.is_authenticated:
+            user = request.user
+        else:
+            return Response(
+                {"error": "Authentication required. Provide an Authorization Bearer header or a single-use stream ticket from /api/v1/sync/stream-ticket/."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
 
         # 2. Authorize Company Access
+        target_company_id = ticket_company_id or request.query_params.get('company_id')
         try:
-            company = get_authorized_company(request, request.query_params.get('company_id'))
+            company = get_authorized_company(request, target_company_id)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
 

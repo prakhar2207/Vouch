@@ -220,3 +220,69 @@ class InvoicePDFAndClaimTests(TestCase):
         dup_resp = self.client.post(reverse('claim_register'), reg_payload, format='json')
         self.assertEqual(dup_resp.status_code, status.HTTP_409_CONFLICT)
         self.assertIn('already been added', dup_resp.data['error'])
+
+    def test_claim_preview_with_documentshare_token(self):
+        """Previewing an invoice using cryptographically hashed DocumentShare token succeeds."""
+        from apps.documents.models import DocumentSnapshot
+        from apps.documents.services.share_service import DocumentShareService
+
+        snapshot = DocumentSnapshot.objects.create(
+            company=self.company,
+            document_type='SALES_INVOICE',
+            source_id=str(self.sales_voucher.id),
+            document_number=self.sales_voucher.voucher_number,
+            document_date=self.sales_voucher.voucher_date,
+            total_amount=self.sales_voucher.total_amount,
+            snapshot_json={
+                'party': {
+                    'name': self.sales_voucher.buyer_name,
+                    'gstin': self.sales_voucher.buyer_gstin,
+                    'phone': self.sales_voucher.buyer_phone,
+                    'email': self.sales_voucher.buyer_email,
+                }
+            }
+        )
+        raw_token, share = DocumentShareService.create_share(snapshot=snapshot, user=self.user)
+
+        url = reverse('claim_preview') + f'?token={raw_token}'
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['voucher_number'], 'INV/2026-27/0101')
+        self.assertEqual(response.data['buyer_prefill']['gstin'], '07BBBBB2222B1Z2')
+
+    def test_claim_preview_rejects_revoked_documentshare_token(self):
+        """Revoked DocumentShare token is strictly rejected."""
+        from apps.documents.models import DocumentSnapshot
+        from apps.documents.services.share_service import DocumentShareService
+
+        snapshot = DocumentSnapshot.objects.create(
+            company=self.company,
+            document_type='SALES_INVOICE',
+            source_id=str(self.sales_voucher.id),
+            document_number=self.sales_voucher.voucher_number,
+            document_date=self.sales_voucher.voucher_date,
+            total_amount=self.sales_voucher.total_amount,
+            snapshot_json={}
+        )
+        raw_token, share = DocumentShareService.create_share(snapshot=snapshot, user=self.user)
+        DocumentShareService.revoke_share(share)
+
+        url = reverse('claim_preview') + f'?token={raw_token}'
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('revoked', response.data['error'].lower())
+
+    def test_claim_preview_rejects_raw_voucher_uuid(self):
+        """Passing raw voucher UUID instead of cryptographically signed token is rejected."""
+        url = reverse('claim_preview') + f'?token={self.sales_voucher.id}'
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid', response.data['error'])
+
+    def test_pdf_download_rejects_query_jwt_token(self):
+        """Invoice PDF download strictly rejects JWT authentication in URL query parameters."""
+        fake_jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.fake'
+        url = reverse('invoice_pdf_download', kwargs={'voucher_id': self.sales_voucher.id}) + f'?auth_token={fake_jwt}'
+        response = self.client.get(url)
+        # Without valid Authorization header or valid signed token, it must be rejected (401 or 403)
+        self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])

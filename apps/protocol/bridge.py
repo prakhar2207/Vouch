@@ -470,6 +470,13 @@ class LedgerBridge:
                             PaymentAllocationService.auto_allocate_voucher(pay_voucher, preferred_invoice_id=str(base_voucher.id))
                         except Exception as e:
                             logger.error(f"Payment allocation failure for voucher {pay_voucher.voucher_number}: {e}", exc_info=True)
+                            PaymentAllocationService.record_allocation_task(
+                                company=company,
+                                payment_voucher=pay_voucher,
+                                preferred_invoice=base_voucher,
+                                status='FAILED',
+                                error=str(e)
+                            )
                             pay_voucher.notes = f"ALLOCATION_PENDING: Auto-allocation failed ({str(e)[:150]}). Manual reconciliation required."
                             pay_voucher.save(update_fields=['notes'])
                     posted_vouchers.append(pay_voucher)

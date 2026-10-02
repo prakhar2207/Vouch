@@ -293,7 +293,9 @@ class GSTIntegrationTests(TestCase):
         self.assertEqual(post_res.status_code, 200)
         self.assertTrue(post_res.data['success'])
         self.assertEqual(post_res.data['status'], 'FILED')
-        self.assertTrue(post_res.data['arn'].startswith('ARN-'))
+        # P0-08: When user does not supply government ARN, arn is None and internal reference is in provider_reference
+        self.assertIsNone(post_res.data['arn'])
+        self.assertTrue(post_res.data['provider_reference'].startswith('VOUCH-INTERNAL-REF-'))
 
         # Check database persistence
         filing = GSTFilingRecord.objects.filter(
@@ -305,6 +307,7 @@ class GSTIntegrationTests(TestCase):
         self.assertEqual(filing.status, 'FILED')
         self.assertEqual(filing.total_taxable_value, Decimal('150000.00'))
         self.assertEqual(filing.submitted_by, self.user)
+        self.assertTrue(filing.provider_reference.startswith('VOUCH-INTERNAL-REF-'))
 
         # Check GET history
         get_res = client.get(f'/api/v1/gst/returns/mark-filed/{self.company.id}/')
@@ -329,4 +332,75 @@ class GSTIntegrationTests(TestCase):
             format='json'
         )
         self.assertEqual(res.status_code, 403)
+
+    def test_09_fail_closed_encryption_on_corrupted_ciphertext(self):
+        """P0-01: Corrupted ciphertext MUST fail closed with CredentialDecryptionError, never returning ciphertext."""
+        from apps.gst.encryption import decrypt_gst_credential, CredentialDecryptionError
+
+        corrupted_token = "enc:v1:corrupted_garbage_token_invalid_base64_or_bad_hmac"
+        with self.assertRaises(CredentialDecryptionError):
+            decrypt_gst_credential(corrupted_token)
+
+    def test_10_gst_filing_with_official_government_arn(self):
+        """P0-08: When official government ARN is provided, it is stored in arn directly."""
+        from apps.companies.models import UserCompany
+        from apps.gst.models import GSTFilingRecord
+        from rest_framework.test import APIClient
+
+        UserCompany.objects.create(user=self.user, company=self.company, role='CA')
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+
+        official_arn = "AA0908260123456"
+        post_res = client.post(
+            f'/api/v1/gst/returns/mark-filed/{self.company.id}/',
+            data={
+                'period': '092026',
+                'return_type': 'GSTR1',
+                'arn': official_arn,
+                'total_taxable_value': '200000.00',
+                'total_tax_amount': '36000.00'
+            },
+            format='json'
+        )
+        self.assertEqual(post_res.status_code, 200)
+        self.assertEqual(post_res.data['arn'], official_arn)
+
+        filing = GSTFilingRecord.objects.filter(
+            company=self.company,
+            return_period='092026'
+        ).first()
+        self.assertIsNotNone(filing)
+        self.assertEqual(filing.arn, official_arn)
+
+    def test_11_statutory_gst_rbac_separation_of_duties(self):
+        """P0-03: EMPLOYEE can view reports but CANNOT file GST returns or modify portal credentials."""
+        from apps.companies.models import UserCompany
+        from rest_framework.test import APIClient
+
+        employee = User.objects.create_user(email='emp_statutory@example.com', password='empstatutorypass123')
+        UserCompany.objects.create(user=employee, company=self.company, role='EMPLOYEE')
+
+        client = APIClient()
+        client.force_authenticate(user=employee)
+
+        # 1. EMPLOYEE can view GSTR-3B summary (CanViewGST)
+        get_res = client.get(f'/api/v1/gst/reports/gstr3b/{self.company.id}/')
+        self.assertEqual(get_res.status_code, 200)
+
+        # 2. EMPLOYEE cannot mark return as filed (CanFileGST requires ADMIN, OWNER, CA)
+        file_res = client.post(
+            f'/api/v1/gst/returns/mark-filed/{self.company.id}/',
+            data={'period': '102026', 'return_type': 'GSTR1'},
+            format='json'
+        )
+        self.assertEqual(file_res.status_code, 403)
+
+        # 3. EMPLOYEE cannot modify GST credentials (CanManageGSTCredentials requires ADMIN, OWNER)
+        cred_res = client.post(
+            f'/api/v1/gst/config/{self.company.id}/',
+            data={'api_key': 'new_key'},
+            format='json'
+        )
+        self.assertEqual(cred_res.status_code, 403)
 

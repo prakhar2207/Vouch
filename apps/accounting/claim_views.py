@@ -37,10 +37,37 @@ class InvoiceClaimPreviewAPIView(APIView):
         if not token:
             return Response({'error': 'Claim token is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        payload = None
+        # 1. Try DocumentShareService (SHA-256 token hash)
         try:
-            payload = InvoiceNotificationService.verify_claim_token(token)
-        except ValueError as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            from apps.documents.services.share_service import DocumentShareService
+            from apps.documents.models import DocumentShare
+            token_hash = DocumentShareService.hash_token(token)
+            share = DocumentShare.objects.select_related('document_snapshot', 'document_snapshot__company').filter(token_hash=token_hash).first()
+            if share:
+                if not share.is_active:
+                    msg = "This share link has been revoked by the sender." if share.revoked_at else "This share link has expired."
+                    return Response({'error': msg}, status=status.HTTP_400_BAD_REQUEST)
+                DocumentShareService.resolve_share(token, request=request, record_event='VIEWED')
+                snap = share.document_snapshot
+                raw_data = getattr(snap, 'snapshot_json', {}) or {}
+                buyer_dict = raw_data.get('party', {}) if isinstance(raw_data, dict) else {}
+                payload = {
+                    'voucher_id': str(snap.source_id),
+                    'buyer_name': buyer_dict.get('name', ''),
+                    'buyer_gstin': buyer_dict.get('gstin', ''),
+                    'buyer_phone': buyer_dict.get('phone', ''),
+                    'buyer_email': buyer_dict.get('email', ''),
+                }
+        except Exception:
+            pass
+
+        # 2. Try Cryptographic HMAC Claim Token
+        if not payload:
+            try:
+                payload = InvoiceNotificationService.verify_claim_token(token)
+            except ValueError as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         voucher_id = payload.get('voucher_id')
         try:
@@ -101,42 +128,40 @@ class InvoicePDFDownloadAPIView(APIView):
 
     def get(self, request, voucher_id, *args, **kwargs):
         token = request.query_params.get('token', '').strip()
-        auth_token = request.query_params.get('auth_token', '').strip()
 
         try:
             voucher = Voucher.objects.select_related('company', 'party_ledger').prefetch_related('items__product').get(id=voucher_id)
         except Voucher.DoesNotExist:
             return Response({'error': 'Invoice not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Authorization: either valid claim token, authenticated user session, or valid JWT auth_token in query
+        # Authorization: either valid cryptographic share/claim token, or authenticated user session (via Bearer header)
         authorized = False
         if token:
+            # 1. DocumentShareService (SHA-256 token hash)
             try:
-                payload = InvoiceNotificationService.verify_claim_token(token)
-                if str(payload.get('voucher_id')) == str(voucher.id):
+                from apps.documents.services.share_service import DocumentShareService
+                share = DocumentShareService.resolve_share(token, request=request, record_event='DOWNLOADED')
+                snap = share.document_snapshot
+                if str(snap.source_id) == str(voucher.id):
                     authorized = True
             except Exception:
                 pass
+
+            # 2. Cryptographic HMAC Claim Token
+            if not authorized:
+                try:
+                    payload = InvoiceNotificationService.verify_claim_token(token)
+                    if str(payload.get('voucher_id')) == str(voucher.id):
+                        authorized = True
+                except Exception:
+                    pass
 
         if not authorized and request.user.is_authenticated:
             if UserCompany.objects.filter(company=voucher.company, user=request.user).exists():
                 authorized = True
 
-        if not authorized and auth_token:
-            try:
-                from rest_framework_simplejwt.tokens import AccessToken
-                from django.contrib.auth import get_user_model
-                User = get_user_model()
-                decoded = AccessToken(auth_token)
-                user_id = decoded['user_id']
-                jwt_user = User.objects.get(id=user_id)
-                if UserCompany.objects.filter(company=voucher.company, user=jwt_user).exists():
-                    authorized = True
-            except Exception as e:
-                logger.warning(f"Could not validate auth_token for PDF download: {e}")
-
         if not authorized:
-            return Response({'error': 'Unauthorized to view this invoice PDF.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'error': 'Unauthorized to view this invoice PDF. A valid secure share token or authenticated session is required.'}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             from apps.documents.services import DocumentPDFService
@@ -175,10 +200,18 @@ class InvoiceRecipientStatusAPIView(APIView):
         voucher = None
         if token:
             try:
-                payload = InvoiceNotificationService.verify_claim_token(token)
-                v_id = payload.get('voucher_id')
+                from apps.documents.services.share_service import DocumentShareService
+                share = DocumentShareService.resolve_share(token, request=request)
+                v_id = share.document_snapshot.source_id
             except Exception:
                 pass
+
+            if not v_id:
+                try:
+                    payload = InvoiceNotificationService.verify_claim_token(token)
+                    v_id = payload.get('voucher_id')
+                except Exception:
+                    pass
 
         if v_id:
             try:
@@ -383,10 +416,29 @@ class InvoiceClaimRegisterAPIView(APIView):
         if not token:
             return Response({'error': 'Claim token is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        payload = None
+        # 1. Try DocumentShareService
         try:
-            payload = InvoiceNotificationService.verify_claim_token(token)
-        except ValueError as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            from apps.documents.services.share_service import DocumentShareService
+            share = DocumentShareService.resolve_share(token, request=request, record_event='CLAIMED')
+            snap = share.document_snapshot
+            buyer_dict = snap.document_data.get('party', {}) if isinstance(snap.document_data, dict) else {}
+            payload = {
+                'voucher_id': str(snap.source_id),
+                'buyer_name': buyer_dict.get('name', ''),
+                'buyer_gstin': buyer_dict.get('gstin', ''),
+                'buyer_phone': buyer_dict.get('phone', ''),
+                'buyer_email': buyer_dict.get('email', ''),
+            }
+        except Exception:
+            pass
+
+        # 2. Try Cryptographic HMAC Claim Token
+        if not payload:
+            try:
+                payload = InvoiceNotificationService.verify_claim_token(token)
+            except ValueError as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         voucher_id = payload.get('voucher_id')
         try:

@@ -206,3 +206,28 @@ class CanManageCompanySettings(BaseCompanyPermission):
 
 class CanDeleteCompany(BaseCompanyPermission):
     allowed_roles = ['ADMIN', 'OWNER']
+
+# Statutory GST & E-Way Bill / E-Invoice Permissions
+class CanViewGST(BaseCompanyPermission):
+    allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE', 'VIEWER']
+
+class CanPrepareGST(BaseCompanyPermission):
+    allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']
+
+class CanReconcileGST(BaseCompanyPermission):
+    allowed_roles = ['ADMIN', 'OWNER', 'CA']
+
+class CanFileGST(BaseCompanyPermission):
+    allowed_roles = ['ADMIN', 'OWNER', 'CA']
+
+class CanManageGSTCredentials(BaseCompanyPermission):
+    allowed_roles = ['ADMIN', 'OWNER']
+
+class CanGenerateEWayBill(BaseCompanyPermission):
+    allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']
+
+class CanCancelEWayBill(BaseCompanyPermission):
+    allowed_roles = ['ADMIN', 'OWNER', 'CA']
+
+class CanGenerateEInvoice(BaseCompanyPermission):
+    allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']

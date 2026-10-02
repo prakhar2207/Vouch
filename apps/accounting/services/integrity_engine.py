@@ -440,6 +440,41 @@ class AccountingIntegrityEngine:
                     resolved_at=timezone.now()
                 )
 
+        # Check for failed or unresolved payment allocation tasks
+        from apps.accounting.models import PaymentAllocationTask
+        failed_tasks = PaymentAllocationTask.objects.filter(
+            company=company,
+            status__in=['FAILED', 'PARTIALLY_ALLOCATED']
+        ).select_related('payment_voucher', 'preferred_invoice')[:20]
+
+        for pt in failed_tasks:
+            finding = cls._get_or_create_finding(
+                company=company,
+                category='PAYMENT',
+                title=f"Payment allocation needs attention for #{pt.payment_voucher.voucher_number}",
+                defaults={
+                    "severity": "WARNING" if pt.status == 'PARTIALLY_ALLOCATED' else "CRITICAL",
+                    "description": f"Payment #{pt.payment_voucher.voucher_number} of ₹{pt.target_amount} has status '{pt.status}'. Remaining unallocated: ₹{pt.remaining_amount}. {f'Error: {pt.last_error}' if pt.last_error else ''}",
+                    "evidence": {
+                        "task_id": str(pt.id),
+                        "payment_voucher_id": str(pt.payment_voucher_id),
+                        "target_amount": str(pt.target_amount),
+                        "allocated_amount": str(pt.allocated_amount),
+                        "remaining_amount": str(pt.remaining_amount),
+                        "status": pt.status,
+                        "error": pt.last_error,
+                    },
+                    "expected_state": f"Payment #{pt.payment_voucher.voucher_number} should be fully settled.",
+                    "actual_state": f"Task status: {pt.status} with ₹{pt.remaining_amount} unallocated.",
+                    "probable_cause": pt.last_error or "Automated allocation found no matching open invoices or hit concurrency conflict.",
+                    "suggested_action": "Retry payment allocation or manually map invoice in Cash & Bank.",
+                    "confidence": 0.95,
+                    "fix_action": "RECONCILE_FIFO"
+                },
+                existing_findings_map=existing_findings_map
+            )
+            findings.append(finding)
+
         return findings
 
     @classmethod

@@ -13,8 +13,14 @@ from apps.accounts.permissions import (
     get_authorized_company,
     IsCompanyMember,
     IsCompanyAdmin,
-    CanCreateSales,
-    CanCancelVoucher,
+    CanViewGST,
+    CanPrepareGST,
+    CanReconcileGST,
+    CanFileGST,
+    CanManageGSTCredentials,
+    CanGenerateEWayBill,
+    CanCancelEWayBill,
+    CanGenerateEInvoice,
 )
 from apps.gst.models import CompanyGSTConfig, EWayBillRecord, GSTFilingRecord
 from apps.gst.services.gstin_lookup_service import GSTINLookupService
@@ -66,7 +72,10 @@ class CompanyGSTConfigAPIView(APIView):
     GET/POST /api/v1/gst/config/<uuid:company_id>/
     Manage company GST portal credentials, sandbox toggle, and provider choice.
     """
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [IsAuthenticated(), CanViewGST()]
+        return [IsAuthenticated(), CanManageGSTCredentials()]
 
     def get(self, request, company_id):
         from django.utils import timezone
@@ -124,7 +133,7 @@ class EWayBillGenerateAPIView(APIView):
     POST /api/v1/gst/eway-bill/generate/
     Generates official Part-A and Part-B E-Way bill for a sales/purchase voucher.
     """
-    permission_classes = [IsAuthenticated, CanCreateSales]
+    permission_classes = [IsAuthenticated, CanGenerateEWayBill]
 
     def post(self, request):
         voucher_id = request.data.get('voucher_id')
@@ -158,7 +167,7 @@ class EWayBillUpdateVehicleAPIView(APIView):
     POST /api/v1/gst/eway-bill/update-vehicle/
     Updates Part-B vehicle details for an active E-Way bill.
     """
-    permission_classes = [IsAuthenticated, CanCreateSales]
+    permission_classes = [IsAuthenticated, CanGenerateEWayBill]
 
     def post(self, request):
         ewb_number = request.data.get('ewb_number')
@@ -184,7 +193,7 @@ class EWayBillCancelAPIView(APIView):
     POST /api/v1/gst/eway-bill/cancel/
     Cancels an active E-Way bill.
     """
-    permission_classes = [IsAuthenticated, CanCancelVoucher]
+    permission_classes = [IsAuthenticated, CanCancelEWayBill]
 
     def post(self, request):
         ewb_number = request.data.get('ewb_number')
@@ -208,7 +217,7 @@ class EWayBillVoucherDetailAPIView(APIView):
     GET /api/v1/gst/eway-bill/voucher/<uuid:voucher_id>/
     Fetches all E-Way bills generated for a given voucher.
     """
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    permission_classes = [IsAuthenticated, CanViewGST]
 
     def get(self, request, voucher_id):
         ewbs = EWayBillRecord.objects.filter(
@@ -238,7 +247,7 @@ class GSTR1ExportAPIView(APIView):
     GET /api/v1/gst/reports/gstr1/<uuid:company_id>/
     Exports GSTR-1 payload JSON compliant with the official GST Offline Tool.
     """
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    permission_classes = [IsAuthenticated, CanPrepareGST]
 
     def get(self, request, company_id):
         company = get_company_or_404(request.user, company_id)
@@ -265,7 +274,7 @@ class GSTR3BSummaryAPIView(APIView):
     GET /api/v1/gst/reports/gstr3b/<uuid:company_id>/
     Computes Outward Tax Liability (Table 3.1) vs Eligible ITC (Table 4).
     """
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    permission_classes = [IsAuthenticated, CanViewGST]
 
     def get(self, request, company_id):
         company = get_company_or_404(request.user, company_id)
@@ -282,7 +291,7 @@ class GSTRPreFilingExceptionsAPIView(APIView):
     Pre-filing Health Check ("Triangulation"):
     Scans vouchers for the period and returns clean count vs exceptions needing correction.
     """
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    permission_classes = [IsAuthenticated, CanPrepareGST]
 
     def get(self, request, company_id):
         company = get_company_or_404(request.user, company_id)
@@ -298,7 +307,7 @@ class GSTR9AnnualSummaryAPIView(APIView):
     GET /api/v1/gst/reports/gstr9/<uuid:company_id>/
     Annual Return (GSTR-9) reconciliation summary across 4 quarters / 12 months.
     """
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    permission_classes = [IsAuthenticated, CanViewGST]
 
     def get(self, request, company_id):
         company = get_company_or_404(request.user, company_id)
@@ -313,7 +322,10 @@ class GSTRMarkPeriodFiledAPIView(APIView):
     GET/POST /api/v1/gst/returns/mark-filed/<uuid:company_id>/
     Durable recording and query of GST return filing state machine.
     """
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [IsAuthenticated(), CanViewGST()]
+        return [IsAuthenticated(), CanFileGST()]
 
     def get(self, request, company_id):
         company = get_company_or_404(request.user, company_id)
@@ -342,20 +354,21 @@ class GSTRMarkPeriodFiledAPIView(APIView):
         import hashlib
 
         company = get_company_or_404(request.user, company_id)
-        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER', 'CA']):
-            return Response({"success": False, "error": "Permission denied: Only Admin, Owner, or CA can mark returns as filed."}, status=status.HTTP_403_FORBIDDEN)
-
         period = request.data.get('period') or request.data.get('return_period') or 'Current Period'
         return_type = request.data.get('return_type', 'GSTR1').upper()
         arn = request.data.get('arn', '').strip()
         filing_mode = request.data.get('filing_mode', 'MANUAL').upper()
         taxable_value = Decimal(str(request.data.get('total_taxable_value', '0.00')))
         tax_amount = Decimal(str(request.data.get('total_tax_amount', '0.00')))
+        invoices_count = int(request.data.get('invoices_count', 0))
 
-        if not arn:
-            ts_str = timezone.now().strftime('%Y%m%d%H%M%S')
-            h = hashlib.sha256(f"{company.id}:{period}:{ts_str}".encode()).hexdigest()[:8].upper()
-            arn = f"ARN-{company.gstin[:4] if company.gstin else 'VOUC'}-{period.replace('-', '')}-{h}"
+        # P0-08: Strictly eliminate pseudo-government ARNs!
+        # If user provides genuine government ARN, persist it.
+        # Otherwise, keep arn blank and use provider_reference for internal tracking.
+        ts_str = timezone.now().strftime('%Y%m%d%H%M%S')
+        h = hashlib.sha256(f"{company.id}:{period}:{ts_str}".encode()).hexdigest()[:8].upper()
+        provider_ref = request.data.get('provider_reference') or f"VOUCH-INTERNAL-REF-{period.replace('-', '')}-{h}"
+        payload_hash = hashlib.sha256(f"{company.id}:{return_type}:{period}:{taxable_value}:{tax_amount}".encode()).hexdigest()
 
         record, _ = GSTFilingRecord.objects.update_or_create(
             company=company,
@@ -364,9 +377,12 @@ class GSTRMarkPeriodFiledAPIView(APIView):
             defaults={
                 'status': 'FILED',
                 'arn': arn,
+                'provider_reference': provider_ref,
+                'payload_hash': payload_hash,
                 'filing_mode': filing_mode,
                 'total_taxable_value': taxable_value,
                 'total_tax_amount': tax_amount,
+                'invoices_count': invoices_count,
                 'submitted_by': request.user,
                 'response_snapshot': request.data if isinstance(request.data, dict) else {},
             }
@@ -376,7 +392,8 @@ class GSTRMarkPeriodFiledAPIView(APIView):
             "success": True,
             "message": f"GST return for period '{period}' successfully recorded as FILED.",
             "filing_id": str(record.id),
-            "arn": record.arn,
+            "arn": record.arn or None,
+            "provider_reference": record.provider_reference,
             "return_type": record.return_type,
             "return_period": record.return_period,
             "status": record.status,
@@ -390,7 +407,7 @@ class GSTRDirectPortalOTPRequestAPIView(APIView):
     POST /api/v1/gst/portal/request-otp/
     Requests taxpayer OTP from GST Portal / Sandbox for direct filing.
     """
-    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    permission_classes = [IsAuthenticated, CanFileGST]
 
     def post(self, request):
         company_id = request.data.get('company_id')
@@ -409,7 +426,7 @@ class GSTRDirectPortalVerifyOTPAPIView(APIView):
     POST /api/v1/gst/portal/verify-otp/
     Verifies 6-digit OTP and generates an active GST Portal session token.
     """
-    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    permission_classes = [IsAuthenticated, CanFileGST]
 
     def post(self, request):
         company_id = request.data.get('company_id')
@@ -435,7 +452,7 @@ class GSTRDirectPortalUploadGSTR1APIView(APIView):
     POST /api/v1/gst/portal/upload-gstr1/
     Directly uploads GSTR-1 returns to the GST Portal / Sandbox without manual JSON file download.
     """
-    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    permission_classes = [IsAuthenticated, CanFileGST]
 
     def post(self, request):
         company_id = request.data.get('company_id')
@@ -445,9 +462,6 @@ class GSTRDirectPortalUploadGSTR1APIView(APIView):
             return Response({"success": False, "error": "company_id, start_date, and end_date are required."}, status=400)
 
         company = get_company_or_404(request.user, company_id)
-        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER', 'CA']):
-            return Response({"success": False, "error": "Permission denied: Only Admin, Owner, or CA can upload returns to the GST portal."}, status=status.HTTP_403_FORBIDDEN)
-
         auth_token = request.data.get('auth_token')
 
         result = GSTPortalService.upload_gstr1_direct(
@@ -464,7 +478,7 @@ class GSTRDirectPortalStatusAPIView(APIView):
     GET /api/v1/gst/portal/status/<uuid:company_id>/<str:ref_id>/
     Queries return processing status by Reference ID.
     """
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    permission_classes = [IsAuthenticated, CanViewGST]
 
     def get(self, request, company_id, ref_id):
         company = get_company_or_404(request.user, company_id)

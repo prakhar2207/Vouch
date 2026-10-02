@@ -102,6 +102,7 @@ export default function PrintInvoicePage() {
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState<boolean>(false);
   const [copiedToClipboard, setCopiedToClipboard] = useState<boolean>(false);
   const [shareStatusMessage, setShareStatusMessage] = useState<string | null>(null);
+  const [shareToken, setShareToken] = useState<string>('');
   const [isAuth, setIsAuth] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [copiedMessage, setCopiedMessage] = useState<boolean>(false);
@@ -259,9 +260,12 @@ export default function PrintInvoicePage() {
       } else {
         // Public viewing for recipients with a valid share or claim token (e.g. via QR scan or share link)
         const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-        const shareToken = urlParams?.get('token') || urlParams?.get('share_token') || urlParams?.get('claim_token') || '';
-        const publicUrl = shareToken
-          ? `${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/?token=${encodeURIComponent(shareToken)}`
+        const incomingToken = urlParams?.get('token') || urlParams?.get('share_token') || urlParams?.get('claim_token') || '';
+        if (incomingToken) {
+          setShareToken(incomingToken);
+        }
+        const publicUrl = incomingToken
+          ? `${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/?token=${encodeURIComponent(incomingToken)}`
           : `${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/`;
         res = await axios.get(publicUrl);
       }
@@ -269,6 +273,17 @@ export default function PrintInvoicePage() {
       if (res?.data?.data) {
         const invData = res.data.data;
         setInvoice(invData);
+
+        if (token) {
+          try {
+            const shareRes = await api.post(`/api/v1/documents/vouchers/${invoiceId}/share/`, { expires_in_days: 30 });
+            if (shareRes.data?.raw_token) {
+              setShareToken(shareRes.data.raw_token);
+            }
+          } catch (e) {
+            // Optional share prefetch
+          }
+        }
 
         if (invData.download_permission) {
           setDownloadPermission(invData.download_permission);
@@ -438,7 +453,7 @@ export default function PrintInvoicePage() {
 
     // 3. Dynamic Smart Vouch Link (Default: Public View + Instant UPI + B2B Auto-Book)
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vouchapp.in';
-    const smartUrl = `${origin}/claim?token=${invoiceId}`;
+    const smartUrl = shareToken ? `${origin}/claim?token=${encodeURIComponent(shareToken)}` : `${origin}/sales/${invoiceId}/print`;
     return {
       value: smartUrl,
       label: 'Scan to View, Pay & Add to Books',
@@ -655,7 +670,7 @@ export default function PrintInvoicePage() {
     
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vouch-pi-one.vercel.app';
     const publicInvoiceUrl = `${origin}/sales/${invoiceId}/print`;
-    const claimUrl = `${origin}/claim?token=${invoiceId}`;
+    const claimUrl = shareToken ? `${origin}/claim?token=${encodeURIComponent(shareToken)}` : publicInvoiceUrl;
     const invDate = invoice.date || invoice.voucher_date || 'Today';
 
     return (
@@ -787,6 +802,9 @@ export default function PrintInvoicePage() {
 
       try {
         const shareRes = await api.post(`/api/v1/documents/vouchers/${invoiceId}/share/`, { expires_in_days: 30 });
+        if (shareRes.data?.raw_token) {
+          setShareToken(shareRes.data.raw_token);
+        }
         if (shareRes.data?.whatsapp_message) {
           waMessage = shareRes.data.whatsapp_message;
         }

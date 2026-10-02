@@ -276,12 +276,16 @@ export default function SalesInvoiceList() {
 
       // 1. Obtain official secure document share token & message
       let waMessage = '';
+      let shareToken = '';
       try {
         const shareRes = await axios.post(
           `${API_BASE_URL}/api/v1/documents/vouchers/${inv.id}/share/`,
           { expires_in_days: 30 },
           { headers }
         );
+        if (shareRes.data?.raw_token) {
+          shareToken = shareRes.data.raw_token;
+        }
         if (shareRes.data?.whatsapp_message) {
           waMessage = shareRes.data.whatsapp_message;
         }
@@ -294,6 +298,9 @@ export default function SalesInvoiceList() {
         try {
           const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/dispatch-details/`, { headers });
           waMessage = res.data?.whatsapp_message || '';
+          if (res.data?.claim_token && !shareToken) {
+            shareToken = res.data.claim_token;
+          }
         } catch (e) {
           console.warn('Dispatch details fallback failed:', e);
         }
@@ -306,6 +313,7 @@ export default function SalesInvoiceList() {
         const partyName = inv.party?.name || inv.buyer_name || 'Valued Customer';
         const companyName = inv.company?.name || 'Our Company';
         const invDate = inv.voucher_date || inv.date || 'Today';
+        const claimLink = shareToken ? `${origin}/claim?token=${encodeURIComponent(shareToken)}` : `${origin}/sales/${inv.id}/print`;
         waMessage = (
           `🧾 *TAX INVOICE #${invoiceNo}*\n\n` +
           `Dear *${partyName}*,\n\n` +
@@ -316,7 +324,7 @@ export default function SalesInvoiceList() {
           `📄 *View & Download Official PDF:*\n` +
           `${origin}/sales/${inv.id}/print\n\n` +
           `⚡ *1-Click Import (Auto-Book Purchase in Vouch):*\n` +
-          `${origin}/claim?token=${inv.id}\n\n` +
+          `${claimLink}\n\n` +
           `Thank you for doing business with us!\n` +
           `*${companyName}*`
         );

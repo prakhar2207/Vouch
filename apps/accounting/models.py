@@ -309,6 +309,46 @@ class PaymentAllocation(models.Model):
         return f"Allocation: {self.payment_voucher.voucher_number} -> {self.invoice_voucher.voucher_number} (₹{self.allocated_amount})"
 
 
+class PaymentAllocationTask(models.Model):
+    """
+    Durable tracking for background or deferred payment voucher allocation.
+    Maintains state across partial settlements, retry attempts, and reconciliation failures.
+    Ensures allocation failures do not get silently lost in unstructured text notes.
+    """
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending'),
+        ('PARTIALLY_ALLOCATED', 'Partially Allocated'),
+        ('COMPLETED', 'Completed'),
+        ('FAILED', 'Failed'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='payment_allocation_tasks')
+    payment_voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='allocation_tasks')
+    preferred_invoice = models.ForeignKey(Voucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='preferred_allocation_tasks')
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='PENDING', db_index=True)
+    target_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    allocated_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    remaining_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    retry_count = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['company', 'status']),
+            models.Index(fields=['payment_voucher', 'status']),
+        ]
+
+    def __str__(self):
+        return f"Task #{self.id} | {self.payment_voucher.voucher_number} ({self.status}) - ₹{self.allocated_amount}/₹{self.target_amount}"
+
+
+
+
 class OfflineCommand(models.Model):
     STATUS_CHOICES = (
         ('RECEIVED', 'Received'),

@@ -11,7 +11,7 @@ from rest_framework.exceptions import PermissionDenied, NotFound
 
 from apps.companies.models import Company
 from apps.accounting.models import Voucher
-from apps.accounts.permissions import get_authorized_company, user_has_company_roles
+from apps.accounts.permissions import get_authorized_company, user_has_company_roles, CanViewGST, CanReconcileGST
 from apps.gst.models import GSTR2BImport, GSTR2BRecord
 from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
 from apps.gst.services.itc_notification_service import ITCNotificationService
@@ -24,7 +24,7 @@ class GSTR2BUploadView(APIView):
     Ingests official GSTR-2B JSON or Excel file downloaded from the GST portal,
     and runs the 4-way reconciliation delta engine against purchase vouchers.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanReconcileGST]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request, *args, **kwargs):
@@ -108,7 +108,7 @@ class ITCReconciliationListView(APIView):
     Returns reconciled invoice items with filtering by status:
     ALL, MATCHED, MISMATCHED, MISSING_IN_2B, MISSING_IN_BOOKS.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanViewGST]
 
     def get(self, request, *args, **kwargs):
         company = get_authorized_company(request)
@@ -237,7 +237,7 @@ class ITCSmartPaymentHoldView(APIView):
     Enables/updates the Smart GST Payment Hold on a specific purchase voucher.
     MSMEs use this to pay base amount and withhold the GST portion until supplier files GSTR-1.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanReconcileGST]
 
     def post(self, request, *args, **kwargs):
         voucher_id = request.data.get('voucher_id')
@@ -248,9 +248,6 @@ class ITCSmartPaymentHoldView(APIView):
             return Response({'error': 'voucher_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
         company = get_authorized_company(request)
-
-        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE']):
-            return Response({'error': 'Permission denied: Insufficient role to modify payment hold.'}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             voucher = Voucher.objects.defer('attachment_data', 'attachment_mime').get(id=voucher_id, company=company)
@@ -283,7 +280,7 @@ class ITCVendorNoticeView(APIView):
     """
     Generates the WhatsApp Notice content and 1-click wa.me URL for chasing a defaulting vendor.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanViewGST]
 
     def get(self, request, voucher_id, *args, **kwargs):
         company = get_authorized_company(request)
@@ -302,7 +299,7 @@ class ITCSummaryView(APIView):
     """
     Provides aggregated risk stats: ITC at risk, Safe ITC, Held amounts, Section 16(4) counts.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanViewGST]
 
     def get(self, request, *args, **kwargs):
         company = get_authorized_company(request)
@@ -321,7 +318,7 @@ class ITCRunReconciliationView(APIView):
     """
     Manually re-triggers reconciliation across existing GSTR-2B data and purchase vouchers.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanReconcileGST]
 
     def post(self, request, *args, **kwargs):
         company = get_authorized_company(request)
