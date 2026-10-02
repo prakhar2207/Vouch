@@ -231,8 +231,10 @@ AWS_S3_REGION_NAME = env('AWS_S3_REGION_NAME', default='ap-south-1')
 
 from datetime import timedelta
 
+SUPERADMIN_EMAILS = env.list('SUPERADMIN_EMAILS', default=['prakharssa@gmail.com'])
+
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,

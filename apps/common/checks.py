@@ -70,4 +70,9 @@ def check_production_security_gate(app_configs, **kwargs):
         if not broker_url or 'redis' not in broker_url and 'amqp' not in broker_url:
             errors.append(Error("CELERY_BROKER_URL must be configured with Redis or AMQP when background worker tasks are enabled.", id="vouch.security.E012"))
 
+    # 10. Backup Encryption Key Isolation
+    backup_key = os.environ.get('BACKUP_ENCRYPTION_KEY', '') or getattr(settings, 'BACKUP_ENCRYPTION_KEY', '')
+    if not backup_key or backup_key == secret_key:
+        errors.append(Warning("BACKUP_ENCRYPTION_KEY is sharing the same key as SECRET_KEY. Configure a dedicated BACKUP_ENCRYPTION_KEY in production for defense-in-depth backup isolation.", id="vouch.security.W014"))
+
     return errors

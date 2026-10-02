@@ -13,8 +13,14 @@ class CurrentUserView(APIView):
             "data": serializer.data
         })
 
+from rest_framework.throttling import AnonRateThrottle
+
+class RegisterRateThrottle(AnonRateThrottle):
+    rate = '15/hour'
+
 class RegisterView(APIView):
     permission_classes = []  # Allow any
+    throttle_classes = [RegisterRateThrottle]
 
     def post(self, request):
         import datetime
@@ -150,7 +156,10 @@ class RegisterView(APIView):
                 }, status=201)
 
         except Exception as e:
-            return Response({"success": False, "error": f"Registration failed: {str(e)}"}, status=400)
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Registration failure for '{email}': {e}", exc_info=True)
+            return Response({"success": False, "error": "Registration failed. Please verify your details or try again."}, status=400)
 
 
 from rest_framework.throttling import AnonRateThrottle

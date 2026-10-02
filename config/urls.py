@@ -124,5 +124,9 @@ urlpatterns = [
     path('api/v1/accounting/period-trial-balance/', apps.accounting.period_views.PeriodTrialBalanceAPIView.as_view(), name='period_trial_balance'),
     path('api/v1/accounting/split-company/audit/', apps.accounting.period_views.SplitCompanyAuditAPIView.as_view(), name='split_company_audit'),
     path('api/v1/accounting/split-company/', apps.accounting.period_views.SplitCompanyExecuteAPIView.as_view(), name='split_company_execute'),
-    re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+]
+
+if settings.DEBUG:
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
+    ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

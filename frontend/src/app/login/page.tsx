@@ -28,7 +28,7 @@ export default function Login() {
         setUser(res.data.user);
       }
       const user = res.data.user;
-      if (user?.is_superuser || user?.email?.trim().toLowerCase() === 'prakharssa@gmail.com') {
+      if (user?.is_superuser) {
         if (typeof window !== 'undefined') {
           localStorage.removeItem('vouch_active_company_id');
         }

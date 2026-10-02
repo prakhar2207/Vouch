@@ -94,7 +94,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   // Superadmin isolation: platform superadmin only sees the Superadmin Command Center, never company dashboards
   useEffect(() => {
-    if (user?.is_superuser || user?.email?.trim().toLowerCase() === "prakharssa@gmail.com") {
+    if (user?.is_superuser) {
       router.replace("/admin");
     }
   }, [user, router]);

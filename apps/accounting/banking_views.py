@@ -11,10 +11,10 @@ from apps.ledgers.models import Ledger
 from apps.accounting.models import BankStatementImport, BankTransaction, PartyMapping
 from apps.accounting.services.bank_statement_service import BankStatementService
 from apps.accounting.services.bank_reconciliation_service import BankReconciliationService
-from apps.accounts.permissions import get_authorized_company
+from apps.accounts.permissions import get_authorized_company, IsCompanyMember, CanManageLedgers
 
 class BankStatementUploadAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageLedgers]
 
     def post(self, request, *args, **kwargs):
         """
@@ -66,7 +66,7 @@ import json
 import ast
 
 class BankTransactionListAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, *args, **kwargs):
         company = get_authorized_company(request)
@@ -185,10 +185,7 @@ class BankTransactionListAPIView(APIView):
                 try:
                     notes = json.loads(raw_notes)
                 except Exception:
-                    try:
-                        notes = ast.literal_eval(raw_notes)
-                    except Exception:
-                        notes = {"notes": raw_notes}
+                    notes = {"notes": raw_notes}
             elif isinstance(raw_notes, dict):
                 notes = raw_notes
             else:
@@ -234,7 +231,7 @@ class BankTransactionListAPIView(APIView):
 
 
 class BankTransactionResolveAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageLedgers]
 
     def post(self, request, pk, *args, **kwargs):
         """
@@ -269,7 +266,7 @@ class BankTransactionResolveAPIView(APIView):
 
 
 class BankTransactionBulkResolveAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageLedgers]
 
     def post(self, request, *args, **kwargs):
         """
@@ -344,7 +341,7 @@ class BankTransactionBulkResolveAPIView(APIView):
 
 
 class PartyMappingListAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageLedgers]
 
     def get(self, request, *args, **kwargs):
         company = get_authorized_company(request)
@@ -377,7 +374,7 @@ class PartyMappingListAPIView(APIView):
 
 
 class BankSummaryAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, *args, **kwargs):
         company = get_authorized_company(request)
@@ -416,7 +413,7 @@ class BankSummaryAPIView(APIView):
 
 
 class BankTransactionDetailAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageLedgers]
 
     def post(self, request, pk, *args, **kwargs):
         """
@@ -447,7 +444,7 @@ class BankTransactionDetailAPIView(APIView):
 
 
 class BankStatementImportListAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, *args, **kwargs):
         """
@@ -496,7 +493,7 @@ class BankStatementImportListAPIView(APIView):
 
 
 class BankStatementImportDetailAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageLedgers]
 
     def post(self, request, pk, *args, **kwargs):
         """
@@ -534,7 +531,7 @@ class BankStatementImportDetailAPIView(APIView):
 
 
 class BankTransactionToggleDirectionAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageLedgers]
 
     def post(self, request, pk, *args, **kwargs):
         """

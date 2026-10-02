@@ -2,11 +2,12 @@ import Cookies from 'js-cookie';
 import { jwtDecode } from 'jwt-decode';
 
 export const setTokens = (access: string, refresh?: string) => {
+  const isSecure = typeof window !== 'undefined' && window.location.protocol === 'https:';
   if (access && access !== 'undefined' && access !== 'null') {
-    Cookies.set('access_token', access, { expires: 1, sameSite: 'lax' });
+    Cookies.set('access_token', access, { expires: 1, sameSite: 'lax', secure: isSecure });
   }
   if (refresh && refresh !== 'undefined' && refresh !== 'null') {
-    Cookies.set('refresh_token', refresh, { expires: 30, sameSite: 'lax' });
+    Cookies.set('refresh_token', refresh, { expires: 30, sameSite: 'lax', secure: isSecure });
   }
 };
 
@@ -135,8 +136,8 @@ export const isSuperAdmin = (authUser?: AuthUser | null): boolean => {
   const user = authUser || getUser();
   if (!user) return false;
   return Boolean(
-    user.email?.trim().toLowerCase() === 'prakharssa@gmail.com' &&
-    (user.is_superuser || user.is_staff)
+    user.is_superuser ||
+    (user.is_staff && user.role?.toUpperCase() === 'ADMIN')
   );
 };
 

@@ -115,7 +115,7 @@ export default function SuperadminPortalPage() {
         const user = meRes.data?.data;
         setCurrentUser(user);
 
-        if (user?.email?.trim().toLowerCase() === 'prakharssa@gmail.com' && (user?.is_superuser || user?.is_staff || user?.role?.toUpperCase() === 'ADMIN')) {
+        if (user?.is_superuser || (user?.is_staff && user?.role?.toUpperCase() === 'ADMIN')) {
           setIsAuthorized(true);
         } else {
           setIsAuthorized(false);

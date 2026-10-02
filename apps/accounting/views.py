@@ -307,7 +307,7 @@ class TrialBalanceAPIView(APIView):
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class ProfitAndLossReportAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, *args, **kwargs):
         from apps.accounts.permissions import get_authorized_company
@@ -323,7 +323,7 @@ class ProfitAndLossReportAPIView(APIView):
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class BalanceSheetReportAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, *args, **kwargs):
         from apps.accounts.permissions import get_authorized_company
@@ -2793,7 +2793,7 @@ class AgingReportAPIView(APIView):
     GET /api/v1/accounting/reports/aging/<uuid:company_id>/
     Computes real-time aging analysis for debtors (receivables) or creditors (payables).
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, company_id=None):
         try:
@@ -2850,7 +2850,7 @@ class AutoFIFOReconciliationAPIView(APIView):
     POST /api/v1/accounting/allocation/auto-fifo/<uuid:company_id>/
     One-click reconciliation of unallocated payments/receipts against open invoices via FIFO.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanPostVoucher]
 
     def post(self, request, company_id=None):
         try:
@@ -2874,14 +2874,16 @@ class VoucherAuditHistoryAPIView(APIView):
     Retrieves MCA-compliant immutable audit version log for a voucher.
     Returns previous snapshots (v1, v2...) with timestamps, user, reasons, and diffs.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, voucher_id):
         try:
             from apps.accounting.models import Voucher
+            from apps.accounts.permissions import get_authorized_company
             voucher = Voucher.objects.select_related('company', 'created_by', 'corrected_by', 'party_ledger').defer(
                 'attachment_data', 'attachment_mime', 'company__signature_data'
             ).get(id=voucher_id)
+            get_authorized_company(request, company_id=voucher.company_id)
             # Find the root voucher in the revision chain
             root_v = voucher
             while root_v.revision_of:
@@ -3061,7 +3063,7 @@ class PurchasePeriodSummaryAPIView(APIView):
 
 
 class CheckDuplicateVoucherAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, *args, **kwargs):
         """

@@ -127,7 +127,7 @@ export default function Dashboard() {
     }
 
     const u = getUser();
-    if (u?.is_superuser || u?.email?.trim().toLowerCase() === "prakharssa@gmail.com") {
+    if (u?.is_superuser) {
       router.replace("/admin");
       return;
     }
