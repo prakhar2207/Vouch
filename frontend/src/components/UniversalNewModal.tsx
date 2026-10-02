@@ -18,7 +18,6 @@ import {
   Percent,
   Scale,
 } from "lucide-react";
-import { useAccountantMode } from "@/context/AccountantModeContext";
 
 interface UniversalNewModalProps {
   isOpen: boolean;
@@ -28,7 +27,6 @@ interface UniversalNewModalProps {
 export default function UniversalNewModal({ isOpen, onClose }: UniversalNewModalProps) {
   const router = useRouter();
   const modalRef = useRef<HTMLDivElement>(null);
-  const { isAccountantMode } = useAccountantMode();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -204,50 +202,46 @@ export default function UniversalNewModal({ isOpen, onClose }: UniversalNewModal
               </div>
             </button>
 
-            {isAccountantMode && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => navigateTo("/vouchers/grid?type=JOURNAL")}
-                  className="group text-left p-3 rounded-xl border border-primary/30 bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all flex flex-col justify-between cursor-pointer"
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="p-1.5 rounded-lg bg-primary/20 text-primary">
-                      <Scale className="w-4 h-4" />
-                    </div>
-                    <kbd className="text-[10px] font-mono px-1 py-0.2 rounded bg-primary/20 text-primary font-bold">
-                      F7
-                    </kbd>
-                  </div>
-                  <div>
-                    <div className="text-xs sm:text-sm font-bold text-foreground flex items-center gap-1.5">
-                      <span>Journal Matrix</span>
-                      <span className="text-[9px] bg-primary/15 text-primary px-1 rounded font-bold">Dr/Cr</span>
-                    </div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">Multi-line adjustments & transfers</div>
-                  </div>
-                </button>
+            <button
+              type="button"
+              onClick={() => navigateTo("/vouchers/grid?type=JOURNAL")}
+              className="group text-left p-3 rounded-xl border border-primary/30 bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all flex flex-col justify-between cursor-pointer"
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="p-1.5 rounded-lg bg-primary/20 text-primary">
+                  <Scale className="w-4 h-4" />
+                </div>
+                <kbd className="text-[10px] font-mono px-1 py-0.2 rounded bg-primary/20 text-primary font-bold">
+                  F7
+                </kbd>
+              </div>
+              <div>
+                <div className="text-xs sm:text-sm font-bold text-foreground flex items-center gap-1.5">
+                  <span>Journal Matrix</span>
+                  <span className="text-[9px] bg-primary/15 text-primary px-1 rounded font-bold">Dr/Cr</span>
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">Multi-line adjustments & transfers</div>
+              </div>
+            </button>
 
-                <button
-                  type="button"
-                  onClick={() => navigateTo("/vouchers/grid?type=CONTRA")}
-                  className="group text-left p-3 rounded-xl border border-border/70 bg-card hover:bg-muted/60 hover:border-sky-500/40 transition-all flex flex-col justify-between cursor-pointer"
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="p-1.5 rounded-lg bg-sky-500/15 text-sky-600 dark:text-sky-400">
-                      <Landmark className="w-4 h-4" />
-                    </div>
-                    <kbd className="text-[10px] font-mono px-1 py-0.2 rounded bg-muted text-muted-foreground font-semibold">
-                      F4
-                    </kbd>
-                  </div>
-                  <div>
-                    <div className="text-xs sm:text-sm font-bold text-foreground">Contra Transfer</div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">Cash deposit, withdrawal, bank-to-bank</div>
-                  </div>
-                </button>
-              </>
-            )}
+            <button
+              type="button"
+              onClick={() => navigateTo("/vouchers/grid?type=CONTRA")}
+              className="group text-left p-3 rounded-xl border border-border/70 bg-card hover:bg-muted/60 hover:border-sky-500/40 transition-all flex flex-col justify-between cursor-pointer"
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="p-1.5 rounded-lg bg-sky-500/15 text-sky-600 dark:text-sky-400">
+                  <Landmark className="w-4 h-4" />
+                </div>
+                <kbd className="text-[10px] font-mono px-1 py-0.2 rounded bg-muted text-muted-foreground font-semibold">
+                  F4
+                </kbd>
+              </div>
+              <div>
+                <div className="text-xs sm:text-sm font-bold text-foreground">Contra Transfer</div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">Cash deposit, withdrawal, bank-to-bank</div>
+              </div>
+            </button>
           </div>
         </div>
 

@@ -51,7 +51,6 @@ export const metadata: Metadata = {
 import { CompanyProvider } from "@/context/CompanyContext";
 import { FinancialYearProvider } from "@/context/FinancialYearContext";
 import { PeriodProvider } from "@/context/PeriodContext";
-import { AccountantModeProvider } from "@/context/AccountantModeContext";
 import YearEndClosingModal from "@/components/modals/YearEndClosingModal";
 import PeriodModal from "@/components/modals/PeriodModal";
 import SplitCompanyModal from "@/components/modals/SplitCompanyModal";
@@ -71,30 +70,28 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <AccountantModeProvider>
-            <CompanyProvider>
-              <FinancialYearProvider>
-                <PeriodProvider>
-                  <ShortcutProvider>
-                    <ToastProvider>
-                    {children}
-                    <DateModal />
-                    <PeriodModal />
-                    <SplitCompanyModal />
-                    <HelpModal />
-                    <QuickCreateModal />
-                    <YearEndClosingModal />
-                    <TallyCalculator />
-                    <OnboardingTour />
-                    <PWAInstallPrompt />
-                    <OfflineSyncHandler />
-                    <ExtensionErrorSuppressor />
-                  </ToastProvider>
-                </ShortcutProvider>
-              </PeriodProvider>
-            </FinancialYearProvider>
-          </CompanyProvider>
-        </AccountantModeProvider>
+          <CompanyProvider>
+            <FinancialYearProvider>
+              <PeriodProvider>
+                <ShortcutProvider>
+                  <ToastProvider>
+                  {children}
+                  <DateModal />
+                  <PeriodModal />
+                  <SplitCompanyModal />
+                  <HelpModal />
+                  <QuickCreateModal />
+                  <YearEndClosingModal />
+                  <TallyCalculator />
+                  <OnboardingTour />
+                  <PWAInstallPrompt />
+                  <OfflineSyncHandler />
+                  <ExtensionErrorSuppressor />
+                </ToastProvider>
+              </ShortcutProvider>
+            </PeriodProvider>
+          </FinancialYearProvider>
+        </CompanyProvider>
       </ThemeProvider>
       </body>
     </html>

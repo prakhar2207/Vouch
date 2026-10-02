@@ -30,7 +30,6 @@ import {
   Lock,
   Scissors,
   ArrowRight,
-  Scale,
   ShieldCheck,
   ShieldAlert,
   Activity,
@@ -49,7 +48,6 @@ import {
 } from "lucide-react";
 import SyncStatusBadge from "./SyncStatusBadge";
 import UniversalNewModal from "./UniversalNewModal";
-import { useAccountantMode } from "@/context/AccountantModeContext";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -58,7 +56,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isUniversalNewOpen, setIsUniversalNewOpen] = useState(false);
-  const { isAccountantMode, toggleAccountantMode } = useAccountantMode();
 
   // Simplified Navigation Dropdown States: Reports and More
   const [isReportsOpen, setIsReportsOpen] = useState(false);
@@ -575,26 +572,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Right Section: Workspace Context, Quick Search & Utilities */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto pr-0.5">
-            
-            {/* Mode Indicator & Quick Toggle: Fixed 36x36px icon button (No text expansion, prevents navbar overflow in both modes) */}
-            <button
-              type="button"
-              onClick={toggleAccountantMode}
-              className={`hidden sm:flex items-center justify-center p-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer shadow-2xs min-h-[36px] min-w-[36px] shrink-0 ${
-                isAccountantMode
-                  ? "bg-primary/15 text-primary border-primary/30 hover:bg-primary/25"
-                  : "bg-muted/30 text-muted-foreground border-border/50 hover:bg-muted/60 hover:text-foreground"
-              }`}
-              title={
-                isAccountantMode
-                  ? "Accountant Mode Active (Double-entry journal enabled). Click to switch to Business Mode."
-                  : "Business Mode Active (Simplified billing). Click to switch to Accountant Mode."
-              }
-              aria-label={isAccountantMode ? "Accountant Mode Active. Click to switch to Business Mode." : "Business Mode Active. Click to switch to Accountant Mode."}
-            >
-              <Scale className={`w-4 h-4 ${isAccountantMode ? "text-primary" : "text-muted-foreground"}`} />
-            </button>
-
             {/* Company Switcher Pill */}
             <div ref={companyRef} className="relative hidden md:block shrink-0">
               <button
@@ -824,21 +801,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <Sparkles className="w-3.5 h-3.5 text-blue-400" />
                     <span>Guided Tour</span>
                   </button>
-                  {/* Accountant vs Business Mode Toggle */}
-                  <div className="px-2.5 py-1.5 flex items-center justify-between text-xs rounded-lg hover:bg-muted/70 transition-colors">
-                    <div className="flex items-center gap-2">
-                      <Scale className="w-3.5 h-3.5 text-primary" />
-                      <span>Accountant Mode</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={toggleAccountantMode}
-                      className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer ${isAccountantMode ? "bg-primary" : "bg-muted-foreground/30"}`}
-                      title={isAccountantMode ? "Switch to Simplified Business Mode" : "Switch to Professional Double-Entry Mode"}
-                    >
-                      <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-transform ${isAccountantMode ? "left-4.5" : "left-0.5"}`} />
-                    </button>
-                  </div>
                   <div className="border-t border-border/40 my-1"></div>
                   <button
                     onClick={handleLogout}

@@ -27,7 +27,6 @@ import {
   AlertTriangle,
   Scale
 } from 'lucide-react';
-import { useAccountantMode } from '@/context/AccountantModeContext';
 
 type PaymentMode = 'CASH' | 'CHEQUE' | 'NEFT' | 'RTGS' | 'IMPS' | 'UPI' | 'BANK_TRANSFER';
 type PartyCategory = 'ALL' | 'SUPPLIER' | 'EXPENSE';
@@ -35,7 +34,6 @@ type PartyCategory = 'ALL' | 'SUPPLIER' | 'EXPENSE';
 export default function NewVoucherPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const { isAccountantMode } = useAccountantMode();
   const [saving, setSaving] = useState(false);
   const [companyId, setCompanyId] = useState('');
   const [ledgers, setLedgers] = useState<any[]>([]);
@@ -356,29 +354,27 @@ export default function NewVoucherPage() {
           </div>
         </div>
 
-        {/* Accountant Mode Switch Banner */}
-        {isAccountantMode && (
-          <div className="p-3 sm:p-3.5 rounded-xl bg-primary/10 border border-primary/25 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs animate-in fade-in">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-lg bg-primary/20 text-primary shrink-0">
-                <Scale className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="font-bold text-foreground">Accountant Mode Active</span>
-                <p className="text-muted-foreground text-[11px]">
-                  Need full multi-line Debit / Credit rows or Tally-style speed matrix?
-                </p>
-              </div>
+        {/* Multi-Line Journal Grid Link */}
+        <div className="p-3 sm:p-3.5 rounded-xl bg-muted/30 border border-border/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0">
+              <Scale className="w-4 h-4" />
             </div>
-            <Link
-              href="/vouchers/grid"
-              className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-colors flex items-center gap-1.5 self-start sm:self-auto shrink-0 shadow-xs"
-            >
-              <span>Open Journal Grid (F7)</span>
-              <span>→</span>
-            </Link>
+            <div>
+              <span className="font-bold text-foreground">Need Multi-Line Double-Entry?</span>
+              <p className="text-muted-foreground text-[11px]">
+                Post multi-line Debit / Credit rows or Tally-style speed entries in the voucher matrix.
+              </p>
+            </div>
           </div>
-        )}
+          <Link
+            href="/vouchers/grid"
+            className="px-3 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary font-semibold transition-colors flex items-center gap-1.5 self-start sm:self-auto shrink-0 border border-primary/25"
+          >
+            <span>Open Journal Grid (F7)</span>
+            <span>→</span>
+          </Link>
+        </div>
 
         {/* Type Selector */}
         <div className="grid grid-cols-2 gap-3 sm:gap-4">

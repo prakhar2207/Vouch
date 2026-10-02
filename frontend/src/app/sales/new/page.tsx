@@ -31,19 +31,11 @@ import {
 } from 'lucide-react';
 import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
-import { useAccountantMode } from '@/context/AccountantModeContext';
 
 export default function SalesPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const { isAccountantMode } = useAccountantMode();
   const [isPostingImpactOpen, setIsPostingImpactOpen] = useState(false);
-
-  useEffect(() => {
-    if (isAccountantMode) {
-      setIsPostingImpactOpen(true);
-    }
-  }, [isAccountantMode]);
 
   const { workingDate, registerSaveHandler, registerAltCCallback, registerDeleteLineHandler, registerEditMasterHandler, setIsCalculatorOpen } = useShortcuts();
   const { activeFY, isReadOnly } = useFinancialYear();
@@ -2670,11 +2662,6 @@ export default function SalesPage() {
             <div className="flex items-center gap-2">
               <Scale className="w-4 h-4 text-primary" />
               <span>Accounting Details & Double-Entry Impact</span>
-              {isAccountantMode && (
-                <span className="text-[10px] bg-primary/15 text-primary px-1.5 py-0.5 rounded font-mono font-bold">
-                  Accountant Mode
-                </span>
-              )}
             </div>
             <div className="flex items-center gap-2 text-muted-foreground font-mono text-[11px]">
               <span>Balanced: ₹{grandTotal.toFixed(2)} Dr = ₹{grandTotal.toFixed(2)} Cr</span>
