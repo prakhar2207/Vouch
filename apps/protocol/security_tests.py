@@ -148,6 +148,16 @@ def run_threat_simulations():
         print("[FAIL] FAIL: QR replay succeeded!")
     except SecurityViolation as e:
         print(f"[SUCCESS] DEFLECTED: Ephemeral nonce check blocked QR replay. Error: {e}")
+    # THREAT 9: PRODUCTION KMS FAIL-CLOSED ENFORCEMENT (Zero Software Fallback)
+    # ---------------------------------------------------------
+    print("\n[Threat 9] Production Cloud KMS fails or credentials missing (testing fail-closed defense)...")
+    from apps.protocol.kms import CloudKMSProvider, KMSSigningError
+    kms_provider = CloudKMSProvider(provider="AWS")
+    try:
+        kms_provider.sign("UNCONFIGURED_KEY_ID", b"test_payload")
+        print("[FAIL] FAIL: Production KMS silently fell back to software signing!")
+    except KMSSigningError as e:
+        print(f"[SUCCESS] DEFLECTED: Production KMS failed closed with zero software fallback. Error: {e}")
 
     print("\n[ALL THREATS DEFLECTED] Comprehensive security verification complete.")
 

@@ -5,6 +5,10 @@
 .env.staging
 *.env
 !.env.example
+*.pem
+*.key
+*.enc
+backups/database/
 
 # Python & Virtual Environment
 venv/

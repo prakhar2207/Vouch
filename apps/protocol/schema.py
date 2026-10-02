@@ -3,6 +3,10 @@ from typing import List, Dict, Optional, Any
 from datetime import datetime
 from decimal import Decimal
 
+PROTOCOL_VERSION: str = "1.0"
+PROTOCOL_RELEASE: str = "1.0.0"
+PROTOCOL_STATE: str = "FROZEN"
+
 class ProtocolException(Exception):
     pass
 

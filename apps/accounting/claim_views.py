@@ -194,6 +194,11 @@ class InvoiceRecipientStatusAPIView(APIView):
         ).strip().upper()
 
         if not request.user.is_authenticated:
+            if not token:
+                return Response(
+                    {'error': 'A valid secure claim token is required to view recipient status.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
             return Response({
                 'authenticated': False,
                 'is_recipient': False,

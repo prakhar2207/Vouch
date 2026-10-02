@@ -204,6 +204,7 @@ async function runBrowserOfflineFlow() {
   const vaultAudit = await ClientKeyManager.auditSecurityVault();
   console.log(`  -> Web Crypto API Available:   ${vaultAudit.webCryptoSupported}`);
   console.log(`  -> IndexedDB Key Custody:      ${vaultAudit.hasIndexedDBKey}`);
+  console.log(`  -> Non-Extractable Private Key:${vaultAudit.isNonExtractable}`);
   console.log(`  -> Zero LocalStorage Leakage:  ${vaultAudit.zeroLocalStorageLeak}`);
   console.log(`  -> Security Vault Status:      ${vaultAudit.secure ? "ACTIVE_SECURE" : "UNSECURE"}`);
   if (!vaultAudit.secure) {

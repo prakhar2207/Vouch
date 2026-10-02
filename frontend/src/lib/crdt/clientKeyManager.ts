@@ -144,7 +144,7 @@ export class ClientKeyManager {
           "jwk",
           jwk,
           { name: "Ed25519" },
-          true,
+          false, // extractable = false (Hardware/Keystore isolation: private key cannot be extracted)
           ["sign"]
         );
         await KeyVaultIDB.savePrivateKey(privKey);
@@ -171,11 +171,11 @@ export class ClientKeyManager {
     try {
       const keyPair = await window.crypto.subtle.generateKey(
         { name: "Ed25519" },
-        true,
+        false, // extractable = false (Private key non-extractable: cannot be exported via exportKey)
         ["sign", "verify"]
       );
 
-      // Export raw 32-byte public key as hex (safe for public storage)
+      // Export raw 32-byte public key as hex (safe for public storage; public key is always extractable)
       const rawPub = await window.crypto.subtle.exportKey("raw", keyPair.publicKey);
       const pubHex = Array.from(new Uint8Array(rawPub))
         .map(b => b.toString(16).padStart(2, "0"))
@@ -308,7 +308,7 @@ export class ClientKeyManager {
       // Step 2: Generate fresh new Ed25519 keypair
       const newKeyPair = await window.crypto.subtle.generateKey(
         { name: "Ed25519" },
-        true,
+        false, // extractable = false (Private key non-extractable)
         ["sign", "verify"]
       );
 
@@ -386,6 +386,7 @@ export class ClientKeyManager {
   public static async auditSecurityVault(): Promise<{
     secure: boolean;
     hasIndexedDBKey: boolean;
+    isNonExtractable: boolean;
     zeroLocalStorageLeak: boolean;
     webCryptoSupported: boolean;
     deviceId: string;
@@ -408,12 +409,17 @@ export class ClientKeyManager {
 
     const privKey = await KeyVaultIDB.getPrivateKey();
     const hasIndexedDBKey = privKey !== null;
+    const isNonExtractable = privKey ? privKey.extractable === false : false;
+    if (privKey && privKey.extractable) {
+      errors.push("Security Warning: Private key is extractable.");
+    }
 
     const identity = await this.getOrCreateIdentity();
 
     return {
-      secure: webCryptoSupported && zeroLocalStorageLeak && hasIndexedDBKey,
+      secure: webCryptoSupported && zeroLocalStorageLeak && hasIndexedDBKey && isNonExtractable,
       hasIndexedDBKey,
+      isNonExtractable,
       zeroLocalStorageLeak,
       webCryptoSupported,
       deviceId: identity.deviceId,
