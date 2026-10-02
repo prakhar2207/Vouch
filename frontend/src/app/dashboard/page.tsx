@@ -221,6 +221,18 @@ export default function Dashboard() {
               setSyncMessage("Updating local books...");
             }
             
+            // Also refresh canonical forecast from server if online
+            const token = getAccessToken();
+            if (token) {
+              axios.get(`${API_BASE_URL}/api/v1/analytics/forecast/${validCid}/?days=30&company_id=${validCid}`, {
+                headers: { Authorization: `Bearer ${token}`, "X-Company-ID": validCid }
+              }).then((fRes) => {
+                if (isMounted && fRes.data?.success && fRes.data.data) {
+                  setForecast(fRes.data.data);
+                }
+              }).catch(() => {});
+            }
+
             pullIncrementalChanges(validCid, (msg) => {
               if (isMounted) setSyncMessage(msg);
             }).then(async (res) => {
@@ -671,7 +683,7 @@ export default function Dashboard() {
               <div className={`text-xl sm:text-2xl font-black font-mono tracking-tight ${
                 netWorkingCapital >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
               }`}>
-                {netWorkingCapital >= 0 ? "+" : ""}₹{netWorkingCapital.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                {netWorkingCapital >= 0 ? "+₹" : "-₹"}{Math.abs(netWorkingCapital).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
               </div>
               <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
                 <span title="(Cash + Debtors + Stock - Payables)">(Assets − Payables)</span>
@@ -682,7 +694,7 @@ export default function Dashboard() {
               <div className="mt-1.5 pt-1.5 border-t border-border/30 text-[11px] text-muted-foreground flex items-center justify-between">
                 <span>Liquid Runway:</span>
                 <span className={`font-mono font-semibold ${liquidCashGap >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
-                  {liquidCashGap >= 0 ? "+" : ""}₹{(liquidCashGap / 100000).toFixed(2)}L
+                  {liquidCashGap >= 0 ? "+₹" : "-₹"}{Math.abs(liquidCashGap / 100000).toFixed(2)}L
                   <span className="text-muted-foreground font-normal ml-1 font-sans">
                     {liquidCashGap < 0 ? "(Stock backed)" : ""}
                   </span>

@@ -367,6 +367,21 @@ function AnalyticsHubContent() {
       baseItems = [...slicedHist, ...futureList];
     }
 
+    if (chartAnchorDate && !baseItems.some((it: any) => it.date === chartAnchorDate)) {
+      const existingAnchor =
+        combinedList.find((it: any) => it.date === chartAnchorDate) ||
+        (forecast.historical_daily_series || []).find((it: any) => it.date === chartAnchorDate) ||
+        (forecast.daily_forecast || []).find((it: any) => it.date === chartAnchorDate);
+      if (existingAnchor) {
+        baseItems.push({
+          ...existingAnchor,
+          is_historical: true,
+          is_today: true,
+        });
+        baseItems.sort((a: any, b: any) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
+      }
+    }
+
     if (baseItems.length === 0) return [];
 
     let runningCum = 0;
@@ -1472,7 +1487,15 @@ function AnalyticsHubContent() {
                       </>
                     ) : (
                       <>
-                        Expected to beat {forecast?.monthly_comparison?.previous_month?.month_name || "last month"} (₹{(forecast?.monthly_comparison?.previous_month?.total_sales || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}) by <strong>+₹{(forecast?.monthly_comparison?.mom_comparison?.absolute_change || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong>. To hit this, you only need <strong>₹{(forecast?.monthly_comparison?.mom_comparison?.required_daily_to_match_last_month || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/day</strong>.
+                        {Number(forecast?.monthly_comparison?.mom_comparison?.absolute_change || 0) >= 0 ? (
+                          <>
+                            Expected to beat {forecast?.monthly_comparison?.previous_month?.month_name || "last month"} (₹{(forecast?.monthly_comparison?.previous_month?.total_sales || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}) by <strong>+₹{Number(forecast?.monthly_comparison?.mom_comparison?.absolute_change || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong>. To hit this, you only need <strong>₹{Math.max(0, Number(forecast?.monthly_comparison?.mom_comparison?.required_daily_to_match_last_month || 0)).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/day</strong>.
+                          </>
+                        ) : (
+                          <>
+                            Pacing behind {forecast?.monthly_comparison?.previous_month?.month_name || "last month"} (₹{(forecast?.monthly_comparison?.previous_month?.total_sales || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}) by <strong>-₹{Math.abs(Number(forecast?.monthly_comparison?.mom_comparison?.absolute_change || 0)).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong>. To bridge this, you need <strong>₹{Math.max(0, Number(forecast?.monthly_comparison?.mom_comparison?.required_daily_to_match_last_month || 0)).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/day</strong>.
+                          </>
+                        )}
                       </>
                     )}
                   </p>
@@ -1871,22 +1894,6 @@ function AnalyticsHubContent() {
                         }}
                       />
 
-                      {/* Today Milestone Divider Line */}
-                      {chartAnchorDate && (
-                        <ReferenceLine
-                          x={chartAnchorDate}
-                          stroke="#6366f1"
-                          strokeDasharray="3 3"
-                          strokeWidth={1.5}
-                          label={{
-                            value: "Today",
-                            position: "top",
-                            fill: "#6366f1",
-                            fontSize: 10,
-                            fontWeight: 700,
-                          }}
-                        />
-                      )}
 
                       {/* Smoothed Trend Mode: Background Bars + Smoothed Lines */}
                       {lineChartMode === "smoothed" && (
@@ -1970,6 +1977,24 @@ function AnalyticsHubContent() {
                           dot={false}
                           activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2, fill: "#3b82f6" }}
                           name="Cumulative Sales Pace"
+                        />
+                      )}
+
+                      {/* Today Milestone Divider Line - Rendered last so it sits cleanly on top of all series */}
+                      {chartAnchorDate && chartTimelineData.some((it: any) => it.date === chartAnchorDate) && (
+                        <ReferenceLine
+                          x={chartAnchorDate}
+                          stroke="#6366f1"
+                          strokeDasharray="4 4"
+                          strokeWidth={2}
+                          label={{
+                            value: "Today",
+                            position: "top",
+                            fill: "#6366f1",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            offset: 8,
+                          }}
                         />
                       )}
                     </ComposedChart>

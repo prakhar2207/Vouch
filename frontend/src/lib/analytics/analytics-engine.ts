@@ -1010,14 +1010,27 @@ export class LocalAnalyticsEngine {
       }
     }
 
-    // Recency-weighted composite baseline
-    const recent30Dates = positiveDates.slice(-30);
-    const recent60Dates = positiveDates.slice(-60);
-    const recent7Dates = positiveDates.slice(-7);
+    // Recency-weighted composite baseline over true calendar days (matching backend)
+    const anchorTime = anchorDate.getTime();
+    const getCalendarWindowTotal = (daysBack: number): number => {
+      let tot = 0;
+      const startTime = anchorTime - daysBack * 24 * 60 * 60 * 1000;
+      for (const d of positiveDates) {
+        const t = new Date(d).getTime();
+        if (t > startTime && t <= anchorTime) {
+          tot += salesByDate[d] || 0;
+        }
+      }
+      return tot;
+    };
 
-    const recent30Mean = recent30Dates.length > 0 ? recent30Dates.reduce((s, d) => s + (salesByDate[d] || 0), 0) / Math.max(1, recent30Dates.length) : avgSales;
-    const recent60Mean = recent60Dates.length > 0 ? recent60Dates.reduce((s, d) => s + (salesByDate[d] || 0), 0) / Math.max(1, recent60Dates.length) : avgSales;
-    const recent7Mean = recent7Dates.length > 0 ? recent7Dates.reduce((s, d) => s + (salesByDate[d] || 0), 0) / Math.max(1, recent7Dates.length) : recent30Mean;
+    const recent30Total = getCalendarWindowTotal(30);
+    const recent60Total = getCalendarWindowTotal(60);
+    const recent7Total = getCalendarWindowTotal(7);
+
+    const recent30Mean = recent30Total > 0 ? recent30Total / 30.0 : avgSales;
+    const recent60Mean = recent60Total > 0 ? recent60Total / 60.0 : avgSales;
+    const recent7Mean = recent7Total > 0 ? recent7Total / 7.0 : recent30Mean;
 
     const effectiveBase = Math.max(
       0.50 * recent30Mean +
@@ -1500,7 +1513,7 @@ export class LocalAnalyticsEngine {
       momSummary = `Already exceeded ${lastMonthName} (+₹${aheadAmt.toLocaleString('en-IN')} ahead) with ${daysRemaining} days remaining.`;
     } else if (momPct > 1.5) {
       paceStatus = "BEATING_LAST_MONTH";
-      momSummary = `On track to finish +${momPct}% ahead of ${lastMonthName} (+₹${momAbs.toLocaleString('en-IN')}).`;
+      momSummary = `On track to finish +${momPct}% ahead of ${lastMonthName} (+₹${Math.abs(momAbs).toLocaleString('en-IN')}).`;
     } else if (momPct < -1.5) {
       paceStatus = "PACING_BEHIND";
       momSummary = `Pacing ${Math.abs(momPct)}% behind ${lastMonthName} (-₹${Math.abs(momAbs).toLocaleString('en-IN')}).`;
@@ -1576,9 +1589,9 @@ export class LocalAnalyticsEngine {
     const timelineStartDateStr = combinedPositiveDates.length > 0 ? combinedPositiveDates[0] : (positiveDates[0] || "");
 
     const startHistTime = new Date(timelineStartDateStr).getTime();
-    const anchorTime = anchorDate.getTime();
+    const histAnchorTime = anchorDate.getTime();
     const dayMs = 24 * 60 * 60 * 1000;
-    const totalHistDays = Math.max(1, Math.round((anchorTime - startHistTime) / dayMs) + 1);
+    const totalHistDays = Math.max(1, Math.round((histAnchorTime - startHistTime) / dayMs) + 1);
 
     for (let dIdx = 0; dIdx < totalHistDays; dIdx++) {
       const curDate = new Date(startHistTime + dIdx * dayMs);
@@ -1616,6 +1629,21 @@ export class LocalAnalyticsEngine {
     }
 
     const anchorDateStr = anchorDate.toISOString().slice(0, 10);
+    if (!historicalDailySeries.some((h) => h.date === anchorDateStr)) {
+      historicalDailySeries.push({
+        date: anchorDateStr,
+        actual_sales: Math.round((salesByDate[anchorDateStr] || 0) * 100) / 100,
+        actual_purchases: Math.round((pByDate[anchorDateStr] || 0) * 100) / 100,
+        gross_profit: Math.round(((salesByDate[anchorDateStr] || 0) - (pByDate[anchorDateStr] || 0)) * 100) / 100,
+        moving_avg_7d: historicalDailySeries[historicalDailySeries.length - 1]?.moving_avg_7d || 0,
+        cumulative_sales: Math.round(runningCumulative * 100) / 100,
+        cumulative_purchases: Math.round(runningCumulativePurchases * 100) / 100,
+        cumulative_profit: Math.round(runningCumulativeProfit * 100) / 100,
+        invoice_count: (salesByDate[anchorDateStr] || 0) > 0 ? 1 : 0,
+        is_historical: true,
+      });
+    }
+
     const combinedSeries: Array<{
       date: string;
       actual_sales: number | null;
@@ -1633,6 +1661,7 @@ export class LocalAnalyticsEngine {
     }> = [];
 
     historicalDailySeries.forEach((h) => {
+      const isAnchor = h.date === anchorDateStr;
       combinedSeries.push({
         date: h.date,
         actual_sales: h.actual_sales,
@@ -1642,11 +1671,11 @@ export class LocalAnalyticsEngine {
         cumulative_sales: h.cumulative_sales,
         cumulative_purchases: h.cumulative_purchases ?? 0,
         cumulative_profit: h.cumulative_profit ?? 0,
-        projected_sales: null,
-        lower_bound: null,
-        upper_bound: null,
+        projected_sales: isAnchor ? h.actual_sales : null,
+        lower_bound: isAnchor ? h.actual_sales : null,
+        upper_bound: isAnchor ? h.actual_sales : null,
         is_historical: true,
-        is_today: h.date === anchorDateStr,
+        is_today: isAnchor,
       });
     });
 

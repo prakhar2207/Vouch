@@ -343,6 +343,12 @@ class AnalyticsEngine:
         else:
             anchor_date = max_date
 
+        # Ensure df extends up to anchor_date so anchor_date is always present in historical timeline
+        if anchor_date > max_date:
+            df.loc[pd.to_datetime(anchor_date)] = [0.0] * len(df.columns)
+            df = df.resample('D').sum().fillna(0)
+            max_date = anchor_date
+
         history_span_days = (max_date - min_date).days if min_date and max_date else 0
 
         # Baseline velocity metrics
@@ -730,6 +736,7 @@ class AnalyticsEngine:
                 "cumulative_profit": h["cumulative_profit"],
                 "projected_sales": h["actual_sales"] if is_anchor else None,
                 "is_historical": True,
+                "is_today": is_anchor,
             })
         for f in forecast_list:
             combined_series.append({
@@ -1189,7 +1196,7 @@ class AnalyticsEngine:
                 mom_summary = f"Already exceeded {last_month_name} (+₹{ahead_amt:,.0f} ahead) with {days_remaining} days remaining."
             elif mom_pct > 1.5:
                 pace_status = "BEATING_LAST_MONTH"
-                mom_summary = f"On track to finish +{mom_pct}% ahead of {last_month_name} (+₹{mom_abs:,.0f})."
+                mom_summary = f"On track to finish +{mom_pct}% ahead of {last_month_name} (+₹{abs(mom_abs):,.0f})."
             elif mom_pct < -1.5:
                 pace_status = "PACING_BEHIND"
                 mom_summary = f"Pacing {abs(mom_pct)}% behind {last_month_name} (-₹{abs(mom_abs):,.0f})."
