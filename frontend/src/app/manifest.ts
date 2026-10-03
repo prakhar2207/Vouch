@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Vouch Accounting & ERP",
+    name: "Vouch",
     short_name: "Vouch",
     description: "High-Speed Double-Entry Accounting & ERP with AI Accounts Payable and GST Compliance",
     start_url: "/dashboard",

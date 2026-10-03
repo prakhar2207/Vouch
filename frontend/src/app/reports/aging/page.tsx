@@ -34,6 +34,7 @@ export default function AgingReportPage() {
   const companyId = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") || "" : "");
 
   useEffect(() => {
+    document.title = "Outstanding Aging Analysis | Vouch";
     if (!isAuthenticated()) {
       router.push("/login");
     }
@@ -55,7 +56,13 @@ export default function AgingReportPage() {
       if (activeFY?.id) params.append('financial_year_id', activeFY.id);
       if (activeFY?.end_date) {
         params.append('end_date', activeFY.end_date);
-        params.append('as_of_date', activeFY.end_date);
+        const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+        // For active/future financial year, age as of today; for closed past financial year, age as of end date
+        if (activeFY.end_date < todayStr) {
+          params.append('as_of_date', activeFY.end_date);
+        } else {
+          params.append('as_of_date', todayStr);
+        }
       }
       const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/reports/aging/${companyId}/?${params.toString()}`, { headers });
       setReportData(res.data.data);
@@ -86,9 +93,9 @@ export default function AgingReportPage() {
       const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/allocation/auto-fifo/${companyId}/`, {}, { headers });
       setNotification(res.data.message || "Auto-reconciliation finished.");
       loadAgingData();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert("Failed to run auto-FIFO reconciliation.");
+      setError(e.response?.data?.error || "Failed to run auto-FIFO reconciliation.");
     } finally {
       setReconciling(false);
     }
@@ -118,7 +125,9 @@ export default function AgingReportPage() {
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Track overdue bills by age buckets (0–30, 31–60, 61–90, &gt;90 days) with MSME 45-day statutory compliance.
+                  {partyType === "CUSTOMER"
+                    ? "Track overdue customer receivables by age buckets (0–30, 31–60, 61–90, >90 days) to optimize collections and cash flow."
+                    : "Track overdue supplier payables by age buckets (0–30, 31–60, 61–90, >90 days) with MSME Section 43B(h) statutory compliance."}
                 </p>
               </div>
             </div>
@@ -241,14 +250,25 @@ export default function AgingReportPage() {
           </div>
         </div>
 
-        {/* MSME Alert Banner */}
-        {(summary?.msme_overdue_count ?? 0) > 0 && (
+        {/* Context-Aware Alert Banners */}
+        {partyType === "SUPPLIER" && (summary?.msme_overdue_count ?? 0) > 0 && (
           <div className="p-4 bg-amber-50 border border-amber-200 dark:bg-amber-950/40 dark:border-amber-800 rounded-2xl flex items-center justify-between text-xs text-amber-900 dark:text-amber-300">
             <div className="flex items-center gap-2.5">
               <ShieldAlert className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
               <span>
                 <strong>MSME Section 43B(h) Warning:</strong> You have{" "}
-                <strong>{summary.msme_overdue_count} overdue invoice(s)</strong> exceeding 45 days. In India, payments to MSME registered suppliers must be settled within 45 days to claim tax deductions.
+                <strong>{summary.msme_overdue_count} overdue supplier bill(s)</strong> exceeding 45 days. In India, payments to MSME registered suppliers must be settled within 45 days to claim tax deductions.
+              </span>
+            </div>
+          </div>
+        )}
+
+        {partyType === "CUSTOMER" && ((summary?.overdue_invoices_count ?? 0) > 0 || (summary?.above_90 ?? 0) > 0) && (
+          <div className="p-4 bg-amber-50 border border-amber-200 dark:bg-amber-950/40 dark:border-amber-800 rounded-2xl flex items-center justify-between text-xs text-amber-900 dark:text-amber-300">
+            <div className="flex items-center gap-2.5">
+              <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+              <span>
+                <strong>Overdue Receivables Notice:</strong> You have customer invoices exceeding standard payment terms. Prioritize collection follow-ups on &gt;60 and &gt;90 day invoices to protect working capital and reduce DSO.
               </span>
             </div>
           </div>
@@ -326,14 +346,34 @@ export default function AgingReportPage() {
                       </td>
 
                       <td className="py-3 text-center">
-                        {p.msme_overdue ? (
-                          <span className="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 rounded text-[10px] font-bold">
-                            &gt;45d Overdue
-                          </span>
+                        {partyType === "SUPPLIER" ? (
+                          p.msme_overdue ? (
+                            <span className="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 rounded text-[10px] font-bold">
+                              &gt;45d MSME Overdue
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 rounded text-[10px] font-semibold">
+                              Compliant
+                            </span>
+                          )
                         ) : (
-                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 rounded text-[10px] font-semibold">
-                            Compliant
-                          </span>
+                          p.above_90 > 0 ? (
+                            <span className="px-2 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800 rounded text-[10px] font-bold">
+                              &gt;90d Critical
+                            </span>
+                          ) : (p.days_61_90 > 0 || p.days_31_60 > 0) ? (
+                            <span className="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 rounded text-[10px] font-semibold">
+                              Overdue
+                            </span>
+                          ) : p.days_1_30 > 0 ? (
+                            <span className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800 rounded text-[10px] font-semibold">
+                              1–30d Due
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 rounded text-[10px] font-semibold">
+                              Current
+                            </span>
+                          )
                         )}
                       </td>
                     </tr>

@@ -2857,7 +2857,10 @@ class AgingReportAPIView(APIView):
                 fy = FinancialYear.objects.filter(id=fy_id, company=company).first()
                 if fy:
                     end_date = fy.end_date
-                    as_of_date = fy.end_date
+                    if not as_of_str:
+                        # For active/future FY, default aging to today; for past closed FY, age as of FY end date
+                        today = datetime.date.today()
+                        as_of_date = min(today, fy.end_date)
 
             if as_of_str:
                 try:

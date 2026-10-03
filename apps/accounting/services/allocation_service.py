@@ -369,7 +369,13 @@ class PaymentAllocationService:
         """
         import datetime
         today = datetime.date.today()
-        comparison_date = as_of_date or end_date or today
+        if as_of_date:
+            comparison_date = as_of_date
+        elif end_date:
+            comparison_date = min(today, end_date)
+        else:
+            comparison_date = today
+
         is_customer = (party_type.upper() == 'CUSTOMER')
         target_vtypes = ['SALES', 'OPENING_INVOICE'] if is_customer else ['PURCHASE', 'OPENING_BILL']
 
@@ -390,7 +396,15 @@ class PaymentAllocationService:
                 "party_type": party_type,
                 "total_outstanding": 0.0,
                 "parties": [],
-                "summary": {"current": 0.0, "days_1_30": 0.0, "days_31_60": 0.0, "days_61_90": 0.0, "above_90": 0.0, "msme_overdue_count": 0}
+                "summary": {
+                    "current": 0.0,
+                    "days_1_30": 0.0,
+                    "days_31_60": 0.0,
+                    "days_61_90": 0.0,
+                    "above_90": 0.0,
+                    "msme_overdue_count": 0,
+                    "overdue_invoices_count": 0,
+                }
             }
 
         inv_ids = [inv.id for inv in invoices]
@@ -402,9 +416,26 @@ class PaymentAllocationService:
         allocations_map = {item['invoice_voucher_id']: item['total_paid'] for item in alloc_totals}
 
         parties_map = {}
-        summary = {"current": 0.0, "days_1_30": 0.0, "days_31_60": 0.0, "days_61_90": 0.0, "above_90": 0.0, "msme_overdue_count": 0}
+        summary = {
+            "current": 0.0,
+            "days_1_30": 0.0,
+            "days_31_60": 0.0,
+            "days_61_90": 0.0,
+            "above_90": 0.0,
+            "msme_overdue_count": 0,
+            "overdue_invoices_count": 0,
+        }
 
         for inv in invoices:
+            # P0: Skip spot cash / counter sales. Cash sales are settled at point-of-sale and are not credit debts
+            if is_customer:
+                p_ledger = inv.party_ledger
+                p_name_lower = (p_ledger.name if p_ledger else (inv.buyer_name or '')).lower().strip()
+                if p_ledger and getattr(p_ledger, 'ledger_type', None) == 'CASH':
+                    continue
+                if p_name_lower in ['cash', 'cash sale', 'cash sales', 'counter sale', 'counter sales', 'cash-in-hand', 'cash a/c', 'cash account']:
+                    continue
+
             tot = quantize_money(inv.total_amount)
             paid = quantize_money(allocations_map.get(inv.id, Decimal('0.00')))
             remaining = tot - paid
@@ -413,10 +444,15 @@ class PaymentAllocationService:
 
             ref_date = inv.due_date or inv.voucher_date
             overdue_days = (comparison_date - ref_date).days if comparison_date > ref_date else 0
-            is_msme_alert = overdue_days > 45
+            
+            # MSME Section 43B(h) applies EXCLUSIVELY to Payables (Suppliers / Creditors), never to Customer Receivables
+            is_msme_alert = (not is_customer) and (overdue_days > 45)
+            is_delayed_collection = is_customer and (overdue_days > 45)
 
             if is_msme_alert:
                 summary["msme_overdue_count"] += 1
+            if is_delayed_collection:
+                summary["overdue_invoices_count"] += 1
 
             p_id = str(inv.party_ledger_id) if inv.party_ledger_id else "counter"
             p_name = inv.party_ledger.name if inv.party_ledger else (inv.buyer_name or "Counter Party")
@@ -434,6 +470,8 @@ class PaymentAllocationService:
                     "days_61_90": Decimal('0.00'),
                     "above_90": Decimal('0.00'),
                     "msme_overdue": False,
+                    "is_overdue": False,
+                    "max_overdue_days": 0,
                     "bills_count": 0,
                 }
 
@@ -441,6 +479,9 @@ class PaymentAllocationService:
             parties_map[p_id]["bills_count"] += 1
             if is_msme_alert:
                 parties_map[p_id]["msme_overdue"] = True
+            if overdue_days > 0:
+                parties_map[p_id]["is_overdue"] = True
+            parties_map[p_id]["max_overdue_days"] = max(parties_map[p_id]["max_overdue_days"], overdue_days)
 
             rem_flt = float(remaining)
             if overdue_days <= 0:
@@ -473,6 +514,8 @@ class PaymentAllocationService:
                 "days_61_90": float(p["days_61_90"]),
                 "above_90": float(p["above_90"]),
                 "msme_overdue": p["msme_overdue"],
+                "is_overdue": p["is_overdue"],
+                "max_overdue_days": p["max_overdue_days"],
                 "bills_count": p["bills_count"],
             })
 
