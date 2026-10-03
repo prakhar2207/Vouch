@@ -357,11 +357,17 @@ export default function PurchasePage() {
 
   // Calculate Subtotals
   const grossTotal = allItems.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.rate)), 0);
+  const totalItemDiscount = allItems.reduce((sum, item) => {
+    const gross = Number(item.quantity) * Number(item.rate);
+    const disc = gross * ((Number(item.discount_percent) || 0) / 100);
+    return sum + disc;
+  }, 0);
+  const taxableSubtotal = Math.max(0, grossTotal - totalItemDiscount);
   const totalTax = allItems.reduce((sum, item) => {
       const gross = Number(item.quantity) * Number(item.rate);
-      const discount = gross * (Number(item.discount_percent)/100);
+      const discount = gross * ((Number(item.discount_percent) || 0) / 100);
       const taxable = gross - discount;
-      return sum + (taxable * (Number(item.gst_rate)/100));
+      return sum + (taxable * (Number(item.gst_rate) / 100));
   }, 0);
   const cartageVal = Number(cartageAmount) || 0;
   const unroundedGrandTotal = allItems.reduce((sum, item) => {
@@ -635,10 +641,27 @@ export default function PurchasePage() {
         {/* Totals Section */}
         <div className="flex justify-end">
             <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-sm p-6 space-y-3">
-                <div className="flex justify-between text-muted-foreground text-sm">
-                    <span>Gross Total</span>
-                    <span className="font-mono tabular-nums font-semibold text-foreground">₹{grossTotal.toFixed(2)}</span>
-                </div>
+                {totalItemDiscount > 0 ? (
+                  <>
+                    <div className="flex justify-between text-muted-foreground text-sm">
+                        <span>Gross Subtotal</span>
+                        <span className="font-mono tabular-nums font-semibold text-foreground">₹{grossTotal.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-emerald-600 dark:text-emerald-400 text-sm font-medium">
+                        <span>Total Item Discount</span>
+                        <span className="font-mono tabular-nums font-semibold">-₹{totalItemDiscount.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-foreground text-sm font-semibold border-t border-dashed border-border/80 pt-1.5 pb-0.5">
+                        <span>Taxable Subtotal (Discounted)</span>
+                        <span className="font-mono tabular-nums font-bold text-foreground">₹{taxableSubtotal.toFixed(2)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between text-muted-foreground text-sm">
+                      <span>Subtotal (Taxable)</span>
+                      <span className="font-mono tabular-nums font-semibold text-foreground">₹{grossTotal.toFixed(2)}</span>
+                  </div>
+                )}
                 {isInterState ? (
                     <div className="flex justify-between text-primary text-sm font-medium">
                         <span>IGST</span>
