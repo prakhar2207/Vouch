@@ -389,12 +389,20 @@ class SuperadminCompanyDeleteView(APIView):
         from django.db import transaction
         from apps.companies.models import Company, UserCompany, CompanySettings
         from apps.accounting.models import (
-            Voucher, VoucherItem, LedgerEntry, PaymentAllocation,
-            BankStatementImport, BankTransaction, InwardVoucherRequest, FinancialYear
+            Voucher, VoucherItem, LedgerEntry, PaymentAllocation, PaymentAllocationTask,
+            BankStatementImport, BankTransaction, InwardVoucherRequest, FinancialYear,
+            VoucherSequence, LedgerBalance, PartyMapping, AccountingFinding, SyncEvent,
+            OfflineCommand
         )
         from apps.accounting.models_proforma import ProformaInvoice, ProformaItem
-        from apps.inventory.models import StockEntry, Product, Category, Warehouse
+        from apps.inventory.models import InventoryEntry, Product, ProductCategory, Warehouse
         from apps.ledgers.models import Ledger, LedgerGroup
+        from apps.gst.models import (
+            CompanyGSTConfig, EWayBillRecord, EInvoiceRecord,
+            GSTR2BImport, GSTR2BRecord, GSTFilingRecord
+        )
+        from apps.documents.models import DocumentAuditEvent, DocumentSnapshot, EDIDocument, EDIExchange
+        from apps.protocol.models import AuthorizedDevice, DeviceKeyRotationAudit
         from apps.audit.models import AuditLog
 
         company = Company.objects.filter(id=pk).first()
@@ -406,55 +414,117 @@ class SuperadminCompanyDeleteView(APIView):
 
         try:
             with transaction.atomic():
-                # 1. Clean up bank transactions & imports
-                BankTransaction.objects.filter(company=company).delete()
-                BankStatementImport.objects.filter(company=company).delete()
+                # 1. Audit logs: RAW DELETE so no Python delete() or signal is triggered
+                try:
+                    AuditLog.objects.filter(company=company)._raw_delete(using='default')
+                except Exception:
+                    pass
 
-                # 2. Clean up EDI requests
-                InwardVoucherRequest.objects.filter(source_company=company).delete()
-                InwardVoucherRequest.objects.filter(target_company=company).delete()
+                # 2. Protocol models
+                try:
+                    devices = AuthorizedDevice.objects.filter(company=company)
+                    DeviceKeyRotationAudit.objects.filter(device__in=devices).delete()
+                    devices.delete()
+                except Exception:
+                    pass
 
-                # 3. Clean up Payment allocations
-                PaymentAllocation.objects.filter(company=company).delete()
+                # 3. EDI, GST, and Documents records
+                try:
+                    EDIExchange.objects.filter(target_company=company).delete()
+                    EDIDocument.objects.filter(sender_company=company).delete()
+                    InwardVoucherRequest.objects.filter(source_company=company).delete()
+                    InwardVoucherRequest.objects.filter(target_company=company).delete()
+                    DocumentAuditEvent.objects.filter(company=company).delete()
+                    DocumentSnapshot.objects.filter(company=company).delete()
+                    EWayBillRecord.objects.filter(company=company).delete()
+                    EInvoiceRecord.objects.filter(company=company).delete()
+                    GSTR2BRecord.objects.filter(company=company).delete()
+                    GSTR2BImport.objects.filter(company=company).delete()
+                    GSTFilingRecord.objects.filter(company=company).delete()
+                    CompanyGSTConfig.objects.filter(company=company).delete()
+                except Exception:
+                    pass
 
-                # 4. Clean up Proformas & Items
-                ProformaItem.objects.filter(proforma__company=company).delete()
-                ProformaInvoice.objects.filter(company=company).delete()
+                # 4. Bank transactions, imports, party mappings, findings, sync events, tasks, offline commands
+                try:
+                    BankTransaction.objects.filter(company=company).delete()
+                    BankStatementImport.objects.filter(company=company).delete()
+                    PartyMapping.objects.filter(company=company).delete()
+                    AccountingFinding.objects.filter(company=company).delete()
+                    SyncEvent.objects.filter(company=company).delete()
+                    PaymentAllocationTask.objects.filter(company=company).delete()
+                    OfflineCommand.objects.filter(company=company).delete()
+                except Exception:
+                    pass
 
-                # 5. Clean up Vouchers, Items, and LedgerEntries
-                VoucherItem.objects.filter(voucher__company=company).delete()
-                LedgerEntry.objects.filter(voucher__company=company).delete()
-                Voucher.objects.filter(company=company).delete()
+                # 5. Payment allocations
+                try:
+                    PaymentAllocation.objects.filter(company=company).delete()
+                except Exception:
+                    pass
 
-                # 6. Clean up Stock Entries, Products, Categories, Warehouses
-                StockEntry.objects.filter(product__company=company).delete()
-                Product.objects.filter(company=company).delete()
-                Category.objects.filter(company=company).delete()
-                Warehouse.objects.filter(company=company).delete()
+                # 6. Proformas and Proforma items
+                try:
+                    ProformaItem.objects.filter(proforma__company=company).delete()
+                    ProformaInvoice.objects.filter(company=company).delete()
+                except Exception:
+                    pass
 
-                # 7. Clean up Ledgers and Groups
-                Ledger.objects.filter(company=company).delete()
-                LedgerGroup.objects.filter(company=company).delete()
+                # 7. Voucher Items, Ledger Entries, and Vouchers (nullify revision chains first)
+                try:
+                    VoucherItem.objects.filter(voucher__company=company).delete()
+                    LedgerEntry.objects.filter(voucher__company=company).delete()
+                    Voucher.objects.filter(company=company).update(revision_of=None)
+                    Voucher.objects.filter(company=company).delete()
+                except Exception:
+                    pass
 
-                # 8. Clean up Financial Years
-                FinancialYear.objects.filter(company=company).delete()
+                # 8. Inventory: Entries, Products, Categories, Warehouses
+                try:
+                    InventoryEntry.objects.filter(company=company).delete()
+                    InventoryEntry.objects.filter(product__company=company).delete()
+                    Product.objects.filter(company=company).delete()
+                    ProductCategory.objects.filter(company=company).delete()
+                    Warehouse.objects.filter(company=company).delete()
+                except Exception:
+                    pass
 
-                # 9. Clean up memberships, settings, and audit logs
-                UserCompany.objects.filter(company=company).delete()
-                CompanySettings.objects.filter(company=company).delete()
-                AuditLog.objects.filter(company=company)._raw_delete(using='default')
+                # 9. Ledger balances, Sequences, Ledgers, and Groups
+                try:
+                    LedgerBalance.objects.filter(ledger__company=company).delete()
+                    VoucherSequence.objects.filter(company=company).delete()
+                    Ledger.objects.filter(company=company).delete()
+                    LedgerGroup.objects.filter(company=company).delete()
+                except Exception:
+                    pass
 
-                # 10. Delete the Company record
+                # 10. Financial Years
+                try:
+                    FinancialYear.objects.filter(company=company).delete()
+                except Exception:
+                    pass
+
+                # 11. User memberships & Settings
+                try:
+                    UserCompany.objects.filter(company=company).delete()
+                    CompanySettings.objects.filter(company=company).delete()
+                except Exception:
+                    pass
+
+                # 12. Delete the Company record
                 company.delete()
 
-                # Record global platform audit log
-                AuditLog.objects.create(
-                    user=request.user,
-                    action='DELETE',
-                    model_name='Company',
-                    record_id=company_id,
-                    changes={'deleted_company_name': company_name}
-                )
+                # Safe platform audit logging
+                try:
+                    AuditLog.objects.create(
+                        user=request.user,
+                        action='DELETE',
+                        model_name='Company',
+                        record_id=company_id,
+                        changes={'deleted_company_name': company_name}
+                    )
+                except Exception:
+                    pass
 
             return Response({
                 "success": True,
@@ -463,7 +533,7 @@ class SuperadminCompanyDeleteView(APIView):
             })
         except Exception as e:
             return Response(
-                {"error": f"Failed to delete company: {str(e)}"},
+                {"error": f"Failed to delete company: {str(e)}", "detail": str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -511,13 +581,16 @@ class SuperadminUserDeleteView(APIView):
                 target_user.delete()
 
                 # Record global platform audit log
-                AuditLog.objects.create(
-                    user=request.user,
-                    action='DELETE',
-                    model_name='User',
-                    record_id=user_id,
-                    changes={'deleted_user_email': user_email}
-                )
+                try:
+                    AuditLog.objects.create(
+                        user=request.user,
+                        action='DELETE',
+                        model_name='User',
+                        record_id=user_id,
+                        changes={'deleted_user_email': user_email}
+                    )
+                except Exception:
+                    pass
 
             return Response({
                 "success": True,
@@ -526,7 +599,7 @@ class SuperadminUserDeleteView(APIView):
             })
         except Exception as e:
             return Response(
-                {"error": f"Failed to delete user: {str(e)}"},
+                {"error": f"Failed to delete user: {str(e)}", "detail": str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
 

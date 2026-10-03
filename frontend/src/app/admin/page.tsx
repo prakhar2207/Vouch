@@ -315,7 +315,8 @@ export default function SuperadminPortalPage() {
       }
       setDeleteTarget(null);
     } catch (err: any) {
-      toast.error("Delete Failed", err.response?.data?.error || err.message);
+      const errorMsg = err.response?.data?.detail || err.response?.data?.error || err.message || "Deletion failed";
+      toast.error("Delete Failed", errorMsg);
     } finally {
       setDeleting(false);
     }
