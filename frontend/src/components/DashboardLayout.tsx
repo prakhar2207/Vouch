@@ -193,17 +193,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           
           {/* Left Section: Brand & Primary Nav */}
           <div className="flex items-center gap-1 xl:gap-1.5 2xl:gap-2 min-w-0">
-            {/* Mobile / Tablet Hamburger Button */}
-            <button
-              onClick={() => setIsMobileNavOpen(true)}
-              className="lg:hidden p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center"
-              aria-label="Open Navigation Menu"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-
             {/* Brand Logo */}
             <div id="tour-header-brand" className="flex items-center gap-1.5 shrink-0">
               <Link
@@ -1302,9 +1291,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <button
           type="button"
           onClick={() => setIsMobileNavOpen(true)}
-          className="flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-lg text-[10px] font-medium text-muted-foreground hover:text-foreground cursor-pointer"
+          className="flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-lg text-[10px] font-medium text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
+          aria-label="Open Navigation Menu"
+          title="Menu"
         >
-          <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
           </svg>
           <span>Menu</span>
