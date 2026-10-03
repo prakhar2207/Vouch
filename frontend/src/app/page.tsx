@@ -1,27 +1,132 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
-import { 
-  Keyboard, 
-  Scan, 
-  FileCheck, 
-  TrendingUp, 
-  Sparkles, 
-  CheckCircle2, 
-  ShieldCheck, 
-  ArrowRight, 
-  Zap, 
-  Cpu, 
-  Laptop, 
-  Layers, 
-  FileText 
+import { motion, useInView } from "framer-motion";
+import {
+  Keyboard,
+  Scan,
+  FileCheck,
+  TrendingUp,
+  Sparkles,
+  ArrowRight,
+  Zap,
+  Shield,
+  Globe,
+  BarChart3,
+  Clock,
+  Users,
+  Building2,
+  IndianRupee,
+  Activity,
+  ChevronRight,
+  Layers,
+  Terminal,
 } from "lucide-react";
 import { isAuthenticated } from "@/utils/auth";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { VouchLogo } from "@/components/VouchLogo";
 
+/* ────────────────────── Animated Counter ────────────────────── */
+function AnimatedCounter({ target, suffix = "", prefix = "" }: { target: number; suffix?: string; prefix?: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const isInViewport = useInView(ref, { once: true, margin: "-50px" });
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    if (!isInViewport) return;
+    const duration = 1800;
+    const startTime = performance.now();
+
+    const animate = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setCount(Math.round(eased * target));
+      if (progress < 1) requestAnimationFrame(animate);
+    };
+
+    requestAnimationFrame(animate);
+  }, [isInViewport, target]);
+
+  return <span ref={ref}>{prefix}{count.toLocaleString("en-IN")}{suffix}</span>;
+}
+
+/* ────────────────────── Feature Data ────────────────────── */
+const features = [
+  {
+    icon: Keyboard,
+    title: "Lightning-Fast Data Entry",
+    description: "Tally-style F4–F9 shortcuts, instant master creation with Alt+C, post vouchers with Ctrl+A. Your hands never leave the keyboard.",
+    color: "blue",
+    gradient: "from-blue-500/10 to-blue-600/5",
+    iconBg: "bg-blue-500/10 dark:bg-blue-500/15",
+    iconColor: "text-blue-600 dark:text-blue-400",
+    borderHover: "hover:border-blue-500/40",
+  },
+  {
+    icon: Scan,
+    title: "AI-Powered Bill Scanning",
+    description: "Upload a photo or PDF. Our AI extracts items, validates GSTIN, matches HSN codes, and auto-fills the voucher — zero manual typing.",
+    color: "purple",
+    gradient: "from-purple-500/10 to-purple-600/5",
+    iconBg: "bg-purple-500/10 dark:bg-purple-500/15",
+    iconColor: "text-purple-600 dark:text-purple-400",
+    borderHover: "hover:border-purple-500/40",
+  },
+  {
+    icon: FileCheck,
+    title: "Flawless GST Compliance",
+    description: "Automatic CGST/SGST/IGST calculation from state codes. Inventory adjustments, ITC reconciliation, and audit-proof double-entry balancing.",
+    color: "emerald",
+    gradient: "from-emerald-500/10 to-emerald-600/5",
+    iconBg: "bg-emerald-500/10 dark:bg-emerald-500/15",
+    iconColor: "text-emerald-600 dark:text-emerald-400",
+    borderHover: "hover:border-emerald-500/40",
+  },
+  {
+    icon: TrendingUp,
+    title: "Real-Time Business Insights",
+    description: "Live dashboards, customer analytics, sales trends, aging reports, and revenue patterns — all rendered the moment you ask.",
+    color: "amber",
+    gradient: "from-amber-500/10 to-amber-600/5",
+    iconBg: "bg-amber-500/10 dark:bg-amber-500/15",
+    iconColor: "text-amber-600 dark:text-amber-400",
+    borderHover: "hover:border-amber-500/40",
+  },
+  {
+    icon: Globe,
+    title: "B2B EDI Network",
+    description: "Cryptographic buyer-seller invoice exchange. Send sales invoices that auto-create purchase entries in your buyer's books — verified and tamper-proof.",
+    color: "cyan",
+    gradient: "from-cyan-500/10 to-cyan-600/5",
+    iconBg: "bg-cyan-500/10 dark:bg-cyan-500/15",
+    iconColor: "text-cyan-600 dark:text-cyan-400",
+    borderHover: "hover:border-cyan-500/40",
+  },
+  {
+    icon: Shield,
+    title: "Bank-Grade Security",
+    description: "Hash-chained audit logs, immutable transaction records, device authorization, and end-to-end encrypted protocol operations.",
+    color: "rose",
+    gradient: "from-rose-500/10 to-rose-600/5",
+    iconBg: "bg-rose-500/10 dark:bg-rose-500/15",
+    iconColor: "text-rose-600 dark:text-rose-400",
+    borderHover: "hover:border-rose-500/40",
+  },
+];
+
+/* ────────────────────── Keyboard Shortcut Data ────────────────────── */
+const shortcuts = [
+  { label: "Sales", key: "F8", desc: "GST Invoice", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20" },
+  { label: "Purchase", key: "F9", desc: "AI Bill Scan", color: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20" },
+  { label: "Search", key: "⌘K", desc: "Command Box", color: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" },
+  { label: "Save", key: "^A", desc: "Instant Post", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+  { label: "Masters", key: "Alt+C", desc: "On the Fly", color: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+  { label: "Date", key: "F2", desc: "Change Period", color: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" },
+];
+
+/* ────────────────────── Main Page ────────────────────── */
 export default function LandingPage() {
   const [isAuth, setIsAuth] = useState(false);
   const { setIsHelpOpen } = useShortcuts();
@@ -31,22 +136,22 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col selection:bg-blue-500 selection:text-foreground">
-      {/* Navigation Header */}
-      <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-background/80 backdrop-blur-md">
+    <div className="min-h-screen bg-background text-foreground flex flex-col selection:bg-blue-600/20 selection:text-foreground">
+      {/* ─────────── Navigation ─────────── */}
+      <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/70 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <Link href="/" className="flex items-center gap-2.5">
               <VouchLogo size={28} showWordmark={true} />
-              <span className="px-2 py-0.5 text-[10px] font-mono bg-blue-600/10 text-blue-500 rounded border border-blue-500/20 font-bold">
+              <span className="px-2 py-0.5 text-[10px] font-mono bg-blue-600/10 text-blue-600 dark:text-blue-400 rounded border border-blue-500/20 font-bold">
                 Cloud Core
               </span>
             </Link>
-            <nav className="hidden md:flex items-center gap-6 text-xs font-semibold text-muted-foreground">
-              <a href="#features" className="hover:text-foreground transition-colors">Features</a>
-              <a href="#mockup" className="hover:text-foreground transition-colors">AI Bill Scanner</a>
-              <a href="#shortcuts" className="hover:text-foreground transition-colors">Keyboard Shortcuts</a>
-              <a href="#get-started" className="hover:text-foreground transition-colors">Get Started</a>
+            <nav className="hidden md:flex items-center gap-1 text-[13px] font-medium text-muted-foreground">
+              <a href="#features" className="px-3 py-1.5 rounded-lg hover:text-foreground hover:bg-muted transition-all">Features</a>
+              <a href="#mockup" className="px-3 py-1.5 rounded-lg hover:text-foreground hover:bg-muted transition-all">AI Bill Scanner</a>
+              <a href="#shortcuts" className="px-3 py-1.5 rounded-lg hover:text-foreground hover:bg-muted transition-all">Keyboard Shortcuts</a>
+              <a href="#get-started" className="px-3 py-1.5 rounded-lg hover:text-foreground hover:bg-muted transition-all">Get Started</a>
             </nav>
           </div>
 
@@ -57,13 +162,13 @@ export default function LandingPage() {
               className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground rounded-lg text-xs font-semibold border border-border transition-colors cursor-pointer"
             >
               <span>Shortcuts</span>
-              <kbd className="px-1 py-0.2 bg-background rounded text-[10px] text-muted-foreground font-mono">F1</kbd>
+              <kbd className="px-1 py-0.5 bg-background rounded text-[10px] text-muted-foreground font-mono border border-border/50">F1</kbd>
             </button>
 
             {isAuth ? (
               <Link
                 href="/dashboard"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-foreground rounded-lg text-xs font-bold shadow-md transition-all flex items-center gap-1.5"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-md shadow-blue-600/20 transition-all flex items-center gap-1.5"
               >
                 <span>Go to Dashboard →</span>
               </Link>
@@ -77,7 +182,7 @@ export default function LandingPage() {
                 </Link>
                 <Link
                   href="/register"
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-foreground rounded-lg text-xs font-bold shadow-md transition-all"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-md shadow-blue-600/20 transition-all"
                 >
                   Get Started
                 </Link>
@@ -87,239 +192,306 @@ export default function LandingPage() {
         </div>
       </header>
 
-      {/* Hero Section */}
-      <section className="relative overflow-hidden pt-16 pb-20 md:pt-24 md:pb-28">
-        {/* Ambient Glows */}
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[350px] bg-gradient-to-tr from-blue-600/15 via-purple-600/10 to-transparent blur-3xl pointer-events-none rounded-full" />
+      {/* ─────────── Hero Section ─────────── */}
+      <section className="relative overflow-hidden pt-20 pb-24 md:pt-28 md:pb-32">
+        {/* Background Pattern — subtle dot grid */}
+        <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.04]" style={{
+          backgroundImage: "radial-gradient(circle, currentColor 1px, transparent 1px)",
+          backgroundSize: "24px 24px",
+        }} />
 
-        <div className="max-w-5xl mx-auto px-6 text-center space-y-6 relative z-10">
+        {/* Ambient Glow — Light */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[500px] bg-gradient-to-b from-blue-500/8 via-purple-500/5 to-transparent blur-3xl pointer-events-none rounded-full dark:from-blue-600/15 dark:via-purple-600/10" />
+
+        {/* Secondary glow accents */}
+        <div className="absolute -top-20 -left-40 w-[400px] h-[400px] bg-blue-400/5 dark:bg-blue-500/10 blur-3xl rounded-full pointer-events-none" />
+        <div className="absolute -top-20 -right-40 w-[400px] h-[400px] bg-purple-400/5 dark:bg-purple-500/10 blur-3xl rounded-full pointer-events-none" />
+
+        <div className="max-w-5xl mx-auto px-6 text-center space-y-8 relative z-10">
+          {/* Badge */}
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold"
+            className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/8 dark:bg-blue-500/10 border border-blue-500/15 dark:border-blue-500/20 text-blue-600 dark:text-blue-400 text-xs font-semibold"
           >
             <Zap className="w-3.5 h-3.5" />
             <span>Next-Gen Cloud Accounting & ERP for Modern Businesses</span>
           </motion.div>
 
-          <motion.h1 
-            initial={{ opacity: 0, y: 15 }}
+          {/* Headline */}
+          <motion.h1
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.1 }}
-            className="text-4xl sm:text-6xl font-black tracking-tight leading-[1.1] text-balance"
+            transition={{ duration: 0.7, delay: 0.1 }}
+            className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-black tracking-tight leading-[1.08] text-balance"
           >
-            Desktop Speed. The Cloud's Power. <br />
-            <span className="bg-gradient-to-r from-blue-500 via-indigo-400 to-purple-500 bg-clip-text text-transparent">
-              AI's Intelligence.
+            Desktop Speed.{" "}
+            <br className="hidden sm:block" />
+            Cloud Power.{" "}
+            <br className="hidden sm:block" />
+            <span className="bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-600 dark:from-blue-400 dark:via-indigo-400 dark:to-purple-400 bg-clip-text text-transparent">
+              AI Intelligence.
             </span>
           </motion.h1>
 
-          <motion.p 
-            initial={{ opacity: 0, y: 15 }}
+          {/* Subtitle */}
+          <motion.p
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.2 }}
+            transition={{ duration: 0.7, delay: 0.2 }}
             className="max-w-2xl mx-auto text-base sm:text-lg text-muted-foreground text-balance leading-relaxed"
           >
-            The modern double-entry ERP built for fast-moving businesses. Zero data entry with AI bill scanning, instant GST compliance, and keyboard-first navigation.
+            The modern double-entry ERP built for fast-moving businesses.
+            Zero data entry with AI bill scanning, instant GST compliance,
+            and keyboard-first navigation.
           </motion.p>
 
           {/* CTAs */}
-          <motion.div 
-            initial={{ opacity: 0, y: 15 }}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.3 }}
-            className="flex items-center justify-center gap-4 flex-wrap pt-4"
+            transition={{ duration: 0.7, delay: 0.3 }}
+            className="flex items-center justify-center gap-4 flex-wrap pt-2"
           >
             <Link
               href={isAuth ? "/dashboard" : "/register"}
-              className="px-6 py-3.5 bg-blue-600 hover:bg-blue-700 text-foreground rounded-xl text-sm font-bold shadow-xl shadow-blue-600/20 transition-all flex items-center gap-2 cursor-pointer"
+              className="group px-7 py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-600/25 dark:shadow-blue-600/15 transition-all flex items-center gap-2.5 cursor-pointer"
             >
-              <span>{isAuth ? "Launch Dashboard" : "Get Started"}</span>
-              <ArrowRight className="w-4 h-4" />
+              <span>{isAuth ? "Launch Dashboard" : "Get Started Free"}</span>
+              <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
             </Link>
             <a
               href="#mockup"
-              className="px-6 py-3.5 bg-secondary hover:bg-secondary/80 text-foreground border border-border rounded-xl text-sm font-bold transition-all flex items-center gap-2 cursor-pointer"
+              className="px-7 py-3.5 bg-white dark:bg-secondary hover:bg-slate-50 dark:hover:bg-secondary/80 text-foreground border border-border/80 dark:border-border rounded-xl text-sm font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm"
             >
               <span>Interactive Demo</span>
-              <kbd className="px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono text-muted-foreground">Live</kbd>
+              <span className="inline-flex items-center px-1.5 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded text-[10px] font-bold border border-emerald-500/20">Live</span>
             </a>
           </motion.div>
 
-          {/* Quick Keyboard Matrix */}
-          <div id="shortcuts" className="pt-10">
-            <div className="p-3 bg-card border border-border rounded-2xl shadow-xl max-w-3xl mx-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 text-left">
-              <div className="p-2.5 bg-muted/80 dark:bg-muted/60 dark:bg-card dark:bg-zinc-950/60 rounded-xl border border-border space-y-1">
-                <div className="flex justify-between items-center"><span className="text-[10px] text-gray-600 dark:text-gray-400 uppercase font-semibold">Sales</span><kbd className="text-[10px] font-mono bg-blue-900/40 text-blue-300 px-1 py-0.2 rounded">F8</kbd></div>
-                <div className="text-xs font-bold text-foreground">GST Invoice</div>
+          {/* Social Proof Stats */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.7, delay: 0.45 }}
+            className="flex items-center justify-center gap-8 sm:gap-12 pt-6 flex-wrap"
+          >
+            <div className="flex flex-col items-center gap-1">
+              <div className="flex items-center gap-1.5 text-foreground">
+                <Building2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <span className="text-xl sm:text-2xl font-black tabular-nums"><AnimatedCounter target={80} suffix="+" /></span>
               </div>
-              <div className="p-2.5 bg-muted/80 dark:bg-muted/60 dark:bg-card dark:bg-zinc-950/60 rounded-xl border border-border space-y-1">
-                <div className="flex justify-between items-center"><span className="text-[10px] text-gray-600 dark:text-gray-400 uppercase font-semibold">Purchase</span><kbd className="text-[10px] font-mono bg-purple-900/40 text-purple-300 px-1 py-0.2 rounded">F9</kbd></div>
-                <div className="text-xs font-bold text-foreground">AI Bill Scan</div>
-              </div>
-              <div className="p-2.5 bg-muted/80 dark:bg-muted/60 dark:bg-card dark:bg-zinc-950/60 rounded-xl border border-border space-y-1">
-                <div className="flex justify-between items-center"><span className="text-[10px] text-gray-600 dark:text-gray-400 uppercase font-semibold">Search</span><kbd className="text-[10px] font-mono bg-muted dark:bg-zinc-800 text-gray-700 dark:text-gray-300 px-1 py-0.2 rounded">⌘K</kbd></div>
-                <div className="text-xs font-bold text-foreground">Command Box</div>
-              </div>
-              <div className="p-2.5 bg-muted/80 dark:bg-muted/60 dark:bg-card dark:bg-zinc-950/60 rounded-xl border border-border space-y-1">
-                <div className="flex justify-between items-center"><span className="text-[10px] text-gray-600 dark:text-gray-400 uppercase font-semibold">Save</span><kbd className="text-[10px] font-mono bg-green-900/40 text-green-300 px-1 py-0.2 rounded">^A</kbd></div>
-                <div className="text-xs font-bold text-foreground">Instant Post</div>
-              </div>
-              <div className="p-2.5 bg-muted/80 dark:bg-muted/60 dark:bg-card dark:bg-zinc-950/60 rounded-xl border border-border space-y-1">
-                <div className="flex justify-between items-center"><span className="text-[10px] text-gray-600 dark:text-gray-400 uppercase font-semibold">Masters</span><kbd className="text-[10px] font-mono bg-amber-900/40 text-amber-300 px-1 py-0.2 rounded">Alt+C</kbd></div>
-                <div className="text-xs font-bold text-foreground">On the Fly</div>
-              </div>
-              <div className="p-2.5 bg-muted/80 dark:bg-muted/60 dark:bg-card dark:bg-zinc-950/60 rounded-xl border border-border space-y-1">
-                <div className="flex justify-between items-center"><span className="text-[10px] text-gray-600 dark:text-gray-400 uppercase font-semibold">Date</span><kbd className="text-[10px] font-mono bg-muted dark:bg-zinc-800 text-gray-700 dark:text-gray-300 px-1 py-0.2 rounded">F2</kbd></div>
-                <div className="text-xs font-bold text-foreground">Change Period</div>
-              </div>
+              <span className="text-[11px] text-muted-foreground font-medium">Active Companies</span>
             </div>
+            <div className="w-px h-8 bg-border hidden sm:block" />
+            <div className="flex flex-col items-center gap-1">
+              <div className="flex items-center gap-1.5 text-foreground">
+                <IndianRupee className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span className="text-xl sm:text-2xl font-black tabular-nums"><AnimatedCounter target={2} suffix="Cr+" /></span>
+              </div>
+              <span className="text-[11px] text-muted-foreground font-medium">Volume Processed</span>
+            </div>
+            <div className="w-px h-8 bg-border hidden sm:block" />
+            <div className="flex flex-col items-center gap-1">
+              <div className="flex items-center gap-1.5 text-foreground">
+                <Activity className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                <span className="text-xl sm:text-2xl font-black tabular-nums"><AnimatedCounter target={99} suffix="%" prefix="" /></span>
+              </div>
+              <span className="text-[11px] text-muted-foreground font-medium">Uptime SLA</span>
+            </div>
+          </motion.div>
+
+          {/* Keyboard Shortcut Matrix */}
+          <div id="shortcuts" className="pt-8">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.7, delay: 0.55 }}
+              className="p-3 bg-white dark:bg-card border border-border/80 dark:border-border rounded-2xl shadow-xl shadow-black/5 dark:shadow-black/20 max-w-3xl mx-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 text-left"
+            >
+              {shortcuts.map((s) => (
+                <div key={s.key} className="p-2.5 bg-slate-50 dark:bg-zinc-900/80 rounded-xl border border-border/60 dark:border-border space-y-1 hover:border-blue-500/30 transition-colors">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] text-muted-foreground uppercase font-semibold">{s.label}</span>
+                    <kbd className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${s.color}`}>{s.key}</kbd>
+                  </div>
+                  <div className="text-xs font-bold text-foreground">{s.desc}</div>
+                </div>
+              ))}
+            </motion.div>
           </div>
         </div>
       </section>
 
-      {/* Feature Grid with Lucide Icons */}
-      <section id="features" className="py-20 border-t border-border bg-muted/50 dark:bg-card dark:bg-zinc-950/40">
-        <div className="max-w-7xl mx-auto px-6 space-y-12">
-          <div className="text-center max-w-2xl mx-auto space-y-3">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-blue-400">Next-Generation Features</h2>
-            <p className="text-3xl font-extrabold tracking-tight">Engineered for Rapid Business Operations</p>
-            <p className="text-sm text-gray-600 dark:text-gray-400">Everything an accountant, business owner, or enterprise operator needs.</p>
+      {/* ─────────── Features Grid ─────────── */}
+      <section id="features" className="py-24 border-t border-border/60 bg-slate-50/50 dark:bg-zinc-950/40">
+        <div className="max-w-7xl mx-auto px-6 space-y-16">
+          <div className="text-center max-w-2xl mx-auto space-y-4">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5 }}
+              className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/8 dark:bg-blue-500/10 border border-blue-500/15 dark:border-blue-500/20 text-blue-600 dark:text-blue-400 text-xs font-semibold"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Next-Generation Features</span>
+            </motion.div>
+            <motion.h2
+              initial={{ opacity: 0, y: 10 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5, delay: 0.1 }}
+              className="text-3xl sm:text-4xl font-extrabold tracking-tight text-balance"
+            >
+              Engineered for Rapid{" "}
+              <span className="bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent">Business Operations</span>
+            </motion.h2>
+            <motion.p
+              initial={{ opacity: 0, y: 10 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+              className="text-muted-foreground text-sm sm:text-base"
+            >
+              Everything an accountant, business owner, or enterprise operator needs — in one platform.
+            </motion.p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {/* Feature 1 */}
-            <div className="p-6 bg-card border border-border rounded-2xl space-y-3 shadow-sm hover:border-blue-500/50 transition-all group">
-              <div className="w-12 h-12 bg-blue-600/10 text-blue-400 rounded-xl flex items-center justify-center border border-blue-500/20 group-hover:scale-105 transition-transform">
-                <Keyboard className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-foreground">Lightning Fast Data Entry</h3>
-              <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-                F4-F9 shortcuts you already know. Never touch your mouse. Create masters on the fly with <kbd className="px-1 bg-muted dark:bg-zinc-800 rounded font-mono">Alt+C</kbd> and post vouchers instantly with <kbd className="px-1 bg-muted dark:bg-zinc-800 rounded font-mono">Ctrl+A</kbd>.
-              </p>
-            </div>
-
-            {/* Feature 2 */}
-            <div className="p-6 bg-card border border-border rounded-2xl space-y-3 shadow-sm hover:border-purple-500/50 transition-all group">
-              <div className="w-12 h-12 bg-purple-600/10 text-purple-400 rounded-xl flex items-center justify-center border border-purple-500/20 group-hover:scale-105 transition-transform">
-                <Scan className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-foreground">Automated Accounts Payable</h3>
-              <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-                Upload a purchase bill photo or PDF. Our AI extracts the items, matches the GSTIN, validates HSN codes, and prepares the voucher with zero manual typing.
-              </p>
-            </div>
-
-            {/* Feature 3 */}
-            <div className="p-6 bg-card border border-border rounded-2xl space-y-3 shadow-sm hover:border-green-500/50 transition-all group">
-              <div className="w-12 h-12 bg-green-600/10 text-green-400 rounded-xl flex items-center justify-center border border-green-500/20 group-hover:scale-105 transition-transform">
-                <FileCheck className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-foreground">Flawless GST Compliance</h3>
-              <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-                Auto-calculates CGST, SGST, and IGST based on 2-digit state codes. Automatic inventory stock adjustments and audit-proof double-entry balancing.
-              </p>
-            </div>
-
-            {/* Feature 4 */}
-            <div className="p-6 bg-card border border-border rounded-2xl space-y-3 shadow-sm hover:border-amber-500/50 transition-all group">
-              <div className="w-12 h-12 bg-amber-600/10 text-amber-400 rounded-xl flex items-center justify-center border border-amber-500/20 group-hover:scale-105 transition-transform">
-                <TrendingUp className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-foreground">Business Insights</h3>
-              <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-                Customer insights and sales trends at a glance. Understand your best customers and daily revenue patterns.
-              </p>
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {features.map((f, i) => (
+              <motion.div
+                key={f.title}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.5, delay: i * 0.08 }}
+                className={`group p-6 bg-white dark:bg-card border border-border/60 dark:border-border rounded-2xl space-y-4 shadow-sm hover:shadow-md ${f.borderHover} transition-all duration-300`}
+              >
+                <div className={`w-11 h-11 ${f.iconBg} ${f.iconColor} rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300`}>
+                  <f.icon className="w-5 h-5" />
+                </div>
+                <h3 className="text-base font-bold text-foreground">{f.title}</h3>
+                <p className="text-[13px] text-muted-foreground leading-relaxed">
+                  {f.description}
+                </p>
+              </motion.div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* Interactive Mockup Section (Visual Anchor with Framer Motion Animation) */}
-      <section id="mockup" className="py-24 border-t border-border bg-muted/60 dark:bg-card dark:bg-zinc-950/60 relative overflow-hidden">
-        <div className="max-w-6xl mx-auto px-6 space-y-8">
-          <div className="text-center space-y-2 max-w-2xl mx-auto">
-            <div className="inline-flex items-center gap-1.5 text-xs font-bold text-purple-400 uppercase tracking-wider">
+      {/* ─────────── AI OCR Mockup Section ─────────── */}
+      <section id="mockup" className="py-24 border-t border-border/60 relative overflow-hidden">
+        {/* Subtle background gradient */}
+        <div className="absolute inset-0 bg-gradient-to-b from-background via-slate-50/30 dark:via-zinc-950/50 to-background pointer-events-none" />
+
+        <div className="max-w-6xl mx-auto px-6 space-y-10 relative z-10">
+          <div className="text-center space-y-3 max-w-2xl mx-auto">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider"
+            >
               <Sparkles className="w-3.5 h-3.5" />
               <span>Live Scanning Simulation</span>
-            </div>
-            <h2 className="text-3xl font-extrabold tracking-tight">See AI OCR & Split-Screen in Action</h2>
-            <p className="text-xs text-gray-600 dark:text-gray-400">
+            </motion.div>
+            <motion.h2
+              initial={{ opacity: 0, y: 10 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: 0.1 }}
+              className="text-3xl sm:text-4xl font-extrabold tracking-tight"
+            >
+              See AI OCR & Split-Screen{" "}
+              <span className="bg-gradient-to-r from-purple-600 to-pink-600 dark:from-purple-400 dark:to-pink-400 bg-clip-text text-transparent">in Action</span>
+            </motion.h2>
+            <motion.p
+              initial={{ opacity: 0, y: 10 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: 0.2 }}
+              className="text-muted-foreground text-sm"
+            >
               Drag-and-drop supplier bills to extract line items, quantities, and GST rates in seconds.
-            </p>
+            </motion.p>
           </div>
 
-          {/* Stylized Browser Window */}
-          <div className="rounded-2xl border border-border/80 bg-card dark:bg-zinc-900 shadow-2xl overflow-hidden">
+          {/* Browser Window Mockup */}
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.7, delay: 0.2 }}
+            className="rounded-2xl border border-border/80 dark:border-border bg-white dark:bg-zinc-900 shadow-2xl shadow-black/8 dark:shadow-black/30 overflow-hidden"
+          >
             {/* Window Titlebar */}
-            <div className="px-4 py-3 bg-card dark:bg-zinc-950 border-b border-border flex items-center justify-between">
+            <div className="px-4 py-3 bg-slate-50 dark:bg-zinc-950 border-b border-border/80 dark:border-border flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-red-500/80 inline-block"></span>
-                <span className="w-3 h-3 rounded-full bg-yellow-500/80 inline-block"></span>
-                <span className="w-3 h-3 rounded-full bg-green-500/80 inline-block"></span>
+                <span className="w-3 h-3 rounded-full bg-red-400 dark:bg-red-500/80 inline-block" />
+                <span className="w-3 h-3 rounded-full bg-yellow-400 dark:bg-yellow-500/80 inline-block" />
+                <span className="w-3 h-3 rounded-full bg-green-400 dark:bg-green-500/80 inline-block" />
               </div>
-              <div className="px-6 py-1 bg-card dark:bg-zinc-900 rounded-lg text-[11px] font-mono text-gray-600 dark:text-gray-400 border border-border flex items-center gap-2">
-                <span className="text-green-500">🔒</span>
+              <div className="px-6 py-1 bg-white dark:bg-zinc-900 rounded-lg text-[11px] font-mono text-muted-foreground border border-border/80 dark:border-border flex items-center gap-2">
+                <span className="text-green-600 dark:text-green-500">🔒</span>
                 <span>https://app.vouch.in/purchases/new</span>
               </div>
-              <div className="text-xs text-gray-600 dark:text-gray-500 font-mono">F9 Purchase Scan</div>
+              <div className="text-xs text-muted-foreground font-mono flex items-center gap-1.5">
+                <Terminal className="w-3 h-3" />
+                <span>F9 Purchase Scan</span>
+              </div>
             </div>
 
-            {/* Split Screen Content inside Mockup */}
-            <div className="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 bg-muted/80 dark:bg-card dark:bg-zinc-950/80">
-              {/* Left: Simulated Original Bill Receipt with Pulse / Scanning Beam */}
-              <div className="relative bg-card dark:bg-zinc-900 border border-border rounded-xl p-5 overflow-hidden flex flex-col justify-between h-[360px]">
-                {/* Framer Motion Scanline Beam */}
+            {/* Split Screen Content */}
+            <div className="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 bg-slate-50/80 dark:bg-zinc-950/80">
+              {/* Left: Simulated Invoice */}
+              <div className="relative bg-white dark:bg-zinc-900 border border-border/60 dark:border-border rounded-xl p-5 overflow-hidden flex flex-col justify-between h-[360px]">
+                {/* Scanning beam */}
                 <motion.div
-                  animate={{
-                    top: ["0%", "100%", "0%"],
-                  }}
-                  transition={{
-                    duration: 4,
-                    repeat: Infinity,
-                    ease: "easeInOut",
-                  }}
-                  className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-blue-400 to-transparent shadow-[0_0_15px_#3b82f6] pointer-events-none z-10"
+                  animate={{ top: ["0%", "100%", "0%"] }}
+                  transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                  className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-blue-500 to-transparent shadow-[0_0_12px_rgba(59,130,246,0.5)] pointer-events-none z-10"
                 />
 
                 <div className="space-y-4">
-                  <div className="flex justify-between items-start border-b border-border pb-3">
+                  <div className="flex justify-between items-start border-b border-border/60 dark:border-border pb-3">
                     <div>
                       <div className="text-xs font-bold text-foreground font-mono flex items-center gap-1.5">
                         <span>TAX INVOICE</span>
-                        <span className="text-[10px] font-sans font-semibold px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border/60">
+                        <span className="text-[10px] font-sans font-semibold px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
                           Demo Invoice
                         </span>
                       </div>
-                      <div className="text-[11px] text-gray-600 dark:text-gray-400">Apex Industrial Supplies Pvt Ltd</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">Apex Industrial Supplies Pvt Ltd</div>
                     </div>
                     <div className="text-right">
-                      <div className="text-xs font-mono text-blue-400 font-bold"># INV-2026-0891</div>
-                      <div className="text-[10px] text-gray-600 dark:text-gray-400 font-mono">Date: 15/01/2026</div>
+                      <div className="text-xs font-mono text-blue-600 dark:text-blue-400 font-bold"># INV-2026-0891</div>
+                      <div className="text-[10px] text-muted-foreground font-mono">Date: 15/01/2026</div>
                     </div>
                   </div>
 
-                  <div className="space-y-2 text-[11px] font-mono text-gray-700 dark:text-gray-300">
-                    <div className="flex justify-between text-gray-600 dark:text-gray-500 text-[10px] border-b border-border/60 pb-1">
+                  <div className="space-y-2 text-[11px] font-mono">
+                    <div className="flex justify-between text-muted-foreground text-[10px] border-b border-border/40 dark:border-border/60 pb-1">
                       <span>ITEM DESCRIPTION</span>
                       <span>HSN</span>
                       <span>QTY</span>
                       <span>AMOUNT</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="font-semibold text-foreground">BEARING 6205-2RS INDUSTRIAL</span>
-                      <span className="text-gray-600 dark:text-gray-400">84821011</span>
+                    <div className="flex justify-between text-foreground">
+                      <span className="font-semibold">BEARING 6205-2RS INDUSTRIAL</span>
+                      <span className="text-muted-foreground">84821011</span>
                       <span>10.00 PCS</span>
                       <span>₹2,500.00</span>
                     </div>
-                    <div className="flex justify-between text-gray-600 dark:text-gray-400">
+                    <div className="flex justify-between text-muted-foreground">
                       <span>CGST (9.00%)</span>
                       <span></span>
                       <span></span>
                       <span>₹225.00</span>
                     </div>
-                    <div className="flex justify-between text-gray-600 dark:text-gray-400">
+                    <div className="flex justify-between text-muted-foreground">
                       <span>SGST (9.00%)</span>
                       <span></span>
                       <span></span>
@@ -328,137 +500,206 @@ export default function LandingPage() {
                   </div>
                 </div>
 
-                <div className="pt-3 border-t border-border flex justify-between items-center text-xs font-bold font-mono">
-                  <span className="text-gray-600 dark:text-gray-400">GRAND TOTAL:</span>
-                  <span className="text-green-400 text-sm">₹ 2,950.00</span>
+                <div className="pt-3 border-t border-border/60 dark:border-border flex justify-between items-center text-xs font-bold font-mono">
+                  <span className="text-muted-foreground">GRAND TOTAL:</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 text-sm">₹ 2,950.00</span>
                 </div>
               </div>
 
-              {/* Right: Extracted JSON / Verified ERP Form */}
-              <div className="bg-card dark:bg-zinc-900 border border-blue-500/30 rounded-xl p-5 space-y-4 flex flex-col justify-between h-[360px]">
+              {/* Right: Extracted Data */}
+              <div className="bg-white dark:bg-zinc-900 border border-blue-500/20 dark:border-blue-500/30 rounded-xl p-5 space-y-4 flex flex-col justify-between h-[360px]">
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between border-b border-border pb-2">
+                  <div className="flex items-center justify-between border-b border-border/60 dark:border-border pb-2">
                     <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-green-500 animate-ping"></span>
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                      </span>
                       <span className="text-xs font-bold text-foreground">AI OCR Extracted Data</span>
                     </div>
-                    <span className="px-2 py-0.5 bg-green-500/10 text-green-400 rounded text-[10px] font-bold border border-green-500/20">
+                    <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded text-[10px] font-bold border border-emerald-500/20">
                       High-confidence matching
                     </span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="p-2 bg-card dark:bg-zinc-950 rounded-lg border border-border">
-                      <div className="text-[10px] text-gray-600 dark:text-gray-400 uppercase">Supplier</div>
-                      <div className="font-semibold text-foreground truncate">Apex Industrial Supplies Pvt Ltd</div>
+                    <div className="p-2.5 bg-slate-50 dark:bg-zinc-950 rounded-lg border border-border/60 dark:border-border">
+                      <div className="text-[10px] text-muted-foreground uppercase font-medium">Supplier</div>
+                      <div className="font-semibold text-foreground truncate mt-0.5">Apex Industrial Supplies Pvt Ltd</div>
                     </div>
-                    <div className="p-2 bg-card dark:bg-zinc-950 rounded-lg border border-border">
-                      <div className="text-[10px] text-gray-600 dark:text-gray-400 uppercase">GSTIN</div>
-                      <div className="font-mono text-blue-400 font-bold">27AAACA1234A1Z5</div>
+                    <div className="p-2.5 bg-slate-50 dark:bg-zinc-950 rounded-lg border border-border/60 dark:border-border">
+                      <div className="text-[10px] text-muted-foreground uppercase font-medium">GSTIN</div>
+                      <div className="font-mono text-blue-600 dark:text-blue-400 font-bold mt-0.5">27AAACA1234A1Z5</div>
                     </div>
-                    <div className="p-2 bg-card dark:bg-zinc-950 rounded-lg border border-border">
-                      <div className="text-[10px] text-gray-600 dark:text-gray-400 uppercase">State Code</div>
-                      <div className="font-mono text-foreground">27 (Maharashtra)</div>
+                    <div className="p-2.5 bg-slate-50 dark:bg-zinc-950 rounded-lg border border-border/60 dark:border-border">
+                      <div className="text-[10px] text-muted-foreground uppercase font-medium">State Code</div>
+                      <div className="font-mono text-foreground mt-0.5">27 (Maharashtra)</div>
                     </div>
-                    <div className="p-2 bg-card dark:bg-zinc-950 rounded-lg border border-border">
-                      <div className="text-[10px] text-gray-600 dark:text-gray-400 uppercase">Invoice No</div>
-                      <div className="font-mono text-purple-400 font-bold">INV-2026-0891</div>
+                    <div className="p-2.5 bg-slate-50 dark:bg-zinc-950 rounded-lg border border-border/60 dark:border-border">
+                      <div className="text-[10px] text-muted-foreground uppercase font-medium">Invoice No</div>
+                      <div className="font-mono text-purple-600 dark:text-purple-400 font-bold mt-0.5">INV-2026-0891</div>
                     </div>
                   </div>
 
-                  <div className="p-2.5 bg-card dark:bg-zinc-950 rounded-lg border border-border space-y-1 text-xs">
-                    <div className="flex justify-between text-[10px] text-gray-600 dark:text-gray-400 font-mono">
+                  <div className="p-2.5 bg-slate-50 dark:bg-zinc-950 rounded-lg border border-border/60 dark:border-border space-y-1 text-xs">
+                    <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
                       <span>TAXABLE: ₹2,500.00</span>
                       <span>CGST: ₹225.00 | SGST: ₹225.00</span>
                     </div>
                     <div className="flex justify-between text-xs font-bold text-foreground font-mono">
                       <span>Total Amount:</span>
-                      <span className="text-green-400">₹2,950.00</span>
+                      <span className="text-emerald-600 dark:text-emerald-400">₹2,950.00</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <Link
-                    href="/purchases/new"
-                    className="w-full py-2 bg-green-600 hover:bg-green-700 text-foreground rounded-lg text-xs font-bold text-center transition-colors shadow-lg"
-                  >
-                    ✓ Post to Accounting Ledger
-                  </Link>
-                </div>
+                <Link
+                  href="/purchases/new"
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold text-center transition-colors shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2"
+                >
+                  <FileCheck className="w-3.5 h-3.5" />
+                  <span>Post to Accounting Ledger</span>
+                </Link>
               </div>
             </div>
-          </div>
+          </motion.div>
         </div>
       </section>
 
-      {/* Get Started / Call to Action */}
-      <section id="get-started" className="py-20 bg-gradient-to-b from-transparent to-muted/50 dark:to-zinc-950 border-t border-border">
-        <div className="max-w-4xl mx-auto px-6 text-center space-y-6">
-          <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight">
-            Ready to streamline your business accounting?
-          </h2>
-          <p className="text-gray-600 dark:text-gray-400 text-sm max-w-xl mx-auto">
-            Experience lightning-fast double-entry bookkeeping, automated GST invoices, and AI accounts payable today.
-          </p>
-          <div className="pt-2 flex items-center justify-center gap-4 flex-wrap">
+      {/* ─────────── Trust Indicators ─────────── */}
+      <section className="py-16 border-t border-border/60 bg-slate-50/50 dark:bg-zinc-950/40">
+        <div className="max-w-5xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 15 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="grid grid-cols-2 md:grid-cols-4 gap-6"
+          >
+            {[
+              { icon: Shield, label: "ACID Compliant", desc: "Bank-grade transactions" },
+              { icon: Clock, label: "Offline Ready", desc: "Works without internet" },
+              { icon: BarChart3, label: "Real-Time Reports", desc: "P&L, Balance Sheet, Aging" },
+              { icon: Users, label: "Multi-User", desc: "Team collaboration" },
+            ].map((item, i) => (
+              <motion.div
+                key={item.label}
+                initial={{ opacity: 0, y: 15 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.1 }}
+                className="flex flex-col items-center text-center gap-2.5 p-5 rounded-xl bg-white dark:bg-card border border-border/50 dark:border-border shadow-sm"
+              >
+                <div className="w-10 h-10 rounded-lg bg-blue-500/8 dark:bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                  <item.icon className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-sm font-bold text-foreground">{item.label}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">{item.desc}</div>
+                </div>
+              </motion.div>
+            ))}
+          </motion.div>
+        </div>
+      </section>
+
+      {/* ─────────── CTA Section ─────────── */}
+      <section id="get-started" className="py-24 border-t border-border/60 relative overflow-hidden">
+        {/* Background gradient */}
+        <div className="absolute inset-0 bg-gradient-to-b from-background via-blue-50/30 dark:via-blue-950/10 to-background pointer-events-none" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-blue-500/5 dark:bg-blue-500/8 blur-3xl rounded-full pointer-events-none" />
+
+        <div className="max-w-3xl mx-auto px-6 text-center space-y-8 relative z-10">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="space-y-4"
+          >
+            <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-balance">
+              Ready to streamline your{" "}
+              <span className="bg-gradient-to-r from-blue-600 to-purple-600 dark:from-blue-400 dark:to-purple-400 bg-clip-text text-transparent">
+                business accounting
+              </span>?
+            </h2>
+            <p className="text-muted-foreground text-sm sm:text-base max-w-xl mx-auto">
+              Experience lightning-fast double-entry bookkeeping, automated GST invoices,
+              and AI accounts payable — free to get started.
+            </p>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ delay: 0.15 }}
+            className="flex items-center justify-center gap-4 flex-wrap"
+          >
             <Link
               href={isAuth ? "/dashboard" : "/register"}
-              className="px-8 py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-xl shadow-blue-600/25 transition-all inline-flex items-center gap-2 cursor-pointer"
+              className="group px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-xl shadow-blue-600/25 dark:shadow-blue-600/15 transition-all inline-flex items-center gap-2.5 cursor-pointer"
             >
-              <span>{isAuth ? "Enter Dashboard" : "Get Started Now"}</span>
-              <ArrowRight className="w-4 h-4" />
+              <span>{isAuth ? "Enter Dashboard" : "Get Started Free"}</span>
+              <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
             </Link>
-          </div>
+          </motion.div>
+
+          <motion.p
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true }}
+            transition={{ delay: 0.3 }}
+            className="text-[11px] text-muted-foreground"
+          >
+            No credit card required · Free tier available · Setup in under 2 minutes
+          </motion.p>
         </div>
       </section>
 
-      {/* Comprehensive Footer */}
-      <footer className="border-t border-border bg-card dark:bg-zinc-950 py-12 text-xs text-gray-600 dark:text-gray-400">
+      {/* ─────────── Footer ─────────── */}
+      <footer className="border-t border-border/60 bg-slate-50 dark:bg-zinc-950 py-12 text-xs text-muted-foreground">
         <div className="max-w-7xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
-          <div className="space-y-3">
+          <div className="space-y-3 col-span-2 md:col-span-1">
             <VouchLogo size={24} showWordmark={true} />
-            <p className="text-xs text-gray-600 dark:text-gray-500 leading-relaxed">
-              Keyboard-first double-entry accounting and AI accounts payable platform for modern businesses.
+            <p className="text-xs text-muted-foreground leading-relaxed max-w-[220px]">
+              Keyboard-first double-entry accounting and AI accounts payable platform for modern Indian businesses.
             </p>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-3">
             <div className="text-xs font-bold uppercase tracking-wider text-foreground">Product</div>
-            <ul className="space-y-1.5 text-gray-600 dark:text-gray-400">
-              <li><Link href="/dashboard" className="hover:text-foreground transition-colors">Dashboard</Link></li>
-              <li><Link href="/sales" className="hover:text-foreground transition-colors">Sales Invoicing (F8)</Link></li>
-              <li><Link href="/purchases" className="hover:text-foreground transition-colors">AI Bill Scanner (F9)</Link></li>
-              <li><Link href="/vouchers" className="hover:text-foreground transition-colors">Payments & Receipts</Link></li>
+            <ul className="space-y-2 text-muted-foreground">
+              <li><Link href="/dashboard" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Dashboard</Link></li>
+              <li><Link href="/sales" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Sales Invoicing (F8)</Link></li>
+              <li><Link href="/purchases" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />AI Bill Scanner (F9)</Link></li>
+              <li><Link href="/vouchers" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Payments & Receipts</Link></li>
             </ul>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-3">
             <div className="text-xs font-bold uppercase tracking-wider text-foreground">Resources</div>
-            <ul className="space-y-1.5 text-gray-600 dark:text-gray-400">
-              <li><button onClick={() => setIsHelpOpen(true)} className="hover:text-foreground transition-colors cursor-pointer">Keyboard Shortcuts (F1)</button></li>
-              <li><Link href="/dashboard" className="hover:text-foreground transition-colors">Documentation</Link></li>
-              <li><Link href="/dashboard" className="hover:text-foreground transition-colors">GST Compliance Guide</Link></li>
-              <li><Link href="/~offline" className="hover:text-foreground transition-colors">Offline Support (PWA)</Link></li>
+            <ul className="space-y-2 text-muted-foreground">
+              <li><button onClick={() => setIsHelpOpen(true)} className="hover:text-foreground transition-colors cursor-pointer inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Keyboard Shortcuts (F1)</button></li>
+              <li><Link href="/dashboard" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Documentation</Link></li>
+              <li><Link href="/dashboard" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />GST Compliance Guide</Link></li>
+              <li><Link href="/~offline" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Offline Support (PWA)</Link></li>
             </ul>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-3">
             <div className="text-xs font-bold uppercase tracking-wider text-foreground">Legal & Trust</div>
-            <ul className="space-y-1.5 text-gray-600 dark:text-gray-400">
-              <li><span className="text-gray-600 dark:text-gray-500">Privacy Policy</span></li>
-              <li><span className="text-gray-600 dark:text-gray-500">Terms of Service</span></li>
-              <li><span className="text-gray-600 dark:text-gray-500">Strict ACID Compliance</span></li>
-              <li><span className="text-gray-600 dark:text-gray-500">Zero Cloud Storage Overhead</span></li>
+            <ul className="space-y-2 text-muted-foreground">
+              <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Privacy Policy</li>
+              <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Terms of Service</li>
+              <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />ACID Compliance</li>
+              <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />End-to-End Encryption</li>
             </ul>
           </div>
         </div>
 
-        <div className="max-w-7xl mx-auto px-6 pt-6 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-gray-600 dark:text-gray-500">
+        <div className="max-w-7xl mx-auto px-6 pt-6 border-t border-border/60 dark:border-border flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-muted-foreground">
           <div>
-            © {new Date().getFullYear()} Vouch Platform. Built for Modern Businesses.
+            © {new Date().getFullYear()} Vouch Platform. Built for Modern Indian Businesses.
           </div>
-          <div className="flex items-center gap-4 font-mono">
-            <span>PWA Enabled</span>
-            <span>•</span>
-            <span>Installable Desktop & Mobile</span>
+          <div className="flex items-center gap-3 font-mono text-[10px]">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded border border-emerald-500/15">PWA Enabled</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded border border-blue-500/15">Desktop & Mobile</span>
           </div>
         </div>
       </footer>
