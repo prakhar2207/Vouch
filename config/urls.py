@@ -87,6 +87,15 @@ urlpatterns = [
     path('api/export/tally/xml/', TallyExportAPIView.as_view(), name='api_tally_export_xml'),
     
     # Standard v1 Namespaced Endpoints
+    path('api/v1/vouchers/', UniversalVoucherAPIView.as_view(), name='api_v1_vouchers'),
+    path('api/v1/vouchers/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='api_v1_voucher_detail'),
+    path('api/v1/vouchers/<uuid:voucher_id>/attachment/', VoucherAttachmentAPIView.as_view(), name='api_v1_voucher_attachment'),
+    path('api/v1/ocr/extract/', OCRExtractAPIView.as_view(), name='api_v1_ocr_extract'),
+    path('api/v1/b2b/inbox/', InwardVoucherInboxView.as_view(), name='api_v1_b2b_inbox'),
+    path('api/v1/b2b/inbox/<uuid:pk>/', InwardVoucherDetailView.as_view(), name='api_v1_b2b_inbox_detail'),
+    path('api/v1/b2b/inbox/<uuid:pk>/accept/', InwardVoucherAcceptView.as_view(), name='api_v1_b2b_inbox_accept'),
+    path('api/v1/b2b/inbox/<uuid:pk>/reject/', InwardVoucherRejectView.as_view(), name='api_v1_b2b_inbox_reject'),
+    path('api/v1/export/tally/xml/', TallyExportAPIView.as_view(), name='api_v1_tally_export_xml'),
     path('api/v1/auth/', include('apps.accounts.urls')),
     path('api/v1/companies/', include('apps.companies.urls')),
     path('api/v1/accounting/', include('apps.accounting.urls')),

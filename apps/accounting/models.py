@@ -409,6 +409,12 @@ class InwardVoucherRequest(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['source_voucher', 'target_company'],
+                name='unique_edi_request_per_voucher_target',
+            ),
+        ]
 
     def __str__(self):
         return f"EDI #{self.id} | {self.source_company.name} -> {self.target_company.name} ({self.status})"

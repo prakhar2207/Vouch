@@ -236,14 +236,13 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
       console.warn("Failed to reset orphaned syncing vouchers:", _e);
     }
 
-    const allPending = await offlineDb.vouchers
+    const now = Date.now();
+    // Filter at Dexie collection level to avoid unneeded in-memory allocations
+    const pending = await offlineDb.vouchers
       .where("status")
       .equals("PENDING")
+      .filter((item) => !item.nextRetryAt || item.nextRetryAt <= now)
       .toArray();
-
-    const now = Date.now();
-    // Only pick up items whose exponential backoff delay has elapsed
-    const pending = allPending.filter((item) => !item.nextRetryAt || item.nextRetryAt <= now);
 
     if (pending.length === 0) return { processed: 0, failed: 0 };
 

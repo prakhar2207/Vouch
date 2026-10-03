@@ -11,9 +11,6 @@
     "postinstall": "node scripts/patch-html2canvas.js"
   },
   "dependencies": {
-    "@ag-grid-community/client-side-row-model": "^32.3.9",
-    "@ag-grid-community/core": "^32.3.9",
-    "@ag-grid-community/styles": "^32.3.9",
     "@serwist/next": "^9.5.12",
     "@serwist/precaching": "^9.5.12",
     "@serwist/sw": "^9.5.12",

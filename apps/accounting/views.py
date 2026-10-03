@@ -54,9 +54,19 @@ class CreateSalesInvoiceAPIView(APIView):
         """
         data = request.data
         try:
+            # Validate required fields upfront to prevent unhandled KeyError → 500
+            company_id = data.get('company_id')
+            party_ledger_id = data.get('party_ledger_id')
+            if not company_id:
+                return Response({"success": False, "error": "company_id is required."}, status=400)
+            if not party_ledger_id:
+                return Response({"success": False, "error": "party_ledger_id is required."}, status=400)
+            if not data.get('items'):
+                return Response({"success": False, "error": "At least one invoice item is required."}, status=400)
+
             from apps.ledgers.models import LedgerGroup
-            company = Company.objects.get(id=data['company_id'], users__user=request.user)
-            party_ledger = Ledger.objects.get(id=data['party_ledger_id'], company=company)
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            party_ledger = Ledger.objects.get(id=party_ledger_id, company=company)
 
             with transaction.atomic():
                 # Resolve sales ledger
@@ -186,9 +196,19 @@ class CreatePurchaseInvoiceAPIView(APIView):
     def post(self, request):
         data = request.data
         try:
+            # Validate required fields upfront to prevent unhandled KeyError → 500
+            company_id = data.get('company_id')
+            party_ledger_id = data.get('party_ledger_id')
+            if not company_id:
+                return Response({"success": False, "error": "company_id is required."}, status=400)
+            if not party_ledger_id:
+                return Response({"success": False, "error": "party_ledger_id is required."}, status=400)
+            if not data.get('items'):
+                return Response({"success": False, "error": "At least one invoice item is required."}, status=400)
+
             from apps.ledgers.models import LedgerGroup
-            company = Company.objects.get(id=data['company_id'], users__user=request.user)
-            party_ledger = Ledger.objects.get(id=data['party_ledger_id'], company=company)
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            party_ledger = Ledger.objects.get(id=party_ledger_id, company=company)
 
             # Resolve purchase ledger
             purchase_ledger = None

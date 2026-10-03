@@ -29,13 +29,28 @@ function getCleanEndpoint(url?: string): string {
   if (!url) return 'unknown';
   try {
     const parsed = new URL(url, API_BASE_URL);
-    return parsed.pathname;
+    // Normalize UUIDs and numeric IDs to prevent unbounded Map growth
+    return parsed.pathname
+      .replace(/\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi, '/:id')
+      .replace(/\/\d+(?=\/|$)/g, '/:id');
   } catch {
     return url.split('?')[0];
   }
 }
 
 function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
+  // Skip telemetry tracking during SSR to prevent server-side memory leaks
+  if (typeof window === 'undefined') {
+    const token = getAccessToken();
+    const currentAuth = config.headers?.Authorization;
+    const isInvalidAuth = !currentAuth || currentAuth === 'Bearer undefined' || currentAuth === 'Bearer null' || currentAuth === 'Bearer ';
+    if (token && isInvalidAuth) {
+      if (!config.headers) config.headers = {} as InternalAxiosRequestConfig['headers'];
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  }
+
   const endpoint = getCleanEndpoint(config.url);
   const now = Date.now();
   let stats = requestTelemetry.get(endpoint);
@@ -95,6 +110,13 @@ const processQueue = (error: unknown, token: string | null = null) => {
 };
 
 async function handleResponseError(error: AxiosError) {
+  // CRITICAL: Never queue or refresh tokens during SSR — module-level state
+  // (isRefreshing, failedQueue) is shared across all concurrent user requests
+  // on the Node.js server, which would cause cross-tenant data leakage.
+  if (typeof window === 'undefined') {
+    return Promise.reject(error);
+  }
+
   const originalRequest = error.config as (InternalAxiosRequestConfig & { _retry?: boolean }) | undefined;
 
   // Only handle 401 Unauthorized errors with a valid request config

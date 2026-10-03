@@ -152,13 +152,26 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* Smooth theme transitions */
-*,
-*::before,
-*::after {
-  transition-property: background-color, border-color;
-  transition-duration: 0.15s;
-  transition-timing-function: ease-out;
+/* Smooth theme transitions — only when user has no motion preference */
+@media (prefers-reduced-motion: no-preference) {
+  *,
+  *::before,
+  *::after {
+    transition-property: background-color, border-color;
+    transition-duration: 0.15s;
+    transition-timing-function: ease-out;
+  }
+}
+
+/* Strip all motion for users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
 
 /* Disable transitions on page load to prevent flash */

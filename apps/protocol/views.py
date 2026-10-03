@@ -61,10 +61,10 @@ class ProtocolSyncAPIView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Retrieve existing server operations for this transaction
+        # Retrieve existing server operations for this transaction (streamed to prevent OOM)
         server_ops_qs = ProtocolOperation.objects.filter(transaction__transaction_id=tx_id).order_by('logical_timestamp')
         server_operations = []
-        for db_op in server_ops_qs:
+        for db_op in server_ops_qs.iterator(chunk_size=500):
             server_operations.append(AccountingOperation(
                 operation_id=db_op.operation_id,
                 transaction_id=tx_id,

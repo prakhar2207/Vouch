@@ -196,10 +196,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {/* Mobile / Tablet Hamburger Button */}
             <button
               onClick={() => setIsMobileNavOpen(true)}
-              className="lg:hidden p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer shrink-0 min-h-[36px] min-w-[36px] flex items-center justify-center"
+              className="lg:hidden p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center"
               aria-label="Open Navigation Menu"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
@@ -628,7 +628,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 aria-label={`Switch Company Workspace (Active: ${activeCompany?.name || 'Company'})`}
                 aria-haspopup="true"
                 aria-expanded={isCompanyDropdownOpen}
-                className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
+                className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[44px]"
                 title={`Active Company: ${activeCompany?.name || 'Company'}`}
               >
                 <div className="w-5 h-5 rounded-md bg-gradient-to-br from-primary/20 to-primary/10 border border-primary/25 flex items-center justify-center text-[10px] font-bold text-primary shrink-0 uppercase">
@@ -696,7 +696,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 aria-label={`Financial Year (${activeFY ? (activeFY.code || activeFY.name) : "FY 26-27"})`}
                 aria-haspopup="true"
                 aria-expanded={isFYDropdownOpen}
-                className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[36px]"
+                className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[44px]"
                 title="Change Financial Year or Period (Alt + F2)"
               >
                 <span className="font-mono tabular-nums text-xs font-semibold text-foreground whitespace-nowrap">
@@ -767,7 +767,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <button
               id="tour-command-palette-btn"
               onClick={() => setIsCommandPaletteOpen(true)}
-              className="flex items-center justify-center p-2 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[36px] min-w-[36px] shrink-0"
+              className="flex items-center justify-center p-2 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[44px] min-w-[44px] shrink-0"
               title="Quick Search & Navigation (Ctrl+K)"
               aria-label="Quick Search"
             >
@@ -780,7 +780,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               onClick={() => setIsCalculatorOpen(!isCalculatorOpen)}
               aria-label="Tally Calculator & GST Tools"
               aria-expanded={isCalculatorOpen}
-              className={`p-2 rounded-xl transition-all cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center shrink-0 ${
+              className={`p-2 rounded-xl transition-all cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center shrink-0 ${
                 isCalculatorOpen
                   ? "bg-primary/20 text-primary border border-primary/40 shadow-xs"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -893,6 +893,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             onClick={() => setIsMobileNavOpen(false)}
           />
           <aside
+            ref={(node) => {
+              // Focus trap: lock Tab/Shift-Tab inside the drawer
+              if (!node) return;
+              const focusableSelector = 'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+              const focusableEls = node.querySelectorAll<HTMLElement>(focusableSelector);
+              if (focusableEls.length === 0) return;
+              const firstEl = focusableEls[0];
+              const lastEl = focusableEls[focusableEls.length - 1];
+              firstEl.focus();
+              const trapHandler = (e: KeyboardEvent) => {
+                if (e.key !== 'Tab') return;
+                if (e.shiftKey) {
+                  if (document.activeElement === firstEl) {
+                    e.preventDefault();
+                    lastEl.focus();
+                  }
+                } else {
+                  if (document.activeElement === lastEl) {
+                    e.preventDefault();
+                    firstEl.focus();
+                  }
+                }
+              };
+              node.addEventListener('keydown', trapHandler);
+              // Cleanup via MutationObserver is not needed since React unmounts when isMobileNavOpen=false
+            }}
             className="relative w-72 max-w-[80vw] bg-card/95 backdrop-blur-xl border-r border-border/40 h-full flex flex-col p-5 shadow-2xl z-10 animate-in slide-in-from-left duration-200"
             role="dialog"
             aria-modal="true"
@@ -904,7 +930,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
               <button
                 onClick={() => setIsMobileNavOpen(false)}
-                className="text-muted-foreground hover:text-foreground p-2 rounded-lg min-h-[36px] min-w-[36px] flex items-center justify-center cursor-pointer transition-colors"
+                className="text-muted-foreground hover:text-foreground p-2 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer transition-colors"
                 aria-label="Close Navigation Menu"
               >
                 <X className="w-5 h-5" />
@@ -967,7 +993,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   setIsMobileNavOpen(false);
                   setIsPeriodModalOpen(true);
                 }}
-                className="flex items-center gap-2 px-3 py-2 bg-muted text-foreground rounded-lg border border-border/60 font-mono tabular-nums text-xs min-h-[36px]"
+                className="flex items-center gap-2 px-3 py-2 bg-muted text-foreground rounded-lg border border-border/60 font-mono tabular-nums text-xs min-h-[44px]"
               >
                 <Calendar className="w-4 h-4 text-muted-foreground" />
                 <span>{activeFY?.code || "FY 26-27"} · {workingDate}</span>
@@ -978,7 +1004,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   setIsMobileNavOpen(false);
                   setIsHelpOpen(true);
                 }}
-                className="px-3 py-2 bg-muted/60 text-muted-foreground rounded-lg border border-border/50 text-xs font-semibold min-h-[36px]"
+                className="px-3 py-2 bg-muted/60 text-muted-foreground rounded-lg border border-border/50 text-xs font-semibold min-h-[44px]"
               >
                 Help (F1)
               </button>

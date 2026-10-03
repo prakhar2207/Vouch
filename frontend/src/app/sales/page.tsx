@@ -138,9 +138,7 @@ export default function SalesInvoiceList() {
         // Async purge any detected ghosts from IndexedDB
         const ghosts = (result.data || []).filter(isGhostVoucher);
         if (ghosts.length > 0) {
-          for (const g of ghosts) {
-            vouchersRepository.deleteVoucher(g.id);
-          }
+          await Promise.all(ghosts.map((g: any) => vouchersRepository.deleteVoucher(g.id)));
         }
 
         setPagination({

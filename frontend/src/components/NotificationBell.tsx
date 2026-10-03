@@ -116,7 +116,10 @@ export function NotificationBell() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative p-2 text-muted-foreground hover:text-foreground rounded-xl hover:bg-muted/60 transition-colors cursor-pointer min-h-[36px] min-w-[36px] items-center justify-center flex"
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
+        aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
+        className="relative p-2 text-muted-foreground hover:text-foreground rounded-xl hover:bg-muted/60 transition-colors cursor-pointer min-h-[44px] min-w-[44px] items-center justify-center flex"
         title="Notifications"
       >
         <Bell className="w-4 h-4" />
@@ -126,7 +129,11 @@ export function NotificationBell() {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-card border border-border shadow-2xl rounded-2xl z-50 overflow-hidden">
+        <div
+          role="region"
+          aria-label="Notifications"
+          className="absolute right-0 mt-2 w-80 sm:w-96 bg-card border border-border shadow-2xl rounded-2xl z-50 overflow-hidden"
+        >
           <div className="p-4 border-b border-border bg-muted/20 flex items-center justify-between">
             <h3 className="font-bold text-sm text-foreground">Notifications</h3>
             {unreadCount > 0 && (

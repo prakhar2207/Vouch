@@ -158,7 +158,7 @@ export default function Register() {
 
         {/* Error Alert */}
         {error && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-3.5 rounded-xl mb-6 text-xs flex items-start gap-2 animate-in fade-in">
+          <div role="alert" aria-live="assertive" className="bg-red-500/10 border border-red-500/30 text-red-400 p-3.5 rounded-xl mb-6 text-xs flex items-start gap-2 animate-in fade-in">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
@@ -170,8 +170,9 @@ export default function Register() {
           {step === 1 && (
             <div className="space-y-4 animate-in fade-in duration-200">
               <div>
-                <label className="block text-xs font-semibold mb-1.5 text-foreground">Login Email *</label>
+                <label htmlFor="reg-email" className="block text-xs font-semibold mb-1.5 text-foreground">Login Email *</label>
                 <input
+                  id="reg-email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -181,8 +182,9 @@ export default function Register() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold mb-1.5 text-foreground">Password *</label>
+                <label htmlFor="reg-password" className="block text-xs font-semibold mb-1.5 text-foreground">Password *</label>
                 <input
+                  id="reg-password"
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -199,8 +201,9 @@ export default function Register() {
           {step === 2 && (
             <div className="space-y-4 animate-in fade-in duration-200">
               <div>
-                <label className="block text-xs font-semibold mb-1.5 text-foreground">Firm Name *</label>
+                <label htmlFor="reg-firm" className="block text-xs font-semibold mb-1.5 text-foreground">Firm Name *</label>
                 <input
+                  id="reg-firm"
                   type="text"
                   value={firmName}
                   onChange={(e) => setFirmName(e.target.value)}
@@ -211,8 +214,9 @@ export default function Register() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold mb-1.5 text-foreground">GSTIN *</label>
+                  <label htmlFor="reg-gstin" className="block text-xs font-semibold mb-1.5 text-foreground">GSTIN *</label>
                   <input
+                    id="reg-gstin"
                     type="text"
                     value={gstin}
                     onChange={(e) => setGstin(e.target.value.toUpperCase())}
@@ -223,8 +227,9 @@ export default function Register() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold mb-1.5 text-foreground">Mobile No. *</label>
+                  <label htmlFor="reg-phone" className="block text-xs font-semibold mb-1.5 text-foreground">Mobile No. *</label>
                   <input
+                    id="reg-phone"
                     type="tel"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
@@ -236,8 +241,9 @@ export default function Register() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold mb-1.5 text-foreground">Company Email (Optional)</label>
+                  <label htmlFor="reg-company-email" className="block text-xs font-semibold mb-1.5 text-foreground">Company Email (Optional)</label>
                   <input
+                    id="reg-company-email"
                     type="email"
                     value={companyEmail}
                     onChange={(e) => setCompanyEmail(e.target.value)}
@@ -256,8 +262,9 @@ export default function Register() {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold mb-1.5 text-foreground">Billing Address *</label>
+                <label htmlFor="reg-address" className="block text-xs font-semibold mb-1.5 text-foreground">Billing Address *</label>
                 <textarea
+                  id="reg-address"
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
                   required
@@ -280,8 +287,9 @@ export default function Register() {
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold mb-1.5 text-foreground">Proprietor / Signatory Name</label>
+                  <label htmlFor="reg-proprietor-name" className="block text-xs font-semibold mb-1.5 text-foreground">Proprietor / Signatory Name</label>
                   <input
+                    id="reg-proprietor-name"
                     type="text"
                     value={proprietorName}
                     onChange={(e) => setProprietorName(e.target.value)}
@@ -290,8 +298,9 @@ export default function Register() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold mb-1.5 text-foreground">Proprietor Phone</label>
+                  <label htmlFor="reg-proprietor-phone" className="block text-xs font-semibold mb-1.5 text-foreground">Proprietor Phone</label>
                   <input
+                    id="reg-proprietor-phone"
                     type="tel"
                     value={proprietorPhone}
                     onChange={(e) => setProprietorPhone(e.target.value)}
@@ -303,11 +312,12 @@ export default function Register() {
 
               {/* Digital Signature File Upload */}
               <div>
-                <label className="block text-xs font-semibold mb-1.5 text-foreground">
+                <label htmlFor="reg-signature-file" className="block text-xs font-semibold mb-1.5 text-foreground">
                   Digital Signature Image (Optional)
                 </label>
                 
                 <input
+                  id="reg-signature-file"
                   type="file"
                   ref={fileInputRef}
                   onChange={handleSignatureChange}

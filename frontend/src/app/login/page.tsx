@@ -63,7 +63,7 @@ export default function Login() {
 
         {/* Error */}
         {error && (
-          <div className="bg-destructive/10 border border-destructive/20 text-destructive p-3 rounded-xl mb-5 text-xs flex items-start gap-2 animate-in fade-in">
+          <div role="alert" aria-live="assertive" className="bg-destructive/10 border border-destructive/20 text-destructive p-3 rounded-xl mb-5 text-xs flex items-start gap-2 animate-in fade-in">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
@@ -72,8 +72,9 @@ export default function Login() {
         <form onSubmit={handleLogin} className="space-y-4">
           {/* Email Field */}
           <div>
-            <label className="block text-xs font-semibold mb-1.5 text-foreground">Email</label>
+            <label htmlFor="login-email" className="block text-xs font-semibold mb-1.5 text-foreground">Email</label>
             <input 
+              id="login-email"
               type="email" 
               autoComplete="email"
               className="w-full bg-muted/50 border border-input p-3 rounded-xl text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all" 
@@ -88,7 +89,7 @@ export default function Login() {
           {/* Password Field */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-semibold text-foreground">Password</label>
+              <label htmlFor="login-password" className="text-xs font-semibold text-foreground">Password</label>
               <button 
                 type="button"
                 onClick={() => alert("Please contact your administrator to reset your password.")}
@@ -99,6 +100,7 @@ export default function Login() {
             </div>
             <div className="relative">
               <input 
+                id="login-password"
                 type={showPassword ? 'text' : 'password'}
                 autoComplete="current-password"
                 className="w-full bg-muted/50 border border-input p-3 pr-10 rounded-xl text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all" 
