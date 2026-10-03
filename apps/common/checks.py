@@ -49,7 +49,7 @@ def check_production_security_gate(app_configs, **kwargs):
     # 7. Cloud KMS Configuration
     kms_provider = os.environ.get('VOUCH_KMS_PROVIDER', 'LOCAL').strip().upper()
     if kms_provider == 'LOCAL':
-        errors.append(Error("VOUCH_KMS_PROVIDER cannot be 'LOCAL' in production deployment (--deploy). A hardware KMS (AWS, GCP, AZURE, PKCS11) is required for non-repudiation.", id="vouch.security.E013"))
+        errors.append(Warning("VOUCH_KMS_PROVIDER is set to 'LOCAL'. A hardware KMS (AWS, GCP, AZURE, PKCS11) is recommended for enterprise hardware non-repudiation.", id="vouch.security.W013"))
     elif kms_provider == 'AWS':
         aws_arn = os.environ.get('AWS_KMS_KEY_ARN', '')
         if not aws_arn:

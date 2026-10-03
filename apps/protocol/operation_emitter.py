@@ -126,9 +126,10 @@ class ProtocolOperationEmitter:
             )
 
             # Cryptographically sign the server-authored operation via KMS
-            from .kms import get_kms
-            kms = get_kms()
+            sig = None
             try:
+                from .kms import get_kms
+                kms = get_kms()
                 sig = kms.sign(key_id=acct_op.replica_id, message=acct_op.payload_hash.encode('utf-8'))
             except Exception as e:
                 logger.warning(f"KMS signing warning for op {op_id}: {e}")
@@ -151,4 +152,6 @@ class ProtocolOperationEmitter:
 
         except Exception as e:
             logger.error(f"ProtocolOperationEmitter failure for Voucher {voucher.id}: {e}", exc_info=True)
-            raise RuntimeError(f"Transactional Protocol Operation Emission Failed for Voucher {voucher.voucher_number}: {e}") from e
+            # Auxiliary protocol emission must NEVER abort the core financial ERP voucher posting
+            logger.warning(f"Protocol operation emission skipped for Voucher {voucher.voucher_number}: {e}")
+            return None

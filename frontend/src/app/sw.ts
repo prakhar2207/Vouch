@@ -30,7 +30,7 @@ const safeDefaultCache = defaultCache.filter((entry) => {
 // (e.g., /api/v1/companies/, /api/v1/sync/, onrender.com backend, etc.)
 // All offline financial data is managed authoritatively via IndexedDB (Dexie).
 const accountingCustomCaching: RuntimeCaching[] = [
-  // 0. Navigation / Documents (NetworkFirst with offline fallback via Serwist fallbacks config)
+  // 0. Navigation / Documents (NetworkFirst with offline fallback)
   {
     matcher: ({ request, url }: any) => {
       // Never intercept API calls or backend endpoints
@@ -39,11 +39,19 @@ const accountingCustomCaching: RuntimeCaching[] = [
     },
     handler: new NetworkFirst({
       cacheName: "vouch-pages-cache",
+      networkTimeoutSeconds: 5,
       plugins: [
         new ExpirationPlugin({
           maxEntries: 50,
           maxAgeSeconds: 7 * 24 * 60 * 60, // 7 days
         }),
+        {
+          handlerDidError: async () => {
+            const cachedOffline = await caches.match("/~offline");
+            if (cachedOffline) return cachedOffline;
+            return new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain" } });
+          },
+        },
       ],
     }),
   },
@@ -91,6 +99,13 @@ installSerwist({
       } as any,
     ],
   },
+});
+
+// Precache offline page on install
+self.addEventListener("install", (event: any) => {
+  event.waitUntil(
+    caches.open("vouch-pages-cache").then((cache) => cache.add("/~offline").catch(() => {}))
+  );
 });
 
 // Cache cleanup: Wipe obsolete vouch-masters-cache from any existing clients
