@@ -7,7 +7,7 @@ import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 
-import { ChevronLeft, ChevronRight, Edit2, Trash2, Scale } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Edit2, Trash2, Scale, AlertCircle } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
@@ -23,6 +23,7 @@ export default function VouchersPage() {
   const { activeFY } = useFinancialYear();
   const [vouchers, setVouchers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'ALL' | 'PAYMENT' | 'RECEIPT'>('ALL');
   const [page, setPage] = useState<number>(1);
   const [pagination, setPagination] = useState<any>(null);
@@ -45,6 +46,7 @@ export default function VouchersPage() {
 
   const fetchVouchers = async (typeFilter: string = filter, targetPage: number = page) => {
     setLoading(true);
+    setFetchError(null);
     try {
       let companyId = activeCompanyId;
       if (!companyId && typeof window !== 'undefined') {
@@ -107,8 +109,9 @@ export default function VouchersPage() {
           });
         }
       }).catch(() => {});
-    } catch (err) {
+    } catch (err: unknown) {
       console.error(err);
+      setFetchError(err instanceof Error ? err.message : "Failed to load vouchers. Please check your connection.");
     } finally {
       setLoading(false);
     }
@@ -224,7 +227,23 @@ export default function VouchersPage() {
         {/* Table & Mobile Cards Container */}
         <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
           {loading ? (
-            <div className="p-12 text-center text-muted-foreground text-sm">Loading vouchers...</div>
+            <div className="flex flex-col items-center justify-center p-16 text-muted-foreground gap-3">
+              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm font-medium">Loading vouchers...</span>
+            </div>
+          ) : fetchError && vouchers.length === 0 ? (
+            <div className="p-12 text-center text-muted-foreground flex flex-col items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-destructive/10 text-destructive flex items-center justify-center">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <p className="text-sm font-semibold text-foreground">{fetchError}</p>
+              <button
+                onClick={() => fetchVouchers(filter, page)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-semibold hover:bg-primary/90 transition-colors cursor-pointer"
+              >
+                Try Again
+              </button>
+            </div>
           ) : vouchers.length === 0 ? (
             <div className="p-16 text-center text-muted-foreground">
               <svg className="w-16 h-16 text-zinc-700 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>

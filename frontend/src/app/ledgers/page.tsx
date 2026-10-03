@@ -1156,7 +1156,7 @@ export default function LedgersPage() {
         {/* Table View */}
         <div className="bg-card border border-border/40 rounded-2xl shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left text-xs min-w-[700px]">
               <thead className="bg-muted/30 text-muted-foreground border-b border-border/40 uppercase tracking-wider font-semibold">
                 <tr>
                   <th className="py-3 px-4">Account Head (Ledger)</th>
@@ -1174,7 +1174,7 @@ export default function LedgersPage() {
                   <tr>
                     <td colSpan={8} className="text-center py-12 text-muted-foreground">
                       <div className="flex flex-col items-center justify-center gap-2">
-                        <RefreshCw className="w-5 h-5 animate-spin text-blue-500" />
+                        <RefreshCw className="w-5 h-5 animate-spin text-primary" />
                         <span>Loading accounts...</span>
                       </div>
                     </td>

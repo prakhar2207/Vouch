@@ -268,7 +268,7 @@ export class ClientOperationManager {
               delta = qty;
             }
 
-            const baseStock = typeof product.currentStock === "number" ? product.currentStock : Number((product as any).current_stock ?? 0);
+            const baseStock = typeof product.currentStock === "number" ? product.currentStock : Number((product as { current_stock?: number }).current_stock ?? 0);
             const rawStock = baseStock + delta;
             if (rawStock < 0) {
               console.warn(`[Inventory Invariant Warning] Product ${product.id} stock projected negative (${rawStock}). Retaining exact arithmetic state for accounting review without clamp masking.`);
@@ -369,7 +369,11 @@ export class ClientOperationManager {
       if (ops.length === 0) continue;
 
       const firstOp = ops[0];
-      const companyId = firstOp.payload?.company_id || firstOp.payload?.company || "";
+      const companyId = String(firstOp.payload?.company_id || firstOp.payload?.company || "").trim();
+      if (!companyId) {
+        console.warn(`[Sync skipped] Missing company_id on outbox transaction ${txId}. Cannot sync without company context.`);
+        continue;
+      }
       const canonicalTx = firstOp.payload?.canonical_transaction;
       const canonicalTxHash = firstOp.payload?.canonical_tx_hash;
 
@@ -469,6 +473,15 @@ export class ClientOperationManager {
               lastSyncedAt: Date.now()
             });
           } else {
+            if (data.status === "SYNC_REJECTED" && typeof window !== "undefined") {
+              window.dispatchEvent(new CustomEvent("vouch_sync_rejected", {
+                detail: {
+                  transactionId: txId,
+                  reason: data.reason || "Sync rejected by server",
+                  status: data.status
+                }
+              }));
+            }
             for (const item of items) {
               if (item.id) {
                 const newRetryCount = (item.retryCount || 0) + 1;
@@ -494,7 +507,8 @@ export class ClientOperationManager {
             }
           }
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err || "Network Error");
         for (const item of items) {
           if (item.id) {
             const newRetryCount = (item.retryCount || 0) + 1;
@@ -502,7 +516,7 @@ export class ClientOperationManager {
               status: "FAILED",
               retryCount: newRetryCount,
               nextRetryAt: Date.now() + Math.pow(2, newRetryCount) * 1000,
-              lastError: err?.message || "Network Error"
+              lastError: errorMsg
             });
           }
         }

@@ -51,7 +51,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     <ToastContext.Provider value={{ toast }}>
       {children}
       {/* Sleek In-App Toast Container (top-right) */}
-      <div className="fixed top-5 right-5 z-[9999] flex flex-col gap-2.5 max-w-sm w-full pointer-events-none">
+      <div
+        className="fixed top-5 right-5 z-[9999] flex flex-col gap-2.5 max-w-sm w-full pointer-events-none"
+        aria-live="polite"
+        role="status"
+        aria-atomic="true"
+      >
         {toasts.map((t) => (
           <div
             key={t.id}

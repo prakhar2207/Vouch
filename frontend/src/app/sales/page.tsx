@@ -548,7 +548,10 @@ export default function SalesInvoiceList() {
             <span className="text-xs text-muted-foreground hidden sm:inline">Use ↑ / ↓ arrow keys to navigate, Ctrl+Enter to edit, Enter to print</span>
           </div>
           {loading ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground">Loading invoices...</div>
+            <div className="flex flex-col items-center justify-center h-full py-20 text-muted-foreground gap-3">
+              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm font-medium">Loading invoices...</span>
+            </div>
           ) : invoices.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-12 bg-card">
               <svg className="w-20 h-20 text-muted-foreground dark:text-gray-600 mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -556,7 +559,7 @@ export default function SalesInvoiceList() {
               </svg>
               <h3 className="text-2xl font-bold mb-2">No Invoices Found</h3>
               <p className="text-muted-foreground max-w-md mx-auto mb-8">No invoices found matching the current filter.</p>
-              <Link href="/sales/new" className="bg-blue-600 text-foreground px-6 py-2.5 rounded-lg shadow hover:bg-blue-700 transition-colors font-medium">
+              <Link href="/sales/new" className="bg-blue-600 text-white px-6 py-2.5 rounded-lg shadow hover:bg-blue-700 transition-colors font-medium">
                 + Create Invoice
               </Link>
             </div>

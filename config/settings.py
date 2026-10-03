@@ -222,7 +222,9 @@ CELERY_BEAT_SCHEDULE = {
 
 # Off-site Disaster Recovery & Cloud Storage Settings
 BACKUP_RETENTION_DAYS = env.int('BACKUP_RETENTION_DAYS', default=7)
-BACKUP_ENCRYPTION_KEY = env('BACKUP_ENCRYPTION_KEY', default=SECRET_KEY)
+import hashlib
+_default_backup_key = hashlib.sha256((SECRET_KEY + '_vouch_dr_backup_salt').encode()).hexdigest()
+BACKUP_ENCRYPTION_KEY = env('BACKUP_ENCRYPTION_KEY', default=_default_backup_key)
 BACKUP_S3_BUCKET = env('BACKUP_S3_BUCKET', default=None)
 AWS_STORAGE_BUCKET_NAME = env('AWS_STORAGE_BUCKET_NAME', default=None)
 AWS_ACCESS_KEY_ID = env('AWS_ACCESS_KEY_ID', default=None)
@@ -305,6 +307,10 @@ if render_hostname and f'https://{render_hostname}' not in CSRF_TRUSTED_ORIGINS:
     CSRF_TRUSTED_ORIGINS.append(f'https://{render_hostname}')
 
 # Security & Reverse Proxy Settings (Production Hardening)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+
 if not DEBUG:
     # Render / reverse proxy HTTPS termination header
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -312,10 +318,10 @@ if not DEBUG:
     # Secure Cookies over HTTPS
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+    CSRF_COOKIE_HTTPONLY = True
     
-    # HTTP Security Headers
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    X_FRAME_OPTIONS = 'DENY'
+    # Enforce SSL Redirect in production
+    SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=True)
     
     # HTTP Strict Transport Security (HSTS)
     SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=31536000)  # 1 year
@@ -324,6 +330,7 @@ if not DEBUG:
 else:
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
+    SECURE_SSL_REDIRECT = False
 
 # Upload limits (50 MB) to prevent RequestDataTooBig on manufacturer price lists and high-res bills
 DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800

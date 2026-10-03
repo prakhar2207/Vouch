@@ -36,8 +36,39 @@ export default function Register() {
 
   const handleNext = (e: React.FormEvent) => {
     e.preventDefault();
-    if (step === 1 && (!email || !password)) return;
-    if (step === 2 && (!firmName || !gstin || !phone || !address || !stateCode)) return;
+    if (step === 1) {
+      if (!email.trim() || !password) {
+        setError("Please enter your email and password to continue.");
+        return;
+      }
+      if (password.length < 6) {
+        setError("Password must be at least 6 characters long.");
+        return;
+      }
+    }
+    if (step === 2) {
+      if (!firmName.trim()) {
+        setError("Please enter your legal business or firm name.");
+        return;
+      }
+      if (!gstin.trim()) {
+        setError("Please enter your GSTIN.");
+        return;
+      }
+      if (!phone.trim()) {
+        setError("Please enter your business contact phone.");
+        return;
+      }
+      if (!address.trim()) {
+        setError("Please enter your business registered address.");
+        return;
+      }
+      if (!stateCode.trim()) {
+        setError("Please enter your 2-digit state code.");
+        return;
+      }
+    }
+    setError("");
     setStep(step + 1);
   };
 

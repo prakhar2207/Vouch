@@ -9,7 +9,11 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useFinancialYear } from "@/context/FinancialYearContext";
-import { LocalAnalyticsEngine } from "@/lib/analytics/analytics-engine";
+import {
+  LocalAnalyticsEngine,
+  LocalDashboardResult,
+  SalesForecastResult,
+} from "@/lib/analytics/analytics-engine";
 import { pullIncrementalChanges, executeClientOutboxSync } from "@/lib/sync/sync-worker";
 import { offlineDb } from "@/lib/db/offlineDb";
 import {
@@ -98,14 +102,46 @@ function formatCurrencyShort(val: number): string {
   return `₹${val.toFixed(0)}`;
 }
 
+export type CoverageData = LocalDashboardResult["coverage"];
+
+export interface DashboardVoucher {
+  id?: string;
+  voucher_number?: string;
+  voucherNumber?: string;
+  voucher_type?: string;
+  voucherType?: string;
+  voucher_date?: string;
+  voucherDate?: string;
+  date?: string;
+  party_name?: string;
+  partyName?: string;
+  narration?: string;
+  total_amount?: number | string;
+  totalAmount?: number | string;
+  status?: string;
+  [key: string]: any;
+}
+
+export interface HealthReportData {
+  health_score?: number;
+  health_status?: string;
+  status?: string;
+  metrics?: {
+    critical_findings_count?: number;
+    [key: string]: any;
+  };
+  findings?: Array<any>;
+  [key: string]: any;
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const { setIsHelpOpen } = useShortcuts();
-  const [insights, setInsights] = useState<any>(null);
-  const [vouchers, setVouchers] = useState<any[]>([]);
-  const [coverage, setCoverage] = useState<any>(null);
-  const [forecast, setForecast] = useState<any>(null);
-  const [healthReport, setHealthReport] = useState<any>(null);
+  const [insights, setInsights] = useState<LocalDashboardResult | null>(null);
+  const [vouchers, setVouchers] = useState<DashboardVoucher[]>([]);
+  const [coverage, setCoverage] = useState<CoverageData | null>(null);
+  const [forecast, setForecast] = useState<SalesForecastResult | null>(null);
+  const [healthReport, setHealthReport] = useState<HealthReportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [syncStatus, setSyncStatus] = useState<"IDLE" | "SYNCING" | "ERROR">("IDLE");

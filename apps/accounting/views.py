@@ -58,60 +58,60 @@ class CreateSalesInvoiceAPIView(APIView):
             company = Company.objects.get(id=data['company_id'], users__user=request.user)
             party_ledger = Ledger.objects.get(id=data['party_ledger_id'], company=company)
 
-            # Resolve sales ledger
-            sales_ledger = None
-            sales_ledger_id = data.get('sales_ledger_id')
-            if sales_ledger_id and str(sales_ledger_id).strip():
-                try:
-                    sales_ledger = Ledger.objects.filter(id=sales_ledger_id, company=company).first()
-                except Exception:
-                    sales_ledger = None
-            if not sales_ledger:
-                sales_ledger = Ledger.objects.filter(company=company, ledger_type='SALES').first() or \
-                               Ledger.objects.filter(company=company, name__icontains='Sales').first()
-                if not sales_ledger:
-                    income_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Sales Accounts', defaults={'nature': 'INCOME'})
-                    sales_ledger, _ = Ledger.objects.get_or_create(company=company, name='Sales Account', defaults={'group': income_grp, 'ledger_type': 'SALES'})
-
-            # Resolve tax ledgers
-            tax_grp = None
-            def get_or_create_duties_grp():
-                nonlocal tax_grp
-                if not tax_grp:
-                    tax_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Duties & Taxes', defaults={'nature': 'LIABILITY'})
-                return tax_grp
-
-            cgst_ledger = None
-            cgst_id = data.get('cgst_ledger_id')
-            if cgst_id and str(cgst_id).strip():
-                try:
-                    cgst_ledger = Ledger.objects.filter(id=cgst_id, company=company).first()
-                except Exception:
-                    cgst_ledger = None
-            if not cgst_ledger or 'input' in cgst_ledger.name.lower():
-                cgst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'CGST')
-
-            sgst_ledger = None
-            sgst_id = data.get('sgst_ledger_id')
-            if sgst_id and str(sgst_id).strip():
-                try:
-                    sgst_ledger = Ledger.objects.filter(id=sgst_id, company=company).first()
-                except Exception:
-                    sgst_ledger = None
-            if not sgst_ledger or 'input' in sgst_ledger.name.lower():
-                sgst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'SGST')
-
-            igst_ledger = None
-            igst_id = data.get('igst_ledger_id')
-            if igst_id and str(igst_id).strip():
-                try:
-                    igst_ledger = Ledger.objects.filter(id=igst_id, company=company).first()
-                except Exception:
-                    igst_ledger = None
-            if not igst_ledger or 'input' in igst_ledger.name.lower():
-                igst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'IGST')
-            
             with transaction.atomic():
+                # Resolve sales ledger
+                sales_ledger = None
+                sales_ledger_id = data.get('sales_ledger_id')
+                if sales_ledger_id and str(sales_ledger_id).strip():
+                    try:
+                        sales_ledger = Ledger.objects.filter(id=sales_ledger_id, company=company).first()
+                    except Exception:
+                        sales_ledger = None
+                if not sales_ledger:
+                    sales_ledger = Ledger.objects.filter(company=company, ledger_type='SALES').first() or \
+                                   Ledger.objects.filter(company=company, name__icontains='Sales').first()
+                    if not sales_ledger:
+                        income_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Sales Accounts', defaults={'nature': 'INCOME'})
+                        sales_ledger, _ = Ledger.objects.get_or_create(company=company, name='Sales Account', defaults={'group': income_grp, 'ledger_type': 'SALES'})
+
+                # Resolve tax ledgers
+                tax_grp = None
+                def get_or_create_duties_grp():
+                    nonlocal tax_grp
+                    if not tax_grp:
+                        tax_grp, _ = LedgerGroup.objects.get_or_create(company=company, name='Duties & Taxes', defaults={'nature': 'LIABILITY'})
+                    return tax_grp
+
+                cgst_ledger = None
+                cgst_id = data.get('cgst_ledger_id')
+                if cgst_id and str(cgst_id).strip():
+                    try:
+                        cgst_ledger = Ledger.objects.filter(id=cgst_id, company=company).first()
+                    except Exception:
+                        cgst_ledger = None
+                if not cgst_ledger or 'input' in cgst_ledger.name.lower():
+                    cgst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'CGST')
+
+                sgst_ledger = None
+                sgst_id = data.get('sgst_ledger_id')
+                if sgst_id and str(sgst_id).strip():
+                    try:
+                        sgst_ledger = Ledger.objects.filter(id=sgst_id, company=company).first()
+                    except Exception:
+                        sgst_ledger = None
+                if not sgst_ledger or 'input' in sgst_ledger.name.lower():
+                    sgst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'SGST')
+
+                igst_ledger = None
+                igst_id = data.get('igst_ledger_id')
+                if igst_id and str(igst_id).strip():
+                    try:
+                        igst_ledger = Ledger.objects.filter(id=igst_id, company=company).first()
+                    except Exception:
+                        igst_ledger = None
+                if not igst_ledger or 'input' in igst_ledger.name.lower():
+                    igst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'IGST')
+                
                 # 1. Orchestrate Invoice Creation
                 voucher = SalesInvoiceService.generate_sales_invoice(
                     company=company,
@@ -376,6 +376,8 @@ class ListVouchersAPIView(APIView):
                     default=Value(False),
                     output_field=BooleanField()
                 )
+            ).select_related(
+                'party_ledger'
             ).only(
                 'id', 'voucher_number', 'reference_number', 'voucher_type',
                 'voucher_date', 'status', 'total_amount', 'party_ledger__name'
@@ -501,7 +503,10 @@ def check_invoice_download_permission(user, voucher):
 
     if buyer_phone and len(buyer_phone) >= 10:
         phone_clean = buyer_phone[-10:]
-        buyer_companies_phone = Company.objects.filter(phone__icontains=phone_clean, is_active=True)
+        buyer_companies_phone = Company.objects.filter(
+            Q(phone=phone_clean) | Q(phone=f"+91{phone_clean}") | Q(phone__endswith=phone_clean),
+            is_active=True
+        )
         if buyer_companies_phone.exists():
             uc_buyer_phone = UserCompany.objects.filter(user=user, company__in=buyer_companies_phone).first()
             if uc_buyer_phone:
@@ -1047,7 +1052,7 @@ class VoucherDetailAPIView(APIView):
                                 brand__iexact=item_brand
                             ).first()
                             if not product:
-                                for p in Product.objects.filter(company=company, brand__iexact=item_brand):
+                                for p in Product.objects.filter(company=company, brand__iexact=item_brand).select_related('category'):
                                     if get_canonical_key(p.name, p.category.name if p.category else cat_name) == canon_key:
                                         product = p
                                         if p.name != clean_item_name:
@@ -1063,7 +1068,7 @@ class VoucherDetailAPIView(APIView):
                                 name__iexact=clean_item_name
                             ).filter(unbranded_q).first()
                             if not product:
-                                for p in Product.objects.filter(company=company).filter(unbranded_q):
+                                for p in Product.objects.filter(company=company).filter(unbranded_q).select_related('category'):
                                     if get_canonical_key(p.name, p.category.name if p.category else cat_name) == canon_key:
                                         product = p
                                         if p.name != clean_item_name:

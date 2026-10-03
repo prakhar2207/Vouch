@@ -284,7 +284,7 @@ export default function PartiesPage() {
             <div className="flex items-center gap-2">
               <Link 
                 href="/purchases/suppliers/new" 
-                className="bg-red-600/90 hover:bg-red-600 text-foreground px-4 py-2.5 rounded-xl shadow transition-colors text-sm font-semibold whitespace-nowrap flex items-center gap-2 min-h-[40px]"
+                className="bg-red-600/90 hover:bg-red-600 text-white px-4 py-2.5 rounded-xl shadow transition-colors text-sm font-semibold whitespace-nowrap flex items-center gap-2 min-h-[40px]"
               >
                 <Plus className="w-4 h-4" />
                 <span>Supplier</span>
@@ -370,7 +370,10 @@ export default function PartiesPage() {
         </div>
         
         {loading ? (
-          <div className="flex items-center justify-center py-20 text-muted-foreground">Loading parties...</div>
+          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm font-medium">Loading parties...</span>
+          </div>
         ) : filteredParties.length === 0 ? (
           <div className="flex flex-col items-center justify-center text-center p-16 bg-card rounded-2xl border border-border/40 shadow-sm mt-4">
             <svg className="w-16 h-16 text-muted-foreground mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -383,7 +386,7 @@ export default function PartiesPage() {
                 : `No ${activeFilter !== 'ALL' ? activeFilter.toLowerCase() + 's' : 'parties'} recorded yet.`}
             </p>
             <div className="flex gap-3">
-              <Link href="/purchases/suppliers/new" className="bg-red-600 text-foreground px-5 py-2 rounded-xl shadow hover:bg-red-700 transition-colors text-xs font-bold">
+              <Link href="/purchases/suppliers/new" className="bg-red-600 text-white px-5 py-2 rounded-xl shadow hover:bg-red-700 transition-colors text-xs font-bold">
                 + Add Supplier
               </Link>
               <Link href="/sales/customers/new" className="bg-primary hover:bg-primary/90 text-primary-foreground px-5 py-2 rounded-xl shadow-md shadow-primary/20 transition-colors text-xs font-bold">

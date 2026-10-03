@@ -4,10 +4,10 @@ import { jwtDecode } from 'jwt-decode';
 export const setTokens = (access: string, refresh?: string) => {
   const isSecure = typeof window !== 'undefined' && window.location.protocol === 'https:';
   if (access && access !== 'undefined' && access !== 'null') {
-    Cookies.set('access_token', access, { expires: 1, sameSite: 'lax', secure: isSecure });
+    Cookies.set('access_token', access, { expires: 1, sameSite: 'strict', secure: isSecure });
   }
   if (refresh && refresh !== 'undefined' && refresh !== 'null') {
-    Cookies.set('refresh_token', refresh, { expires: 30, sameSite: 'lax', secure: isSecure });
+    Cookies.set('refresh_token', refresh, { expires: 30, sameSite: 'strict', secure: isSecure });
   }
 };
 
@@ -101,32 +101,37 @@ export const setUser = (user: AuthUser) => {
 
 export const getUser = (): AuthUser | null => {
   if (typeof window === 'undefined') return null;
+
+  let storedUser: AuthUser | null = null;
   try {
     const raw = localStorage.getItem('vouch_user');
     if (raw) {
-      return JSON.parse(raw);
+      storedUser = JSON.parse(raw);
     }
   } catch (e) {
     console.error('Error reading user from localStorage', e);
   }
 
-  // Fallback: extract from JWT
+  // Prioritize cryptographically signed JWT claims for role & identity to prevent localStorage privilege tampering
   const token = getAccessToken();
   if (token) {
     try {
       const decoded = jwtDecode<DecodedTokenPayload>(token);
-      if (decoded) {
+      if (decoded && decoded.user_id) {
         return {
-          id: decoded.user_id || '',
-          email: decoded.email || '',
-          role: decoded.role || 'VIEWER',
-          is_staff: Boolean(decoded.is_staff),
-          is_superuser: Boolean(decoded.is_superuser),
+          id: decoded.user_id,
+          email: decoded.email || storedUser?.email || '',
+          first_name: storedUser?.first_name,
+          last_name: storedUser?.last_name,
+          role: decoded.role || storedUser?.role || 'VIEWER',
+          is_staff: decoded.is_staff !== undefined ? Boolean(decoded.is_staff) : Boolean(storedUser?.is_staff),
+          is_superuser: decoded.is_superuser !== undefined ? Boolean(decoded.is_superuser) : Boolean(storedUser?.is_superuser),
         };
       }
     } catch {}
   }
-  return null;
+
+  return storedUser;
 };
 
 export const removeUser = () => {

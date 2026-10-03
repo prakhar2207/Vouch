@@ -185,6 +185,7 @@ class Voucher(models.Model):
             models.Index(fields=['company', 'party_ledger', 'voucher_date']),
             models.Index(fields=['company', 'party_ledger', 'status']),
             models.Index(fields=['company', 'voucher_type', 'voucher_date']),
+            models.Index(fields=['company', 'voucher_type', 'status', 'voucher_date']),
             models.Index(fields=['company', 'updated_at']),
         ]
 

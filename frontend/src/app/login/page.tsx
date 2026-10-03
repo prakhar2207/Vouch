@@ -74,7 +74,8 @@ export default function Login() {
           <div>
             <label className="block text-xs font-semibold mb-1.5 text-foreground">Email</label>
             <input 
-              type="text" 
+              type="email" 
+              autoComplete="email"
               className="w-full bg-muted/50 border border-input p-3 rounded-xl text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all" 
               value={username} 
               onChange={e => setUsername(e.target.value)} 
@@ -88,11 +89,18 @@ export default function Login() {
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-semibold text-foreground">Password</label>
-              <span className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">Forgot password?</span>
+              <button 
+                type="button"
+                onClick={() => alert("Please contact your administrator to reset your password.")}
+                className="text-xs text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
+              >
+                Forgot password?
+              </button>
             </div>
             <div className="relative">
               <input 
                 type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
                 className="w-full bg-muted/50 border border-input p-3 pr-10 rounded-xl text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all" 
                 value={password} 
                 onChange={e => setPassword(e.target.value)} 
@@ -102,8 +110,8 @@ export default function Login() {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                tabIndex={-1}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors cursor-pointer p-1 rounded-md"
+                aria-label={showPassword ? "Hide password" : "Show password"}
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>

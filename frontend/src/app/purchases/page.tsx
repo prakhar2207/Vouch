@@ -738,8 +738,9 @@ export default function PurchaseInvoiceList() {
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center p-16 text-muted-foreground text-sm">
-              Loading invoices...
+            <div className="flex flex-col items-center justify-center p-16 text-muted-foreground gap-3">
+              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm font-medium">Loading invoices...</span>
             </div>
           ) : fetchError && invoices.length === 0 ? (
             <div className="flex flex-col items-center justify-center p-16 text-center bg-card">
@@ -1173,8 +1174,9 @@ export default function PurchaseInvoiceList() {
               {/* Modal Body */}
               <div className="flex-1 overflow-y-auto p-6 space-y-6">
                 {loadingDetail ? (
-                  <div className="flex items-center justify-center p-12 text-muted-foreground">
-                    Loading voucher details & attached invoice...
+                  <div className="flex flex-col items-center justify-center p-12 text-muted-foreground gap-3">
+                    <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <span className="text-sm font-medium">Loading voucher details & attached invoice...</span>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

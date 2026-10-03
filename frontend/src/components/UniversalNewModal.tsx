@@ -28,6 +28,7 @@ interface UniversalNewModalProps {
 export default function UniversalNewModal({ isOpen, onClose }: UniversalNewModalProps) {
   const router = useRouter();
   const modalRef = useRef<HTMLDivElement>(null);
+  const previousActiveElement = useRef<HTMLElement | null>(null);
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [canAccounting, setCanAccounting] = useState(true);
 
@@ -63,17 +64,23 @@ export default function UniversalNewModal({ isOpen, onClose }: UniversalNewModal
     };
 
     if (isOpen) {
+      previousActiveElement.current = document.activeElement as HTMLElement | null;
       document.addEventListener("keydown", handleKeyDown);
       document.body.style.overflow = "hidden";
-      // Auto-focus first interactive element
+      // Auto-focus first interactive element that is not disabled
       setTimeout(() => {
-        const firstBtn = modalRef.current?.querySelector<HTMLButtonElement>("button:not([aria-label='Close dialog'])");
+        const firstBtn = modalRef.current?.querySelector<HTMLButtonElement>(
+          "button:not([aria-label='Close dialog']):not([disabled])"
+        ) || modalRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])");
         firstBtn?.focus();
       }, 50);
     }
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = "unset";
+      if (previousActiveElement.current) {
+        previousActiveElement.current.focus();
+      }
     };
   }, [isOpen, onClose]);
 
@@ -98,12 +105,13 @@ export default function UniversalNewModal({ isOpen, onClose }: UniversalNewModal
     <div
       onClick={handleBackdropClick}
       className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="universal-new-title"
     >
       <div
         ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="universal-new-title"
+        aria-describedby="universal-new-description"
         className="w-full max-w-2xl bg-card border border-border/80 rounded-2xl shadow-2xl p-5 sm:p-6 space-y-5 animate-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto"
       >
         {/* Header */}
@@ -113,7 +121,7 @@ export default function UniversalNewModal({ isOpen, onClose }: UniversalNewModal
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
               <span>Create / Record</span>
             </h2>
-            <p className="text-xs text-muted-foreground">
+            <p id="universal-new-description" className="text-xs text-muted-foreground">
               Quickly record transactions, create invoices, or add items & parties.
             </p>
           </div>

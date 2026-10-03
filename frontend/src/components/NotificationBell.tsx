@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { Bell, CheckCircle2, AlertCircle } from "lucide-react";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
+import { useToast } from "@/context/ToastContext";
 
 const urlBase64ToUint8Array = (base64String: string) => {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -17,6 +18,7 @@ const urlBase64ToUint8Array = (base64String: string) => {
 };
 
 export function NotificationBell() {
+  const { toast } = useToast();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
@@ -103,10 +105,10 @@ export function NotificationBell() {
         headers: { Authorization: `Bearer ${token}` },
       });
       setPushEnabled(true);
-      alert("Push notifications enabled!");
+      toast.success("Push notifications enabled!");
     } catch (e) {
       console.error("Failed to subscribe:", e);
-      alert("Failed to enable notifications. Please check browser permissions.");
+      toast.error("Failed to enable notifications. Please check browser permissions.");
     }
   };
 

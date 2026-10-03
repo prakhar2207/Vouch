@@ -298,14 +298,20 @@ export default function BankingPage() {
           }))
         ).catch((e: any) => console.warn("Failed to cache bank transactions offline:", e));
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
+      let loadedFromCache = false;
       if (selectedBankId) {
         const cached = await bankTransactionsRepository.getByBankLedger(selectedBankId);
         if (cached && cached.length > 0) {
           setTransactions(cached as any[]);
           toast.info("Offline Mode", "Displaying locally cached bank transactions.");
+          loadedFromCache = true;
         }
+      }
+      if (!loadedFromCache) {
+        const errMsg = err instanceof Error ? err.message : "Failed to load bank transactions";
+        toast.error("Banking Load Error", errMsg);
       }
     } finally {
       setLoading(false);

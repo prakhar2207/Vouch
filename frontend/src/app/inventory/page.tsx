@@ -339,7 +339,10 @@ export default function InventoryPage() {
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center py-20 text-muted-foreground">Loading...</div>
+          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm font-medium">Loading inventory categories...</span>
+          </div>
         ) : categories.length === 0 ? (
           <div className="flex flex-col items-center justify-center text-center p-16 bg-card rounded-2xl border border-border/40 shadow-sm">
             <svg className="w-20 h-20 text-muted-foreground/60 mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

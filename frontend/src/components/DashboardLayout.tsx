@@ -45,6 +45,7 @@ import {
   AlertTriangle,
   FolderKanban,
   Sliders,
+  X,
 } from "lucide-react";
 import SyncStatusBadge from "./SyncStatusBadge";
 import UniversalNewModal from "./UniversalNewModal";
@@ -94,7 +95,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     setIsCompanyDropdownOpen(false);
   }, [pathname]);
 
-  // Click away listener for dropdowns
+  // Click away and Escape key listeners for dropdowns
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
@@ -105,8 +106,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       if (companyRef.current && !companyRef.current.contains(target)) setIsCompanyDropdownOpen(false);
     };
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsReportsOpen(false);
+        setIsMoreOpen(false);
+        setIsUserMenuOpen(false);
+        setIsFYDropdownOpen(false);
+        setIsCompanyDropdownOpen(false);
+        setIsMobileNavOpen(false);
+      }
+    };
+
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, []);
 
   const handleLogout = () => {
@@ -162,6 +178,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
       />
+
+      {/* Skip to Main Content Link for Keyboard Accessibility */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:px-4 focus:py-2 focus:bg-primary focus:text-white focus:rounded-md focus:shadow-lg focus:outline-none"
+      >
+        Skip to main content
+      </a>
 
       {/* TOP NAVIGATION BAR */}
       <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-card/90 backdrop-blur-xl shadow-2xs print:hidden overflow-x-clip">
@@ -275,6 +299,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     setIsReportsOpen(!isReportsOpen);
                     setIsMoreOpen(false);
                   }}
+                  aria-haspopup="menu"
+                  aria-expanded={isReportsOpen}
+                  aria-controls="reports-dropdown-menu"
                   className={`px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                     isReportsActive
                       ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
@@ -287,12 +314,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
 
                 {isReportsOpen && (
-                  <div className="absolute left-0 top-full mt-1.5 w-72 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95 space-y-1">
+                  <div
+                    id="reports-dropdown-menu"
+                    role="menu"
+                    aria-label="Financial Statements & Reports"
+                    className="absolute left-0 top-full mt-1.5 w-72 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95 space-y-1"
+                  >
                     <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
                       Financial Statements & Reports
                     </div>
                     <Link
                       href="/reports/profit-and-loss"
+                      role="menuitem"
                       onClick={() => setIsReportsOpen(false)}
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
                     >
@@ -303,6 +336,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <Link
                       href="/reports/balance-sheet"
+                      role="menuitem"
                       onClick={() => setIsReportsOpen(false)}
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
                     >
@@ -313,6 +347,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <Link
                       href="/reports/trial-balance"
+                      role="menuitem"
                       onClick={() => setIsReportsOpen(false)}
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
                     >
@@ -323,6 +358,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <Link
                       href="/reports/aging"
+                      role="menuitem"
                       onClick={() => setIsReportsOpen(false)}
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
                     >
@@ -334,6 +370,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <div className="border-t border-border/40 my-1"></div>
                     <Link
                       href="/analytics"
+                      role="menuitem"
                       onClick={() => setIsReportsOpen(false)}
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
                     >
@@ -357,6 +394,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     setIsMoreOpen(!isMoreOpen);
                     setIsReportsOpen(false);
                   }}
+                  aria-haspopup="menu"
+                  aria-expanded={isMoreOpen}
+                  aria-controls="more-dropdown-menu"
                   className={`px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] font-medium transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                     isMoreActive
                       ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
@@ -369,7 +409,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
 
                 {isMoreOpen && (
-                  <div className="absolute left-0 top-full mt-1.5 w-80 max-h-[82vh] overflow-y-auto bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95 space-y-1">
+                  <div
+                    id="more-dropdown-menu"
+                    role="menu"
+                    aria-label="More Features"
+                    className="absolute left-0 top-full mt-1.5 w-80 max-h-[82vh] overflow-y-auto bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95 space-y-1"
+                  >
                     {/* Section 1: GST & Compliance */}
                     <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
                       GST & Statutory
@@ -687,7 +732,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                             <span className="font-medium text-xs text-foreground flex items-center gap-1.5">
                               {fy.name || `FY ${fy.code}`}
                               {fy.is_closed && (
-                                <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-400 font-normal">Closed</span>
+                                <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-800 dark:text-amber-300 font-normal">Closed</span>
                               )}
                             </span>
                             <span className="font-mono text-[10px] text-muted-foreground">
@@ -778,14 +823,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                       <span className={`px-1.5 py-0.5 text-[9px] font-mono font-bold rounded uppercase border ${
                         role === 'ADMIN'
-                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                          ? 'bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-500/30'
                           : role === 'OWNER'
-                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                          ? 'bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-500/30'
                           : role === 'CA'
-                          ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                          ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30'
                           : role === 'EMPLOYEE'
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                          : 'bg-zinc-500/10 text-zinc-400 border-zinc-500/30'
+                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
+                          : 'bg-zinc-500/10 text-zinc-700 dark:text-zinc-300 border-zinc-500/30'
                       }`}>
                         {role}
                       </span>
@@ -830,7 +875,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Read-Only Mode Banner for Closed Financial Year */}
       {isReadOnly && (
-        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-xs font-medium text-amber-400 flex items-center justify-between print:hidden">
+        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-xs font-medium text-amber-800 dark:text-amber-300 flex items-center justify-between print:hidden">
           <div className="flex items-center gap-2 max-w-[1600px] mx-auto w-full">
             <Lock className="w-3.5 h-3.5 shrink-0" />
             <span>
@@ -847,17 +892,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
             onClick={() => setIsMobileNavOpen(false)}
           />
-          <aside className="relative w-72 max-w-[80vw] bg-card/95 backdrop-blur-xl border-r border-border/40 h-full flex flex-col p-5 shadow-2xl z-10 animate-in slide-in-from-left duration-200">
+          <aside
+            className="relative w-72 max-w-[80vw] bg-card/95 backdrop-blur-xl border-r border-border/40 h-full flex flex-col p-5 shadow-2xl z-10 animate-in slide-in-from-left duration-200"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation Menu"
+          >
             <div className="flex items-center justify-between pb-4 border-b border-border">
               <div className="flex items-center gap-2">
                 <VouchLogo size={24} showWordmark={true} />
               </div>
               <button
                 onClick={() => setIsMobileNavOpen(false)}
-                className="text-muted-foreground hover:text-foreground p-2 rounded-lg min-h-[36px] min-w-[36px] flex items-center justify-center cursor-pointer"
+                className="text-muted-foreground hover:text-foreground p-2 rounded-lg min-h-[36px] min-w-[36px] flex items-center justify-center cursor-pointer transition-colors"
                 aria-label="Close Navigation Menu"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -1159,7 +1209,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden pb-20 lg:pb-0 print:overflow-visible print:p-0 print:m-0 print:w-full print:block">
+      <main id="main-content" className="flex-1 overflow-y-auto overflow-x-hidden pb-20 lg:pb-0 print:overflow-visible print:p-0 print:m-0 print:w-full print:block">
         <div className="p-4 sm:p-6 lg:p-8 max-w-[1600px] mx-auto print:p-0 print:m-0 print:max-w-none print:w-full">
           {children}
         </div>

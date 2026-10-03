@@ -163,13 +163,33 @@ class RegisterView(APIView):
 
 
 from rest_framework.throttling import AnonRateThrottle
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from .serializers import CustomTokenObtainPairSerializer
 
 class LoginRateThrottle(AnonRateThrottle):
     rate = '15/minute'
 
+class LoginAccountRateThrottle(AnonRateThrottle):
+    """Throttles login attempts per target account/email to prevent distributed brute-force attacks."""
+    rate = '10/minute'
+    scope = 'login_account'
+
+    def get_cache_key(self, request, view):
+        if request.user.is_authenticated:
+            ident = request.user.pk
+        else:
+            email = str(request.data.get('email') or request.data.get('username') or '').strip().lower()
+            if not email:
+                return None
+            ident = f"email_{email}"
+        return self.cache_format % {'scope': self.scope, 'ident': ident}
+
 class ThrottledTokenObtainPairView(TokenObtainPairView):
-    throttle_classes = [LoginRateThrottle]
+    throttle_classes = [LoginRateThrottle, LoginAccountRateThrottle]
     serializer_class = CustomTokenObtainPairSerializer
+
+class ThrottledTokenRefreshView(TokenRefreshView):
+    throttle_classes = [LoginRateThrottle]
+    throttle_scope = 'auth'
+
 

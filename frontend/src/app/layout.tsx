@@ -32,7 +32,11 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Vouch - Double-Entry Accounting & AI ERP",
+  metadataBase: new URL("https://vouchapp.in"),
+  title: {
+    default: "Vouch - Double-Entry Accounting & AI ERP",
+    template: "%s | Vouch",
+  },
   description: "Keyboard-first cloud ERP and accounting platform with automated GST compliance and AI bill extraction.",
   manifest: "/manifest.webmanifest",
   icons: {
@@ -44,6 +48,19 @@ export const metadata: Metadata = {
     capable: true,
     statusBarStyle: "default",
     title: "Vouch",
+  },
+  openGraph: {
+    type: "website",
+    locale: "en_IN",
+    url: "https://vouchapp.in",
+    siteName: "Vouch Accounting",
+    title: "Vouch - Double-Entry Accounting & AI ERP",
+    description: "Keyboard-first cloud ERP and accounting platform with automated GST compliance and AI bill extraction.",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Vouch - Double-Entry Accounting & AI ERP",
+    description: "Keyboard-first cloud ERP and accounting platform with automated GST compliance and AI bill extraction.",
   },
 };
 
