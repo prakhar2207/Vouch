@@ -18,6 +18,7 @@ import {
   Printer,
   Lock,
   ExternalLink,
+  QrCode,
 } from "lucide-react";
 
 interface ShareData {
@@ -344,6 +345,11 @@ export default function PublicSharePage() {
               <p className="text-xs text-slate-700 font-medium">
                 GSTIN: <span className="font-bold">{seller.gstin || "Unregistered"}</span>
               </p>
+              {(seller.upi_id || seller.bank_upi_id) && (
+                <p className="text-xs text-emerald-700 font-medium">
+                  UPI ID: <span className="font-mono font-bold text-emerald-900">{seller.upi_id || seller.bank_upi_id}</span>
+                </p>
+              )}
             </div>
 
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
@@ -357,6 +363,30 @@ export default function PublicSharePage() {
               </p>
             </div>
           </div>
+
+          {/* Instant UPI Payment Action */}
+          {(dto.upi_url || seller.upi_id || seller.bank_upi_id) && (
+            <div className="bg-emerald-50 border border-emerald-200/80 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                  <QrCode className="w-4 h-4 text-emerald-700" />
+                  Direct UPI Merchant Payment
+                </span>
+                <p className="text-xs text-emerald-700 mt-0.5">
+                  Business UPI VPA: <span className="font-mono font-bold text-emerald-950">{seller.upi_id || seller.bank_upi_id}</span>
+                </p>
+              </div>
+              {dto.upi_url && (
+                <a
+                  href={dto.upi_url}
+                  className="w-full sm:w-auto px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition-colors inline-flex items-center justify-center gap-1.5 shrink-0"
+                >
+                  Pay ₹{Number(data.total_amount || subtotals.grand_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} via UPI
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </a>
+              )}
+            </div>
+          )}
 
           {/* Items Table (For Invoices) */}
           {items.length > 0 && (

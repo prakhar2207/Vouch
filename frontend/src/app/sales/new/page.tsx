@@ -225,6 +225,7 @@ export default function SalesPage() {
           setCompany(cachedComp.data);
           setCompanyId(cachedComp.data.id);
           setCompanyStateCode(cachedComp.data.state_code || '');
+          if (cachedComp.data.upi_id) setUpiId(cachedComp.data.upi_id);
           setEnableLedgerMapping(cachedComp.data.settings?.enable_ledger_mapping || false);
           setEnableManualInvoice(cachedComp.data.settings?.enable_manual_invoice_number || false);
         }
@@ -247,6 +248,7 @@ export default function SalesPage() {
       setCompany(comp);
       setCompanyId(cId);
       setCompanyStateCode(comp.state_code || '');
+      if (comp.upi_id) setUpiId(comp.upi_id);
       
       const isMappingEnabled = comp.settings?.enable_ledger_mapping || false;
       setEnableLedgerMapping(isMappingEnabled);
@@ -2487,7 +2489,18 @@ export default function SalesPage() {
                     </label>
                     <select
                       value={selectedBankLedgerId}
-                      onChange={e => setSelectedBankLedgerId(e.target.value)}
+                      onChange={e => {
+                        const chosenId = e.target.value;
+                        setSelectedBankLedgerId(chosenId);
+                        if (chosenId) {
+                          const chosenLedger = ledgers.find(l => l.id === chosenId);
+                          if (chosenLedger?.upi_id) {
+                            setUpiId(chosenLedger.upi_id);
+                          }
+                        } else if (company?.upi_id) {
+                          setUpiId(company.upi_id);
+                        }
+                      }}
                       className="w-full bg-background border border-input text-foreground text-sm p-2.5 rounded-lg focus:ring-2 focus:ring-primary outline-none"
                     >
                       <option value="">-- Use Default Company Bank --</option>

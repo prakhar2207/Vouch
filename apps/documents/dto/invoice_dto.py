@@ -144,22 +144,39 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
                 'total_tax': float(r_cgst + r_sgst),
             })
 
-    # Bank details defaults
-    b_name = company.bank_name or 'Canara Bank Govind Nagar'
-    b_branch = company.bank_branch or ''
-    b_acc = company.bank_account_number or '125008094288'
-    b_ifsc = company.bank_ifsc or 'CNRB0003827'
+    # Bank details defaults - check Company model first, fallback to bank ledger if not set
+    b_name = (getattr(company, 'bank_name', '') or '').strip()
+    b_branch = (getattr(company, 'bank_branch', '') or '').strip()
+    b_acc = (getattr(company, 'bank_account_number', '') or '').strip()
+    b_ifsc = (getattr(company, 'bank_ifsc', '') or '').strip()
 
-    # UPI URL
-    phone_val = getattr(company, 'phone', '')
-    upi_id = getattr(company, 'bank_upi_id', None) or (f"{phone_val}@upi" if phone_val else "vouch@upi")
-    upi_url = (
-        f"upi://pay?pa={upi_id}"
-        f"&pn={urllib.parse.quote(company.name)}"
-        f"&am={float(final_grand_total):.2f}"
-        f"&cu=INR"
-        f"&tn={urllib.parse.quote(f'Inv {voucher.voucher_number}')}"
-    )
+    if not (b_name or b_acc):
+        bank_ledger = company.ledgers.filter(ledger_type='BANK').exclude(bank_account_number='').exclude(bank_account_number__isnull=True).first()
+        if bank_ledger:
+            b_name = (bank_ledger.name or '').strip()
+            b_acc = (bank_ledger.bank_account_number or '').strip()
+            b_ifsc = (bank_ledger.bank_ifsc or '').strip()
+
+    # UPI URL resolution:
+    # Strictly use the official business merchant UPI configured by the owner in Settings (company.upi_id).
+    # If not present on company, check if a bank ledger has a configured upi_id.
+    # NEVER fall back to personal phone number or fake dummy handle.
+    upi_id = (getattr(company, 'upi_id', '') or '').strip()
+    if not upi_id:
+        bank_ledger_upi = company.ledgers.filter(ledger_type='BANK').exclude(upi_id='').exclude(upi_id__isnull=True).first()
+        if bank_ledger_upi and bank_ledger_upi.upi_id:
+            upi_id = bank_ledger_upi.upi_id.strip()
+
+    upi_url = ''
+    if upi_id:
+        payee_name = company.legal_name or company.name or 'Merchant'
+        upi_url = (
+            f"upi://pay?pa={urllib.parse.quote(upi_id)}"
+            f"&pn={urllib.parse.quote(payee_name)}"
+            f"&am={float(final_grand_total):.2f}"
+            f"&cu=INR"
+            f"&tn={urllib.parse.quote(f'Inv {voucher.voucher_number}')}"
+        )
 
     sig_url = None
     sig_field = getattr(company, 'proprietor_signature', None)
@@ -202,6 +219,15 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
             'bank_account_number': b_acc,
             'bank_ifsc': b_ifsc,
             'bank_upi_id': upi_id,
+            'upi_id': upi_id,
+            'bank': {
+                'bank_name': b_name,
+                'account_number': b_acc,
+                'ifsc': b_ifsc,
+                'branch': b_branch,
+                'upi_id': upi_id,
+                'upi_url': upi_url,
+            },
             'proprietor_name': company.proprietor_name or '',
             'signature_url': sig_url,
         },

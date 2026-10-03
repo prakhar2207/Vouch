@@ -159,6 +159,14 @@ class PublicShareResolveAPIView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
 
         snapshot = share.document_snapshot
+        if snapshot.source_type == 'Voucher' and snapshot.template_version != '2.1':
+            try:
+                voucher = Voucher.objects.filter(id=snapshot.source_id, company=snapshot.company).first()
+                if voucher:
+                    snapshot = DocumentSnapshotService.get_or_create_voucher_snapshot(voucher, force_refresh=True)
+            except Exception as e:
+                logger.warning(f"Could not refresh stale public share snapshot {snapshot.id}: {e}")
+
         caps = get_document_capabilities(snapshot.document_type)
 
         return Response({
@@ -191,6 +199,14 @@ class PublicShareDownloadPDFAPIView(APIView):
 
         watermark = request.query_params.get('watermark') != '0'
         snapshot = share.document_snapshot
+        if snapshot.source_type == 'Voucher' and snapshot.template_version != '2.1':
+            try:
+                voucher = Voucher.objects.filter(id=snapshot.source_id, company=snapshot.company).first()
+                if voucher:
+                    snapshot = DocumentSnapshotService.get_or_create_voucher_snapshot(voucher, force_refresh=True)
+            except Exception as e:
+                logger.warning(f"Could not refresh stale public download snapshot {snapshot.id}: {e}")
+
         pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(snapshot, watermark=watermark)
 
         filename = f"{snapshot.document_number.replace('/', '_') or 'document'}.pdf"

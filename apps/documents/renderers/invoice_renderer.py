@@ -569,19 +569,38 @@ class InvoicePDFRenderer:
         ]))
 
         # ================= 7. BANK DETAILS =================
-        b_name = seller.get('bank_name', 'Canara Bank')
-        b_branch = seller.get('bank_branch', 'Govind Nagar')
-        b_acc = seller.get('bank_account_number', '125008094288')
-        b_ifsc = seller.get('bank_ifsc', 'CNRB0003827')
+        b_name = (seller.get('bank_name') or seller.get('bank', {}).get('bank_name') or '').strip()
+        b_branch = (seller.get('bank_branch') or seller.get('bank', {}).get('branch') or '').strip()
+        b_acc = (seller.get('bank_account_number') or seller.get('bank', {}).get('account_number') or '').strip()
+        b_ifsc = (seller.get('bank_ifsc') or seller.get('bank', {}).get('ifsc') or '').strip()
+        upi_id = (seller.get('upi_id') or seller.get('bank_upi_id') or seller.get('bank', {}).get('upi_id') or '').strip()
 
         s_bank_title = ParagraphStyle('BankT', fontName=f_bold, fontSize=9.8, leading=12, alignment=TA_CENTER, textColor=colors.black)
-        s_bank_body = ParagraphStyle('BankB', fontName=f_semi, fontSize=9.0, leading=12, alignment=TA_CENTER, textColor=colors.black)
+        s_bank_body = ParagraphStyle('BankB', fontName=f_semi, fontSize=8.5, leading=11, alignment=TA_CENTER, textColor=colors.black)
 
-        bank_cell = [
-            Paragraph("<u>BANK DETAILS</u>", s_bank_title),
-            Spacer(1, 2),
-            Paragraph(f"{b_name} {b_branch}, ACCOUNT NO- {b_acc}, IFSCODE: {b_ifsc}", s_bank_body)
-        ]
+        if b_name or b_acc or upi_id:
+            bank_parts = []
+            if b_name:
+                b_str = b_name
+                if b_branch:
+                    b_str += f" {b_branch}"
+                bank_parts.append(b_str)
+            if b_acc:
+                bank_parts.append(f"ACCOUNT NO- {b_acc}")
+            if b_ifsc:
+                bank_parts.append(f"IFSCODE: {b_ifsc}")
+            if upi_id:
+                bank_parts.append(f"UPI ID: {upi_id}")
+
+            bank_detail_text = ", ".join(bank_parts)
+            bank_cell = [
+                Paragraph("<u>BANK DETAILS</u>", s_bank_title),
+                Spacer(1, 2),
+                Paragraph(bank_detail_text, s_bank_body)
+            ]
+        else:
+            bank_cell = [Paragraph("", s_bank_body)]
+
         bank_table = Table([[bank_cell]], colWidths=[WIDTH])
         bank_table.setStyle(TableStyle([
             ('PADDING', (0, 0), (-1, -1), 0),
@@ -622,8 +641,8 @@ class InvoicePDFRenderer:
 
         # QR Code
         qr_img = None
+        upi_url = dto.get('upi_url') or seller.get('bank', {}).get('upi_url') or ''
         try:
-            upi_url = dto.get('upi_url') or seller.get('bank', {}).get('upi_url') or ''
             if upi_url:
                 qr = qrcode.QRCode(version=1, box_size=3, border=0)
                 qr.add_data(upi_url)
@@ -632,17 +651,27 @@ class InvoicePDFRenderer:
                 qr_buf = io.BytesIO()
                 pil_qr.save(qr_buf, format='PNG')
                 qr_buf.seek(0)
-                qr_img = RLImage(qr_buf, width=75.0, height=75.0)
+                qr_img = RLImage(qr_buf, width=72.0, height=72.0)
         except Exception as e:
             logger.warning(f"Could not generate QR code: {e}")
 
         s_qr_lbl = ParagraphStyle('QRLbl', fontName=f_bold, fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
-        qr_title = "UPI Payment QR" if (is_proforma or upi_url) else "E-Invoice QR Code"
-        qr_cell = [
-            Paragraph(qr_title, s_qr_lbl),
-            Spacer(1, 6),
-            qr_img if qr_img else Paragraph("", s_terms_item),
-        ]
+        s_qr_upi = ParagraphStyle('QRUpi', fontName=f_semi, fontSize=6.2, leading=7.5, alignment=TA_CENTER, textColor=colors.black)
+
+        if qr_img:
+            qr_title = "UPI Payment QR" if upi_url else "E-Invoice QR Code"
+            qr_cell = [
+                Paragraph(qr_title, s_qr_lbl),
+                Spacer(1, 3),
+                qr_img,
+            ]
+            if upi_id:
+                qr_cell.extend([
+                    Spacer(1, 2),
+                    Paragraph(f"UPI: {upi_id}", s_qr_upi)
+                ])
+        else:
+            qr_cell = [Paragraph("", s_terms_item)]
 
         # Signatures Cell
         s_rcvr = ParagraphStyle('Rcvr', fontName=f_bold, fontSize=8.2, leading=10.5, alignment=TA_LEFT, textColor=colors.black)

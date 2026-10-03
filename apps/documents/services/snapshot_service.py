@@ -48,7 +48,7 @@ class DocumentSnapshotService:
         doc_type = VOUCHER_TYPE_TO_DOC_TYPE.get(voucher.voucher_type, 'SALES_INVOICE')
         source_id = str(voucher.id)
 
-        CURRENT_TEMPLATE_VERSION = '2.0'
+        CURRENT_TEMPLATE_VERSION = '2.1'
         if not force_refresh:
             existing = DocumentSnapshot.objects.filter(
                 company=voucher.company,
