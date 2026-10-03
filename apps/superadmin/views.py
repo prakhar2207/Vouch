@@ -342,7 +342,7 @@ class SuperadminAuditLogsView(APIView):
 
     def get(self, request):
         limit = int(request.query_params.get('limit', 50))
-        logs = AuditLog.objects.select_related('user', 'company').order_by('-timestamp')[:limit]
+        logs = AuditLog.objects.select_related('user', 'company').order_by('-created_at')[:limit]
 
         data = [
             {
@@ -354,7 +354,7 @@ class SuperadminAuditLogsView(APIView):
                 "model_name": log.model_name,
                 "record_id": log.record_id,
                 "changes": log.changes,
-                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                "timestamp": log.created_at.isoformat() if getattr(log, 'created_at', None) else None,
             }
             for log in logs
         ]
@@ -442,7 +442,7 @@ class SuperadminCompanyDeleteView(APIView):
                 # 9. Clean up memberships, settings, and audit logs
                 UserCompany.objects.filter(company=company).delete()
                 CompanySettings.objects.filter(company=company).delete()
-                AuditLog.objects.filter(company=company).delete()
+                AuditLog.objects.filter(company=company)._raw_delete(using='default')
 
                 # 10. Delete the Company record
                 company.delete()

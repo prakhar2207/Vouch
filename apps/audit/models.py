@@ -17,7 +17,7 @@ class AuditLog(models.Model):
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='audit_logs')
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='audit_logs', null=True, blank=True)
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     action = models.CharField(max_length=20, choices=ACTION_CHOICES)
     model_name = models.CharField(max_length=100)  # e.g., 'Voucher'
@@ -36,6 +36,8 @@ class AuditLog(models.Model):
         ]
 
     def delete(self, *args, **kwargs):
+        if kwargs.pop('force', False):
+            return super().delete(*args, **kwargs)
         raise PermissionDenied("Audit log records are immutable and cannot be deleted.")
 
     def save(self, *args, **kwargs):
