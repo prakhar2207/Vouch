@@ -32,7 +32,9 @@ import {
   Server,
   Zap,
   LogIn,
-  LogOut
+  LogOut,
+  Trash2,
+  AlertTriangle
 } from "lucide-react";
 
 interface MetricsData {
@@ -99,6 +101,12 @@ export default function SuperadminPortalPage() {
 
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    type: "company" | "user";
+    id: string;
+    name: string;
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // 1. Authenticate and check permissions
   useEffect(() => {
@@ -276,6 +284,40 @@ export default function SuperadminPortalPage() {
       toast.error("Action Failed", err.response?.data?.error || err.message);
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  // Actions: Delete Company or User
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const token = getAccessToken();
+      const headers = { Authorization: `Bearer ${token}` };
+      if (deleteTarget.type === "company") {
+        const res = await axios.delete(
+          `${API_BASE_URL}/api/v1/superadmin/companies/${deleteTarget.id}/`,
+          { headers }
+        );
+        toast.success("Company Deleted", res.data?.message || "Company permanently deleted.");
+        setCompanies((prev) => prev.filter((c) => c.id !== deleteTarget.id));
+        setCompaniesCount((prev) => Math.max(0, prev - 1));
+        fetchMetrics();
+      } else {
+        const res = await axios.delete(
+          `${API_BASE_URL}/api/v1/superadmin/users/${deleteTarget.id}/`,
+          { headers }
+        );
+        toast.success("User Deleted", res.data?.message || "User permanently deleted.");
+        setUsers((prev) => prev.filter((u) => u.id !== deleteTarget.id));
+        setUsersCount((prev) => Math.max(0, prev - 1));
+        fetchMetrics();
+      }
+      setDeleteTarget(null);
+    } catch (err: any) {
+      toast.error("Delete Failed", err.response?.data?.error || err.message);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -642,11 +684,23 @@ export default function SuperadminPortalPage() {
                                 disabled={actionLoading === `company-${c.id}`}
                                 className={`px-2 py-1 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
                                   c.is_active
-                                    ? "bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 border-rose-500/20"
+                                    ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 border-amber-500/20"
                                     : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 border-emerald-500/20"
                                 }`}
                               >
                                 {c.is_active ? "Suspend" : "Activate"}
+                              </button>
+
+                              {/* Delete Company Button */}
+                              <button
+                                type="button"
+                                onClick={() => setDeleteTarget({ type: "company", id: c.id, name: c.name })}
+                                disabled={actionLoading === `company-${c.id}` || deleting}
+                                className="px-2 py-1 rounded-lg text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 border border-rose-500/20 transition-colors cursor-pointer flex items-center gap-1"
+                                title={`Permanently delete company ${c.name}`}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Delete</span>
                               </button>
                             </div>
                           </td>
@@ -788,11 +842,23 @@ export default function SuperadminPortalPage() {
                                 disabled={actionLoading === `user-active-${u.id}`}
                                 className={`px-2 py-1 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
                                   u.is_active
-                                    ? "bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 border-rose-500/20"
+                                    ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 border-amber-500/20"
                                     : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 border-emerald-500/20"
                                 }`}
                               >
                                 {u.is_active ? "Deactivate" : "Activate"}
+                              </button>
+
+                              {/* Delete User */}
+                              <button
+                                type="button"
+                                onClick={() => setDeleteTarget({ type: "user", id: u.id, name: u.email })}
+                                disabled={u.id === currentUser?.id || actionLoading === `user-${u.id}` || deleting}
+                                className="px-2 py-1 rounded-lg text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 border border-rose-500/20 transition-colors cursor-pointer flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                                title={u.id === currentUser?.id ? "You cannot delete your own account" : `Permanently delete user ${u.email}`}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Delete</span>
                               </button>
                             </div>
                           </td>
@@ -978,6 +1044,59 @@ export default function SuperadminPortalPage() {
                     <ExternalLink className="w-3 h-3 text-muted-foreground" />
                   </a>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Confirmation Modal */}
+        {deleteTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-dialog-title"
+              className="w-full max-w-md bg-card border border-border shadow-2xl rounded-2xl p-6 space-y-4 animate-in zoom-in-95 duration-150"
+            >
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-500 shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div className="space-y-1">
+                  <h3 id="delete-dialog-title" className="text-base font-bold text-foreground">
+                    Delete {deleteTarget.type === "company" ? "Company Tenant" : "Platform User"}?
+                  </h3>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Are you sure you want to permanently delete{" "}
+                    <strong className="text-foreground">{deleteTarget.name}</strong>?
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3 bg-rose-500/5 border border-rose-500/15 rounded-xl text-xs text-rose-600 dark:text-rose-400">
+                {deleteTarget.type === "company"
+                  ? "This will permanently purge this tenant, including all its vouchers, ledgers, inventory, and historical accounting records. This action cannot be reversed."
+                  : "This user will be permanently removed from all tenant companies and lose all platform access. Any created records will be reassigned to your superadmin account."}
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={deleting}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDelete}
+                  disabled={deleting}
+                  className="px-4 py-2 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white shadow-md flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-60"
+                >
+                  <Trash2 className={`w-3.5 h-3.5 ${deleting ? "animate-spin" : ""}`} />
+                  <span>{deleting ? "Deleting..." : "Permanently Delete"}</span>
+                </button>
               </div>
             </div>
           </div>

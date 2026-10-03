@@ -378,3 +378,155 @@ class SuperadminImpersonateCompanyView(APIView):
             status=status.HTTP_403_FORBIDDEN
         )
 
+
+class SuperadminCompanyDeleteView(APIView):
+    """
+    Permanently delete a company and all associated records (vouchers, items, ledgers, products).
+    """
+    permission_classes = [IsSuperAdminOrStaff]
+
+    def delete(self, request, pk):
+        from django.db import transaction
+        from apps.companies.models import Company, UserCompany, CompanySettings
+        from apps.accounting.models import (
+            Voucher, VoucherItem, LedgerEntry, PaymentAllocation,
+            BankStatementImport, BankTransaction, InwardVoucherRequest, FinancialYear
+        )
+        from apps.accounting.models_proforma import ProformaInvoice, ProformaItem
+        from apps.inventory.models import StockEntry, Product, Category, Warehouse
+        from apps.ledgers.models import Ledger, LedgerGroup
+        from apps.audit.models import AuditLog
+
+        company = Company.objects.filter(id=pk).first()
+        if not company:
+            return Response({"error": "Company not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        company_name = company.name
+        company_id = str(company.id)
+
+        try:
+            with transaction.atomic():
+                # 1. Clean up bank transactions & imports
+                BankTransaction.objects.filter(company=company).delete()
+                BankStatementImport.objects.filter(company=company).delete()
+
+                # 2. Clean up EDI requests
+                InwardVoucherRequest.objects.filter(source_company=company).delete()
+                InwardVoucherRequest.objects.filter(target_company=company).delete()
+
+                # 3. Clean up Payment allocations
+                PaymentAllocation.objects.filter(company=company).delete()
+
+                # 4. Clean up Proformas & Items
+                ProformaItem.objects.filter(proforma__company=company).delete()
+                ProformaInvoice.objects.filter(company=company).delete()
+
+                # 5. Clean up Vouchers, Items, and LedgerEntries
+                VoucherItem.objects.filter(voucher__company=company).delete()
+                LedgerEntry.objects.filter(voucher__company=company).delete()
+                Voucher.objects.filter(company=company).delete()
+
+                # 6. Clean up Stock Entries, Products, Categories, Warehouses
+                StockEntry.objects.filter(product__company=company).delete()
+                Product.objects.filter(company=company).delete()
+                Category.objects.filter(company=company).delete()
+                Warehouse.objects.filter(company=company).delete()
+
+                # 7. Clean up Ledgers and Groups
+                Ledger.objects.filter(company=company).delete()
+                LedgerGroup.objects.filter(company=company).delete()
+
+                # 8. Clean up Financial Years
+                FinancialYear.objects.filter(company=company).delete()
+
+                # 9. Clean up memberships, settings, and audit logs
+                UserCompany.objects.filter(company=company).delete()
+                CompanySettings.objects.filter(company=company).delete()
+                AuditLog.objects.filter(company=company).delete()
+
+                # 10. Delete the Company record
+                company.delete()
+
+                # Record global platform audit log
+                AuditLog.objects.create(
+                    user=request.user,
+                    action='DELETE',
+                    model_name='Company',
+                    record_id=company_id,
+                    changes={'deleted_company_name': company_name}
+                )
+
+            return Response({
+                "success": True,
+                "message": f"Company '{company_name}' ({company_id[:8]}...) was permanently deleted.",
+                "deleted_id": company_id
+            })
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to delete company: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class SuperadminUserDeleteView(APIView):
+    """
+    Permanently delete a user account and clean up their company associations.
+    """
+    permission_classes = [IsSuperAdminOrStaff]
+
+    def delete(self, request, pk):
+        from django.db import transaction
+        from apps.accounts.models import User
+        from apps.accounting.models import Voucher
+        from apps.accounting.models_proforma import ProformaInvoice
+        from apps.companies.models import UserCompany
+        from apps.audit.models import AuditLog
+
+        target_user = User.objects.filter(id=pk).first()
+        if not target_user:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if str(target_user.id) == str(request.user.id):
+            return Response({"error": "You cannot delete your own superadmin account."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if target_user.is_superuser and not request.user.is_superuser:
+            return Response({"error": "Only superusers can delete another superuser account."}, status=status.HTTP_403_FORBIDDEN)
+
+        user_email = target_user.email
+        user_id = str(target_user.id)
+
+        try:
+            with transaction.atomic():
+                # Reassign vouchers/proformas created by this user to acting superadmin to satisfy PROTECT foreign key
+                Voucher.objects.filter(created_by=target_user).update(created_by=request.user)
+                ProformaInvoice.objects.filter(created_by=target_user).update(created_by=request.user)
+
+                # Remove company affiliations
+                UserCompany.objects.filter(user=target_user).delete()
+
+                # Unlink audit logs
+                AuditLog.objects.filter(user=target_user).update(user=None)
+
+                # Delete the user
+                target_user.delete()
+
+                # Record global platform audit log
+                AuditLog.objects.create(
+                    user=request.user,
+                    action='DELETE',
+                    model_name='User',
+                    record_id=user_id,
+                    changes={'deleted_user_email': user_email}
+                )
+
+            return Response({
+                "success": True,
+                "message": f"User '{user_email}' was permanently deleted.",
+                "deleted_id": user_id
+            })
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to delete user: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
