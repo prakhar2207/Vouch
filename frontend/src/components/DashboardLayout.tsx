@@ -780,7 +780,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               onClick={() => setIsCalculatorOpen(!isCalculatorOpen)}
               aria-label="Tally Calculator & GST Tools"
               aria-expanded={isCalculatorOpen}
-              className={`p-2 rounded-xl transition-all cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center shrink-0 ${
+              className={`p-2 rounded-xl transition-all cursor-pointer min-h-[44px] min-w-[44px] hidden sm:flex items-center justify-center shrink-0 ${
                 isCalculatorOpen
                   ? "bg-primary/20 text-primary border border-primary/40 shadow-xs"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -795,8 +795,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <NotificationBell />
             </div>
 
-            {/* Theme Toggle */}
-            <div className="shrink-0 flex items-center">
+            {/* Theme Toggle (Hidden on mobile header to preserve brand logo spacing) */}
+            <div className="shrink-0 hidden sm:flex items-center">
               <ThemeToggle />
             </div>
 
@@ -928,13 +928,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <div className="flex items-center gap-2">
                 <VouchLogo size={24} showWordmark={true} />
               </div>
-              <button
-                onClick={() => setIsMobileNavOpen(false)}
-                className="text-muted-foreground hover:text-foreground p-2 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer transition-colors"
-                aria-label="Close Navigation Menu"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-1.5">
+                <ThemeToggle />
+                <button
+                  onClick={() => setIsMobileNavOpen(false)}
+                  className="text-muted-foreground hover:text-foreground p-2 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer transition-colors"
+                  aria-label="Close Navigation Menu"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Mobile Company Selector */}
@@ -999,15 +1002,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <span>{activeFY?.code || "FY 26-27"} · {workingDate}</span>
               </button>
 
-              <button
-                onClick={() => {
-                  setIsMobileNavOpen(false);
-                  setIsHelpOpen(true);
-                }}
-                className="px-3 py-2 bg-muted/60 text-muted-foreground rounded-lg border border-border/50 text-xs font-semibold min-h-[44px]"
-              >
-                Help (F1)
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => {
+                    setIsMobileNavOpen(false);
+                    setIsCalculatorOpen(true);
+                  }}
+                  className="p-2 bg-muted/60 text-muted-foreground hover:text-foreground rounded-lg border border-border/50 text-xs min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer"
+                  aria-label="Calculator"
+                  title="Calculator (Alt+N)"
+                >
+                  <Calculator className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => {
+                    setIsMobileNavOpen(false);
+                    setIsHelpOpen(true);
+                  }}
+                  className="px-3 py-2 bg-muted/60 text-muted-foreground rounded-lg border border-border/50 text-xs font-semibold min-h-[44px] cursor-pointer"
+                >
+                  Help (F1)
+                </button>
+              </div>
             </div>
 
             {/* Mobile Nav Links */}

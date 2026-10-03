@@ -149,18 +149,21 @@ export default function PrintInvoicePage() {
     };
     window.addEventListener('resize', handleResize);
     handleResize();
-    return () => window.removeEventListener('resize', handleResize);
-  }, [invoice, layoutMode]);
 
-  useEffect(() => {
-    if (invoice && sheetRef.current) {
-      const timer = setTimeout(() => {
-        if (sheetRef.current) {
-          setSheetHeight(sheetRef.current.offsetHeight);
-        }
-      }, 300);
-      return () => clearTimeout(timer);
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => {
+      if (sheetRef.current) {
+        setSheetHeight(sheetRef.current.offsetHeight);
+      }
+    }) : null;
+
+    if (ro && sheetRef.current) {
+      ro.observe(sheetRef.current);
     }
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      ro?.disconnect();
+    };
   }, [invoice, layoutMode]);
 
   // Recipient check for logged-in users
@@ -954,6 +957,7 @@ export default function PrintInvoicePage() {
               margin: 8mm 6mm;
             }
             #invoice-sheet {
+              position: static !important;
               transform: none !important;
               width: 100% !important;
               min-width: 100% !important;
@@ -1084,27 +1088,6 @@ export default function PrintInvoicePage() {
                 POS
               </button>
             </div>
-
-            {layoutMode === 'A4' && (
-              <div className="flex items-center p-0.5 bg-slate-800 rounded-lg border border-slate-700 font-semibold">
-                <button
-                  onClick={() => setScaleMode('fit')}
-                  className={`px-2 py-1 rounded-md transition-all ${
-                    scaleMode === 'fit' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400'
-                  }`}
-                >
-                  Fit Screen
-                </button>
-                <button
-                  onClick={() => setScaleMode('100')}
-                  className={`px-2 py-1 rounded-md transition-all ${
-                    scaleMode === '100' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400'
-                  }`}
-                >
-                  100%
-                </button>
-              </div>
-            )}
 
             {invoice?.company?.upi_id && (
               <div className="flex items-center p-0.5 bg-slate-800 rounded-lg border border-slate-700 font-semibold">
@@ -1565,7 +1548,9 @@ export default function PrintInvoicePage() {
                 ? {
                     width: `${794 * activeScale}px`,
                     height: `${sheetHeight * activeScale}px`,
+                    position: 'relative',
                     overflow: 'hidden',
+                    margin: '0 auto',
                     transition: 'width 0.15s ease, height 0.15s ease',
                   }
                 : undefined
@@ -1579,14 +1564,17 @@ export default function PrintInvoicePage() {
                 activeScale < 1
                   ? {
                       transform: `scale(${activeScale})`,
-                      transformOrigin: 'top left',
+                      transformOrigin: '0 0',
                       width: '794px',
                       minWidth: '794px',
                       maxWidth: '794px',
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
                     }
                   : undefined
               }
-              className="w-[210mm] max-w-[210mm] shrink-0 min-h-[270mm] print:min-h-[270mm] print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none flex flex-col mx-auto"
+              className="w-[210mm] max-w-[210mm] shrink-0 min-h-[270mm] print:min-h-[270mm] print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none flex flex-col mx-auto print:static print:transform-none"
             >
           
           {/* Main Border Box */}

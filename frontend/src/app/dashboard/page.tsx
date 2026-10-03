@@ -545,15 +545,23 @@ export default function Dashboard() {
                   </span>
                 </>
               )}
+              <button
+                onClick={() => setIsHelpOpen(true)}
+                className="p-1 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted transition-colors cursor-pointer inline-flex items-center"
+                title="Help & Shortcuts (F1)"
+                aria-label="Help & Shortcuts (F1)"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
 
           {/* Quick Action Button Cluster */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
             <Link
               id="tour-sales-btn"
               href="/sales/new"
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all cursor-pointer"
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all cursor-pointer w-full sm:w-auto"
             >
               <Plus className="w-4 h-4" />
               <span>Sale</span>
@@ -565,7 +573,7 @@ export default function Dashboard() {
             <Link
               id="tour-purchase-btn"
               href="/purchases/new"
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-all cursor-pointer"
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-all cursor-pointer w-full sm:w-auto"
             >
               <Plus className="w-4 h-4" />
               <span>Purchase</span>
@@ -575,8 +583,8 @@ export default function Dashboard() {
             </Link>
 
             <Link
-              href="/parties"
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-card hover:bg-muted text-foreground border border-border/70 transition-all cursor-pointer"
+              href="/vouchers?type=RECEIPT"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold bg-card hover:bg-muted text-foreground border border-border/70 transition-all cursor-pointer w-full sm:w-auto"
             >
               <ArrowDownRight className="w-4 h-4 text-emerald-500" />
               <span>Receive</span>
@@ -586,8 +594,8 @@ export default function Dashboard() {
             </Link>
 
             <Link
-              href="/parties"
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-card hover:bg-muted text-foreground border border-border/70 transition-all cursor-pointer"
+              href="/vouchers?type=PAYMENT"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold bg-card hover:bg-muted text-foreground border border-border/70 transition-all cursor-pointer w-full sm:w-auto"
             >
               <ArrowUpRight className="w-4 h-4 text-rose-500" />
               <span>Pay</span>
@@ -595,14 +603,6 @@ export default function Dashboard() {
                 F5
               </kbd>
             </Link>
-
-            <button
-              onClick={() => setIsHelpOpen(true)}
-              className="p-2 text-muted-foreground hover:text-foreground rounded-xl border border-border/60 hover:bg-muted transition-colors cursor-pointer"
-              title="Help & Shortcuts (F1)"
-            >
-              <HelpCircle className="w-4 h-4" />
-            </button>
           </div>
         </div>
 
