@@ -1,7 +1,7 @@
 "use client";
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { motion, useInView } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   Keyboard,
   Scan,
@@ -15,9 +15,6 @@ import {
   BarChart3,
   Clock,
   Users,
-  Building2,
-  IndianRupee,
-  Activity,
   ChevronRight,
   Layers,
   Terminal,
@@ -27,37 +24,12 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { VouchLogo } from "@/components/VouchLogo";
 
-/* ────────────────────── Animated Counter ────────────────────── */
-function AnimatedCounter({ target, suffix = "", prefix = "" }: { target: number; suffix?: string; prefix?: string }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const isInViewport = useInView(ref, { once: true, margin: "-50px" });
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    if (!isInViewport) return;
-    const duration = 1800;
-    const startTime = performance.now();
-
-    const animate = (currentTime: number) => {
-      const elapsed = currentTime - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setCount(Math.round(eased * target));
-      if (progress < 1) requestAnimationFrame(animate);
-    };
-
-    requestAnimationFrame(animate);
-  }, [isInViewport, target]);
-
-  return <span ref={ref}>{prefix}{count.toLocaleString("en-IN")}{suffix}</span>;
-}
-
 /* ────────────────────── Feature Data ────────────────────── */
 const features = [
   {
     icon: Keyboard,
     title: "Lightning-Fast Data Entry",
-    description: "Tally-style F4–F9 shortcuts, instant master creation with Alt+C, post vouchers with Ctrl+A. Your hands never leave the keyboard.",
+    description: "Works just like Tally — press F8 for sales, F9 for purchases. Create new parties on the fly and save entries instantly. Your hands never leave the keyboard.",
     color: "blue",
     gradient: "from-blue-500/10 to-blue-600/5",
     iconBg: "bg-blue-500/10 dark:bg-blue-500/15",
@@ -66,8 +38,8 @@ const features = [
   },
   {
     icon: Scan,
-    title: "AI-Powered Bill Scanning",
-    description: "Upload a photo or PDF. Our AI extracts items, validates GSTIN, matches HSN codes, and auto-fills the voucher — zero manual typing.",
+    title: "Scan Bills with AI",
+    description: "Just take a photo of any purchase bill or upload a PDF. Our AI reads everything — items, quantities, GST, supplier details — and fills the entry for you.",
     color: "purple",
     gradient: "from-purple-500/10 to-purple-600/5",
     iconBg: "bg-purple-500/10 dark:bg-purple-500/15",
@@ -76,8 +48,8 @@ const features = [
   },
   {
     icon: FileCheck,
-    title: "Flawless GST Compliance",
-    description: "Automatic CGST/SGST/IGST calculation from state codes. Inventory adjustments, ITC reconciliation, and audit-proof double-entry balancing.",
+    title: "GST Done Automatically",
+    description: "CGST, SGST, IGST — calculated automatically based on your state. Stock updates, tax reports, and proper books — all handled without extra effort.",
     color: "emerald",
     gradient: "from-emerald-500/10 to-emerald-600/5",
     iconBg: "bg-emerald-500/10 dark:bg-emerald-500/15",
@@ -86,8 +58,8 @@ const features = [
   },
   {
     icon: TrendingUp,
-    title: "Real-Time Business Insights",
-    description: "Live dashboards, customer analytics, sales trends, aging reports, and revenue patterns — all rendered the moment you ask.",
+    title: "Know Your Business Better",
+    description: "See your best customers, daily sales, pending payments, and profit — all in one dashboard. No spreadsheets, no guesswork.",
     color: "amber",
     gradient: "from-amber-500/10 to-amber-600/5",
     iconBg: "bg-amber-500/10 dark:bg-amber-500/15",
@@ -96,8 +68,8 @@ const features = [
   },
   {
     icon: Globe,
-    title: "B2B EDI Network",
-    description: "Cryptographic buyer-seller invoice exchange. Send sales invoices that auto-create purchase entries in your buyer's books — verified and tamper-proof.",
+    title: "Connected with Your Buyers",
+    description: "Send invoices directly to your buyer's account. They see it instantly and can accept it into their books — no WhatsApp, no emails, no confusion.",
     color: "cyan",
     gradient: "from-cyan-500/10 to-cyan-600/5",
     iconBg: "bg-cyan-500/10 dark:bg-cyan-500/15",
@@ -106,8 +78,8 @@ const features = [
   },
   {
     icon: Shield,
-    title: "Bank-Grade Security",
-    description: "Hash-chained audit logs, immutable transaction records, device authorization, and end-to-end encrypted protocol operations.",
+    title: "Your Data is Safe",
+    description: "Every transaction is securely saved and cannot be tampered with. Your books are always accurate, always backed up, and only you can access them.",
     color: "rose",
     gradient: "from-rose-500/10 to-rose-600/5",
     iconBg: "bg-rose-500/10 dark:bg-rose-500/15",
@@ -270,38 +242,6 @@ export default function LandingPage() {
             </a>
           </motion.div>
 
-          {/* Social Proof Stats */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, delay: 0.45 }}
-            className="flex items-center justify-center gap-8 sm:gap-12 pt-6 flex-wrap"
-          >
-            <div className="flex flex-col items-center gap-1">
-              <div className="flex items-center gap-1.5 text-foreground">
-                <Building2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                <span className="text-xl sm:text-2xl font-black tabular-nums"><AnimatedCounter target={80} suffix="+" /></span>
-              </div>
-              <span className="text-[11px] text-muted-foreground font-medium">Active Companies</span>
-            </div>
-            <div className="w-px h-8 bg-border hidden sm:block" />
-            <div className="flex flex-col items-center gap-1">
-              <div className="flex items-center gap-1.5 text-foreground">
-                <IndianRupee className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                <span className="text-xl sm:text-2xl font-black tabular-nums"><AnimatedCounter target={2} suffix="Cr+" /></span>
-              </div>
-              <span className="text-[11px] text-muted-foreground font-medium">Volume Processed</span>
-            </div>
-            <div className="w-px h-8 bg-border hidden sm:block" />
-            <div className="flex flex-col items-center gap-1">
-              <div className="flex items-center gap-1.5 text-foreground">
-                <Activity className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                <span className="text-xl sm:text-2xl font-black tabular-nums"><AnimatedCounter target={99} suffix="%" prefix="" /></span>
-              </div>
-              <span className="text-[11px] text-muted-foreground font-medium">Uptime SLA</span>
-            </div>
-          </motion.div>
-
           {/* Keyboard Shortcut Matrix */}
           <div id="shortcuts" className="pt-8">
             <motion.div
@@ -336,7 +276,7 @@ export default function LandingPage() {
               className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/8 dark:bg-blue-500/10 border border-blue-500/15 dark:border-blue-500/20 text-blue-600 dark:text-blue-400 text-xs font-semibold"
             >
               <Layers className="w-3.5 h-3.5" />
-              <span>Next-Generation Features</span>
+              <span>Built for Your Business</span>
             </motion.div>
             <motion.h2
               initial={{ opacity: 0, y: 10 }}
@@ -345,8 +285,8 @@ export default function LandingPage() {
               transition={{ duration: 0.5, delay: 0.1 }}
               className="text-3xl sm:text-4xl font-extrabold tracking-tight text-balance"
             >
-              Engineered for Rapid{" "}
-              <span className="bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent">Business Operations</span>
+              Everything You Need to{" "}
+              <span className="bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent">Run Your Accounts</span>
             </motion.h2>
             <motion.p
               initial={{ opacity: 0, y: 10 }}
@@ -355,7 +295,7 @@ export default function LandingPage() {
               transition={{ duration: 0.5, delay: 0.2 }}
               className="text-muted-foreground text-sm sm:text-base"
             >
-              Everything an accountant, business owner, or enterprise operator needs — in one platform.
+              Whether you run a shop, a factory, or a trading business — Vouch makes billing and bookkeeping simple.
             </motion.p>
           </div>
 
@@ -558,7 +498,7 @@ export default function LandingPage() {
                   className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold text-center transition-colors shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2"
                 >
                   <FileCheck className="w-3.5 h-3.5" />
-                  <span>Post to Accounting Ledger</span>
+                  <span>Save to Your Books ✓</span>
                 </Link>
               </div>
             </div>
@@ -576,10 +516,10 @@ export default function LandingPage() {
             className="grid grid-cols-2 md:grid-cols-4 gap-6"
           >
             {[
-              { icon: Shield, label: "ACID Compliant", desc: "Bank-grade transactions" },
-              { icon: Clock, label: "Offline Ready", desc: "Works without internet" },
-              { icon: BarChart3, label: "Real-Time Reports", desc: "P&L, Balance Sheet, Aging" },
-              { icon: Users, label: "Multi-User", desc: "Team collaboration" },
+              { icon: Shield, label: "100% Accurate Books", desc: "Every entry is double-checked" },
+              { icon: Clock, label: "Works Offline Too", desc: "No internet? No problem" },
+              { icon: BarChart3, label: "Instant Reports", desc: "Profit & Loss, Balance Sheet" },
+              { icon: Users, label: "Multi-User Access", desc: "Your whole team can use it" },
             ].map((item, i) => (
               <motion.div
                 key={item.label}
@@ -622,8 +562,8 @@ export default function LandingPage() {
               </span>?
             </h2>
             <p className="text-muted-foreground text-sm sm:text-base max-w-xl mx-auto">
-              Experience lightning-fast double-entry bookkeeping, automated GST invoices,
-              and AI accounts payable — free to get started.
+              Start billing, manage GST, and keep your books clean —
+              all from one simple app. Free to get started.
             </p>
           </motion.div>
 
@@ -661,7 +601,7 @@ export default function LandingPage() {
           <div className="space-y-3 col-span-2 md:col-span-1">
             <VouchLogo size={24} showWordmark={true} />
             <p className="text-xs text-muted-foreground leading-relaxed max-w-[220px]">
-              Keyboard-first double-entry accounting and AI accounts payable platform for modern Indian businesses.
+              Simple billing, GST invoicing, and accounting software — built for Indian businesses who want to save time.
             </p>
           </div>
           <div className="space-y-3">
@@ -687,8 +627,8 @@ export default function LandingPage() {
             <ul className="space-y-2 text-muted-foreground">
               <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Privacy Policy</li>
               <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Terms of Service</li>
-              <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />ACID Compliance</li>
-              <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />End-to-End Encryption</li>
+              <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Secure & Reliable</li>
+              <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Your Data, Your Control</li>
             </ul>
           </div>
         </div>
