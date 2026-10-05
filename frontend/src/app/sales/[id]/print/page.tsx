@@ -30,7 +30,8 @@ import {
   ShieldCheck,
   Sparkles,
   LogIn,
-  History
+  History,
+  Tag
 } from 'lucide-react';
 import AuditHistoryModal from '@/components/modals/AuditHistoryModal';
 
@@ -108,6 +109,21 @@ export default function PrintInvoicePage() {
   const [copiedMessage, setCopiedMessage] = useState<boolean>(false);
   const [preferredWhatsAppClient, setPreferredWhatsAppClient] = useState<'web' | 'app'>('web');
   const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
+  const [showBrand, setShowBrand] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const val = localStorage.getItem('vouch_show_brand_in_sales_invoice');
+      return val !== null ? val === 'true' : true;
+    }
+    return true;
+  });
+
+  const toggleShowBrand = () => {
+    const next = !showBrand;
+    setShowBrand(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('vouch_show_brand_in_sales_invoice', String(next));
+    }
+  };
 
   // Mobile responsiveness and dynamic scaling
   const [scaleMode, setScaleMode] = useState<'fit' | '100'>('fit');
@@ -228,6 +244,7 @@ export default function PrintInvoicePage() {
               },
               items: (p.items || []).map((it: any) => ({
                 product_name: it.product_name || it.name || it.description || 'Item',
+                brand: it.brand || '',
                 hsn_code: it.hsn_code || '',
                 quantity: Number(it.quantity || 1),
                 unit_rate: Number(it.unit_rate || it.rate || 0),
@@ -1089,6 +1106,20 @@ export default function PrintInvoicePage() {
               </button>
             </div>
 
+            <button
+              type="button"
+              onClick={toggleShowBrand}
+              className={`px-2 py-1 rounded-md border font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+                showBrand
+                  ? 'bg-blue-600/20 text-blue-300 border-blue-500/40'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}
+              title="Toggle brand visibility on invoice"
+            >
+              <Tag className="w-3 h-3" />
+              <span>Brand: {showBrand ? 'ON' : 'OFF'}</span>
+            </button>
+
             {invoice?.company?.upi_id && (
               <div className="flex items-center p-0.5 bg-slate-800 rounded-lg border border-slate-700 font-semibold">
                 <button
@@ -1168,6 +1199,21 @@ export default function PrintInvoicePage() {
                 <span>80mm POS Thermal</span>
               </button>
             </div>
+
+            {/* Brand Toggle on Bill */}
+            <button
+              type="button"
+              onClick={toggleShowBrand}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                showBrand
+                  ? 'bg-blue-600/20 text-blue-300 border-blue-500/40 hover:bg-blue-600/30'
+                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+              }`}
+              title="Toggle brand visibility on printed invoice"
+            >
+              <Tag className="w-3.5 h-3.5" />
+              <span>Brand: {showBrand ? 'Visible' : 'Hidden'}</span>
+            </button>
 
             {/* Dynamic QR Mode Toggle on Desktop */}
             {invoice?.company?.upi_id && (
@@ -1422,7 +1468,14 @@ export default function PrintInvoicePage() {
             <div className="py-1 border-b border-dashed border-black divide-y divide-dotted divide-slate-300 text-[11px]">
               {invoice.items.map((item: any, idx: number) => (
                 <div key={idx} className="py-1">
-                  <div className="font-bold">{item.product_name}</div>
+                  <div className="font-bold flex items-baseline justify-between gap-1">
+                    <span>{item.product_name}</span>
+                    {showBrand && item.brand && (
+                      <span className="text-[10px] font-normal text-slate-600 shrink-0">
+                        ({item.brand})
+                      </span>
+                    )}
+                  </div>
                   <div className="flex justify-between text-[10px] text-slate-700">
                     <span>HSN: {item.hsn_code || '-'} | GST: {item.gst_rate}%</span>
                     <span>
@@ -1672,7 +1725,14 @@ export default function PrintInvoicePage() {
                             {invoice.items.map((item: any, idx: number) => (
                                 <tr key={idx} className="align-top border-b border-black">
                                     <td className="border-r border-black text-center py-2 px-1">{idx + 1}</td>
-                                    <td className="border-r border-black text-left py-2 pl-2 font-medium">{item.product_name}</td>
+                                    <td className="border-r border-black text-left py-2 pl-2 font-medium">
+                                        <div>{item.product_name}</div>
+                                        {showBrand && item.brand && (
+                                            <div className="text-[10px] text-slate-600 font-normal mt-0.5">
+                                                Brand: {item.brand}
+                                            </div>
+                                        )}
+                                    </td>
                                     <td className="border-r border-black text-center py-2 px-1 whitespace-nowrap">{item.hsn_code}</td>
                                     <td className="border-r border-black text-right py-2 pr-1 whitespace-nowrap">{Number(item.quantity).toFixed(2)}</td>
                                     <td className="border-r border-black text-center py-2 px-1 whitespace-nowrap">{item.unit}</td>

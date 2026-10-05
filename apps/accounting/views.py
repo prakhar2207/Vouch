@@ -2780,6 +2780,12 @@ class PartyRatesAPIView(APIView):
                     rates_map[pid] = entry
                     if key_brand not in rates_map:
                         rates_map[key_brand] = entry
+                    if pbrand:
+                        pname_alpha = pname.replace(' ', '').replace('-', '').replace('_', '')
+                        pbrand_alpha = pbrand.replace(' ', '').replace('-', '').replace('_', '')
+                        key_brand_alpha = f"{pname_alpha}|{pbrand_alpha}"
+                        if key_brand_alpha not in rates_map:
+                            rates_map[key_brand_alpha] = entry
                     if pname not in rates_map:
                         rates_map[pname] = entry
 
