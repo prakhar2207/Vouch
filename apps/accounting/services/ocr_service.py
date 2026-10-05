@@ -104,6 +104,27 @@ class InvoiceOCRService:
         is_pdf = raw_bytes and ("pdf" in mime_type or raw_bytes[:4] == b'%PDF')
         last_gemini_error = ""
 
+        # Pre-render PDF pages to high-resolution images for split-view preview
+        pdf_preview_images = []
+        if is_pdf and raw_bytes:
+            try:
+                import pymupdf
+                doc = pymupdf.open(stream=raw_bytes, filetype="pdf")
+                for page_num in range(min(len(doc), 5)):
+                    page = doc[page_num]
+                    pix = page.get_pixmap(dpi=150)
+                    img_bytes = pix.tobytes("jpeg")
+                    b64_img = "data:image/jpeg;base64," + base64.b64encode(img_bytes).decode("utf-8")
+                    pdf_preview_images.append(b64_img)
+            except Exception as pdf_img_err:
+                print(f"[PDF Preview Render Warning]: {pdf_img_err}")
+
+        def _attach_pdf_previews(res_dict):
+            if pdf_preview_images and isinstance(res_dict, dict):
+                res_dict["preview_images"] = pdf_preview_images
+                res_dict["preview_image"] = pdf_preview_images[0]
+            return res_dict
+
         # -------------------------------------------------------------
         # TIER 1: Try Gemini Vision AI Dual-Engine
         # -------------------------------------------------------------
@@ -197,7 +218,7 @@ class InvoiceOCRService:
                                     if cleaned_desc:
                                         it["description"] = cleaned_desc
                             result["validation"] = InvoiceOCRService.validate_invoice_math(result)
-                            return result
+                            return _attach_pdf_previews(result)
                         except Exception as gemini_err:
                             last_gemini_error = str(gemini_err)
                             err_str = str(gemini_err).lower()
@@ -222,14 +243,14 @@ class InvoiceOCRService:
                 pdf_parsed_data["source"] = "PDF_TEXT_STREAM"
                 pdf_parsed_data["is_mock"] = False
                 pdf_parsed_data["validation"] = InvoiceOCRService.validate_invoice_math(pdf_parsed_data)
-                return pdf_parsed_data
+                return _attach_pdf_previews(pdf_parsed_data)
 
         if last_gemini_error:
             # Avoid confusing the user when key is present but model was rate limited or failed
             clean_err = last_gemini_error[:160].replace("\n", " ")
-            return InvoiceOCRService._fallback_mock(error=f"Gemini AI issue: {clean_err}. Please verify fields manually.")
+            return _attach_pdf_previews(InvoiceOCRService._fallback_mock(error=f"Gemini AI issue: {clean_err}. Please verify fields manually."))
 
-        return InvoiceOCRService._fallback_mock(error="Unable to detect readable invoice text from this photo.")
+        return _attach_pdf_previews(InvoiceOCRService._fallback_mock(error="Unable to detect readable invoice text from this photo."))
 
     @staticmethod
     def _extract_from_pdf(raw_bytes: bytes) -> Optional[dict]:

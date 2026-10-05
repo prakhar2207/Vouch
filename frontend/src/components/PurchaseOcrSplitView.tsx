@@ -54,12 +54,67 @@ interface ExtractedInvoice {
   source?: string;
   model_used?: string;
   scan_mode?: string;
+  preview_images?: string[];
+  preview_image?: string;
   validation?: ValidationReport;
 }
 
 interface PurchaseOcrSplitViewProps {
   companyId: string;
   onSuccess?: () => void;
+}
+
+// Safely generate a Blob URL from a Base64 data string
+function base64ToBlobUrl(base64: string, mime: string = 'application/pdf'): string {
+  try {
+    const b64Data = base64.includes(',') ? base64.split(',')[1] : base64;
+    const binStr = atob(b64Data);
+    const len = binStr.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binStr.charCodeAt(i);
+    }
+    const blob = new Blob([bytes], { type: mime });
+    return URL.createObjectURL(blob);
+  } catch (e) {
+    return '';
+  }
+}
+
+// Client-side instant PDF renderer using pdfjs-dist
+async function renderPdfPagesClient(fileOrBuffer: File | ArrayBuffer): Promise<string[]> {
+  if (typeof window === 'undefined') return [];
+  try {
+    const pdfjsLib = await import('pdfjs-dist');
+    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+    }
+    const arrayBuffer = fileOrBuffer instanceof File ? await fileOrBuffer.arrayBuffer() : fileOrBuffer;
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(arrayBuffer),
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    });
+    const pdf = await loadingTask.promise;
+    const pageImages: string[] = [];
+    const maxPages = Math.min(pdf.numPages, 5);
+    for (let i = 1; i <= maxPages; i++) {
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 1.5 });
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      if (!context) continue;
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: context, viewport }).promise;
+      pageImages.push(canvas.toDataURL('image/jpeg', 0.85));
+    }
+    return pageImages;
+  } catch (err) {
+    console.warn('[PDF Renderer] Client-side PDF page rendering fallback:', err);
+    return [];
+  }
 }
 
 const reconcileInvoiceTotals = (data: ExtractedInvoice): ExtractedInvoice => {
@@ -96,6 +151,9 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
   const [scanMode, setScanMode] = useState<'printed' | 'handwritten'>('printed');
   const [fileBase64, setFileBase64] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [safeBlobUrl, setSafeBlobUrl] = useState<string>('');
+  const [pdfPageImages, setPdfPageImages] = useState<string[]>([]);
+  const [pdfViewerMode, setPdfViewerMode] = useState<'RENDERED' | 'IFRAME'>('RENDERED');
   const [fileMimeType, setFileMimeType] = useState<string>("application/pdf");
   const [fileName, setFileName] = useState<string>("");
   const [compressionNotice, setCompressionNotice] = useState<string | null>(null);
@@ -137,6 +195,18 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       fetchCategories();
     }
   }, [companyId]);
+
+  useEffect(() => {
+    if (blobUrl) {
+      setSafeBlobUrl(blobUrl);
+    } else if (fileBase64) {
+      const generated = base64ToBlobUrl(fileBase64, fileMimeType);
+      if (generated) {
+        setSafeBlobUrl(generated);
+        return () => URL.revokeObjectURL(generated);
+      }
+    }
+  }, [blobUrl, fileBase64, fileMimeType]);
 
   useEffect(() => {
     return () => {
@@ -201,6 +271,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       setBlobUrl(newBlobUrl);
 
       if (mime.startsWith("image/")) {
+        setPdfPageImages([]);
         try {
           const { base64, compressedSize } = await compressImageFile(file);
           const origSizeMB = (file.size / (1024 * 1024)).toFixed(2);
@@ -223,6 +294,14 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         if (file.size > MAX_BYTES) {
           setCompressionNotice(`⚡ PDF is ${origSizeMB} MB. Stored copy will be processed in-memory without disk overhead.`);
         }
+
+        // Immediately rasterize PDF pages in client background so visual preview is instant
+        renderPdfPagesClient(file).then((imgs) => {
+          if (imgs && imgs.length > 0) {
+            setPdfPageImages(imgs);
+          }
+        }).catch(() => {});
+
         const reader = new FileReader();
         reader.onload = (event) => {
           const base64 = event.target?.result as string;
@@ -255,6 +334,9 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         console.log("[PWA Cache] Loaded purchase OCR result from local IndexedDB cache!");
         const data: ExtractedInvoice = reconcileInvoiceTotals(cached.result);
         setInvoice(data);
+        if (data.preview_images && data.preview_images.length > 0) {
+          setPdfPageImages(data.preview_images);
+        }
         setAutoFilled(true);
         setScanStatusToast("⚡ Loaded instantly from local cache (0ms)!");
         setTimeout(() => setScanStatusToast(null), 3000);
@@ -322,6 +404,9 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
           const reconciled = reconcileInvoiceTotals(data);
           setInvoice(reconciled);
+          if (data.preview_images && data.preview_images.length > 0) {
+            setPdfPageImages(data.preview_images);
+          }
           setAutoFilled(true);
           success = true;
           setScanStatusToast(null);
@@ -580,6 +665,12 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
     }
   };
 
+  const displayedImages = pdfPageImages.length > 0
+    ? pdfPageImages
+    : (invoice?.preview_images && invoice.preview_images.length > 0
+        ? invoice.preview_images
+        : (invoice?.preview_image ? [invoice.preview_image] : []));
+
   return (
     <div className="space-y-6">
       {/* Dual-Engine Hybrid Mode Bar */}
@@ -778,6 +869,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                 onClick={() => {
                   setFileBase64(null);
                   setBlobUrl(null);
+                  setSafeBlobUrl('');
+                  setPdfPageImages([]);
                   setInvoice(null);
                   setCompressionNotice(null);
                   if (fileInputRef.current) fileInputRef.current.value = "";
@@ -827,20 +920,57 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
             {/* Left Pane: Document Viewer (Sticky on Desktop) */}
             <div className={`bg-card border border-border rounded-xl p-4 shadow-sm flex flex-col h-[650px] lg:h-[780px] lg:sticky lg:top-4 overflow-hidden ${
-              mobileTab === 'DOCUMENT' ? 'block' : 'hidden lg:flex'
+              mobileTab === 'DOCUMENT' ? 'flex' : 'hidden lg:flex'
             }`}>
-              <div className="flex items-center justify-between border-b border-border pb-3 mb-3 text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground">Original Document Preview</span>
+              <div className="flex items-center justify-between border-b border-border pb-3 mb-3 text-xs text-muted-foreground gap-2 flex-wrap">
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setZoomLevel((z) => Math.max(50, z - 25))} className="px-2 py-1 bg-card hover:bg-accent text-foreground border border-input rounded text-xs cursor-pointer">-</button>
-                  <span className="font-mono">{zoomLevel}%</span>
-                  <button onClick={() => setZoomLevel((z) => Math.min(200, z + 25))} className="px-2 py-1 bg-card hover:bg-accent text-foreground border border-input rounded text-xs cursor-pointer">+</button>
-                  {blobUrl && (
+                  <span className="font-semibold text-foreground">Document Preview</span>
+                  {fileMimeType.includes("pdf") && displayedImages.length > 1 && (
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-muted text-muted-foreground border border-border">
+                      {displayedImages.length} Pages
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {fileMimeType.includes("pdf") && (
+                    <div className="flex items-center p-0.5 bg-muted rounded-lg border border-border text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setPdfViewerMode('RENDERED')}
+                        className={`px-2 py-0.5 rounded transition-all cursor-pointer ${
+                          pdfViewerMode === 'RENDERED' ? 'bg-primary text-primary-foreground font-semibold shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                        title="High-definition visual rendering (Universal)"
+                      >
+                        Visual
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPdfViewerMode('IFRAME')}
+                        className={`px-2 py-0.5 rounded transition-all cursor-pointer ${
+                          pdfViewerMode === 'IFRAME' ? 'bg-primary text-primary-foreground font-semibold shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                        title="Native browser PDF viewer"
+                      >
+                        PDF
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setZoomLevel((z) => Math.max(50, z - 25))} className="px-2 py-1 bg-card hover:bg-accent text-foreground border border-input rounded text-xs cursor-pointer" title="Zoom Out">-</button>
+                    <span className="font-mono text-xs w-10 text-center">{zoomLevel}%</span>
+                    <button onClick={() => setZoomLevel((z) => Math.min(250, z + 25))} className="px-2 py-1 bg-card hover:bg-accent text-foreground border border-input rounded text-xs cursor-pointer" title="Zoom In">+</button>
+                  </div>
+
+                  {safeBlobUrl && (
                     <a
-                      href={blobUrl}
+                      href={safeBlobUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-2 py-1 bg-blue-600/20 text-blue-600 dark:text-blue-400 hover:bg-blue-600/30 rounded text-xs font-bold"
+                      className="px-2 py-1 bg-blue-600/20 text-blue-600 dark:text-blue-400 hover:bg-blue-600/30 rounded text-xs font-bold transition-colors"
+                      title="Open full document in new tab"
                     >
                       ↗ Pop Out
                     </a>
@@ -848,23 +978,57 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                 </div>
               </div>
 
-              <div className="flex-1 bg-slate-100 dark:bg-zinc-950 border border-border/80 rounded-lg overflow-auto flex items-center justify-center p-2">
+              <div className="flex-1 min-h-0 bg-slate-100 dark:bg-zinc-950 border border-border/80 rounded-lg overflow-auto flex flex-col items-center justify-start p-2 relative">
                 {fileMimeType.includes("pdf") ? (
-                  <object
-                    data={blobUrl || fileBase64}
-                    type="application/pdf"
-                    className="w-full h-full rounded border-0"
-                  >
-                    <embed src={blobUrl || fileBase64} type="application/pdf" className="w-full h-full" />
-                    <div className="text-center p-4 text-xs text-muted-foreground">
-                      PDF preview not supported directly in this view.
-                      <a href={blobUrl || fileBase64} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 underline ml-2">Click to open PDF</a>
+                  pdfViewerMode === 'IFRAME' ? (
+                    <iframe
+                      src={`${safeBlobUrl}#toolbar=0&navpanes=0`}
+                      title="PDF Document"
+                      className="w-full h-full rounded border-0"
+                    />
+                  ) : (
+                    <div className="w-full h-full overflow-auto flex flex-col items-center gap-4 py-2">
+                      {displayedImages.length > 0 ? (
+                        displayedImages.map((imgSrc, idx) => (
+                          <div 
+                            key={idx} 
+                            className="flex flex-col items-center transition-transform"
+                            style={{ 
+                              transform: `scale(${zoomLevel / 100})`, 
+                              transformOrigin: "top center",
+                              marginBottom: zoomLevel > 100 ? `${(zoomLevel - 100) * 4}px` : undefined 
+                            }}
+                          >
+                            <img
+                              src={imgSrc}
+                              alt={`Invoice Page ${idx + 1}`}
+                              className="max-w-full rounded shadow-md border border-border/50 bg-white object-contain"
+                            />
+                            {displayedImages.length > 1 && (
+                              <span className="text-[10px] text-muted-foreground font-mono mt-1">
+                                Page {idx + 1} of {displayedImages.length}
+                              </span>
+                            )}
+                          </div>
+                        ))
+                      ) : safeBlobUrl ? (
+                        <iframe
+                          src={`${safeBlobUrl}#toolbar=0&navpanes=0`}
+                          title="PDF Document"
+                          className="w-full h-full rounded border-0"
+                        />
+                      ) : (
+                        <div className="text-center p-6 text-xs text-muted-foreground flex flex-col items-center gap-2">
+                          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                          <span>Rendering document preview...</span>
+                        </div>
+                      )}
                     </div>
-                  </object>
+                  )
                 ) : (
                   <div className="w-full h-full overflow-auto flex items-center justify-center">
                     <img
-                      src={blobUrl || fileBase64}
+                      src={blobUrl || fileBase64 || ''}
                       alt="Invoice"
                       style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: "center center" }}
                       className="max-w-full max-h-full object-contain rounded transition-transform"
