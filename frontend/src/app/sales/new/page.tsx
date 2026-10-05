@@ -1532,12 +1532,12 @@ export default function SalesPage() {
         </div>
 
         {/* Line Items Card */}
-        <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+        <div className="bg-card border border-border rounded-xl shadow-sm">
             <div className="p-4 sm:p-6 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-2">
                     <h2 className="text-lg font-semibold text-foreground">Line Items by Category</h2>
-                    <span className="text-xs text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded border border-blue-400/20">Auto-Creates & Inherits Tax</span>
+                    <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 dark:text-blue-300 dark:bg-blue-400/10 dark:border-blue-400/20 px-2 py-0.5 rounded font-medium">Auto-Creates & Inherits Tax</span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">Rapid billing for retail and wholesale</p>
                 </div>
@@ -1556,13 +1556,13 @@ export default function SalesPage() {
                     }}
                     className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-all ${
                       showBrandInInvoice
-                        ? 'bg-blue-600/15 text-blue-400 border-blue-500/40 hover:bg-blue-600/25 shadow-2xs'
+                        ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 dark:bg-blue-600/15 dark:text-blue-400 dark:border-blue-500/40 shadow-2xs'
                         : 'bg-muted/50 text-muted-foreground border-border hover:bg-muted'
                     }`}
                     title="Toggle whether Brand names are printed under product names on invoices & receipts"
                   >
-                    <Tag className="w-3.5 h-3.5" />
-                    <span>Brand on Bill: <strong className={showBrandInInvoice ? 'text-blue-300' : 'text-muted-foreground'}>{showBrandInInvoice ? 'YES' : 'NO'}</strong></span>
+                    <Tag className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    <span>Brand on Bill: <strong className={showBrandInInvoice ? 'text-blue-900 dark:text-blue-300 font-bold' : 'text-muted-foreground'}>{showBrandInInvoice ? 'YES' : 'NO'}</strong></span>
                   </button>
 
                   {/* Barcode Quick-Scan Input (P1-5) */}
@@ -1585,7 +1585,7 @@ export default function SalesPage() {
             
             <div className="p-2 space-y-6">
                 {groupedItems.map((group, gIndex) => (
-                    <div key={gIndex} className="border border-border rounded-xl overflow-hidden bg-card shadow-sm">
+                    <div key={gIndex} className="border border-border rounded-xl bg-card shadow-sm">
                         <div className="p-3 sm:p-4 bg-muted/40 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div className="flex-1 max-w-md flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                                 <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Category:</label>
@@ -1603,7 +1603,7 @@ export default function SalesPage() {
                             <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-4 text-sm text-muted-foreground">
                                 <span className="text-xs sm:text-sm">Default HSN: <strong className="text-foreground/80">{group.hsn_code || 'N/A'}</strong></span>
                                 {isInterState ? (
-                                    <span className="bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20 text-xs font-medium">
+                                    <span className="bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-500/20 text-xs font-semibold">
                                         IGST: {group.gst_rate}%
                                     </span>
                                 ) : (
@@ -1612,14 +1612,14 @@ export default function SalesPage() {
                                         <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">SGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
                                     </div>
                                 )}
-                                <button onClick={() => removeCategoryGroup(gIndex)} className="text-red-500 hover:text-red-400 ml-auto sm:ml-4 p-1" title="Delete category group">
+                                <button onClick={() => removeCategoryGroup(gIndex)} className="text-red-500 hover:text-red-400 ml-auto sm:ml-4 p-1 cursor-pointer" title="Delete category group">
                                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                 </button>
                             </div>
                         </div>
                         
-                        <div className="overflow-x-auto">
-                            <table className="w-full min-w-[550px] text-left border-collapse">
+                        <div className="overflow-visible">
+                            <table className="w-full text-left border-collapse">
                                 <thead className="bg-muted/60 text-muted-foreground text-xs uppercase tracking-wider">
                                     <tr>
                                         <th className="p-3 font-semibold">
@@ -1634,15 +1634,15 @@ export default function SalesPage() {
                                                             localStorage.setItem('vouch_show_brand_in_sales_invoice', String(next));
                                                         }
                                                     }}
-                                                    className={`text-[10px] px-1.5 py-0.5 rounded border cursor-pointer inline-flex items-center gap-1 font-mono transition-colors ${
+                                                    className={`text-[10px] px-2 py-0.5 rounded-md border cursor-pointer inline-flex items-center gap-1 font-mono transition-colors ${
                                                         showBrandInInvoice
-                                                            ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                                                            ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/40 font-semibold'
                                                             : 'bg-muted text-muted-foreground border-border'
                                                     }`}
                                                     title="Toggle Brand display on printed invoice"
                                                 >
-                                                    <Tag className="w-2.5 h-2.5" />
-                                                    <span>Brand: {showBrandInInvoice ? 'ON' : 'OFF'}</span>
+                                                    <Tag className="w-2.5 h-2.5 text-blue-600 dark:text-blue-400" />
+                                                    <span>Brand: <strong className={showBrandInInvoice ? 'text-blue-800 dark:text-blue-300 font-bold' : ''}>{showBrandInInvoice ? 'ON' : 'OFF'}</strong></span>
                                                 </button>
                                             </div>
                                         </th>
@@ -1672,15 +1672,17 @@ export default function SalesPage() {
                                         return (
                                         <tr 
                                           key={iIndex} 
-                                          className={`transition-colors ${
-                                            activeRow?.gIndex === gIndex && activeRow?.iIndex === iIndex 
-                                              ? 'bg-muted/60' 
-                                              : 'hover:bg-muted/40'
+                                          className={`transition-colors relative ${
+                                            activeSearch === `${gIndex}-${iIndex}` 
+                                              ? 'z-40 bg-muted/70' 
+                                              : activeRow?.gIndex === gIndex && activeRow?.iIndex === iIndex 
+                                              ? 'z-10 bg-muted/60' 
+                                              : 'z-0 hover:bg-muted/40'
                                           }`}
                                           onClick={() => setActiveRow({ gIndex, iIndex })}
                                         >
-                                            <td className="p-2 relative align-top">
-                                                <div className="relative">
+                                            <td className={`p-2 align-top ${activeSearch === `${gIndex}-${iIndex}` ? 'relative z-40' : 'relative z-auto'}`}>
+                                                <div className={`relative ${activeSearch === `${gIndex}-${iIndex}` ? 'z-50' : 'z-auto'}`}>
                                                     <input 
                                                         type="text" 
                                                         placeholder="e.g. Item Name, Size, or Brand" 
@@ -1692,7 +1694,7 @@ export default function SalesPage() {
                                                         onFocus={() => {
                                                             setActiveSearch(`${gIndex}-${iIndex}`);
                                                             setActiveRow({ gIndex, iIndex });
-                                                        }}
+                                                        }} 
                                                         onBlur={() => setTimeout(() => setActiveSearch(null), 250)}
                                                         className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-sm font-medium" 
                                                     />
@@ -1700,7 +1702,7 @@ export default function SalesPage() {
                                                     {/* Autocomplete Dropdown Popover with Cross-Brand Search */}
                                                     {activeSearch === `${gIndex}-${iIndex}` && (
                                                         <div 
-                                                            className="absolute left-0 top-full mt-1 z-50 w-full min-w-[360px] max-w-[520px] bg-card border border-border rounded-xl shadow-2xl overflow-hidden max-h-80 overflow-y-auto"
+                                                            className="absolute left-0 top-full mt-1.5 z-50 w-full min-w-[420px] max-w-[620px] bg-card border border-border rounded-2xl shadow-2xl overflow-hidden max-h-96 overflow-y-auto"
                                                             onMouseDown={(e) => e.preventDefault()}
                                                         >
                                                             {(() => {
@@ -1747,11 +1749,11 @@ export default function SalesPage() {
                                                                     <div className="divide-y divide-border">
                                                                         {/* Cross-Brand Equivalents Bar (Wholesale Reality) */}
                                                                         {crossBrandEquivalents.length > 1 && (
-                                                                            <div className="bg-blue-950/40 border-b border-blue-500/30 p-2.5">
+                                                                            <div className="bg-gradient-to-r from-blue-50/90 via-indigo-50/80 to-blue-50/90 dark:from-blue-950/60 dark:via-indigo-950/40 dark:to-blue-950/60 border-b border-blue-100 dark:border-blue-800/40 p-3">
                                                                                 <div className="flex items-center justify-between mb-2">
-                                                                                    <div className="flex items-center gap-1.5 text-xs font-bold text-blue-400">
-                                                                                        <RefreshCw className="w-3.5 h-3.5 animate-spin-slow text-blue-400" />
-                                                                                        <span>Cross-Brand Equivalents ({crossBrandEquivalents.length} brands in size "{coreSizeToken.toUpperCase()}")</span>
+                                                                                    <div className="flex items-center gap-1.5 text-xs font-bold text-blue-800 dark:text-blue-300">
+                                                                                        <RefreshCw className="w-3.5 h-3.5 animate-spin-slow text-blue-600 dark:text-blue-400" />
+                                                                                        <span>Cross-Brand Equivalents ({crossBrandEquivalents.length} brands in size &quot;{coreSizeToken.toUpperCase()}&quot;)</span>
                                                                                     </div>
                                                                                     <button
                                                                                         type="button"
@@ -1761,14 +1763,14 @@ export default function SalesPage() {
                                                                                             setBrandSearchQuery('');
                                                                                             setBrandModalTarget({ gIndex, iIndex });
                                                                                         }}
-                                                                                        className="text-[11px] font-bold text-blue-300 hover:text-white flex items-center gap-1 bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/40 px-2 py-0.5 rounded-lg cursor-pointer transition-colors"
+                                                                                        className="text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-600/50 dark:hover:bg-blue-600/70 dark:text-blue-100 border border-blue-600 dark:border-blue-500/40 px-2.5 py-1 rounded-lg cursor-pointer transition-colors flex items-center gap-1 shadow-xs"
                                                                                         title="Open unified brand selector modal"
                                                                                     >
                                                                                         <Tag className="w-3 h-3" />
                                                                                         <span>View All Brands</span>
                                                                                     </button>
                                                                                 </div>
-                                                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                                                                     {crossBrandEquivalents.map((altProd: any) => {
                                                                                         const altStock = Number(altProd.stock_quantity ?? 0);
                                                                                         const isAltStocked = altStock > 0;
@@ -1782,30 +1784,46 @@ export default function SalesPage() {
                                                                                                     selectProduct(gIndex, iIndex, altProd);
                                                                                                     setActiveSearch(null);
                                                                                                 }}
-                                                                                                className={`p-2 rounded-lg border text-left text-xs transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                                                                                className={`p-2.5 rounded-xl border text-left text-xs transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
                                                                                                     isAltStocked 
-                                                                                                        ? 'bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30 shadow-2xs' 
-                                                                                                        : 'bg-muted/50 hover:bg-muted border-border/80 opacity-70'
+                                                                                                        ? 'bg-white hover:bg-emerald-50/60 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/50 shadow-2xs' 
+                                                                                                        : 'bg-slate-50/70 hover:bg-slate-100/90 dark:bg-muted/40 dark:hover:bg-muted/70 border-slate-200 dark:border-border/80 opacity-80'
                                                                                                 }`}
                                                                                             >
-                                                                                                <div className="min-w-0">
-                                                                                                    <div className="font-bold text-foreground flex items-center gap-1.5">
-                                                                                                        <span className="text-primary">{altProd.brand || 'Unbranded'}</span>
-                                                                                                        <span className="text-[11px] font-normal text-muted-foreground truncate">{altProd.name}</span>
+                                                                                                <div className="flex items-start justify-between gap-2">
+                                                                                                    <div className="min-w-0">
+                                                                                                        <div className="font-bold text-xs text-blue-700 dark:text-blue-400">
+                                                                                                            {altProd.brand || 'Unbranded'}
+                                                                                                        </div>
+                                                                                                        <div className="text-[11px] font-mono text-slate-800 dark:text-slate-200 truncate font-semibold">
+                                                                                                            {altProd.name}
+                                                                                                        </div>
                                                                                                     </div>
-                                                                                                    <div className="flex items-center gap-2 mt-0.5 text-[10px] font-mono text-muted-foreground">
-                                                                                                        <span>{altMrp > 0 ? `MRP: ₹${altMrp.toFixed(2)}` : 'No MRP'}</span>
-                                                                                                        {altPast && (
-                                                                                                            <span className="text-emerald-400 font-bold">Party: ₹{Number(altPast.rate).toFixed(2)}</span>
-                                                                                                        )}
-                                                                                                    </div>
-                                                                                                </div>
-                                                                                                <div className="text-right whitespace-nowrap">
-                                                                                                    <span className={`text-[11px] font-mono font-bold px-1.5 py-0.5 rounded ${
-                                                                                                        isAltStocked ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
+                                                                                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                                                                                                        isAltStocked
+                                                                                                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30'
+                                                                                                            : 'bg-slate-100 text-slate-500 dark:bg-muted dark:text-muted-foreground border border-slate-200 dark:border-border'
                                                                                                     }`}>
-                                                                                                        {altStock} {altProd.unit || 'PCS'}
+                                                                                                        {isAltStocked ? `${altStock} in Stock` : 'Out of stock'}
                                                                                                     </span>
+                                                                                                </div>
+                                                                                                <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-100 dark:border-border/40">
+                                                                                                    {altPast && Number(altPast.rate) > 0 ? (
+                                                                                                        <div className="text-blue-700 dark:text-blue-400 font-bold">
+                                                                                                            Last Sold: ₹{Number(altPast.rate).toFixed(2)}
+                                                                                                        </div>
+                                                                                                    ) : altMrp > 0 ? (
+                                                                                                        <div className="text-slate-700 dark:text-slate-300 font-medium">
+                                                                                                            MRP: ₹{altMrp.toFixed(2)}
+                                                                                                        </div>
+                                                                                                    ) : (
+                                                                                                        <span className="text-muted-foreground italic text-[10px]">No price set</span>
+                                                                                                    )}
+                                                                                                    {Number(altProd.purchase_price) > 0 && (
+                                                                                                        <span className="text-[10px] text-muted-foreground">
+                                                                                                            Cost: ₹{Number(altProd.purchase_price).toFixed(2)}
+                                                                                                        </span>
+                                                                                                    )}
                                                                                                 </div>
                                                                                             </button>
                                                                                         );
@@ -1814,7 +1832,7 @@ export default function SalesPage() {
                                                                             </div>
                                                                         )}
 
-                                                                        <div className="bg-muted px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex justify-between border-b border-border">
+                                                                        <div className="bg-slate-50 dark:bg-muted px-3 py-1.5 text-[10px] font-semibold text-slate-600 dark:text-muted-foreground uppercase tracking-wider flex justify-between border-b border-border">
                                                                             <span>Matching Catalog SKUs</span>
                                                                             <span>{filteredProds.length} result{filteredProds.length > 1 ? 's' : ''}</span>
                                                                         </div>
@@ -1831,24 +1849,24 @@ export default function SalesPage() {
                                                                                         selectProduct(gIndex, iIndex, p);
                                                                                         setActiveSearch(null);
                                                                                     }}
-                                                                                    className={`w-full text-left p-2.5 hover:bg-muted/80 flex items-center justify-between gap-3 cursor-pointer transition-colors ${
-                                                                                        isSelected ? 'bg-blue-600/15 border-l-2 border-blue-500' : ''
+                                                                                    className={`w-full text-left p-3 hover:bg-slate-50 dark:hover:bg-muted/60 flex items-center justify-between gap-3 cursor-pointer transition-colors border-b border-slate-100 dark:border-border/60 last:border-b-0 ${
+                                                                                        isSelected ? 'bg-blue-50/80 dark:bg-blue-600/15 border-l-4 border-l-blue-600 dark:border-l-blue-500' : ''
                                                                                     }`}
                                                                                 >
                                                                                     <div className="flex-1 min-w-0">
                                                                                         <div className="flex items-center gap-2 flex-wrap">
-                                                                                            <span className="font-semibold text-foreground text-sm truncate">{p.name}</span>
+                                                                                            <span className="font-semibold text-slate-900 dark:text-foreground text-sm truncate">{p.name}</span>
                                                                                             {p.brand ? (
-                                                                                                <span className="text-[10px] px-1.5 py-0.2 rounded font-bold uppercase bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                                                                                <span className="text-[10px] px-2 py-0.5 rounded-md font-bold uppercase bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/30">
                                                                                                     {p.brand}
                                                                                                 </span>
                                                                                             ) : (
-                                                                                                <span className="text-[10px] px-1.5 py-0.2 rounded font-medium text-muted-foreground bg-muted border border-border">
-                                                                                                    Unbranded
-                                                                                                </span>
+                                                                                            <span className="text-[10px] px-2 py-0.5 rounded-md font-medium text-slate-600 bg-slate-100 border border-slate-200 dark:text-muted-foreground dark:bg-muted dark:border-border">
+                                                                                                Unbranded
+                                                                                            </span>
                                                                                             )}
                                                                                             {pPast && (
-                                                                                                <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" title={`Last invoiced to this party at ₹${Number(pPast.rate).toFixed(2)} on ${pPast.voucher_date || 'past bill'}`}>
+                                                                                                <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40" title={`Last invoiced to this party at ₹${Number(pPast.rate).toFixed(2)} on ${pPast.voucher_date || 'past bill'}`}>
                                                                                                     Party Rate: ₹{Number(pPast.rate).toFixed(2)}
                                                                                                 </span>
                                                                                             )}
@@ -1858,15 +1876,15 @@ export default function SalesPage() {
                                                                                         </div>
                                                                                     </div>
                                                                                     <div className="text-right whitespace-nowrap pl-2">
-                                                                                        <div className="text-xs font-mono font-bold text-foreground">
+                                                                                        <div className="text-xs font-mono font-bold text-slate-900 dark:text-foreground">
                                                                                             {mrp > 0 ? `MRP: ₹${mrp.toFixed(2)}` : 'No MRP'}
                                                                                         </div>
                                                                                         {pPast && (
-                                                                                            <div className="text-[11px] font-mono font-bold text-emerald-400">
+                                                                                            <div className="text-[11px] font-mono font-bold text-emerald-700 dark:text-emerald-400">
                                                                                                 Party: ₹{Number(pPast.rate).toFixed(2)}
                                                                                             </div>
                                                                                         )}
-                                                                                        <div className={`text-[10px] font-mono font-medium ${stock > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                                                        <div className={`text-[10px] font-mono font-medium ${stock > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                                                                                             Avail: {stock} {p.unit || 'PCS'}
                                                                                         </div>
                                                                                     </div>
@@ -1932,29 +1950,29 @@ export default function SalesPage() {
                                                                             setBrandSearchQuery('');
                                                                             setBrandModalTarget({ gIndex, iIndex });
                                                                         }}
-                                                                        className={`text-[10px] px-2 py-0.5 rounded-md border font-semibold flex items-center gap-1 cursor-pointer transition-all ${
+                                                                        className={`text-[10px] px-2.5 py-1 rounded-lg border font-semibold flex items-center gap-1.5 cursor-pointer transition-all ${
                                                                             item.brand
-                                                                                ? 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 border-blue-500/40 shadow-2xs'
-                                                                                : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                                                                ? 'bg-blue-50 hover:bg-blue-100/80 text-blue-800 border-blue-200 dark:bg-blue-500/15 dark:hover:bg-blue-500/25 dark:text-blue-300 dark:border-blue-500/40 shadow-2xs'
+                                                                                : 'bg-amber-50 hover:bg-amber-100/80 text-amber-900 border-amber-200 dark:bg-amber-500/10 dark:hover:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30'
                                                                         }`}
                                                                         title="Click to select or switch brand variant"
                                                                     >
-                                                                        <Tag className="w-3 h-3 text-blue-400" />
-                                                                        <span>Brand: <strong className="text-foreground">{item.brand || 'Select Brand'}</strong></span>
+                                                                        <Tag className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+                                                                        <span>Brand: <strong className="text-slate-900 dark:text-foreground">{item.brand || 'Select Brand'}</strong></span>
                                                                         {sameNameProducts.length > 1 && (
-                                                                            <span className="text-[9px] bg-blue-500 text-white rounded-full px-1 font-mono">
+                                                                            <span className="text-[9px] bg-blue-600 text-white rounded-full px-1.5 font-mono font-bold">
                                                                                 {sameNameProducts.length}
                                                                             </span>
                                                                         )}
-                                                                        <ChevronDown className="w-3 h-3 text-blue-400" />
+                                                                        <ChevronDown className="w-3 h-3 text-blue-600 dark:text-blue-400" />
                                                                     </button>
 
                                                                     {/* 2. Stock Pill */}
                                                                     {matched && (
                                                                         <span className={`text-[10px] font-mono px-2 py-0.5 rounded-md border font-medium flex items-center gap-1 ${
                                                                             availStock > 0 
-                                                                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' 
-                                                                                : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                                                                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/30' 
+                                                                                : 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-500/15 dark:text-rose-400 dark:border-rose-500/30'
                                                                         }`}>
                                                                             <span>● Stock:</span>
                                                                             <strong>{availStock} {matched.unit || 'PCS'}</strong>
@@ -1964,17 +1982,17 @@ export default function SalesPage() {
                                                                     {/* 3. Brand-Specific Last Billed HUD Card */}
                                                                     {pastRate && pastRate > 0 ? (
                                                                         <div 
-                                                                            className="text-[10px] font-mono inline-flex items-center gap-1 bg-emerald-950/40 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-md shadow-2xs"
+                                                                            className="text-[10px] font-mono inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-900 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-500/30 px-2 py-0.5 rounded-md shadow-2xs"
                                                                             title={`Last billed to ${partyName} on ${vDate || 'past invoice'} @ ₹${pastRate.toFixed(2)}${vNum ? ` (${vNum})` : ''}`}
                                                                         >
-                                                                            <span className="text-emerald-400/90 font-sans font-semibold">Last Sold{item.brand ? ` (${item.brand})` : ''}:</span>
-                                                                            <strong className="text-emerald-200">₹{pastRate.toFixed(2)}</strong>
-                                                                            {vDate && <span className="text-emerald-400/70">({vDate})</span>}
+                                                                            <span className="text-emerald-700 dark:text-emerald-400 font-sans font-semibold">Last Sold{item.brand ? ` (${item.brand})` : ''}:</span>
+                                                                            <strong className="text-emerald-950 dark:text-emerald-200 font-bold">₹{pastRate.toFixed(2)}</strong>
+                                                                            {vDate && <span className="text-emerald-600 dark:text-emerald-400/70 text-[9px]">({vDate})</span>}
                                                                             {Number(item.rate) !== pastRate && (
                                                                                 <button
                                                                                     type="button"
                                                                                     onClick={() => updateItem(gIndex, iIndex, 'rate', pastRate)}
-                                                                                    className="text-[9px] bg-emerald-500/25 hover:bg-emerald-500/40 text-emerald-100 px-1 py-0.2 rounded font-sans cursor-pointer transition-colors"
+                                                                                    className="text-[9px] bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-500/25 dark:hover:bg-emerald-500/40 dark:text-emerald-100 px-1.5 py-0.5 rounded font-sans cursor-pointer transition-colors shadow-xs"
                                                                                     title="Apply party's last billed rate"
                                                                                 >
                                                                                     Apply
@@ -1983,7 +2001,7 @@ export default function SalesPage() {
                                                                         </div>
                                                                     ) : (
                                                                         partyLedgerId && (
-                                                                            <span className="text-[10px] font-sans text-muted-foreground/70 bg-muted/30 px-1.5 py-0.5 rounded border border-border/40">
+                                                                            <span className="text-[10px] font-sans text-muted-foreground/80 bg-muted/40 px-2 py-0.5 rounded border border-border/60">
                                                                                 No prior bill{item.brand ? ` (${item.brand})` : ''}
                                                                             </span>
                                                                         )
@@ -1992,15 +2010,15 @@ export default function SalesPage() {
                                                                     {/* 4. Purchase Cost HUD Card */}
                                                                     {purchaseCost > 0 && (
                                                                         <div 
-                                                                            className="text-[10px] font-mono inline-flex items-center gap-1 bg-slate-800/70 text-slate-300 border border-slate-700 px-2 py-0.5 rounded-md"
+                                                                            className="text-[10px] font-mono inline-flex items-center gap-1.5 bg-slate-100 text-slate-800 border border-slate-200 dark:bg-slate-800/70 dark:text-slate-300 dark:border-slate-700 px-2 py-0.5 rounded-md"
                                                                             title={`Latest purchase cost: ₹${purchaseCost.toFixed(2)}. Click '+25%' to apply standard 25% wholesale margin.`}
                                                                         >
-                                                                            <span className="text-slate-400 font-sans font-semibold">Cost:</span>
-                                                                            <strong className="text-slate-200">₹{purchaseCost.toFixed(2)}</strong>
+                                                                            <span className="text-slate-600 dark:text-slate-400 font-sans font-semibold">Cost:</span>
+                                                                            <strong className="text-slate-900 dark:text-slate-200 font-bold">₹{purchaseCost.toFixed(2)}</strong>
                                                                             <button
                                                                                 type="button"
                                                                                 onClick={() => updateItem(gIndex, iIndex, 'rate', Math.round(purchaseCost * 1.25 * 100) / 100)}
-                                                                                className="text-[9px] bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 px-1 py-0.2 rounded font-sans cursor-pointer transition-colors"
+                                                                                className="text-[9px] bg-blue-600 hover:bg-blue-700 text-white dark:bg-blue-500/20 dark:hover:bg-blue-500/30 dark:text-blue-300 px-1.5 py-0.5 rounded font-sans cursor-pointer transition-colors shadow-xs font-semibold"
                                                                                 title="Set rate to Cost + 25% margin"
                                                                             >
                                                                                 +25%
@@ -2013,10 +2031,10 @@ export default function SalesPage() {
                                                                         <div 
                                                                             className={`text-[10px] font-mono inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-semibold ${
                                                                                 isBelowCost 
-                                                                                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/50' 
+                                                                                    ? 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/50' 
                                                                                     : marginPercent! >= 20
-                                                                                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                                                                                    : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                                                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'
+                                                                                    : 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30'
                                                                             }`}
                                                                             title={isBelowCost ? `⚠️ Selling below cost (-₹${(purchaseCost - currentRate).toFixed(2)} loss/unit)!` : `Current gross margin on this line: ${marginPercent!.toFixed(1)}%`}
                                                                         >
@@ -2032,7 +2050,7 @@ export default function SalesPage() {
                                                                         <button
                                                                             type="button"
                                                                             onClick={() => updateItem(gIndex, iIndex, 'rate', catalogMrp)}
-                                                                            className="text-[10px] font-mono inline-flex items-center gap-1 bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground border border-border px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                                                                            className="text-[10px] font-mono inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 border border-slate-200 dark:bg-muted/60 dark:hover:bg-muted dark:text-muted-foreground dark:hover:text-foreground dark:border-border px-1.5 py-0.5 rounded cursor-pointer transition-colors"
                                                                             title="Click to apply catalog MRP"
                                                                         >
                                                                             <span>MRP: ₹{catalogMrp.toFixed(2)} [Use]</span>
@@ -2801,31 +2819,31 @@ export default function SalesPage() {
 
         return (
           <div 
-            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150"
+            className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150"
             onClick={() => setBrandModalTarget(null)}
           >
             <div 
-              className="bg-card text-card-foreground border border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150"
+              className="bg-card text-card-foreground border border-slate-200 dark:border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}
-              <div className="px-5 py-4 border-b border-border flex items-center justify-between bg-muted/30">
+              <div className="px-5 py-4 border-b border-border flex items-center justify-between bg-muted/40">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary font-bold">
+                  <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-700 border border-blue-200 dark:bg-primary/10 dark:border-primary/20 dark:text-primary flex items-center justify-center font-bold">
                     <Tag className="w-5 h-5" />
                   </div>
                   <div>
                     <h3 className="font-bold text-base text-foreground flex items-center gap-2">
                       Select Brand
                       {currentBrand && (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30 font-semibold">
+                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200 dark:bg-primary/15 dark:text-primary dark:border-primary/30 font-semibold">
                           Current: {currentBrand}
                         </span>
                       )}
                     </h3>
                     <p className="text-xs text-muted-foreground truncate max-w-md">
                       Item: <span className="font-semibold text-foreground">{currentItem.product_name || 'New Item'}</span>
-                      {coreSizeToken && <span className="ml-1.5 opacity-75">(Size key: {coreSizeToken.toUpperCase()})</span>}
+                      {coreSizeToken && <span className="ml-1.5 opacity-75 font-mono">(Size key: {coreSizeToken.toUpperCase()})</span>}
                     </p>
                   </div>
                 </div>
@@ -2854,7 +2872,7 @@ export default function SalesPage() {
                       }
                     }}
                     placeholder="Search brand name, or type a new brand and press Enter..."
-                    className="w-full pl-9 pr-28 py-2 text-sm bg-muted/40 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all text-foreground placeholder:text-muted-foreground"
+                    className="w-full pl-9 pr-28 py-2 text-sm bg-slate-50 dark:bg-muted/40 border border-slate-200 dark:border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-600 transition-all text-slate-900 dark:text-foreground placeholder:text-slate-400 dark:placeholder:text-muted-foreground font-medium"
                   />
                   {brandSearchQuery.trim() && (
                     <button
@@ -2863,9 +2881,9 @@ export default function SalesPage() {
                         selectBrand(gIdx, iIdx, brandSearchQuery.trim());
                         setBrandModalTarget(null);
                       }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold px-2.5 py-1 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-all cursor-pointer shadow-xs"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-all cursor-pointer shadow-xs"
                     >
-                      Apply "{brandSearchQuery.trim()}"
+                      Apply &quot;{brandSearchQuery.trim()}&quot;
                     </button>
                   )}
                 </div>
@@ -2883,7 +2901,7 @@ export default function SalesPage() {
                         selectBrand(gIdx, iIdx, '');
                         setBrandModalTarget(null);
                       }}
-                      className="text-muted-foreground hover:text-destructive font-medium underline transition-colors cursor-pointer"
+                      className="text-slate-500 hover:text-rose-600 dark:text-muted-foreground dark:hover:text-destructive font-medium underline transition-colors cursor-pointer"
                     >
                       Clear Brand (Set Unbranded)
                     </button>
@@ -2897,8 +2915,8 @@ export default function SalesPage() {
                 {filteredMatchingProds.length > 0 && (
                   <div>
                     <div className="flex items-center gap-1.5 text-xs font-bold text-foreground uppercase tracking-wider mb-2.5">
-                      <Layers className="w-3.5 h-3.5 text-primary" />
-                      <span>Available Equivalents in Size "{coreSizeToken.toUpperCase()}"</span>
+                      <Layers className="w-3.5 h-3.5 text-blue-600 dark:text-primary" />
+                      <span>Available Equivalents in Size &quot;{coreSizeToken.toUpperCase()}&quot;</span>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                       {filteredMatchingProds.map((altProd: any) => {
@@ -2919,33 +2937,33 @@ export default function SalesPage() {
                             }}
                             className={`text-left p-3 rounded-xl border transition-all cursor-pointer relative group flex flex-col justify-between gap-2 ${
                               isCurrent
-                                ? 'border-primary bg-primary/10 shadow-sm ring-1 ring-primary/30'
+                                ? 'border-blue-600 bg-blue-50/70 dark:bg-primary/10 dark:border-primary shadow-sm ring-1 ring-blue-600 dark:ring-primary/30'
                                 : isStocked
-                                ? 'border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10 hover:border-emerald-500/50 shadow-2xs'
-                                : 'border-border/80 bg-muted/30 hover:bg-muted/60 opacity-80'
+                                ? 'border-emerald-200 bg-white hover:bg-emerald-50/50 dark:border-emerald-500/30 dark:bg-emerald-500/5 dark:hover:bg-emerald-500/10 shadow-xs'
+                                : 'border-slate-200 bg-slate-50/70 hover:bg-slate-100 dark:border-border/80 dark:bg-muted/30 dark:hover:bg-muted/60 opacity-80'
                             }`}
                           >
                             <div className="flex items-start justify-between gap-2">
                               <div>
                                 <div className="flex items-center gap-1.5">
-                                  <span className="font-bold text-sm text-foreground">
+                                  <span className="font-bold text-sm text-blue-700 dark:text-blue-400">
                                     {altProd.brand || 'Unbranded'}
                                   </span>
                                   {isCurrent && (
-                                    <span className="text-[10px] bg-primary text-primary-foreground font-semibold px-1.5 py-0.2 rounded-full flex items-center gap-0.5">
+                                    <span className="text-[10px] bg-blue-600 text-white dark:bg-primary dark:text-primary-foreground font-semibold px-2 py-0.5 rounded-full flex items-center gap-0.5">
                                       <Check className="w-2.5 h-2.5" /> Selected
                                     </span>
                                   )}
                                 </div>
-                                <div className="text-xs text-muted-foreground truncate font-mono">
+                                <div className="text-xs text-slate-800 dark:text-slate-200 truncate font-mono font-semibold">
                                   {altProd.name}
                                 </div>
                               </div>
                               <span
                                 className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
                                   isStocked
-                                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                                    : 'bg-muted text-muted-foreground border border-border'
+                                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30'
+                                    : 'bg-slate-100 text-slate-600 border border-slate-200 dark:bg-muted dark:text-muted-foreground dark:border-border font-medium'
                                 }`}
                               >
                                 {isStocked ? `${stock} ${altProd.unit || 'PCS'} in Stock` : 'Out of stock'}
@@ -2953,19 +2971,19 @@ export default function SalesPage() {
                             </div>
 
                             {/* Pricing Bar */}
-                            <div className="pt-2 border-t border-border/40 flex items-center justify-between text-[11px]">
+                            <div className="pt-2 border-t border-slate-100 dark:border-border/40 flex items-center justify-between text-[11px]">
                               {altPast && Number(altPast.rate) > 0 ? (
-                                <div className="text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1">
+                                <div className="text-blue-700 dark:text-blue-400 font-bold flex items-center gap-1">
                                   <span>Last Sold:</span>
                                   <span className="font-bold">₹{Number(altPast.rate).toFixed(2)}</span>
                                 </div>
                               ) : mrp > 0 ? (
-                                <div className="text-foreground font-medium flex items-center gap-1">
+                                <div className="text-slate-900 dark:text-foreground font-semibold flex items-center gap-1">
                                   <span>MRP:</span>
-                                  <span className="font-bold">₹{mrp.toFixed(2)}</span>
+                                  <span>₹{mrp.toFixed(2)}</span>
                                 </div>
                               ) : (
-                                <span className="text-muted-foreground italic">No price set</span>
+                                <span className="text-muted-foreground italic text-[10px]">No price set</span>
                               )}
 
                               {cost > 0 && (
@@ -3005,8 +3023,8 @@ export default function SalesPage() {
                             }}
                             className={`px-3 py-2 rounded-xl text-xs font-medium border text-left flex items-center justify-between gap-1 transition-all cursor-pointer ${
                               isCurrent
-                                ? 'bg-primary text-primary-foreground border-primary font-bold shadow-xs'
-                                : 'bg-muted/40 hover:bg-muted text-foreground border-border/70 hover:border-border'
+                                ? 'bg-blue-600 text-white border-blue-600 font-bold shadow-xs dark:bg-primary dark:text-primary-foreground dark:border-primary'
+                                : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300 dark:bg-muted/40 dark:hover:bg-muted dark:text-foreground dark:border-border/70 dark:hover:border-border'
                             }`}
                           >
                             <span className="truncate">{bName}</span>
@@ -3017,7 +3035,7 @@ export default function SalesPage() {
                     </div>
                   ) : (
                     <div className="p-4 text-center text-xs text-muted-foreground border border-dashed border-border rounded-xl">
-                      No catalog brand matches "{brandSearchQuery}". Press Enter above to apply as a custom brand.
+                      No catalog brand matches &quot;{brandSearchQuery}&quot;. Press Enter above to apply as a custom brand.
                     </div>
                   )}
                 </div>
