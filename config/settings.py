@@ -109,6 +109,7 @@ if 'test' in sys.argv:
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
+    'django.middleware.gzip.GZipMiddleware',
     'apps.common.logging.RequestCorrelationMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
@@ -145,6 +146,11 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     'default': env.db('DATABASE_URL', default='sqlite:///' + str(BASE_DIR / 'db.sqlite3'))
 }
+
+# Optimize PostgreSQL connection persistence & keep-alive over WAN
+if 'default' in DATABASES and 'postgresql' in DATABASES['default'].get('ENGINE', ''):
+    DATABASES['default']['CONN_MAX_AGE'] = env.int('CONN_MAX_AGE', default=600)
+    DATABASES['default']['CONN_HEALTH_CHECKS'] = True
 
 import sys
 if 'test' in sys.argv:

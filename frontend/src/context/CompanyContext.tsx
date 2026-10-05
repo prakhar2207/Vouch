@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
@@ -32,11 +32,43 @@ interface CompanyContextType {
 const CompanyContext = createContext<CompanyContextType | null>(null);
 
 const STORAGE_KEY = "vouch_active_company_id";
+const CACHED_COMPANIES_KEY = "vouch_cached_companies_list";
 
 export function CompanyProvider({ children }: { children: React.ReactNode }) {
-  const [availableCompanies, setAvailableCompanies] = useState<Company[]>([]);
-  const [activeCompany, setActiveCompanyState] = useState<Company | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [availableCompanies, setAvailableCompanies] = useState<Company[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem(CACHED_COMPANIES_KEY);
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return [];
+  });
+
+  const [activeCompany, setActiveCompanyState] = useState<Company | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const savedId = localStorage.getItem(STORAGE_KEY);
+        const cached = localStorage.getItem(CACHED_COMPANIES_KEY);
+        if (cached) {
+          const list: Company[] = JSON.parse(cached);
+          const found = list.find((c) => c.id === savedId) || list[0] || null;
+          if (found) return found;
+        }
+      } catch {}
+    }
+    return null;
+  });
+
+  const [loading, setLoading] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem(CACHED_COMPANIES_KEY);
+        if (cached && JSON.parse(cached).length > 0) return false;
+      } catch {}
+    }
+    return true;
+  });
 
   const refreshCompanies = useCallback(async (): Promise<Company | null> => {
     if (!isAuthenticated()) {
@@ -55,9 +87,17 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
         : (res.data?.data && Array.isArray(res.data.data) ? res.data.data : []);
 
       setAvailableCompanies(list);
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(CACHED_COMPANIES_KEY, JSON.stringify(list));
+        } catch {}
+      }
 
       if (list.length === 0) {
         setActiveCompanyState(null);
+        if (typeof window !== "undefined") {
+          localStorage.removeItem(CACHED_COMPANIES_KEY);
+        }
         setLoading(false);
         return null;
       }

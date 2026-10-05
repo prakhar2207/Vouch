@@ -49,9 +49,8 @@ class CompanyViewSet(viewsets.ModelViewSet):
     serializer_class = CompanySerializer
 
     def get_queryset(self):
-        # Only return active companies the user belongs to
-        user_companies = UserCompany.objects.filter(user=self.request.user).values_list('company_id', flat=True)
-        return Company.objects.filter(id__in=user_companies, is_active=True)
+        # Only return active companies the user belongs to with pre-fetched settings
+        return Company.objects.filter(users__user=self.request.user, is_active=True).select_related('settings')
 
     def perform_create(self, serializer):
         import base64

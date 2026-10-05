@@ -28,10 +28,45 @@ interface FinancialYearContextType {
 
 const FinancialYearContext = createContext<FinancialYearContextType | null>(null);
 
+const STORAGE_FY_KEY = "vouch_active_fy_id";
+const CACHED_FYS_KEY = "vouch_cached_fys_list";
+
 export function FinancialYearProvider({ children }: { children: React.ReactNode }) {
-  const [availableFYs, setAvailableFYs] = useState<FinancialYear[]>([]);
-  const [activeFY, setActiveFYState] = useState<FinancialYear | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [availableFYs, setAvailableFYs] = useState<FinancialYear[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem(CACHED_FYS_KEY);
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return [];
+  });
+
+  const [activeFY, setActiveFYState] = useState<FinancialYear | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const savedId = localStorage.getItem(STORAGE_FY_KEY);
+        const cached = localStorage.getItem(CACHED_FYS_KEY);
+        if (cached) {
+          const list: FinancialYear[] = JSON.parse(cached);
+          const found = list.find((fy) => fy.id === savedId) || list.find((fy) => !fy.is_closed) || list[0] || null;
+          if (found) return found;
+        }
+      } catch {}
+    }
+    return null;
+  });
+
+  const [loading, setLoading] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem(CACHED_FYS_KEY);
+        if (cached && JSON.parse(cached).length > 0) return false;
+      } catch {}
+    }
+    return true;
+  });
+
   const [isClosingModalOpen, setIsClosingModalOpen] = useState<boolean>(false);
 
   const refreshFYs = useCallback(async () => {
@@ -59,6 +94,11 @@ export function FinancialYearProvider({ children }: { children: React.ReactNode 
       if (res.data?.success && Array.isArray(res.data.data)) {
         const list: FinancialYear[] = res.data.data;
         setAvailableFYs(list);
+        if (typeof window !== "undefined") {
+          try {
+            localStorage.setItem(CACHED_FYS_KEY, JSON.stringify(list));
+          } catch {}
+        }
 
         const todayStr = new Date().toISOString().slice(0, 10);
         const currentByDate = list.find((fy) => !fy.is_closed && fy.start_date <= todayStr && fy.end_date >= todayStr);
