@@ -13,6 +13,30 @@ class CurrentUserView(APIView):
             "data": serializer.data
         })
 
+    def patch(self, request):
+        user = request.user
+        data = request.data
+        if 'first_name' in data:
+            user.first_name = str(data['first_name']).strip()
+        if 'last_name' in data:
+            user.last_name = str(data['last_name']).strip()
+        if 'password' in data and data['password']:
+            new_password = str(data['password'])
+            from django.contrib.auth.password_validation import validate_password
+            try:
+                validate_password(new_password, user=user)
+                user.set_password(new_password)
+            except Exception as e:
+                msg = e.messages[0] if hasattr(e, 'messages') and e.messages else str(e)
+                return Response({"success": False, "error": f"Invalid password: {msg}"}, status=400)
+        user.save()
+        serializer = UserSerializer(user)
+        return Response({
+            "success": True,
+            "data": serializer.data,
+            "message": "User profile updated successfully."
+        })
+
 from rest_framework.throttling import AnonRateThrottle
 
 class RegisterRateThrottle(AnonRateThrottle):

@@ -44,6 +44,87 @@ def process_and_compress_image(file_obj, max_width=600, max_height=300, quality=
     return f"data:{mime};base64,{b64}"
 
 
+def provision_company_defaults(company):
+    import datetime
+    from .models import CompanySettings
+    from apps.inventory.models import Warehouse
+    from apps.ledgers.models import LedgerGroup, Ledger
+    from apps.accounting.models import FinancialYear
+
+    # 1. Company Settings
+    CompanySettings.objects.get_or_create(company=company)
+
+    # 2. Main Godown / Warehouse
+    Warehouse.objects.get_or_create(
+        company=company,
+        name="Main Godown",
+        defaults={"address": company.address or ""}
+    )
+
+    # 3. Core Chart of Accounts (Ledger Groups)
+    debtors_grp, _ = LedgerGroup.objects.get_or_create(
+        company=company, name="Sundry Debtors", defaults={"nature": "ASSET"}
+    )
+    creditors_grp, _ = LedgerGroup.objects.get_or_create(
+        company=company, name="Sundry Creditors", defaults={"nature": "LIABILITY"}
+    )
+    sales_grp, _ = LedgerGroup.objects.get_or_create(
+        company=company, name="Sales Accounts", defaults={"nature": "INCOME"}
+    )
+    purchase_grp, _ = LedgerGroup.objects.get_or_create(
+        company=company, name="Purchase Accounts", defaults={"nature": "EXPENSE"}
+    )
+    duties_grp, _ = LedgerGroup.objects.get_or_create(
+        company=company, name="Duties & Taxes", defaults={"nature": "LIABILITY"}
+    )
+    bank_grp, _ = LedgerGroup.objects.get_or_create(
+        company=company, name="Bank Accounts", defaults={"nature": "ASSET"}
+    )
+    cash_grp, _ = LedgerGroup.objects.get_or_create(
+        company=company, name="Cash-in-Hand", defaults={"nature": "ASSET"}
+    )
+    indirect_grp, _ = LedgerGroup.objects.get_or_create(
+        company=company, name="Indirect Expenses", defaults={"nature": "EXPENSE"}
+    )
+    direct_grp, _ = LedgerGroup.objects.get_or_create(
+        company=company, name="Direct Expenses", defaults={"nature": "EXPENSE"}
+    )
+
+    # 4. Standard Ledgers
+    Ledger.objects.get_or_create(company=company, name="Sales Account", defaults={"group": sales_grp, "ledger_type": "SALES"})
+    Ledger.objects.get_or_create(company=company, name="Purchase Account", defaults={"group": purchase_grp, "ledger_type": "PURCHASE"})
+    Ledger.objects.get_or_create(company=company, name="Cash", defaults={"group": cash_grp, "ledger_type": "CASH"})
+    Ledger.objects.get_or_create(company=company, name="Round Off", defaults={"group": indirect_grp, "ledger_type": "ROUND_OFF"})
+    Ledger.objects.get_or_create(company=company, name="Cartage Outward", defaults={"group": indirect_grp, "ledger_type": "EXPENSE"})
+    Ledger.objects.get_or_create(company=company, name="Cartage Inward", defaults={"group": direct_grp, "ledger_type": "EXPENSE"})
+    Ledger.objects.get_or_create(company=company, name="Output CGST", defaults={"group": duties_grp, "ledger_type": "TAX"})
+    Ledger.objects.get_or_create(company=company, name="Output SGST", defaults={"group": duties_grp, "ledger_type": "TAX"})
+    Ledger.objects.get_or_create(company=company, name="Output IGST", defaults={"group": duties_grp, "ledger_type": "TAX"})
+    Ledger.objects.get_or_create(company=company, name="Input CGST", defaults={"group": duties_grp, "ledger_type": "TAX"})
+    Ledger.objects.get_or_create(company=company, name="Input SGST", defaults={"group": duties_grp, "ledger_type": "TAX"})
+    Ledger.objects.get_or_create(company=company, name="Input IGST", defaults={"group": duties_grp, "ledger_type": "TAX"})
+
+    # 5. Financial Year (Current Indian FY)
+    today = datetime.date.today()
+    if today.month >= 4:
+        start_year = today.year
+        end_year = today.year + 1
+    else:
+        start_year = today.year - 1
+        end_year = today.year
+    code = f"{str(start_year)[-2:]}-{str(end_year)[-2:]}"
+    FinancialYear.objects.get_or_create(
+        company=company,
+        code=code,
+        defaults={
+            "name": f"FY {code}",
+            "start_date": datetime.date(start_year, 4, 1),
+            "end_date": datetime.date(end_year, 3, 31),
+            "is_closed": False,
+        }
+    )
+
+
 class CompanyViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = CompanySerializer
@@ -93,9 +174,9 @@ class CompanyViewSet(viewsets.ModelViewSet):
         if self.request.user.role != 'OWNER':
             self.request.user.role = 'OWNER'
             self.request.user.save(update_fields=['role'])
-        # Create default settings
-        from .models import CompanySettings
-        CompanySettings.objects.create(company=company)
+
+        # Auto-provision complete chart of accounts, warehouse, and financial year
+        provision_company_defaults(company)
 
     def perform_update(self, serializer):
         company = self.get_object()
