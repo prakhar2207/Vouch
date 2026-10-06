@@ -315,6 +315,9 @@ class LedgerListView(APIView):
                     "phone": l.phone or "",
                     "email": l.email or "",
                     "address": l.address or "",
+                    "bank_account_number": l.bank_account_number or "",
+                    "bank_ifsc": l.bank_ifsc or "",
+                    "upi_id": l.upi_id or "",
                     "current_balance": cur_bal,
                     "opening_balance": float(l.opening_balance or 0),
                     "opening_balance_type": l.opening_balance_type,
@@ -524,6 +527,9 @@ class LedgerListView(APIView):
                 phone=data.get('phone', ''),
                 email=data.get('email', ''),
                 address=data.get('address', ''),
+                bank_account_number=str(data.get('bank_account_number') or '').strip(),
+                bank_ifsc=str(data.get('bank_ifsc') or '').strip().upper(),
+                upi_id=str(data.get('upi_id') or '').strip(),
                 discount_percent=discount_percent,
                 credit_limit=credit_limit,
                 credit_period_days=credit_period_days,
@@ -532,6 +538,21 @@ class LedgerListView(APIView):
                 opening_balance_type=op_type,
                 opening_date=opening_date
             )
+
+            # Auto-sync company invoice settlement bank if bank ledger created
+            if requested_type == 'BANK' and (data.get('set_as_company_default') or not company.bank_account_number):
+                b_name = str(data.get('bank_name') or '').strip()
+                if not b_name:
+                    b_name = ledger.name.split('(')[0].strip() or ledger.name
+                if b_name:
+                    company.bank_name = b_name
+                if ledger.bank_account_number:
+                    company.bank_account_number = ledger.bank_account_number
+                if ledger.bank_ifsc:
+                    company.bank_ifsc = ledger.bank_ifsc
+                if ledger.upi_id:
+                    company.upi_id = ledger.upi_id
+                company.save(update_fields=['bank_name', 'bank_account_number', 'bank_ifsc', 'upi_id'])
 
             # Record Opening Balance via strict Double-Entry Accounting
             if op_balance > Decimal('0.00'):
@@ -623,6 +644,9 @@ class LedgerDetailView(APIView):
                 "phone": l.phone or "",
                 "email": l.email or "",
                 "address": l.address or "",
+                "bank_account_number": l.bank_account_number or "",
+                "bank_ifsc": l.bank_ifsc or "",
+                "upi_id": l.upi_id or "",
                 "current_balance": cur_bal,
                 "opening_balance": float(l.opening_balance or 0),
                 "opening_balance_type": l.opening_balance_type,
@@ -649,9 +673,23 @@ class LedgerDetailView(APIView):
             if 'phone' in data: ledger.phone = data['phone']
             if 'email' in data: ledger.email = data['email']
             if 'address' in data: ledger.address = data['address']
+            if 'bank_account_number' in data: ledger.bank_account_number = str(data['bank_account_number']).strip()
+            if 'bank_ifsc' in data: ledger.bank_ifsc = str(data['bank_ifsc']).strip().upper()
+            if 'upi_id' in data: ledger.upi_id = str(data['upi_id']).strip()
             if 'ledger_type' in data: ledger.ledger_type = data['ledger_type']
             if 'is_active' in data: ledger.is_active = bool(data['is_active'])
             if 'is_archived' in data: ledger.is_archived = bool(data['is_archived'])
+
+            if ledger.ledger_type == 'BANK' and data.get('set_as_company_default'):
+                b_name = str(data.get('bank_name') or '').strip() or ledger.name.split('(')[0].strip()
+                if b_name:
+                    company.bank_name = b_name
+                company.bank_account_number = ledger.bank_account_number
+                if ledger.bank_ifsc:
+                    company.bank_ifsc = ledger.bank_ifsc
+                if ledger.upi_id:
+                    company.upi_id = ledger.upi_id
+                company.save(update_fields=['bank_name', 'bank_account_number', 'bank_ifsc', 'upi_id'])
             
             if 'credit_period_days' in data and data.get('credit_period_days') is not None and str(data.get('credit_period_days')).strip() != '':
                 try: ledger.credit_period_days = int(data['credit_period_days'])

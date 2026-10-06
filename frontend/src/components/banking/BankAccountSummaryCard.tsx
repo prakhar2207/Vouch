@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import SearchableSelect, { SearchableOption } from "@/components/SearchableSelect";
 import { Plus } from "lucide-react";
 import { BankLedger } from "./types";
@@ -60,20 +61,31 @@ export default function BankAccountSummaryCard({
       />
 
       {bankLedgers.length === 0 && (
-        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-foreground flex items-center justify-between gap-2">
-          <div>
-            <p className="font-semibold text-amber-500">No bank accounts configured</p>
-            <p className="text-[11px] text-muted-foreground">Add your bank account to reconcile statements.</p>
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-foreground space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="font-semibold text-amber-500">No bank accounts configured</p>
+              <p className="text-[11px] text-muted-foreground">Add your bank account to reconcile statements & match transactions.</p>
+            </div>
+            {onAddNewBank && (
+              <button
+                type="button"
+                onClick={onAddNewBank}
+                className="px-2.5 py-1 bg-primary text-primary-foreground text-xs font-bold rounded-lg shrink-0 cursor-pointer shadow-xs hover:bg-primary/90 transition-all"
+              >
+                + Add Bank
+              </button>
+            )}
           </div>
-          {onAddNewBank && (
-            <button
-              type="button"
-              onClick={onAddNewBank}
-              className="px-2.5 py-1 bg-primary text-primary-foreground text-xs font-bold rounded-lg shrink-0 cursor-pointer shadow-xs"
+          <div className="pt-2 border-t border-amber-500/10 flex items-center justify-between text-[11px]">
+            <span className="text-muted-foreground">Or setup bank on sales invoices:</span>
+            <Link
+              href="/settings?tab=firm-profile"
+              className="text-primary hover:underline font-semibold"
             >
-              + Add
-            </button>
-          )}
+              Firm Settings &rarr;
+            </Link>
+          </div>
         </div>
       )}
 

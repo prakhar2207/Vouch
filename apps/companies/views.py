@@ -124,6 +124,10 @@ def provision_company_defaults(company):
         }
     )
 
+    # 6. Auto-sync Bank Account Ledger (if bank details exist)
+    from apps.companies.services import CompanyBankService
+    CompanyBankService.sync_company_bank_ledger(company)
+
 
 class CompanyViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -239,6 +243,10 @@ class CompanyViewSet(viewsets.ModelViewSet):
         elif 'stamp_data' in self.request.data and self.request.data['stamp_data']:
             instance.stamp_data = self.request.data['stamp_data']
             instance.save(update_fields=['stamp_data'])
+
+        # Auto-sync Bank Account Ledger in Chart of Accounts
+        from apps.companies.services import CompanyBankService
+        CompanyBankService.sync_company_bank_ledger(instance)
 
 
     def destroy(self, request, *args, **kwargs):

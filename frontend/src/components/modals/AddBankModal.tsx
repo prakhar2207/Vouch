@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import React, { useState } from "react";
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
@@ -25,7 +25,9 @@ export default function AddBankModal({
   const [bankName, setBankName] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [ifscCode, setIfscCode] = useState("");
+  const [upiId, setUpiId] = useState("");
   const [openingBalance, setOpeningBalance] = useState("");
+  const [setAsDefault, setSetAsDefault] = useState(true);
 
   if (!isOpen) return null;
 
@@ -45,7 +47,7 @@ export default function AddBankModal({
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
 
-      // Compile helpful name if account number is provided (e.g., "HDFC Bank - A/c 5020001234")
+      // Compile helpful name if account number is provided (e.g., "HDFC Bank (A/c ...1234)")
       let ledgerDisplayName = bankName.trim();
       if (accountNumber.trim() && !ledgerDisplayName.includes(accountNumber.trim().slice(-4))) {
         ledgerDisplayName += ` (A/c ...${accountNumber.trim().slice(-4)})`;
@@ -53,10 +55,15 @@ export default function AddBankModal({
 
       const payload = {
         name: ledgerDisplayName,
+        bank_name: bankName.trim(),
+        bank_account_number: accountNumber.trim(),
+        bank_ifsc: ifscCode.trim().toUpperCase(),
+        upi_id: upiId.trim(),
         group_name: "Bank Accounts",
         ledger_type: "BANK",
         opening_balance: parseFloat(openingBalance || "0") || 0,
         opening_balance_type: "DEBIT",
+        set_as_company_default: setAsDefault,
       };
 
       const res = await axios.post(`${API_BASE_URL}/api/v1/ledgers/${companyId}/`, payload, { headers });
@@ -79,7 +86,9 @@ export default function AddBankModal({
     setBankName("");
     setAccountNumber("");
     setIfscCode("");
+    setUpiId("");
     setOpeningBalance("");
+    setSetAsDefault(true);
     onClose();
   };
 
@@ -152,22 +161,48 @@ export default function AddBankModal({
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
-              Opening Balance (₹)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              value={openingBalance}
-              onChange={(e) => setOpeningBalance(e.target.value)}
-              placeholder="0.00"
-              className="w-full bg-muted/50 border border-input text-foreground px-3.5 py-2.5 rounded-lg text-sm font-mono tabular-nums focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-            />
-            <span className="text-[11px] text-muted-foreground mt-1 block">
-              Leave blank or 0.00 if opening balance will be set later
-            </span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                UPI ID / VPA (Optional)
+              </label>
+              <input
+                type="text"
+                value={upiId}
+                onChange={(e) => setUpiId(e.target.value)}
+                placeholder="e.g. business@okhdfcbank"
+                className="w-full bg-muted/50 border border-input text-foreground px-3 py-2 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                Opening Balance (₹)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={openingBalance}
+                onChange={(e) => setOpeningBalance(e.target.value)}
+                placeholder="0.00"
+                className="w-full bg-muted/50 border border-input text-foreground px-3 py-2 rounded-lg text-sm font-mono tabular-nums focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              />
+            </div>
           </div>
+
+          <label className="flex items-start gap-2.5 p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={setAsDefault}
+              onChange={(e) => setSetAsDefault(e.target.checked)}
+              className="mt-0.5 rounded border-blue-500 text-blue-600 focus:ring-blue-500"
+            />
+            <div className="text-xs">
+              <span className="font-semibold text-foreground">Print on Invoices & Proformas</span>
+              <p className="text-muted-foreground mt-0.5 text-[11px]">
+                Sets this as your firm's primary bank account for invoice payment QR codes and customer transfers.
+              </p>
+            </div>
+          </label>
 
           <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
             <button
