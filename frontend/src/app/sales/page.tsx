@@ -1374,91 +1374,139 @@ function SalesInvoiceListContent() {
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredCustomers.map((customer) => {
-                  const isReceivable = isCustomerReceivable(customer);
-                  return (
-                    <div
-                      key={customer.id}
-                      className={`bg-card border rounded-2xl p-4.5 flex flex-col justify-between shadow-xs transition-all hover:border-border relative overflow-hidden group ${
-                        isReceivable ? 'border-emerald-500/30 hover:border-emerald-500/50' : 'border-border/40'
-                      }`}
-                    >
-                      <div className={`absolute top-0 left-0 right-0 h-1 ${isReceivable ? 'bg-emerald-500' : 'bg-muted-foreground/30'}`} />
+              <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/40 overflow-hidden flex flex-col">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/50 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        <th className="p-4">Customer Name</th>
+                        <th className="p-4">GSTIN</th>
+                        <th className="p-4">Phone</th>
+                        <th className="p-4 text-center">Collection Status</th>
+                        <th className="p-4 text-right">Outstanding Balance</th>
+                        <th className="p-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border text-xs">
+                      {filteredCustomers.map((customer) => {
+                        const isReceivable = isCustomerReceivable(customer);
+                        return (
+                          <tr
+                            key={customer.id}
+                            className={`transition-colors duration-150 hover:bg-muted/40 group ${
+                              isReceivable ? 'bg-emerald-500/[0.02]' : ''
+                            }`}
+                          >
+                            {/* Customer Name */}
+                            <td className="p-4">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Link
+                                  href={`/parties/${customer.id}/statement`}
+                                  className="font-bold text-foreground text-sm hover:text-primary transition-colors"
+                                  title={`View statement for ${customer.name}`}
+                                >
+                                  {customer.name}
+                                </Link>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold shrink-0">
+                                  Customer
+                                </span>
+                              </div>
+                            </td>
 
-                      <div>
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <div className="min-w-0 flex-1">
-                            <h4 className="text-sm font-bold text-foreground truncate group-hover:text-primary transition-colors" title={customer.name}>
-                              {customer.name}
-                            </h4>
-                            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-semibold">
-                                Customer
-                              </span>
-                              {customer.gstin && (
-                                <span className="text-[10px] font-mono text-muted-foreground bg-muted/40 px-1.5 py-0.5 rounded border border-border/40 font-medium">
+                            {/* GSTIN */}
+                            <td className="p-4">
+                              {customer.gstin ? (
+                                <span className="font-mono text-xs text-foreground bg-muted/50 px-2 py-1 rounded border border-border/50">
                                   {customer.gstin}
                                 </span>
+                              ) : (
+                                <span className="text-muted-foreground font-mono">—</span>
                               )}
-                            </div>
-                          </div>
-                          <Link
-                            href={`/parties/${customer.id}/edit`}
-                            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                            title="Edit Customer"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </Link>
-                        </div>
+                            </td>
 
-                        {customer.phone && (
-                          <div className="text-[11px] text-muted-foreground mb-2">
-                            Phone: <span className="text-foreground font-mono font-medium">{customer.phone}</span>
-                          </div>
-                        )}
+                            {/* Phone */}
+                            <td className="p-4 font-mono text-muted-foreground">
+                              {customer.phone ? (
+                                <span className="text-foreground">{customer.phone}</span>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
 
-                        <div className="pt-2 border-t border-border/40 flex items-center justify-between">
-                          <span className="text-xs text-muted-foreground font-medium">Balance</span>
-                          <SemanticBalance
-                            balanceState={customer.balance_state}
-                            displayAmount={customer.display_amount}
-                            currentBalance={customer.current_balance}
-                            normalBalance={customer.normal_balance}
-                            balanceDirection={customer.balance_direction}
-                            size="md"
-                          />
-                        </div>
-                      </div>
+                            {/* Collection Status */}
+                            <td className="p-4 text-center">
+                              {isReceivable ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-mono">
+                                  <Clock className="w-3.5 h-3.5" />
+                                  <span>To Collect</span>
+                                </span>
+                              ) : Number(customer.current_balance || 0) === 0 ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-muted text-muted-foreground font-mono">
+                                  <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                                  <span>Settled (₹0)</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-500/10 text-blue-500 border border-blue-500/20 font-mono">
+                                  <span>Credit Balance</span>
+                                </span>
+                              )}
+                            </td>
 
-                      <div className="mt-3.5 pt-3 border-t border-border/40 flex items-center justify-between gap-2">
-                        <Link
-                          href={`/parties/${customer.id}/statement`}
-                          className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-1 group-hover:translate-x-0.5 transition-transform"
-                        >
-                          <span>Statement</span>
-                          <ArrowUpRight className="w-3.5 h-3.5" />
-                        </Link>
+                            {/* Balance */}
+                            <td className="p-4 text-right">
+                              <SemanticBalance
+                                balanceState={customer.balance_state}
+                                displayAmount={customer.display_amount}
+                                currentBalance={customer.current_balance}
+                                normalBalance={customer.normal_balance}
+                                balanceDirection={customer.balance_direction}
+                                size="md"
+                              />
+                            </td>
 
-                        {isReceivable ? (
-                          <Link
-                            href={`/vouchers/new?type=RECEIPT&party=${customer.id}`}
-                            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-xs transition-colors flex items-center gap-1"
-                          >
-                            <span>Receive (F6)</span>
-                          </Link>
-                        ) : (
-                          <Link
-                            href={`/vouchers/new?type=RECEIPT&party=${customer.id}`}
-                            className="px-3 py-1.5 rounded-xl bg-muted/70 hover:bg-muted text-foreground text-xs font-semibold border border-border/50 transition-colors"
-                          >
-                            <span>Record Receipt</span>
-                          </Link>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                            {/* Actions */}
+                            <td className="p-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                {isReceivable ? (
+                                  <Link
+                                    href={`/vouchers/new?type=RECEIPT&party=${customer.id}`}
+                                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-xs transition-colors flex items-center gap-1 min-h-[34px]"
+                                  >
+                                    <span>Receive (F6)</span>
+                                  </Link>
+                                ) : (
+                                  <Link
+                                    href={`/vouchers/new?type=RECEIPT&party=${customer.id}`}
+                                    className="px-3 py-1.5 rounded-lg bg-muted/70 hover:bg-muted text-foreground text-xs font-semibold border border-border/50 transition-colors flex items-center gap-1 min-h-[34px]"
+                                  >
+                                    <span>Record Receipt</span>
+                                  </Link>
+                                )}
+
+                                <Link
+                                  href={`/parties/${customer.id}/statement`}
+                                  className="px-2.5 py-1.5 rounded-lg bg-muted/60 hover:bg-muted text-foreground text-xs font-semibold border border-border transition-colors flex items-center gap-1 min-h-[34px]"
+                                  title="View Customer Statement"
+                                >
+                                  <span>Statement</span>
+                                  <ArrowUpRight className="w-3.5 h-3.5" />
+                                </Link>
+
+                                <Link
+                                  href={`/parties/${customer.id}/edit`}
+                                  className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted border border-border/40 transition-colors min-h-[34px] min-w-[34px] flex items-center justify-center"
+                                  title="Edit Customer"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </Link>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>
