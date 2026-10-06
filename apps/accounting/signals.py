@@ -57,3 +57,17 @@ def cleanup_voucher_inventory_entries(sender, instance, **kwargs):
     InventoryEntry.objects.filter(voucher_id=instance.id).delete()
 
 
+@receiver(post_save, sender=Voucher)
+def invalidate_voucher_document_snapshot(sender, instance, **kwargs):
+    if kwargs.get('raw'):
+        return
+    try:
+        from apps.documents.models import DocumentSnapshot
+        from apps.documents.services.pdf_service import DocumentPDFService
+        snaps = DocumentSnapshot.objects.filter(source_type='Voucher', source_id=str(instance.id))
+        for snap in snaps:
+            DocumentPDFService.invalidate_cache_for_snapshot(snap)
+    except Exception:
+        pass
+
+

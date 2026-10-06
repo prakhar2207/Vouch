@@ -28,6 +28,27 @@ class DocumentPDFService:
     """
 
     @classmethod
+    def get_cache_key(
+        cls,
+        snapshot: DocumentSnapshot,
+        watermark: bool = False,
+        show_logo: bool = True,
+    ) -> str:
+        version = getattr(snapshot, 'source_version', 1) or 1
+        updated_ts = ''
+        if isinstance(snapshot.snapshot_json, dict):
+            updated_ts = snapshot.snapshot_json.get('_voucher_updated_at') or snapshot.snapshot_json.get('_proforma_updated_at') or ''
+        ts_clean = ''.join(c for c in str(updated_ts) if c.isalnum())
+        return f"vouch_pdf_{snapshot.id}_v{version}_{ts_clean}_{snapshot.template_version}_wm{int(watermark)}_lg{int(show_logo)}"
+
+    @classmethod
+    def invalidate_cache_for_snapshot(cls, snapshot: DocumentSnapshot):
+        for wm in [0, 1]:
+            for lg in [0, 1]:
+                cache.delete(f"vouch_pdf_{snapshot.id}_{snapshot.template_version}_wm{wm}_lg{lg}")
+                cache.delete(cls.get_cache_key(snapshot, watermark=bool(wm), show_logo=bool(lg)))
+
+    @classmethod
     def generate_pdf_from_snapshot(
         cls,
         snapshot: DocumentSnapshot,
@@ -35,7 +56,7 @@ class DocumentPDFService:
         watermark: bool = False,
         show_logo: bool = True,
     ) -> bytes:
-        cache_key = f"vouch_pdf_{snapshot.id}_{snapshot.template_version}_wm{int(watermark)}_lg{int(show_logo)}"
+        cache_key = cls.get_cache_key(snapshot, watermark=watermark, show_logo=show_logo)
 
         if not bypass_cache:
             cached_data = cache.get(cache_key)

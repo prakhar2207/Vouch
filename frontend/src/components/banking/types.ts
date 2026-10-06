@@ -1,8 +1,9 @@
 export interface BankLedger {
   id: string;
   name: string;
-  ledger_type: string;
+  ledger_type?: string;
   ledgerType?: string;
+  group?: string;
   current_balance: number;
   currentBalance?: number;
   bank_account_number?: string;

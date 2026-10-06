@@ -2,6 +2,7 @@
 
 import React from "react";
 import SearchableSelect, { SearchableOption } from "@/components/SearchableSelect";
+import { Plus } from "lucide-react";
 import { BankLedger } from "./types";
 
 interface BankAccountSummaryCardProps {
@@ -9,6 +10,7 @@ interface BankAccountSummaryCardProps {
   onSelectBankId: (id: string) => void;
   bankLedgers: BankLedger[];
   bankOptions: SearchableOption[];
+  onAddNewBank?: () => void;
 }
 
 export default function BankAccountSummaryCard({
@@ -16,6 +18,7 @@ export default function BankAccountSummaryCard({
   onSelectBankId,
   bankLedgers,
   bankOptions,
+  onAddNewBank,
 }: BankAccountSummaryCardProps) {
   const selectedBank = bankLedgers.find((b) => b.id === selectedBankId);
   const bal = selectedBank
@@ -29,11 +32,23 @@ export default function BankAccountSummaryCard({
         <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
           Bank Account
         </label>
-        {bankLedgers.length > 1 && (
-          <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-            {bankLedgers.length} Accounts
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {bankLedgers.length > 1 && (
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+              {bankLedgers.length} Accounts
+            </span>
+          )}
+          {onAddNewBank && (
+            <button
+              type="button"
+              onClick={onAddNewBank}
+              className="text-xs text-primary hover:text-primary/80 font-semibold flex items-center gap-1 cursor-pointer hover:underline"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Bank</span>
+            </button>
+          )}
+        </div>
       </div>
 
       <SearchableSelect
@@ -43,6 +58,24 @@ export default function BankAccountSummaryCard({
         placeholder="-- Select Bank Account --"
         searchPlaceholder="Search bank accounts..."
       />
+
+      {bankLedgers.length === 0 && (
+        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-foreground flex items-center justify-between gap-2">
+          <div>
+            <p className="font-semibold text-amber-500">No bank accounts configured</p>
+            <p className="text-[11px] text-muted-foreground">Add your bank account to reconcile statements.</p>
+          </div>
+          {onAddNewBank && (
+            <button
+              type="button"
+              onClick={onAddNewBank}
+              className="px-2.5 py-1 bg-primary text-primary-foreground text-xs font-bold rounded-lg shrink-0 cursor-pointer shadow-xs"
+            >
+              + Add
+            </button>
+          )}
+        </div>
+      )}
 
       {selectedBank && (
         <div className="space-y-3">

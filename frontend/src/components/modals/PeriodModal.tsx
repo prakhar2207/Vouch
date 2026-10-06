@@ -67,11 +67,22 @@ export default function PeriodModal() {
   };
 
   const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
   const year = today.getFullYear();
   const month = today.getMonth() + 1;
   const curMonthStart = `${year}-${String(month).padStart(2, '0')}-01`;
   const nextMonthDate = new Date(year, month, 0);
   const curMonthEnd = `${year}-${String(month).padStart(2, '0')}-${String(nextMonthDate.getDate()).padStart(2, '0')}`;
+
+  const fyStartYear = activeFY?.start_date ? parseInt(activeFY.start_date.slice(0, 4)) : (month >= 4 ? year : year - 1);
+  const q1Start = `${fyStartYear}-04-01`;
+  const q1End = `${fyStartYear}-06-30`;
+  const q2Start = `${fyStartYear}-07-01`;
+  const q2End = `${fyStartYear}-09-30`;
+  const q3Start = `${fyStartYear}-10-01`;
+  const q3End = `${fyStartYear}-12-31`;
+  const q4Start = `${fyStartYear + 1}-01-01`;
+  const q4End = `${fyStartYear + 1}-03-31`;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -161,11 +172,56 @@ export default function PeriodModal() {
 
               <button
                 type="button"
+                onClick={() => applyCustomPreset(todayStr, todayStr)}
+                className="px-2.5 py-2 bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg border border-border text-left flex items-center justify-between transition-colors cursor-pointer"
+              >
+                <span>Today</span>
+                <span className="text-[10px] text-muted-foreground font-mono">1 Day</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => applyCustomPreset(curMonthStart, curMonthEnd)}
                 className="px-2.5 py-2 bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg border border-border text-left flex items-center justify-between transition-colors cursor-pointer"
               >
                 <span>Current Month</span>
-                <span className="text-[10px] text-muted-foreground font-mono">30 Days</span>
+                <span className="text-[10px] text-muted-foreground font-mono">Month</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => applyCustomPreset(q1Start, q1End)}
+                className="px-2.5 py-2 bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg border border-border text-left flex items-center justify-between transition-colors cursor-pointer"
+              >
+                <span>Q1 (Apr–Jun)</span>
+                <span className="text-[10px] text-muted-foreground font-mono">Apr-Jun</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => applyCustomPreset(q2Start, q2End)}
+                className="px-2.5 py-2 bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg border border-border text-left flex items-center justify-between transition-colors cursor-pointer"
+              >
+                <span>Q2 (Jul–Sep)</span>
+                <span className="text-[10px] text-muted-foreground font-mono">Jul-Sep</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => applyCustomPreset(q3Start, q3End)}
+                className="px-2.5 py-2 bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg border border-border text-left flex items-center justify-between transition-colors cursor-pointer"
+              >
+                <span>Q3 (Oct–Dec)</span>
+                <span className="text-[10px] text-muted-foreground font-mono">Oct-Dec</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => applyCustomPreset(q4Start, q4End)}
+                className="px-2.5 py-2 bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg border border-border text-left flex items-center justify-between transition-colors cursor-pointer"
+              >
+                <span>Q4 (Jan–Mar)</span>
+                <span className="text-[10px] text-muted-foreground font-mono">Jan-Mar</span>
               </button>
 
               <button

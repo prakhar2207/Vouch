@@ -46,6 +46,7 @@ import {
   FolderKanban,
   Sliders,
   X,
+  RotateCcw,
 } from "lucide-react";
 import SyncStatusBadge from "./SyncStatusBadge";
 import UniversalNewModal from "./UniversalNewModal";
@@ -74,7 +75,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const { setIsHelpOpen, setIsDateOpen, workingDate, startTour, isCalculatorOpen, setIsCalculatorOpen } = useShortcuts();
   const { activeFY, availableFYs, setActiveFY, isReadOnly, setIsClosingModalOpen } = useFinancialYear();
-  const { displayPeriod, setIsPeriodModalOpen, setIsSplitModalOpen } = useAccountingPeriod();
+  const { displayPeriod, shortDisplayPeriod, isCustomPeriod, resetToCurrentFY, setIsPeriodModalOpen, setIsSplitModalOpen } = useAccountingPeriod();
   const { activeCompany, availableCompanies, setActiveCompany } = useCompany();
   const { user, role, isAdmin, isOwner, isCA, isEmployee, isViewer, canManageSettings } = useRole();
 
@@ -686,11 +687,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 aria-haspopup="true"
                 aria-expanded={isFYDropdownOpen}
                 className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[44px]"
-                title="Change Financial Year or Period (Alt + F2)"
+                title={isCustomPeriod ? `Active Period: ${displayPeriod} (Click to change)` : "Change Financial Year or Period (Alt + F2)"}
               >
-                <span className="font-mono tabular-nums text-xs font-semibold text-foreground whitespace-nowrap">
-                  {activeFY ? (activeFY.code || activeFY.name) : "FY 26-27"}
-                </span>
+                <div className="flex items-center gap-1.5 font-mono tabular-nums text-xs font-semibold text-foreground whitespace-nowrap">
+                  <span>{activeFY ? (activeFY.code || activeFY.name) : "FY 26-27"}</span>
+                  {isCustomPeriod && (
+                    <span className="text-[10px] text-blue-500 dark:text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded font-sans font-medium">
+                      {shortDisplayPeriod}
+                    </span>
+                  )}
+                </div>
                 <span className={`w-2 h-2 rounded-full shrink-0 ${activeFY?.is_closed ? "bg-amber-400" : "bg-emerald-500"}`} />
                 <ChevronDown className="w-3 h-3 text-muted-foreground/70 shrink-0" />
               </button>
@@ -698,9 +704,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               {isFYDropdownOpen && (
                 <div className="absolute right-0 mt-1.5 w-64 rounded-xl border border-border bg-card/95 backdrop-blur-md shadow-xl p-1.5 z-50 text-xs animate-in fade-in zoom-in-95">
                   <div className="px-2.5 py-1.5 text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-                    <span>Financial Years</span>
-                    <span className="text-[9px] font-mono text-muted-foreground/80">Active FY Only</span>
+                    <span>Company Period</span>
+                    <span className="text-[9px] font-mono text-muted-foreground/80">{isCustomPeriod ? "Custom Range" : "Full FY"}</span>
                   </div>
+                  {isCustomPeriod && (
+                    <div className="px-2.5 py-1.5 mb-1 rounded-lg bg-blue-500/10 border border-blue-500/20 text-foreground text-[11px] flex items-center justify-between">
+                      <span className="font-mono text-blue-500 dark:text-blue-400 font-medium">{shortDisplayPeriod}</span>
+                      <button
+                        onClick={() => {
+                          resetToCurrentFY();
+                          setIsFYDropdownOpen(false);
+                        }}
+                        className="text-[10px] text-primary hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                        title="Reset to entire financial year"
+                      >
+                        <RotateCcw className="w-2.5 h-2.5" />
+                        <span>Reset</span>
+                      </button>
+                    </div>
+                  )}
                   <div className="space-y-0.5 max-h-56 overflow-y-auto">
                     {availableFYs.map((fy) => {
                       const isSelected = activeFY?.id === fy.id;
@@ -743,7 +765,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     >
                       <span className="flex items-center gap-1.5">
                         <Calendar className="w-3.5 h-3.5" />
-                        <span>Custom Period Range</span>
+                        <span>Change Period Range</span>
                       </span>
                       <kbd className="font-mono text-[10px] px-1 py-0.2 bg-muted text-muted-foreground rounded border border-border">Alt+F2</kbd>
                     </button>

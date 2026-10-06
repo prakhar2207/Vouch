@@ -73,7 +73,7 @@ export default function PublicSharePage() {
 
     const fetchShare = async () => {
       try {
-        const res = await axios.get(`${API_BASE_URL}/api/v1/documents/share/resolve/${token}/`);
+        const res = await axios.get(`${API_BASE_URL}/api/v1/documents/share/resolve/${token}/?t=${Date.now()}`);
         setData(res.data);
         if (res.data?.dto?.buyer) {
           setAuthCompanyName(res.data.dto.buyer.name || "");
@@ -91,7 +91,7 @@ export default function PublicSharePage() {
   }, [token]);
 
   const handleDownloadPdf = () => {
-    window.open(`${API_BASE_URL}/api/v1/documents/share/download/${token}/`, "_blank");
+    window.open(`${API_BASE_URL}/api/v1/documents/share/download/${token}/?t=${Date.now()}`, "_blank");
   };
 
   const handleExecuteImport = async () => {

@@ -96,6 +96,12 @@ export default function BalanceSheetPage() {
   const [data, setData] = useState<BalanceSheetData | null>(null);
 
   useEffect(() => {
+    if (toDate && toDate !== asOfDate) {
+      setAsOfDate(toDate);
+    }
+  }, [toDate]);
+
+  useEffect(() => {
     if (!isAuthenticated()) {
       router.push("/login");
       return;

@@ -325,3 +325,43 @@ class DocumentArchitectureTests(TestCase):
         )
         self.assertEqual(blocked_resp.status_code, 400)
         self.assertIn('EDI import is not permitted', blocked_resp.data['error'])
+
+    def test_voucher_edit_refreshes_snapshot_and_pdf(self):
+        """Verify that editing a voucher automatically refreshes the snapshot and busts PDF cache."""
+        # Initial snapshot
+        snap1 = DocumentSnapshotService.get_or_create_voucher_snapshot(self.voucher)
+        self.assertEqual(snap1.total_amount, Decimal('826.00'))
+        pdf1 = DocumentPDFService.generate_pdf_for_voucher(self.voucher)
+
+        # Create share
+        raw_token, share = DocumentShareService.create_share(snap1, user=self.seller_user, expires_in_days=7)
+
+        # Now edit the voucher: change party and total amount
+        new_customer = Ledger.objects.create(
+            company=self.seller_company,
+            group=self.debtors_group,
+            name='Bhagwanti Footwear Products',
+            gstin='09AARFB6445P1ZK',
+            state_code='09',
+            ledger_type='CUSTOMER',
+        )
+        self.voucher.party_ledger = new_customer
+        self.voucher.total_amount = Decimal('3006.00')
+        self.voucher.save()
+
+        # Retrieve snapshot - must automatically detect staleness and refresh
+        snap2 = DocumentSnapshotService.get_or_create_voucher_snapshot(self.voucher)
+        self.assertEqual(snap2.total_amount, Decimal('3006.00'))
+        self.assertEqual(snap2.snapshot_json['buyer']['name'], 'Bhagwanti Footwear Products')
+
+        # PDF generation must produce new PDF
+        pdf2 = DocumentPDFService.generate_pdf_for_voucher(self.voucher)
+        self.assertNotEqual(pdf1, pdf2)
+
+        # Public share download must also resolve fresh snapshot and return updated PDF
+        from rest_framework.test import APIClient
+        client = APIClient()
+        resolve_resp = client.get(f"/api/v1/documents/share/resolve/{raw_token}/")
+        self.assertEqual(resolve_resp.status_code, 200)
+        self.assertEqual(Decimal(str(resolve_resp.data['total_amount'])), Decimal('3006.00'))
+        self.assertEqual(resolve_resp.data['dto']['buyer']['name'], 'Bhagwanti Footwear Products')

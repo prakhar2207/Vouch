@@ -837,7 +837,7 @@ export default function PrintInvoicePage() {
       let pdfBlobUrl: string | null = null;
 
       try {
-        const pdfResp = await api.get(`/api/v1/documents/vouchers/${invoiceId}/pdf/`, { responseType: 'blob' });
+        const pdfResp = await api.get(`/api/v1/documents/vouchers/${invoiceId}/pdf/?fresh=1&t=${Date.now()}`, { responseType: 'blob' });
         pdfFile = new File([pdfResp.data], filename, { type: 'application/pdf' });
         pdfBlobUrl = window.URL.createObjectURL(pdfResp.data);
       } catch (pdfErr) {
@@ -915,7 +915,7 @@ export default function PrintInvoicePage() {
       const filename = getCleanInvoiceFilename();
       // 1. Download official high-definition deterministic vector PDF from backend
       try {
-        const response = await api.get(`/api/v1/documents/vouchers/${invoiceId}/pdf/?download=1`, {
+        const response = await api.get(`/api/v1/documents/vouchers/${invoiceId}/pdf/?download=1&fresh=1&t=${Date.now()}`, {
           responseType: 'blob',
         });
         const blobUrl = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
@@ -979,10 +979,16 @@ export default function PrintInvoicePage() {
               width: 100% !important;
               min-width: 100% !important;
               max-width: 100% !important;
-              min-height: auto !important;
+              min-height: 279mm !important;
               padding: 0 !important;
               margin: 0 !important;
               box-shadow: none !important;
+              display: flex !important;
+              flex-direction: column !important;
+              justify-content: space-between !important;
+              box-sizing: border-box !important;
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
             }
             `
           }
@@ -1742,8 +1748,8 @@ export default function PrintInvoicePage() {
                                 </tr>
                             ))}
                             {/* Filler Row */}
-                            <tr className="border-b border-black">
-                                <td className="border-r border-black h-full min-h-[40px] print:min-h-[16px]"></td>
+                            <tr className="border-b border-black h-full flex-1" style={{ height: '100%' }}>
+                                <td className="border-r border-black h-full min-h-[40px]"></td>
                                 <td className="border-r border-black"></td>
                                 <td className="border-r border-black"></td>
                                 <td className="border-r border-black"></td>

@@ -10,6 +10,7 @@ import ConfirmModal from '@/components/modals/ConfirmModal';
 import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
+import { useAccountingPeriod } from '@/context/PeriodContext';
 import { ledgersRepository } from '@/lib/data';
 import SemanticBalance from '@/components/accounting/SemanticBalance';
 import { 
@@ -33,7 +34,11 @@ export default function PartiesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const { activeCompany, companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
+  const { fromDate, toDate, displayPeriod, isCustomPeriod } = useAccountingPeriod();
   const [companyId, setCompanyId] = useState(activeCompanyId || '');
+
+  const effectiveStartDate = fromDate || activeFY?.start_date;
+  const effectiveEndDate = toDate || activeFY?.end_date;
 
   // Filtering: 'ALL' | 'SUPPLIER' | 'CUSTOMER'
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'SUPPLIER' | 'CUSTOMER'>('ALL');
@@ -51,7 +56,7 @@ export default function PartiesPage() {
       return;
     }
     fetchParties();
-  }, [router, activeCompanyId, activeFY?.id]);
+  }, [router, activeCompanyId, activeFY?.id, fromDate, toDate]);
 
   useEffect(() => {
     if (activeCompanyId && activeCompanyId !== companyId) {
@@ -79,8 +84,8 @@ export default function PartiesPage() {
 
       const { data: filteredParties } = await ledgersRepository.getParties(cid, {
         financialYearId: activeFY?.id,
-        startDate: activeFY?.start_date,
-        endDate: activeFY?.end_date,
+        startDate: effectiveStartDate,
+        endDate: effectiveEndDate,
       });
       setParties(filteredParties);
     } catch (err) {
@@ -246,12 +251,16 @@ export default function PartiesPage() {
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Parties</h1>
-              {activeFY && (
+              {isCustomPeriod ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  <span>{displayPeriod}</span>
+                </span>
+              ) : activeFY ? (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
                   <span>FY {activeFY.code}</span>
                   <span className="text-muted-foreground font-normal text-[11px]">({activeFY.start_date} to {activeFY.end_date})</span>
                 </span>
-              )}
+              ) : null}
             </div>
             <p className="text-muted-foreground mt-1 text-xs sm:text-sm">Manage your customers and suppliers</p>
           </div>

@@ -1,4 +1,5 @@
 import logging
+from decimal import Decimal
 from datetime import date
 from django.http import HttpResponse, JsonResponse
 from rest_framework import status
@@ -69,7 +70,7 @@ class VoucherPDFStreamAPIView(APIView):
         if not voucher:
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        bypass_cache = request.query_params.get('fresh') == '1'
+        bypass_cache = request.query_params.get('fresh') == '1' or request.query_params.get('download') == '1'
         pdf_bytes = DocumentPDFService.generate_pdf_for_voucher(voucher, bypass_cache=bypass_cache)
 
         disposition = 'attachment' if request.query_params.get('download') == '1' else 'inline'
@@ -78,6 +79,8 @@ class VoucherPDFStreamAPIView(APIView):
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = f'{disposition}; filename="{filename}"'
         response['Content-Length'] = len(pdf_bytes)
+        response['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+        response['Pragma'] = 'no-cache'
         return response
 
 
@@ -91,7 +94,8 @@ class VoucherShareAPIView(APIView):
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
 
         expires_in_days = int(request.data.get('expires_in_days', 30))
-        snapshot = DocumentSnapshotService.get_or_create_voucher_snapshot(voucher, user=request.user)
+        # Always force refresh snapshot on share creation so share URL and WhatsApp message contain latest data
+        snapshot = DocumentSnapshotService.get_or_create_voucher_snapshot(voucher, user=request.user, force_refresh=True)
 
         try:
             raw_token, share = DocumentShareService.create_share(
@@ -159,17 +163,29 @@ class PublicShareResolveAPIView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
 
         snapshot = share.document_snapshot
-        if snapshot.source_type == 'Voucher' and snapshot.template_version != '2.1':
+        if snapshot.source_type == 'Voucher':
             try:
                 voucher = Voucher.objects.filter(id=snapshot.source_id, company=snapshot.company).first()
                 if voucher:
-                    snapshot = DocumentSnapshotService.get_or_create_voucher_snapshot(voucher, force_refresh=True)
+                    existing_snap = snapshot.snapshot_json or {}
+                    existing_up = existing_snap.get('_voucher_updated_at')
+                    v_up = str(voucher.updated_at) if hasattr(voucher, 'updated_at') and voucher.updated_at else None
+                    is_stale = (
+                        snapshot.template_version != '2.1' or
+                        (v_up and existing_up != v_up) or
+                        (snapshot.total_amount is not None and voucher.total_amount is not None and Decimal(str(snapshot.total_amount)) != Decimal(str(voucher.total_amount))) or
+                        (snapshot.document_number != voucher.voucher_number)
+                    )
+                    if is_stale:
+                        snapshot = DocumentSnapshotService.get_or_create_voucher_snapshot(voucher, force_refresh=True)
+                        share.document_snapshot = snapshot
+                        share.save(update_fields=['document_snapshot'])
             except Exception as e:
                 logger.warning(f"Could not refresh stale public share snapshot {snapshot.id}: {e}")
 
         caps = get_document_capabilities(snapshot.document_type)
 
-        return Response({
+        response = Response({
             'share_type': share.share_type,
             'document_type': snapshot.document_type,
             'document_number': snapshot.document_number,
@@ -186,6 +202,8 @@ class PublicShareResolveAPIView(APIView):
             },
             'dto': snapshot.snapshot_json,
         })
+        response['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+        return response
 
 
 class PublicShareDownloadPDFAPIView(APIView):
@@ -199,20 +217,34 @@ class PublicShareDownloadPDFAPIView(APIView):
 
         watermark = request.query_params.get('watermark') != '0'
         snapshot = share.document_snapshot
-        if snapshot.source_type == 'Voucher' and snapshot.template_version != '2.1':
+        if snapshot.source_type == 'Voucher':
             try:
                 voucher = Voucher.objects.filter(id=snapshot.source_id, company=snapshot.company).first()
                 if voucher:
-                    snapshot = DocumentSnapshotService.get_or_create_voucher_snapshot(voucher, force_refresh=True)
+                    existing_snap = snapshot.snapshot_json or {}
+                    existing_up = existing_snap.get('_voucher_updated_at')
+                    v_up = str(voucher.updated_at) if hasattr(voucher, 'updated_at') and voucher.updated_at else None
+                    is_stale = (
+                        snapshot.template_version != '2.1' or
+                        (v_up and existing_up != v_up) or
+                        (snapshot.total_amount is not None and voucher.total_amount is not None and Decimal(str(snapshot.total_amount)) != Decimal(str(voucher.total_amount))) or
+                        (snapshot.document_number != voucher.voucher_number)
+                    )
+                    if is_stale:
+                        snapshot = DocumentSnapshotService.get_or_create_voucher_snapshot(voucher, force_refresh=True)
+                        share.document_snapshot = snapshot
+                        share.save(update_fields=['document_snapshot'])
             except Exception as e:
                 logger.warning(f"Could not refresh stale public download snapshot {snapshot.id}: {e}")
 
-        pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(snapshot, watermark=watermark)
+        pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(snapshot, watermark=watermark, bypass_cache=True)
 
         filename = f"{snapshot.document_number.replace('/', '_') or 'document'}.pdf"
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = f'inline; filename="{filename}"'
         response['Content-Length'] = len(pdf_bytes)
+        response['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+        response['Pragma'] = 'no-cache'
         return response
 
 

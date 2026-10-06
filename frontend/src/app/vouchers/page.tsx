@@ -11,6 +11,7 @@ import { ChevronLeft, ChevronRight, Edit2, Trash2, Scale, AlertCircle } from 'lu
 import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
+import { useAccountingPeriod } from '@/context/PeriodContext';
 import { vouchersRepository } from '@/lib/data';
 import { pullIncrementalChanges } from '@/lib/sync/sync-worker';
 import EditPaymentReceiptModal from '@/components/modals/EditPaymentReceiptModal';
@@ -21,6 +22,7 @@ export default function VouchersPage() {
   const { toast } = useToast();
   const { companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
+  const { fromDate, toDate, displayPeriod, isCustomPeriod } = useAccountingPeriod();
   const [vouchers, setVouchers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -28,6 +30,9 @@ export default function VouchersPage() {
   const [page, setPage] = useState<number>(1);
   const [pagination, setPagination] = useState<any>(null);
   const pageSize = 50;
+
+  const effectiveStartDate = fromDate || activeFY?.start_date;
+  const effectiveEndDate = toDate || activeFY?.end_date;
 
   // Edit and Delete state
   const [editingVoucher, setEditingVoucher] = useState<any | null>(null);
@@ -42,7 +47,7 @@ export default function VouchersPage() {
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
     fetchVouchers('ALL', 1);
-  }, [router, activeCompanyId, activeFY?.id]);
+  }, [router, activeCompanyId, activeFY?.id, fromDate, toDate]);
 
   const fetchVouchers = async (typeFilter: string = filter, targetPage: number = page) => {
     setLoading(true);
@@ -65,8 +70,8 @@ export default function VouchersPage() {
         pageSize,
         type: typeFilter !== 'ALL' ? typeFilter : ['PAYMENT', 'RECEIPT'],
         financialYearId: activeFY?.id,
-        startDate: activeFY?.start_date,
-        endDate: activeFY?.end_date,
+        startDate: effectiveStartDate,
+        endDate: effectiveEndDate,
       });
 
       setVouchers(result.data);
@@ -94,8 +99,8 @@ export default function VouchersPage() {
             pageSize,
             type: typeOpt,
             financialYearId: activeFY?.id,
-            startDate: activeFY?.start_date,
-            endDate: activeFY?.end_date,
+            startDate: effectiveStartDate,
+            endDate: effectiveEndDate,
           }).then((fresh) => {
             setVouchers(fresh.data);
             setPagination({
@@ -164,7 +169,18 @@ export default function VouchersPage() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Cash & Bank</h1>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Cash & Bank</h1>
+              {isCustomPeriod ? (
+                <span className="text-[11px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2.5 py-0.5 rounded-full font-medium">
+                  {displayPeriod}
+                </span>
+              ) : activeFY ? (
+                <span className="text-[11px] bg-primary/10 text-primary border border-primary/20 px-2.5 py-0.5 rounded-full font-medium">
+                  FY {activeFY.code}
+                </span>
+              ) : null}
+            </div>
             <p className="text-xs sm:text-sm text-muted-foreground mt-1">Record money you sent and received</p>
           </div>
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">

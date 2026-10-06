@@ -38,12 +38,14 @@ import { offlineDb } from "@/lib/db/offlineDb";
 import { retryFailedVoucher, pullIncrementalChanges } from "@/lib/sync/sync-worker";
 import { vouchersRepository } from "@/lib/data";
 import { PeriodPreset, computePeriodDateRange, formatFriendlyDate } from "@/utils/periodRanges";
+import { useAccountingPeriod } from "@/context/PeriodContext";
 
 export default function PurchaseInvoiceList() {
   const router = useRouter();
   const { toast } = useToast();
   const { companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
+  const { fromDate, toDate, displayPeriod, isCustomPeriod } = useAccountingPeriod();
 
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,8 +86,19 @@ export default function PurchaseInvoiceList() {
   const [deleteConfirmParams, setDeleteConfirmParams] = useState<{ id: string, number: string } | null>(null);
 
   const activeDateRange = useMemo(() => {
-    return computePeriodDateRange(periodPreset, activeFY, customStart, customEnd);
-  }, [periodPreset, activeFY, customStart, customEnd]);
+    if (periodPreset !== "ALL" || customStart || customEnd) {
+      return computePeriodDateRange(periodPreset, activeFY, customStart, customEnd);
+    }
+    const sDate = fromDate || activeFY?.start_date || "";
+    const eDate = toDate || activeFY?.end_date || "";
+    return {
+      startDate: sDate,
+      endDate: eDate,
+      formattedRange: isCustomPeriod
+        ? displayPeriod
+        : activeFY ? `FY ${activeFY.code}` : "All Period",
+    };
+  }, [periodPreset, activeFY, customStart, customEnd, fromDate, toDate, isCustomPeriod, displayPeriod]);
 
   const calculatePeriodMetrics = useCallback(async (targetCompanyId?: string) => {
     let companyId = targetCompanyId || activeCompanyId;
@@ -96,7 +109,8 @@ export default function PurchaseInvoiceList() {
 
     setLoadingMetrics(true);
     try {
-      const { startDate, endDate } = activeDateRange;
+      const startDate = activeDateRange.startDate || fromDate || activeFY?.start_date;
+      const endDate = activeDateRange.endDate || toDate || activeFY?.end_date;
       const token = getAccessToken();
       let serverSummaryFetched = false;
 
@@ -194,7 +208,7 @@ export default function PurchaseInvoiceList() {
     } finally {
       setLoadingMetrics(false);
     }
-  }, [activeCompanyId, activeDateRange, activeFY]);
+  }, [activeCompanyId, activeDateRange, activeFY, fromDate, toDate]);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -203,7 +217,7 @@ export default function PurchaseInvoiceList() {
     }
     fetchInvoices(1);
     calculatePeriodMetrics();
-  }, [router, activeCompanyId, activeFY?.id, filterTableByPeriod, activeDateRange.startDate, activeDateRange.endDate]);
+  }, [router, activeCompanyId, activeFY?.id, filterTableByPeriod, activeDateRange.startDate, activeDateRange.endDate, fromDate, toDate]);
 
   const fetchInvoices = async (targetPage: number = page) => {
     setLoading(true);
@@ -229,17 +243,14 @@ export default function PurchaseInvoiceList() {
         return;
       }
 
-      const dateFilters = filterTableByPeriod
-        ? {
-            startDate: activeDateRange.startDate,
-            endDate: activeDateRange.endDate,
-            financialYearId: undefined,
-          }
-        : {
-            financialYearId: activeFY?.id,
-            startDate: activeFY?.start_date,
-            endDate: activeFY?.end_date,
-          };
+      const effectiveStartDate = (filterTableByPeriod && activeDateRange.startDate) ? activeDateRange.startDate : (fromDate || activeFY?.start_date);
+      const effectiveEndDate = (filterTableByPeriod && activeDateRange.endDate) ? activeDateRange.endDate : (toDate || activeFY?.end_date);
+
+      const dateFilters = {
+        startDate: effectiveStartDate,
+        endDate: effectiveEndDate,
+        financialYearId: activeFY?.id,
+      };
 
       const result = await vouchersRepository.getPurchaseInvoices(companyId, {
         page: targetPage,

@@ -9,6 +9,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
+import { useAccountingPeriod } from '@/context/PeriodContext';
 import EditSalesInvoiceModal from '@/components/modals/EditSalesInvoiceModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 import EWayBillModal from '@/components/gst/EWayBillModal';
@@ -23,12 +24,16 @@ export default function SalesInvoiceList() {
   const { toast } = useToast();
   const { companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
+  const { fromDate, toDate, displayPeriod } = useAccountingPeriod();
 
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState<number>(1);
   const [pagination, setPagination] = useState<any>(null);
   const pageSize = 50;
+
+  const effectiveStartDate = fromDate || activeFY?.start_date;
+  const effectiveEndDate = toDate || activeFY?.end_date;
 
   // Edit and Delete state
   const [editingVoucher, setEditingVoucher] = useState<any | null>(null);
@@ -48,7 +53,7 @@ export default function SalesInvoiceList() {
       return;
     }
     fetchInvoices(1);
-  }, [router, activeCompanyId, statusFilter, activeFY?.id]);
+  }, [router, activeCompanyId, statusFilter, activeFY?.id, fromDate, toDate]);
 
   const fetchInvoices = async (targetPage: number = page) => {
     setLoading(true);
@@ -72,8 +77,8 @@ export default function SalesInvoiceList() {
           pageSize,
           status: statusFilter,
           financialYearId: activeFY?.id,
-          startDate: activeFY?.start_date,
-          endDate: activeFY?.end_date,
+          startDate: effectiveStartDate,
+          endDate: effectiveEndDate,
         });
 
         // Network fallback if local IndexedDB is empty or out of sync
@@ -87,8 +92,8 @@ export default function SalesInvoiceList() {
               params.append("limit", "500");
               params.append("offset", String((targetPage - 1) * pageSize));
               if (activeFY?.id) params.append("financial_year_id", activeFY.id);
-              if (activeFY?.start_date) params.append("start_date", activeFY.start_date);
-              if (activeFY?.end_date) params.append("end_date", activeFY.end_date);
+              if (effectiveStartDate) params.append("start_date", effectiveStartDate);
+              if (effectiveEndDate) params.append("end_date", effectiveEndDate);
 
               const sRes = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?${params.toString()}`, { headers, timeout: 6000 });
               if (sRes.data?.data && sRes.data.data.length > 0) {
@@ -116,8 +121,8 @@ export default function SalesInvoiceList() {
                   pageSize,
                   status: statusFilter,
                   financialYearId: activeFY?.id,
-                  startDate: activeFY?.start_date,
-                  endDate: activeFY?.end_date,
+                  startDate: effectiveStartDate,
+                  endDate: effectiveEndDate,
                 });
               }
             }
@@ -226,7 +231,7 @@ export default function SalesInvoiceList() {
     try {
       toast.info('Downloading Tax Invoice PDF...');
       const token = getAccessToken();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/pdf/?download=true`, {
+      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/pdf/?download=true&fresh=1&t=${Date.now()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -340,7 +345,7 @@ export default function SalesInvoiceList() {
       let pdfFile: File | null = null;
       let pdfBlobUrl: string | null = null;
       try {
-        const pdfRes = await axios.get(`${API_BASE_URL}/api/v1/documents/vouchers/${inv.id}/pdf/`, {
+        const pdfRes = await axios.get(`${API_BASE_URL}/api/v1/documents/vouchers/${inv.id}/pdf/?fresh=1&t=${Date.now()}`, {
           headers,
           responseType: 'blob',
         });

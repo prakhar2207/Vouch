@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import axios from "axios";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -9,6 +9,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useFinancialYear } from "@/context/FinancialYearContext";
+import { useAccountingPeriod } from "@/context/PeriodContext";
 import {
   LocalAnalyticsEngine,
   LocalDashboardResult,
@@ -153,7 +154,17 @@ export default function Dashboard() {
 
   const { activeCompany, companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
+  const { fromDate, toDate, displayPeriod, isCustomPeriod } = useAccountingPeriod();
   const loadedCompanyRef = useRef<string | null>(null);
+
+  const effectiveStartDate = fromDate || activeFY?.start_date;
+  const effectiveEndDate = toDate || activeFY?.end_date;
+
+  const fyOptions = useMemo(() => ({
+    startDate: effectiveStartDate,
+    endDate: effectiveEndDate,
+    financialYearId: activeFY?.id,
+  }), [effectiveStartDate, effectiveEndDate, activeFY?.id]);
 
   // Load dashboard from local IndexedDB first (<15ms), then run incremental sync in background
   useEffect(() => {
@@ -201,13 +212,7 @@ export default function Dashboard() {
         }
         const validCid = cid;
 
-        const fyOptions = {
-          startDate: activeFY?.start_date,
-          endDate: activeFY?.end_date,
-          financialYearId: activeFY?.id,
-        };
-
-        // 1. Instant local read from IndexedDB (strictly scoped to active FY)
+        // 1. Instant local read from IndexedDB (strictly scoped to active period)
         const local = await LocalAnalyticsEngine.getDashboardAnalytics(validCid, fyOptions);
         if (isMounted) {
           setInsights(local);
@@ -245,7 +250,7 @@ export default function Dashboard() {
           } catch (e) {}
         }
 
-        const loadKey = `${validCid}_${activeFY?.id || ''}`;
+        const loadKey = `${validCid}_${activeFY?.id || ''}_${effectiveStartDate || ''}_${effectiveEndDate || ''}`;
         const isInitialCompanyLoad = loadedCompanyRef.current !== loadKey;
         loadedCompanyRef.current = loadKey;
 
@@ -344,11 +349,6 @@ export default function Dashboard() {
     const handleSyncComplete = async () => {
       const cid = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") : null);
       if (cid) {
-        const fyOptions = {
-          startDate: activeFY?.start_date,
-          endDate: activeFY?.end_date,
-          financialYearId: activeFY?.id,
-        };
         const updated = await LocalAnalyticsEngine.getDashboardAnalytics(cid, fyOptions);
         if (isMounted) {
           setInsights(updated);
@@ -387,7 +387,7 @@ export default function Dashboard() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [router, activeCompanyId, activeFY?.id]);
+  }, [router, activeCompanyId, activeFY?.id, fromDate, toDate, fyOptions]);
 
   const handleManualSync = async () => {
     const cid = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") : null);
@@ -396,7 +396,7 @@ export default function Dashboard() {
     setSyncMessage("Syncing local books...");
     await executeClientOutboxSync();
     await pullIncrementalChanges(cid, (msg) => setSyncMessage(msg), { force: true });
-    const refreshed = await LocalAnalyticsEngine.getDashboardAnalytics(cid);
+    const refreshed = await LocalAnalyticsEngine.getDashboardAnalytics(cid, fyOptions);
     setInsights(refreshed);
     setVouchers(refreshed.recent_vouchers || []);
     setCoverage(refreshed.coverage);
@@ -536,7 +536,15 @@ export default function Dashboard() {
 
             <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-muted-foreground">
               <span>Financial Cockpit</span>
-              {activeFY && (
+              {isCustomPeriod ? (
+                <>
+                  <span>•</span>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs">
+                    <Calendar className="w-3 h-3 text-blue-400" />
+                    <span>{displayPeriod}</span>
+                  </span>
+                </>
+              ) : activeFY ? (
                 <>
                   <span>•</span>
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold bg-muted text-foreground border border-border/60 text-xs">
@@ -544,7 +552,7 @@ export default function Dashboard() {
                     <span>FY {activeFY.code}</span>
                   </span>
                 </>
-              )}
+              ) : null}
               <button
                 onClick={() => setIsHelpOpen(true)}
                 className="p-1 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted transition-colors cursor-pointer inline-flex items-center"

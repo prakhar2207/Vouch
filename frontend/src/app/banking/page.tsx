@@ -9,6 +9,8 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useFinancialYear } from "@/context/FinancialYearContext";
+import { useAccountingPeriod } from "@/context/PeriodContext";
+import AddBankModal from "@/components/modals/AddBankModal";
 import { SearchableOption } from "@/components/SearchableSelect";
 import { bankTransactionsRepository, ledgersRepository } from "@/lib/data";
 import {
@@ -46,10 +48,15 @@ export default function BankingPage() {
 
   const { activeCompany, companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
+  const { fromDate, toDate, displayPeriod, isCustomPeriod } = useAccountingPeriod();
   const [companyId, setCompanyId] = useState<string>(isValidId(activeCompanyId) ? activeCompanyId : "");
   const [bankLedgers, setBankLedgers] = useState<BankLedger[]>([]);
   const [selectedBankId, setSelectedBankId] = useState<string>("");
   const [allLedgers, setAllLedgers] = useState<any[]>([]);
+  const [isAddBankOpen, setIsAddBankOpen] = useState<boolean>(false);
+
+  const effectiveStartDate = fromDate || activeFY?.start_date;
+  const effectiveEndDate = toDate || activeFY?.end_date;
 
   // Transactions & Summary State
   const [transactions, setTransactions] = useState<BankTransactionItem[]>([]);
@@ -131,7 +138,7 @@ export default function BankingPage() {
     if (isValidId(companyId)) {
       fetchTransactionsAndSummary();
     }
-  }, [companyId, selectedBankId, activeTab, activeFY?.id]);
+  }, [companyId, selectedBankId, activeTab, activeFY?.id, fromDate, toDate]);
 
   const getHeaders = () => {
     const token = getAccessToken();
@@ -145,6 +152,33 @@ export default function BankingPage() {
       headers["Authorization"] = `Bearer ${token}`;
     }
     return headers;
+  };
+
+  const isBankLedger = (l: any) => {
+    const type = String(l.ledgerType || l.ledger_type || "").toUpperCase();
+    if (type === "BANK" || type === "BANK_OD" || type === "BANK_OCC") return true;
+    const groupName = String(l.group?.name || l.group_name || l.group || "").toLowerCase();
+    if (groupName.includes("bank") && !groupName.includes("loan") && !groupName.includes("borrowing")) return true;
+    return false;
+  };
+
+  const handleBankAdded = (newLedger: any) => {
+    setAllLedgers((prev) => [newLedger, ...prev]);
+    const formattedBank: BankLedger = {
+      id: String(newLedger.id),
+      name: newLedger.name,
+      ledger_type: newLedger.ledger_type || "BANK",
+      ledgerType: newLedger.ledger_type || "BANK",
+      currentBalance: Number(newLedger.current_balance ?? newLedger.opening_balance ?? 0),
+      current_balance: Number(newLedger.current_balance ?? newLedger.opening_balance ?? 0),
+      group: newLedger.group_name || "Bank Accounts",
+    };
+    setBankLedgers((prev) => {
+      const exists = prev.some((b) => b.id === formattedBank.id);
+      return exists ? prev : [formattedBank, ...prev];
+    });
+    setSelectedBankId(String(newLedger.id));
+    ledgersRepository.refreshLedgers(companyId);
   };
 
   const initializeData = async () => {
@@ -180,9 +214,7 @@ export default function BankingPage() {
       const { data: rawLedgers } = await ledgersRepository.getLedgers(cid);
       setAllLedgers(rawLedgers as any[]);
 
-      const banks = (rawLedgers as any[]).filter(
-        (l: any) => l.ledgerType === "BANK" || l.ledger_type === "BANK"
-      );
+      const banks = (rawLedgers as any[]).filter(isBankLedger);
       setBankLedgers(banks);
 
       if (banks.length > 0 && !selectedBankId) {
@@ -193,11 +225,10 @@ export default function BankingPage() {
       ledgersRepository.refreshLedgers(cid).then((refreshed) => {
         if (refreshed && refreshed.length > 0) {
           setAllLedgers(refreshed as any[]);
-          const freshBanks = (refreshed as any[]).filter(
-            (l: any) => l.ledgerType === "BANK" || l.ledger_type === "BANK"
-          );
+          const freshBanks = (refreshed as any[]).filter(isBankLedger);
           if (freshBanks.length > 0) {
             setBankLedgers(freshBanks as any[]);
+            setSelectedBankId((prev) => prev || freshBanks[0].id);
           }
         }
       });
@@ -224,21 +255,22 @@ export default function BankingPage() {
       if (activeFY?.id) {
         params.financial_year_id = activeFY.id;
       }
-      if (activeFY?.start_date) {
-        params.start_date = activeFY.start_date;
+      if (effectiveStartDate) {
+        params.start_date = effectiveStartDate;
       }
-      if (activeFY?.end_date) {
-        params.end_date = activeFY.end_date;
+      if (effectiveEndDate) {
+        params.end_date = effectiveEndDate;
       }
 
       if (typeof window !== "undefined" && !navigator.onLine && selectedBankId) {
         const cachedTxs = await bankTransactionsRepository.getByBankLedger(selectedBankId);
         if (cachedTxs && cachedTxs.length > 0) {
-          const filteredByFY = cachedTxs.filter((t: any) => {
-            if (!activeFY?.start_date || !activeFY?.end_date) return true;
-            return t.transaction_date >= activeFY.start_date && t.transaction_date <= activeFY.end_date;
+          const filteredByPeriod = cachedTxs.filter((t: any) => {
+            if (effectiveStartDate && t.transaction_date < effectiveStartDate) return false;
+            if (effectiveEndDate && t.transaction_date > effectiveEndDate) return false;
+            return true;
           });
-          setTransactions(filteredByFY as any[]);
+          setTransactions(filteredByPeriod as any[]);
           setLoading(false);
           if (isManualRefresh) setRefreshing(false);
           return;
@@ -252,11 +284,11 @@ export default function BankingPage() {
       if (activeFY?.id) {
         summaryParams.financial_year_id = activeFY.id;
       }
-      if (activeFY?.start_date) {
-        summaryParams.start_date = activeFY.start_date;
+      if (effectiveStartDate) {
+        summaryParams.start_date = effectiveStartDate;
       }
-      if (activeFY?.end_date) {
-        summaryParams.end_date = activeFY.end_date;
+      if (effectiveEndDate) {
+        summaryParams.end_date = effectiveEndDate;
       }
 
       const [txRes, sumRes] = await Promise.all([
@@ -941,14 +973,18 @@ export default function BankingPage() {
               <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                 Banking
               </h1>
-              {activeFY && (
+              {isCustomPeriod ? (
+                <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  {displayPeriod}
+                </span>
+              ) : activeFY ? (
                 <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
                   FY {activeFY.code} ({activeFY.start_date} to {activeFY.end_date})
                 </span>
-              )}
+              ) : null}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Upload bank statements and match transactions for {activeFY ? `FY ${activeFY.code}` : "the selected period"}
+              Upload bank statements and match transactions for {isCustomPeriod ? displayPeriod : activeFY ? `FY ${activeFY.code}` : "the selected period"}
             </p>
           </div>
 
@@ -1005,6 +1041,7 @@ export default function BankingPage() {
             onSelectBankId={setSelectedBankId}
             bankLedgers={bankLedgers}
             bankOptions={bankOptions}
+            onAddNewBank={() => setIsAddBankOpen(true)}
           />
           <ReconciliationComparisonCard summary={summary} />
           <ReconciliationOverviewCard
@@ -1156,6 +1193,13 @@ export default function BankingPage() {
           onSubmitExcludeStatement={submitExcludeStatement}
           confirmModalConfig={confirmModalConfig}
           onCloseConfirm={() => setConfirmModalConfig((prev) => ({ ...prev, isOpen: false }))}
+        />
+
+        <AddBankModal
+          isOpen={isAddBankOpen}
+          onClose={() => setIsAddBankOpen(false)}
+          companyId={companyId}
+          onSuccess={handleBankAdded}
         />
       </div>
     </DashboardLayout>

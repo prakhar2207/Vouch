@@ -34,12 +34,20 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
     ewb_no = getattr(ewb_rec, 'eway_bill_number', 'N/A') or 'N/A'
 
     # Buyer & Party info
-    buyer_name = voucher.buyer_name or (party.name if party else 'Customer')
-    buyer_addr = voucher.buyer_address or (party.address if party and party.address else '')
-    buyer_gstin = voucher.buyer_gstin or (party.gstin if party and party.gstin else 'Unregistered')
-    buyer_state = voucher.buyer_state_code or (party.state_code if party and party.state_code else '')
-    buyer_phone = voucher.buyer_phone or (party.phone if party and party.phone else '')
-    buyer_email = voucher.buyer_email or (party.email if party and party.email else '')
+    if party and party.name and party.name.strip().upper() not in ['CASH', 'COUNTER SALE']:
+        buyer_name = party.name
+        buyer_addr = party.address or voucher.buyer_address or ''
+        buyer_gstin = party.gstin or voucher.buyer_gstin or 'Unregistered'
+        buyer_state = party.state_code or voucher.buyer_state_code or ''
+        buyer_phone = party.phone or voucher.buyer_phone or ''
+        buyer_email = party.email or voucher.buyer_email or ''
+    else:
+        buyer_name = voucher.buyer_name or (party.name if party else 'Cash')
+        buyer_addr = voucher.buyer_address or ''
+        buyer_gstin = voucher.buyer_gstin or 'Unregistered'
+        buyer_state = voucher.buyer_state_code or ''
+        buyer_phone = voucher.buyer_phone or ''
+        buyer_email = voucher.buyer_email or ''
 
     # Inter-state check
     is_inter_state = False

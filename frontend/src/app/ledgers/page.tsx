@@ -9,6 +9,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
+import { useAccountingPeriod } from '@/context/PeriodContext';
 import SemanticBalance from '@/components/accounting/SemanticBalance';
 import {
   Search,
@@ -77,6 +78,7 @@ export default function LedgersPage() {
   const { toast } = useToast();
   const { companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
+  const { fromDate, toDate, displayPeriod, isCustomPeriod } = useAccountingPeriod();
 
   const [companyId, setCompanyId] = useState('');
   const [ledgers, setLedgers] = useState<LedgerItem[]>([]);
@@ -145,7 +147,7 @@ export default function LedgersPage() {
       return;
     }
     fetchLedgers();
-  }, [router, activeCompanyId, activeFY?.id, filterLedgersByGstPeriod, activeGstDateRange.startDate, activeGstDateRange.endDate]);
+  }, [router, activeCompanyId, activeFY?.id, filterLedgersByGstPeriod, activeGstDateRange.startDate, activeGstDateRange.endDate, fromDate, toDate]);
 
   // Fetch period-specific GSTR-3B summary when a period preset is active
   useEffect(() => {
@@ -238,8 +240,8 @@ export default function LedgersPage() {
       }
 
       const shouldUsePeriod = filterLedgersByGstPeriod && gstPeriodPreset !== 'ALL';
-      const sDate = shouldUsePeriod ? activeGstDateRange.startDate : activeFY?.start_date;
-      const eDate = shouldUsePeriod ? activeGstDateRange.endDate : activeFY?.end_date;
+      const sDate = shouldUsePeriod ? activeGstDateRange.startDate : (fromDate || activeFY?.start_date);
+      const eDate = shouldUsePeriod ? activeGstDateRange.endDate : (toDate || activeFY?.end_date);
 
       // 2. Read ledgers locally first for instant UI response (scoped to active FY or selected period)
       const { data: localLedgers } = await ledgersRepository.getLedgers(cid, {

@@ -6,6 +6,7 @@ import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import { API_BASE_URL } from "@/utils/api";
 import { useCompany } from "@/context/CompanyContext";
 import { useFinancialYear } from "@/context/FinancialYearContext";
+import { useAccountingPeriod } from "@/context/PeriodContext";
 import DashboardLayout from "@/components/DashboardLayout";
 import { 
   Clock, 
@@ -16,7 +17,7 @@ import {
   Zap, 
   Filter, 
   Building2, 
-  Phone,
+  Phone, 
   ShieldAlert
 } from "lucide-react";
 
@@ -24,6 +25,7 @@ export default function AgingReportPage() {
   const router = useRouter();
   const { activeCompany, companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
+  const { toDate } = useAccountingPeriod();
   const [partyType, setPartyType] = useState<"CUSTOMER" | "SUPPLIER">("CUSTOMER");
   const [loading, setLoading] = useState(false);
   const [reconciling, setReconciling] = useState(false);
@@ -54,12 +56,13 @@ export default function AgingReportPage() {
       const params = new URLSearchParams();
       params.append('type', partyType);
       if (activeFY?.id) params.append('financial_year_id', activeFY.id);
-      if (activeFY?.end_date) {
-        params.append('end_date', activeFY.end_date);
+      const effectiveEndDate = toDate || activeFY?.end_date;
+      if (effectiveEndDate) {
+        params.append('end_date', effectiveEndDate);
         const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
-        // For active/future financial year, age as of today; for closed past financial year, age as of end date
-        if (activeFY.end_date < todayStr) {
-          params.append('as_of_date', activeFY.end_date);
+        // For active/future financial year, age as of today; for closed past financial year or period, age as of end date
+        if (effectiveEndDate < todayStr) {
+          params.append('as_of_date', effectiveEndDate);
         } else {
           params.append('as_of_date', todayStr);
         }
@@ -72,13 +75,13 @@ export default function AgingReportPage() {
     } finally {
       setLoading(false);
     }
-  }, [companyId, partyType, activeFY?.id, activeFY?.end_date]);
+  }, [companyId, partyType, activeFY?.id, activeFY?.end_date, toDate]);
 
   useEffect(() => {
     if (companyId) {
       loadAgingData();
     }
-  }, [companyId, partyType, loadAgingData, activeFY?.id]);
+  }, [companyId, partyType, loadAgingData, activeFY?.id, toDate]);
 
   const handleAutoFIFO = async () => {
     if (!companyId) return;

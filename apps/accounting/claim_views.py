@@ -165,7 +165,7 @@ class InvoicePDFDownloadAPIView(APIView):
 
         try:
             from apps.documents.services import DocumentPDFService
-            pdf_bytes = DocumentPDFService.generate_pdf_for_voucher(voucher)
+            pdf_bytes = DocumentPDFService.generate_pdf_for_voucher(voucher, bypass_cache=True)
             sanitized_num = voucher.voucher_number.replace('/', '_').replace('-', '_')
             filename = f"Tax_Invoice_{sanitized_num}.pdf"
 
@@ -174,6 +174,9 @@ class InvoicePDFDownloadAPIView(APIView):
             as_attachment = request.query_params.get('download', 'false').lower() == 'true'
             disp = 'attachment' if as_attachment else 'inline'
             response['Content-Disposition'] = f'{disp}; filename="{filename}"'
+            response['Content-Length'] = len(pdf_bytes)
+            response['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+            response['Pragma'] = 'no-cache'
             return response
         except Exception as e:
             logger.exception("Failed to render invoice PDF")

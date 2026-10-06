@@ -388,6 +388,24 @@ class ListVouchersAPIView(APIView):
             elif not include_inactive and not v_status:
                 vouchers = vouchers.exclude(status__in=['CANCELLED', 'REVERSED', 'SUPERSEDED'])
 
+            fy_id = request.query_params.get('financial_year_id') or request.headers.get('X-Financial-Year-ID')
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            if start_date and end_date:
+                vouchers = vouchers.filter(voucher_date__range=[start_date, end_date])
+            elif start_date:
+                vouchers = vouchers.filter(voucher_date__gte=start_date)
+            elif end_date:
+                vouchers = vouchers.filter(voucher_date__lte=end_date)
+            elif fy_id:
+                from apps.accounting.models import FinancialYear
+                from django.db.models import Q
+                fy = FinancialYear.objects.filter(id=fy_id, company=company).first()
+                if fy:
+                    vouchers = vouchers.filter(Q(financial_year=fy) | Q(voucher_date__range=[fy.start_date, fy.end_date]))
+                else:
+                    vouchers = vouchers.filter(financial_year_id=fy_id)
+
             total_count = vouchers.count()
 
             vouchers = vouchers.annotate(
@@ -983,6 +1001,16 @@ class VoucherDetailAPIView(APIView):
                 old_party = voucher.party_ledger
                 if target_party != old_party:
                     voucher.party_ledger = target_party
+                    if target_party:
+                        voucher.buyer_name = target_party.name
+                        if target_party.address:
+                            voucher.buyer_address = target_party.address
+                        if target_party.gstin:
+                            voucher.buyer_gstin = target_party.gstin
+                        if target_party.state_code:
+                            voucher.buyer_state_code = target_party.state_code
+                        if target_party.phone:
+                            voucher.buyer_phone = target_party.phone
                     if not has_items and voucher.voucher_type in ['SALES', 'PURCHASE']:
                         if old_party:
                             voucher.ledger_entries.filter(ledger=old_party).update(ledger=target_party)
@@ -1428,6 +1456,16 @@ class VoucherDetailAPIView(APIView):
                         "narration": voucher.narration
                     }
                 )
+
+                # Force refresh DocumentSnapshot and invalidate PDF cache for edited voucher
+                try:
+                    from apps.documents.services.snapshot_service import DocumentSnapshotService
+                    from apps.documents.services.pdf_service import DocumentPDFService
+                    snap = DocumentSnapshotService.get_or_create_voucher_snapshot(voucher, user=request.user, force_refresh=True)
+                    DocumentPDFService.invalidate_cache_for_snapshot(snap)
+                except Exception as snap_err:
+                    import logging
+                    logging.getLogger(__name__).warning(f"Could not refresh DocumentSnapshot after voucher patch: {snap_err}")
 
             type_label = "Voucher" if voucher.voucher_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL'] else "Invoice"
             return Response({
@@ -2213,11 +2251,17 @@ class UniversalVoucherAPIView(APIView):
             else:
                 qs = qs.exclude(status__in=['CANCELLED', 'REVERSED', 'SUPERSEDED'])
 
-            fy_id = request.query_params.get('financial_year_id')
+            fy_id = request.query_params.get('financial_year_id') or request.headers.get('X-Financial-Year-ID')
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
 
-            if fy_id:
+            if start_date and end_date:
+                qs = qs.filter(voucher_date__range=[start_date, end_date])
+            elif start_date:
+                qs = qs.filter(voucher_date__gte=start_date)
+            elif end_date:
+                qs = qs.filter(voucher_date__lte=end_date)
+            elif fy_id:
                 from apps.accounting.models import FinancialYear
                 from django.db.models import Q
                 fy = FinancialYear.objects.filter(id=fy_id, company=company).first()
@@ -2225,12 +2269,6 @@ class UniversalVoucherAPIView(APIView):
                     qs = qs.filter(Q(financial_year=fy) | Q(voucher_date__range=[fy.start_date, fy.end_date]))
                 else:
                     qs = qs.filter(financial_year_id=fy_id)
-            elif start_date and end_date:
-                qs = qs.filter(voucher_date__range=[start_date, end_date])
-            elif start_date:
-                qs = qs.filter(voucher_date__gte=start_date)
-            elif end_date:
-                qs = qs.filter(voucher_date__lte=end_date)
 
             total_count = qs.count()
 
