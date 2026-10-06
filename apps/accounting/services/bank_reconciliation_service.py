@@ -396,6 +396,128 @@ class BankReconciliationService:
                 "voucher_number": created_voucher.voucher_number
             }
 
+        elif action_type in ['TRIANGULAR_SETTLEMENT', 'SISTER_COMPANY_SETTLEMENT']:
+            target_company_id = payload.get('target_company_id')
+            if not target_company_id:
+                raise ValidationError("Target Sister Company ID is required for triangular settlement.")
+
+            target_company = Company.objects.get(id=target_company_id)
+            if target_company.id == company.id:
+                raise ValidationError("Target company cannot be the same company.")
+
+            from apps.accounting.services.inter_company_service import InterCompanyService
+            from apps.accounting.models import InterCompanyEntry
+
+            # 1. In Current Company (Company B):
+            ic_ledger_in_b = InterCompanyService.get_or_create_intercompany_ledger(company, target_company)
+            v_type_b = 'RECEIPT' if is_money_in else 'PAYMENT'
+            v_num_b, _ = InvoiceSequenceService.get_next_number(company, v_type_b, bank_tx.transaction_date)
+
+            narration_b = f"Triangular settlement for {target_company.name}: {bank_tx.description}"
+            voucher_b = Voucher.objects.create(
+                company=company,
+                financial_year=fy,
+                voucher_type=v_type_b,
+                voucher_number=v_num_b,
+                voucher_date=bank_tx.transaction_date,
+                party_ledger=ic_ledger_in_b,
+                reference_number=bank_tx.reference_number or "",
+                status='DRAFT',
+                total_amount=amount,
+                narration=narration_b,
+                created_by=user
+            )
+
+            if is_money_in:
+                LedgerEntry.objects.create(company=company, voucher=voucher_b, ledger=bank_ledger, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Deposit into {bank_ledger.name}")
+                LedgerEntry.objects.create(company=company, voucher=voucher_b, ledger=ic_ledger_in_b, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Cr {ic_ledger_in_b.name} (funds held for {target_company.name})")
+            else:
+                LedgerEntry.objects.create(company=company, voucher=voucher_b, ledger=ic_ledger_in_b, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Dr {ic_ledger_in_b.name} (paid on behalf of {target_company.name})")
+                LedgerEntry.objects.create(company=company, voucher=voucher_b, ledger=bank_ledger, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Withdrawal from {bank_ledger.name}")
+
+            VoucherService.post_voucher(voucher_b)
+
+            # 2. In Target Sister Company (Company A):
+            target_party_id = payload.get('target_party_id')
+            target_party = None
+            if target_party_id:
+                target_party = Ledger.objects.get(id=target_party_id, company=target_company)
+
+            ic_ledger_in_a = InterCompanyService.get_or_create_intercompany_ledger(target_company, company)
+            target_fy = InvoiceSequenceService.get_or_create_active_fy(target_company, bank_tx.transaction_date)
+
+            v_type_a = 'RECEIPT' if is_money_in else 'PAYMENT'
+            v_num_a, _ = InvoiceSequenceService.get_next_number(target_company, v_type_a, bank_tx.transaction_date)
+
+            voucher_a = Voucher.objects.create(
+                company=target_company,
+                financial_year=target_fy,
+                voucher_type=v_type_a,
+                voucher_number=v_num_a,
+                voucher_date=bank_tx.transaction_date,
+                party_ledger=target_party or ic_ledger_in_a,
+                reference_number=f"TRIANGULAR/{voucher_b.voucher_number}",
+                status='DRAFT',
+                total_amount=amount,
+                narration=f"Triangular settlement cleared via {company.name} Bank ({bank_ledger.name}): {bank_tx.description}",
+                created_by=user
+            )
+
+            if is_money_in:
+                LedgerEntry.objects.create(company=target_company, voucher=voucher_a, ledger=ic_ledger_in_a, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Dr {ic_ledger_in_a.name} (funds received in {company.name})")
+                LedgerEntry.objects.create(company=target_company, voucher=voucher_a, ledger=target_party or ic_ledger_in_a, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Cr {target_party.name if target_party else 'Sister Co'} (invoice settlement)")
+            else:
+                LedgerEntry.objects.create(company=target_company, voucher=voucher_a, ledger=target_party or ic_ledger_in_a, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Dr {target_party.name if target_party else 'Sister Co'} (supplier payment)")
+                LedgerEntry.objects.create(company=target_company, voucher=voucher_a, ledger=ic_ledger_in_a, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Cr {ic_ledger_in_a.name} (settled via {company.name})")
+
+            VoucherService.post_voucher(voucher_a)
+
+            target_allocations = []
+            if payload.get('target_invoice_id') or target_party:
+                try:
+                    target_allocations = PaymentAllocationService.auto_allocate_voucher(
+                        voucher_a,
+                        preferred_invoice_id=payload.get('target_invoice_id')
+                    )
+                except Exception as e:
+                    logger.warning(f"Allocation note during triangular settlement: {e}")
+
+            InterCompanyEntry.objects.create(
+                source_company=company,
+                target_company=target_company,
+                source_voucher=voucher_b,
+                target_voucher=voucher_a,
+                entry_type='TRIANGULAR_SETTLEMENT',
+                amount=amount,
+                entry_date=bank_tx.transaction_date,
+                narration=f"Triangular Settlement: {company.name} <-> {target_company.name}",
+                suggested_target_debit_ledger=ic_ledger_in_a if is_money_in else target_party,
+                suggested_target_credit_ledger=target_party if is_money_in else ic_ledger_in_a,
+                status='ACCEPTED',
+                resolved_at=timezone.now(),
+                resolved_by=user,
+                metadata={
+                    "bank_transaction_id": str(bank_tx.id),
+                    "target_allocations_count": len(target_allocations) if target_allocations else 0
+                }
+            )
+
+            bank_tx.matched_voucher = voucher_b
+            bank_tx.matched_party = ic_ledger_in_b
+            bank_tx.status = 'RECONCILED'
+            bank_tx.match_confidence = 1.0
+            bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'match_confidence', 'updated_at'])
+
+            return {
+                "status": "SUCCESS",
+                "voucher_id": str(voucher_b.id),
+                "voucher_number": voucher_b.voucher_number,
+                "target_voucher_id": str(voucher_a.id),
+                "target_voucher_number": voucher_a.voucher_number,
+                "target_company_name": target_company.name,
+                "message": f"Triangular settlement complete: Reconciled in {company.name} and posted in {target_company.name}."
+            }
+
         elif action_type == 'OWNER_DRAWING':
             equity_grp, _ = LedgerGroup.objects.get_or_create(
                 company=company, name="Equity Accounts", defaults={"nature": "EQUITY"}

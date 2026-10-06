@@ -77,4 +77,4 @@ export interface PartyMappingItem {
 
 export type BankingActiveTab = "NEEDS_REVIEW" | "UNRESOLVED" | "MATCHED" | "EXCLUDED" | "ALL";
 
-export type BankingActionType = "MATCH_PARTY" | "RECORD_PAYMENT" | "RECORD_EXPENSE" | "RECORD_TRANSFER" | "OWNER_DRAWING" | "IGNORE";
+export type BankingActionType = "MATCH_PARTY" | "RECORD_PAYMENT" | "RECORD_EXPENSE" | "RECORD_TRANSFER" | "OWNER_DRAWING" | "IGNORE" | "TRIANGULAR_SETTLEMENT";

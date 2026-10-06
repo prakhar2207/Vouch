@@ -645,6 +645,53 @@ class SyncEvent(models.Model):
         ordering = ['id']
 
 
+class InterCompanyEntry(models.Model):
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending Mirror Entry'),
+        ('ACCEPTED', 'Accepted & Posted'),
+        ('REJECTED', 'Rejected'),
+    )
+    ENTRY_TYPE_CHOICES = (
+        ('TRANSFER', 'Funds Transfer (Bank/Cash)'),
+        ('EXPENSE_PAID_ON_BEHALF', 'Expense Paid on Behalf'),
+        ('SALE_PURCHASE', 'Inter-Company Sale / Purchase'),
+        ('TRIANGULAR_SETTLEMENT', 'Triangular Cross-Entity Settlement'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    source_company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='outgoing_intercompany_entries')
+    target_company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='incoming_intercompany_entries')
+    source_voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='source_intercompany_entries')
+    target_voucher = models.ForeignKey(Voucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='target_intercompany_entries')
+
+    entry_type = models.CharField(max_length=50, choices=ENTRY_TYPE_CHOICES, default='TRANSFER')
+    amount = models.DecimalField(max_digits=15, decimal_places=2)
+    entry_date = models.DateField()
+    narration = models.TextField(blank=True, default='')
+
+    # Suggested Accounts for Target Company
+    suggested_target_debit_ledger = models.ForeignKey(Ledger, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    suggested_target_credit_ledger = models.ForeignKey(Ledger, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING', db_index=True)
+    rejection_reason = models.TextField(blank=True, default='')
+    metadata = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='resolved_intercompany_entries')
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['target_company', 'status']),
+            models.Index(fields=['source_company', 'status']),
+        ]
+
+    def __str__(self):
+        return f"[{self.status}] {self.source_company.name} -> {self.target_company.name} (₹{self.amount})"
+
+
 # Proforma Invoices & Quotations
 from .models_proforma import ProformaInvoice, ProformaItem
 

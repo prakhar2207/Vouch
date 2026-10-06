@@ -25,8 +25,8 @@ from .claim_views import (
     InvoiceRecipientStatusAPIView,
 )
 import apps.accounting.banking_views
-
 import apps.accounting.health_views
+import apps.accounting.inter_company_views
 
 urlpatterns = [
     # Proforma Invoices & Quotations
@@ -122,5 +122,14 @@ urlpatterns = [
     path('sync/stream/', apps.accounting.sync_views.SyncStreamAPIView.as_view(), name='accounting_sync_stream'),
     # Asynchronous Background Task Polling
     path('tasks/<str:task_id>/', TaskStatusAPIView.as_view(), name='task_status'),
+
+    # Inter-Company Mirror Ledgers & Matrix Reconciliation
+    path('inter-company/inbox/', apps.accounting.inter_company_views.InterCompanyInboxAPIView.as_view(), name='intercompany_inbox'),
+    path('inter-company/<uuid:pk>/accept/', apps.accounting.inter_company_views.InterCompanyAcceptAPIView.as_view(), name='intercompany_accept'),
+    path('inter-company/<uuid:pk>/reject/', apps.accounting.inter_company_views.InterCompanyRejectAPIView.as_view(), name='intercompany_reject'),
+    path('inter-company/reconcile/', apps.accounting.inter_company_views.InterCompanyMatrixReconciliationAPIView.as_view(), name='intercompany_reconcile'),
+
+    # Multi-Entity Consolidated Financials & Group MIS
+    path('consolidated-financials/', apps.accounting.inter_company_views.ConsolidatedFinancialsAPIView.as_view(), name='consolidated_financials'),
 ]
 

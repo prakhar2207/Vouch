@@ -359,6 +359,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                     <div className="border-t border-border/40 my-1"></div>
                     <Link
+                      href="/reports/consolidated"
+                      role="menuitem"
+                      onClick={() => setIsReportsOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                          <span>Consolidated Group MIS</span>
+                          <span className="text-[9px] bg-blue-500/15 text-blue-600 dark:text-blue-400 px-1 rounded font-bold">Group</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">Aggregated cash, net debtors & eliminations</div>
+                      </div>
+                    </Link>
+                    <Link
                       href="/analytics"
                       role="menuitem"
                       onClick={() => setIsReportsOpen(false)}
@@ -479,6 +493,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       <div>
                         <div className="font-semibold text-foreground">Credit & Debit Notes</div>
                         <div className="text-[11px] text-muted-foreground">Sales & purchase returns</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/reports/consolidated?tab=intercompany"
+                      onClick={() => setIsMoreOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+                          <span>Inter-Company Mirroring</span>
+                          <span className="text-[9px] bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 px-1 rounded font-bold">Sync</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">Cross-entity mirror entries & 1-click accept</div>
                       </div>
                     </Link>
 
@@ -1229,6 +1256,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 }`}
               >
                 <span>Balance Sheet</span>
+              </Link>
+              <Link
+                href="/reports/consolidated"
+                onClick={() => setIsMobileNavOpen(false)}
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                  pathname.startsWith("/reports/consolidated") ? "bg-muted font-semibold text-foreground" : "text-muted-foreground hover:bg-muted/60"
+                }`}
+              >
+                <span>Consolidated Group MIS</span>
+                <span className="text-[9px] bg-blue-500/15 text-blue-500 font-bold px-1.5 py-0.5 rounded">Group</span>
               </Link>
               <Link
                 href="/audit"

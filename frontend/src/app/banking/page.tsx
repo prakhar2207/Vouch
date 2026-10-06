@@ -46,10 +46,16 @@ export default function BankingPage() {
   const router = useRouter();
   const { toast } = useToast();
 
-  const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const { activeCompany, companyId: activeCompanyId, availableCompanies } = useCompany();
   const { activeFY } = useFinancialYear();
   const { fromDate, toDate, displayPeriod, isCustomPeriod } = useAccountingPeriod();
   const [companyId, setCompanyId] = useState<string>(isValidId(activeCompanyId) ? activeCompanyId : "");
+
+  const sisterCompanies = useMemo(() => {
+    if (!availableCompanies) return [];
+    return availableCompanies.filter((c) => c.id !== companyId);
+  }, [availableCompanies, companyId]);
+
   const [bankLedgers, setBankLedgers] = useState<BankLedger[]>([]);
   const [selectedBankId, setSelectedBankId] = useState<string>("");
   const [allLedgers, setAllLedgers] = useState<any[]>([]);
@@ -95,6 +101,7 @@ export default function BankingPage() {
   const [selectedTx, setSelectedTx] = useState<BankTransactionItem | null>(null);
   const [actionType, setActionType] = useState<BankingActionType | null>(null);
   const [actionTargetPartyId, setActionTargetPartyId] = useState<string>("");
+  const [actionTargetCompanyId, setActionTargetCompanyId] = useState<string>("");
   const [actionExpenseLedgerId, setActionExpenseLedgerId] = useState<string>("");
   const [actionTransferLedgerId, setActionTransferLedgerId] = useState<string>("");
   const [actionRemarks, setActionRemarks] = useState<string>("");
@@ -679,6 +686,7 @@ export default function BankingPage() {
     }
     setActionExpenseLedgerId(matchedExpId);
     setActionTransferLedgerId("");
+    setActionTargetCompanyId(sisterCompanies.length > 0 ? sisterCompanies[0].id : "");
   };
 
   const handleActionTypeChange = (newType: BankingActionType) => {
@@ -701,11 +709,15 @@ export default function BankingPage() {
       }
       if (matchedExpId) setActionExpenseLedgerId(matchedExpId);
     }
+    if (newType === "TRIANGULAR_SETTLEMENT" && !actionTargetCompanyId && sisterCompanies.length > 0) {
+      setActionTargetCompanyId(sisterCompanies[0].id);
+    }
   };
 
   const closeActionModal = () => {
     setSelectedTx(null);
     setActionType(null);
+    setActionTargetCompanyId("");
     setActionLoading(false);
   };
 
@@ -748,6 +760,17 @@ export default function BankingPage() {
         }
         payload.target_ledger_id = actionTransferLedgerId;
         payload.transfer_ledger_id = actionTransferLedgerId;
+        payload.narration = actionRemarks || selectedTx.description;
+      } else if (actionType === "TRIANGULAR_SETTLEMENT") {
+        if (!actionTargetCompanyId) {
+          toast.warning("Missing Sister Company", "Please select the sister entity for this transaction.");
+          setActionLoading(false);
+          return;
+        }
+        payload.target_company_id = actionTargetCompanyId;
+        if (actionTargetPartyId) {
+          payload.target_party_id = actionTargetPartyId;
+        }
         payload.narration = actionRemarks || selectedTx.description;
       } else if (actionType === "OWNER_DRAWING") {
         payload.narration = actionRemarks || "Proprietor / Partner Drawings";
@@ -1170,6 +1193,9 @@ export default function BankingPage() {
           actionTransferLedgerId={actionTransferLedgerId}
           onTransferLedgerChange={setActionTransferLedgerId}
           contraOptions={contraOptions}
+          sisterCompanies={sisterCompanies}
+          actionTargetCompanyId={actionTargetCompanyId}
+          onTargetCompanyChange={setActionTargetCompanyId}
           actionRemarks={actionRemarks}
           onRemarksChange={setActionRemarks}
           actionLoading={actionLoading}

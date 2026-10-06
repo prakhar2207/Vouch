@@ -55,6 +55,9 @@ interface BankingModalsContainerProps {
   actionTransferLedgerId: string;
   onTransferLedgerChange: (id: string) => void;
   contraOptions: SearchableOption[];
+  sisterCompanies?: { id: string; name: string }[];
+  actionTargetCompanyId?: string;
+  onTargetCompanyChange?: (id: string) => void;
   actionRemarks: string;
   onRemarksChange: (remarks: string) => void;
   actionLoading: boolean;
@@ -120,6 +123,9 @@ export default function BankingModalsContainer({
   actionTransferLedgerId,
   onTransferLedgerChange,
   contraOptions,
+  sisterCompanies,
+  actionTargetCompanyId,
+  onTargetCompanyChange,
   actionRemarks,
   onRemarksChange,
   actionLoading,
@@ -448,6 +454,19 @@ export default function BankingModalsContainer({
                   >
                     Transfer
                   </button>
+                  {sisterCompanies && sisterCompanies.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => onActionTypeChange("TRIANGULAR_SETTLEMENT")}
+                      className={`flex-1 min-w-[75px] py-1.5 px-2 text-[11px] font-semibold rounded-lg transition-all text-center cursor-pointer ${
+                        actionType === "TRIANGULAR_SETTLEMENT"
+                          ? "bg-indigo-600 text-white shadow-sm font-bold"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                      }`}
+                    >
+                      Sister Co
+                    </button>
+                  )}
                   {parseFloat(selectedTx.debit_amount) > 0 && (
                     <button
                       type="button"
@@ -594,6 +613,40 @@ export default function BankingModalsContainer({
                     placeholder="-- Choose Target/Source Ledger --"
                     searchPlaceholder="Search bank or cash ledger..."
                   />
+                </div>
+              )}
+
+              {actionType === "TRIANGULAR_SETTLEMENT" && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1.5">
+                      Select Sister Entity (Cross-Entity Settlement)
+                    </label>
+                    <select
+                      value={actionTargetCompanyId || ""}
+                      onChange={(e) => onTargetCompanyChange && onTargetCompanyChange(e.target.value)}
+                      className="w-full px-3 py-2 bg-muted/30 border border-border/80 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/40 text-foreground"
+                    >
+                      <option value="">-- Choose Sister Business --</option>
+                      {sisterCompanies?.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs text-indigo-950 dark:text-indigo-200 space-y-1.5">
+                    <div className="font-semibold flex items-center gap-1.5 text-indigo-600 dark:text-indigo-400">
+                      <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                      <span>Atomic Triangular Settlement</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      {parseFloat(selectedTx.credit_amount) > 0
+                        ? "Deposit received into this bank account on behalf of the sister entity. Vouch will atomically create a Receipt voucher in this company (Dr Bank / Cr Sister Co Current A/c) and a corresponding Receipt in the sister entity (Dr Sister Co Current A/c / Cr Customer/Income) with zero ledger drift."
+                        : "Payment made from this bank account on behalf of the sister entity. Vouch will atomically create a Payment voucher in this company (Dr Sister Co Current A/c / Cr Bank) and a corresponding Payment in the sister entity (Dr Supplier/Expense / Cr Sister Co Current A/c) with zero ledger drift."}
+                    </p>
+                  </div>
                 </div>
               )}
 
