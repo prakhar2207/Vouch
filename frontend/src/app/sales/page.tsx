@@ -38,7 +38,8 @@ import {
   ShoppingCart,
   Calendar,
   Filter,
-  ArrowRight
+  ArrowRight,
+  Receipt
 } from 'lucide-react';
 import { offlineDb } from '@/lib/db/offlineDb';
 import { PeriodPreset, computePeriodDateRange } from "@/utils/periodRanges";
@@ -814,6 +815,14 @@ function SalesInvoiceListContent() {
           </div>
 
           <div className="flex items-center gap-2">
+            <Link
+              href="/sales/proforma/new"
+              className="px-3.5 py-2.5 rounded-xl text-xs font-semibold border border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              title="Create commercial quotation or price estimate"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>New Estimate / Quote</span>
+            </Link>
             {activeTab === 'invoices' ? (
               <Link href="/sales/new" className="bg-primary text-primary-foreground px-4 py-2.5 rounded-xl text-xs font-bold shadow-md shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-1.5">
                 <Plus className="w-3.5 h-3.5" />
@@ -829,9 +838,9 @@ function SalesInvoiceListContent() {
           </div>
         </div>
 
-        {/* View Switcher: Invoices vs Customers */}
+        {/* View Switcher: Invoices vs Customers vs Proforma Estimates */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card p-2 rounded-2xl border border-border/40 shadow-xs">
-          <div className="flex items-center gap-1.5 p-1 bg-muted/60 rounded-xl border border-border/40 text-xs">
+          <div className="flex items-center gap-1.5 p-1 bg-muted/60 rounded-xl border border-border/40 text-xs flex-wrap sm:flex-nowrap">
             <button
               type="button"
               onClick={() => setActiveTab('invoices')}
@@ -851,6 +860,17 @@ function SalesInvoiceListContent() {
                 {unpaidInvoicesCount > 0 ? `${unpaidInvoicesCount} Due` : invoices.length}
               </span>
             </button>
+            <Link
+              href="/sales/proforma"
+              className="px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2 text-muted-foreground hover:text-foreground hover:bg-background/60 cursor-pointer"
+              title="Commercial estimates and quotations with 1-click GST conversion"
+            >
+              <Receipt className="w-4 h-4 text-blue-500" />
+              <span>Proforma & Estimates</span>
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                Quotes
+              </span>
+            </Link>
             <button
               type="button"
               onClick={() => setActiveTab('customers')}

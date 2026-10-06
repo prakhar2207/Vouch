@@ -26,7 +26,8 @@ import {
   Sparkles,
   ExternalLink,
   Loader2,
-  Calendar
+  Calendar,
+  Users
 } from 'lucide-react';
 
 export default function ProformaQuotationListPage() {
@@ -234,6 +235,35 @@ export default function ProformaQuotationListPage() {
             >
               <Plus className="w-4 h-4" />
               <span>+ New Proforma Invoice</span>
+            </Link>
+          </div>
+        </div>
+
+        {/* View Switcher: Sales Invoices vs Proforma vs Customers */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card p-2 rounded-2xl border border-border/40 shadow-xs">
+          <div className="flex items-center gap-1.5 p-1 bg-muted/60 rounded-xl border border-border/40 text-xs flex-wrap sm:flex-nowrap">
+            <Link
+              href="/sales"
+              className="px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2 text-muted-foreground hover:text-foreground hover:bg-background/60 cursor-pointer"
+            >
+              <FileText className="w-4 h-4 text-emerald-500" />
+              <span>Sales Invoices</span>
+            </Link>
+            <div
+              className="px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2 bg-background text-foreground shadow-xs cursor-default"
+            >
+              <Receipt className="w-4 h-4 text-blue-500" />
+              <span>Proforma & Estimates</span>
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                {proformas.length}
+              </span>
+            </div>
+            <Link
+              href="/sales?tab=customers"
+              className="px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2 text-muted-foreground hover:text-foreground hover:bg-background/60 cursor-pointer"
+            >
+              <Users className="w-4 h-4 text-primary" />
+              <span>Customers</span>
             </Link>
           </div>
         </div>
