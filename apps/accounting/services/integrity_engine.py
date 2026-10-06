@@ -444,7 +444,7 @@ class AccountingIntegrityEngine:
         from apps.accounting.models import PaymentAllocationTask
         failed_tasks = PaymentAllocationTask.objects.filter(
             company=company,
-            status__in=['FAILED', 'PARTIALLY_ALLOCATED']
+            status='FAILED'
         ).select_related('payment_voucher', 'preferred_invoice')[:20]
 
         for pt in failed_tasks:

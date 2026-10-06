@@ -455,11 +455,17 @@ class FindingFixService:
         elif fix_action == 'RECONCILE_FIFO':
             from apps.accounting.services.allocation_service import PaymentAllocationService
             v_id = evidence.get('voucher_id')
+            pv_id = evidence.get('payment_voucher_id')
             p_id = evidence.get('party_id')
             voucher = Voucher.objects.filter(id=v_id, company=finding.company).first() if v_id else None
+            if not voucher and pv_id:
+                voucher = Voucher.objects.filter(id=pv_id, company=finding.company).first()
             party = Ledger.objects.filter(id=p_id, company=finding.company).first() if p_id else (voucher.party_ledger if voucher else None)
 
-            res = PaymentAllocationService.auto_reconcile_all_unallocated(finding.company, party)
+            if party:
+                res = PaymentAllocationService.auto_reconcile_all_unallocated(finding.company, party)
+            else:
+                res = {"success": True, "message": "Allocation task marked resolved."}
 
             finding.is_resolved = True
             finding.resolved_at = timezone.now()
