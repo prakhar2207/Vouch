@@ -33,9 +33,15 @@ import {
   Search,
   Clock,
   FileText,
-  ArrowUpRight
+  ArrowUpRight,
+  TrendingUp,
+  ShoppingCart,
+  Calendar,
+  Filter,
+  ArrowRight
 } from 'lucide-react';
 import { offlineDb } from '@/lib/db/offlineDb';
+import { PeriodPreset, computePeriodDateRange } from "@/utils/periodRanges";
 
 import { retryFailedVoucher, pullIncrementalChanges } from '@/lib/sync/sync-worker';
 import { vouchersRepository, ledgersRepository } from '@/lib/data';
@@ -49,7 +55,7 @@ function SalesInvoiceListContent() {
   const { toast } = useToast();
   const { companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
-  const { fromDate, toDate, displayPeriod } = useAccountingPeriod();
+  const { fromDate, toDate, displayPeriod, isCustomPeriod } = useAccountingPeriod();
 
   // View toggle: Invoices vs Customers (Debtors)
   const [activeTab, setActiveTab] = useState<'invoices' | 'customers'>(() => {
@@ -62,6 +68,45 @@ function SalesInvoiceListContent() {
     if (filterParam === 'paid') return 'PAID';
     return 'ALL';
   });
+
+  // Period Selection & Overview State
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("ALL");
+  const [customStart, setCustomStart] = useState<string>("");
+  const [customEnd, setCustomEnd] = useState<string>("");
+  const [filterTableByPeriod, setFilterTableByPeriod] = useState<boolean>(false);
+  const [periodMetrics, setPeriodMetrics] = useState({
+    totalSales: 0,
+    salesCount: 0,
+    totalOutputGst: 0,
+    outputCgst: 0,
+    outputSgst: 0,
+    outputIgst: 0,
+    paidSales: 0,
+    paidCount: 0,
+    unpaidSales: 0,
+    unpaidCount: 0,
+    totalPurchases: 0,
+    purchaseCount: 0,
+  });
+  const [loadingMetrics, setLoadingMetrics] = useState<boolean>(false);
+
+  const activeDateRange = useMemo(() => {
+    if (periodPreset !== "ALL" || customStart || customEnd) {
+      return computePeriodDateRange(periodPreset, activeFY, customStart, customEnd);
+    }
+    const sDate = fromDate || activeFY?.start_date || "";
+    const eDate = toDate || activeFY?.end_date || "";
+    return {
+      startDate: sDate,
+      endDate: eDate,
+      formattedRange: isCustomPeriod
+        ? displayPeriod
+        : activeFY ? `FY ${activeFY.code}` : "All Period",
+    };
+  }, [periodPreset, activeFY, customStart, customEnd, fromDate, toDate, isCustomPeriod, displayPeriod]);
+
+  const effectiveStartDate = (filterTableByPeriod && activeDateRange.startDate) ? activeDateRange.startDate : (fromDate || activeFY?.start_date);
+  const effectiveEndDate = (filterTableByPeriod && activeDateRange.endDate) ? activeDateRange.endDate : (toDate || activeFY?.end_date);
 
   // Customers view state
   const [customers, setCustomers] = useState<any[]>([]);
@@ -89,9 +134,6 @@ function SalesInvoiceListContent() {
   const [pagination, setPagination] = useState<any>(null);
   const pageSize = 50;
 
-  const effectiveStartDate = fromDate || activeFY?.start_date;
-  const effectiveEndDate = toDate || activeFY?.end_date;
-
   // Edit and Delete state
   const [editingVoucher, setEditingVoucher] = useState<any | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -103,6 +145,116 @@ function SalesInvoiceListContent() {
   // E-Way Bill state
   const [ewayVoucher, setEwayVoucher] = useState<any | null>(null);
   const [isEwayModalOpen, setIsEwayModalOpen] = useState(false);
+
+  const calculatePeriodMetrics = useCallback(async (targetCompanyId?: string) => {
+    let companyId = targetCompanyId || activeCompanyId;
+    if (!companyId && typeof window !== "undefined") {
+      companyId = localStorage.getItem("vouch_active_company_id");
+    }
+    if (!companyId) return;
+
+    setLoadingMetrics(true);
+    try {
+      const startDate = activeDateRange.startDate || fromDate || activeFY?.start_date;
+      const endDate = activeDateRange.endDate || toDate || activeFY?.end_date;
+      const token = getAccessToken();
+      let serverSummaryFetched = false;
+
+      if (token) {
+        try {
+          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
+          const params = new URLSearchParams();
+          if (startDate) params.append("start_date", startDate);
+          if (endDate) params.append("end_date", endDate);
+          if (activeFY?.id) params.append("financial_year_id", activeFY.id);
+
+          const res = await axios.get(
+            `${API_BASE_URL}/api/v1/accounting/reports/sales-period-summary/${companyId}/?${params.toString()}`,
+            { headers, timeout: 6000 }
+          );
+
+          if (res.data?.success && res.data?.data) {
+            const d = res.data.data;
+            setPeriodMetrics({
+              totalSales: Number(d.total_sales) || 0,
+              salesCount: Number(d.sales_count) || 0,
+              totalOutputGst: Number(d.total_output_gst) || 0,
+              outputCgst: Number(d.output_cgst) || 0,
+              outputSgst: Number(d.output_sgst) || 0,
+              outputIgst: Number(d.output_igst) || 0,
+              paidSales: Number(d.paid_sales) || 0,
+              paidCount: Number(d.paid_count) || 0,
+              unpaidSales: Number(d.unpaid_sales) || 0,
+              unpaidCount: Number(d.unpaid_count) || 0,
+              totalPurchases: Number(d.total_purchases) || 0,
+              purchaseCount: Number(d.purchase_count) || 0,
+            });
+            serverSummaryFetched = true;
+          }
+        } catch (serverErr) {
+          console.warn("[SalesOverview] Server summary fetch failed, falling back to local calculation:", serverErr);
+        }
+      }
+
+      if (!serverSummaryFetched) {
+        let vouchers = await offlineDb.syncedVouchers
+          .where("companyId")
+          .equals(companyId)
+          .toArray();
+
+        let salesTot = 0;
+        let salesCnt = 0;
+        let purchasesTot = 0;
+        let purchasesCnt = 0;
+        let paidSales = 0;
+        let paidCnt = 0;
+
+        for (const v of vouchers) {
+          const st = String(v.status || "").toUpperCase();
+          if (st === "CANCELLED" || st === "REVERSED" || st === "SUPERSEDED") continue;
+
+          const vDate = v.voucherDate || (v as any).voucher_date || (v as any).date || "";
+          if (startDate && vDate < startDate) continue;
+          if (endDate && vDate > endDate) continue;
+
+          const vType = String(v.voucherType || (v as any).voucher_type || (v as any).type || "").toUpperCase();
+          const tot = Number(v.totalAmount !== undefined && v.totalAmount !== null ? v.totalAmount : (v as any).total_amount) || 0;
+          const paid = Number(v.paidAmount !== undefined && v.paidAmount !== null ? v.paidAmount : (v as any).paid_amount) || 0;
+
+          if (vType === "SALES") {
+            salesTot += tot;
+            salesCnt += 1;
+            paidSales += paid;
+            if (paid > 0) paidCnt += 1;
+          } else if (vType === "PURCHASE") {
+            purchasesTot += tot;
+            purchasesCnt += 1;
+          }
+        }
+
+        const estTax = Math.round(salesTot * 0.18 / 1.18 * 100) / 100;
+
+        setPeriodMetrics({
+          totalSales: Math.round(salesTot * 100) / 100,
+          salesCount: salesCnt,
+          totalOutputGst: estTax,
+          outputCgst: Math.round(estTax / 2 * 100) / 100,
+          outputSgst: Math.round(estTax / 2 * 100) / 100,
+          outputIgst: 0,
+          paidSales: Math.round(paidSales * 100) / 100,
+          paidCount: paidCnt,
+          unpaidSales: Math.round(Math.max(0, salesTot - paidSales) * 100) / 100,
+          unpaidCount: Math.max(0, salesCnt - paidCnt),
+          totalPurchases: Math.round(purchasesTot * 100) / 100,
+          purchaseCount: purchasesCnt,
+        });
+      }
+    } catch (err) {
+      console.error("calculatePeriodMetrics error:", err);
+    } finally {
+      setLoadingMetrics(false);
+    }
+  }, [activeCompanyId, activeDateRange, activeFY, fromDate, toDate]);
 
   const fetchCustomers = useCallback(async (targetCompanyId?: string) => {
     let companyId = targetCompanyId || activeCompanyId;
@@ -134,7 +286,8 @@ function SalesInvoiceListContent() {
     }
     fetchInvoices(1);
     fetchCustomers();
-  }, [router, activeCompanyId, statusFilter, activeFY?.id, fromDate, toDate, fetchCustomers]);
+    calculatePeriodMetrics();
+  }, [router, activeCompanyId, statusFilter, activeFY?.id, filterTableByPeriod, activeDateRange.startDate, activeDateRange.endDate, fromDate, toDate, fetchCustomers, calculatePeriodMetrics]);
 
   const isCustomerReceivable = useCallback((p: any) => {
     const state = String(p.balance_state || "").toUpperCase();
@@ -304,8 +457,8 @@ function SalesInvoiceListContent() {
               pageSize,
               status: statusFilter,
               financialYearId: activeFY?.id,
-              startDate: activeFY?.start_date,
-              endDate: activeFY?.end_date,
+              startDate: effectiveStartDate,
+              endDate: effectiveEndDate,
             }).then((fresh) => {
               const cleanFresh = (fresh.data || []).filter((v: any) => !isGhostVoucher(v));
               setInvoices(cleanFresh);
@@ -739,47 +892,330 @@ function SalesInvoiceListContent() {
         </div>
 
         {activeTab === 'invoices' ? (
-          <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/40 flex-1 overflow-hidden flex flex-col">
-            <div className="px-5 py-3 border-b border-border/40 bg-muted/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Payment Filter Tabs */}
-                <div className="flex items-center gap-1 bg-muted/80 p-1 rounded-xl border border-border/50 text-xs">
+          <>
+            {/* Period Performance & Overview Section */}
+            <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/40 p-4 sm:p-5 space-y-4">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-border/40 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500">
+                    <Calendar className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 className="text-base font-bold text-foreground">Period Performance &amp; Sales Overview</h2>
+                      <span className="text-[11px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-medium">
+                        {activeDateRange.formattedRange}
+                      </span>
+                      <Link
+                        href="/purchases"
+                        className="text-[11px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:border-blue-500/40 px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1 transition-all"
+                        title="View Purchase Invoices for this period"
+                      >
+                        <ShoppingCart className="w-3 h-3" />
+                        <span>Purchases: ₹{periodMetrics.totalPurchases.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                        <ArrowRight className="w-2.5 h-2.5 opacity-70" />
+                      </Link>
+                      {loadingMetrics && (
+                        <RefreshCw className="w-3.5 h-3.5 text-muted-foreground animate-spin" />
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Track outward sales, Output GST liability, collected payments, and pending receivables
+                    </p>
+                  </div>
+                </div>
+
+                {/* Period presets and table filter toggle */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1 bg-muted/70 p-1 rounded-xl border border-border/50 text-xs overflow-x-auto">
+                    <button
+                      type="button"
+                      onClick={() => setPeriodPreset("ALL")}
+                      className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                        periodPreset === "ALL"
+                          ? "bg-background text-foreground shadow-xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Full FY
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPeriodPreset("THIS_MONTH")}
+                      className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                        periodPreset === "THIS_MONTH"
+                          ? "bg-background text-foreground shadow-xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      This Month
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPeriodPreset("LAST_MONTH")}
+                      className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                        periodPreset === "LAST_MONTH"
+                          ? "bg-background text-foreground shadow-xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Last Month
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPeriodPreset("THIS_QUARTER")}
+                      className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                        periodPreset === "THIS_QUARTER"
+                          ? "bg-background text-foreground shadow-xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      This Quarter
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPeriodPreset("TODAY")}
+                      className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                        periodPreset === "TODAY"
+                          ? "bg-background text-foreground shadow-xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Today
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPeriodPreset("CUSTOM")}
+                      className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                        periodPreset === "CUSTOM"
+                          ? "bg-background text-foreground shadow-xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Custom
+                    </button>
+                  </div>
+
+                  {/* Table filter sync switch */}
                   <button
                     type="button"
-                    onClick={() => setPaymentFilter('ALL')}
-                    className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                      paymentFilter === 'ALL'
-                        ? 'bg-background text-foreground shadow-xs font-bold'
-                        : 'text-muted-foreground hover:text-foreground'
+                    onClick={() => setFilterTableByPeriod(!filterTableByPeriod)}
+                    className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                      filterTableByPeriod
+                        ? "bg-primary/10 text-primary border-primary/30 shadow-xs"
+                        : "bg-muted/40 text-muted-foreground border-border/60 hover:text-foreground"
                     }`}
+                    title="When enabled, the invoices list below will strictly show bills within this period"
                   >
-                    All Invoices ({invoices.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPaymentFilter('UNPAID')}
-                    className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-                      paymentFilter === 'UNPAID'
-                        ? 'bg-amber-500/20 text-amber-500 dark:text-amber-400 border border-amber-500/30 shadow-xs font-bold'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    <Clock className="w-3.5 h-3.5" />
-                    <span>Unpaid (Collect) ({unpaidInvoicesCount})</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPaymentFilter('PAID')}
-                    className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-                      paymentFilter === 'PAID'
-                        ? 'bg-emerald-500/20 text-emerald-500 dark:text-emerald-400 border border-emerald-500/30 shadow-xs font-bold'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    <CheckCircle className="w-3.5 h-3.5" />
-                    <span>Paid ({paidInvoicesCount})</span>
+                    <Filter className="w-3.5 h-3.5" />
+                    <span>Filter Table</span>
+                    <span className={`w-2 h-2 rounded-full ${filterTableByPeriod ? "bg-primary" : "bg-muted-foreground/40"}`} />
                   </button>
                 </div>
+              </div>
+
+              {/* Custom Date Picker row if CUSTOM selected */}
+              {periodPreset === "CUSTOM" && (
+                <div className="flex flex-wrap items-center gap-3 bg-muted/30 p-3 rounded-xl border border-border/40 text-xs">
+                  <span className="font-semibold text-muted-foreground">Select Date Range:</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">From</span>
+                    <input
+                      type="date"
+                      value={customStart}
+                      onChange={(e) => setCustomStart(e.target.value)}
+                      className="bg-background border border-border rounded-lg px-2.5 py-1 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">To</span>
+                    <input
+                      type="date"
+                      value={customEnd}
+                      onChange={(e) => setCustomEnd(e.target.value)}
+                      className="bg-background border border-border rounded-lg px-2.5 py-1 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  {(customStart || customEnd) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomStart("");
+                        setCustomEnd("");
+                      }}
+                      className="text-xs text-muted-foreground hover:text-foreground underline cursor-pointer"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* 4 Summary Cards Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                {/* Card 1: Total Sales */}
+                <div 
+                  onClick={() => setPaymentFilter('ALL')}
+                  className={`bg-muted/20 border rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group transition-all cursor-pointer ${
+                    paymentFilter === 'ALL' ? 'border-emerald-500 ring-2 ring-emerald-500/30 bg-emerald-500/5' : 'border-emerald-500/20 hover:border-emerald-500/40'
+                  }`}
+                  title="Click to view all sales invoices"
+                >
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400 tracking-wider uppercase">
+                      <TrendingUp className="w-3.5 h-3.5" />
+                      <span>Total Sales</span>
+                    </div>
+                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                      {paymentFilter === 'ALL' ? 'Selected' : 'All Sales'}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-2xl sm:text-3xl font-black text-foreground font-mono">
+                      ₹{periodMetrics.totalSales.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </p>
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
+                      <span>{periodMetrics.salesCount} invoices</span>
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">Show all →</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 2: Total Output GST */}
+                <div className="bg-muted/20 border border-indigo-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-indigo-500/40 transition-all">
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-500 dark:text-indigo-400 tracking-wider uppercase">
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Total Output GST</span>
+                    </div>
+                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                      Output Liability
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-2xl sm:text-3xl font-black text-indigo-500 dark:text-indigo-400 font-mono">
+                      ₹{periodMetrics.totalOutputGst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </p>
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
+                      <span>CGST: ₹{periodMetrics.outputCgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                      <span>SGST: ₹{periodMetrics.outputSgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                      {periodMetrics.outputIgst > 0 && (
+                        <span className="hidden xl:inline">IGST: ₹{periodMetrics.outputIgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 3: Collected Amount */}
+                <div 
+                  onClick={() => setPaymentFilter('PAID')}
+                  className={`bg-muted/20 border rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group transition-all cursor-pointer ${
+                    paymentFilter === 'PAID' ? 'border-blue-500 ring-2 ring-blue-500/30 bg-blue-500/5' : 'border-blue-500/20 hover:border-blue-500/40'
+                  }`}
+                  title="Click to view paid invoices"
+                >
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-blue-500 tracking-wider uppercase">
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      <span>Collected Amount</span>
+                    </div>
+                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                      {paymentFilter === 'PAID' ? 'Selected' : 'Settled'}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-2xl sm:text-3xl font-black text-blue-500 dark:text-blue-400 font-mono">
+                      ₹{periodMetrics.paidSales.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </p>
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
+                      <span>{periodMetrics.paidCount} invoices collected</span>
+                      <span className="text-blue-500 dark:text-blue-400 font-medium">Show paid →</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 4: Money to Collect (Due) */}
+                <div 
+                  onClick={() => setPaymentFilter('UNPAID')}
+                  className={`bg-muted/20 border rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group transition-all cursor-pointer ${
+                    paymentFilter === 'UNPAID' ? 'border-amber-500 ring-2 ring-amber-500/30 bg-amber-500/5' : 'border-amber-500/20 hover:border-amber-500/40'
+                  }`}
+                  title="Click to view unpaid sales invoices (Money to Collect)"
+                >
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-500 tracking-wider uppercase">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Money to Collect (Due)</span>
+                    </div>
+                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                      {paymentFilter === 'UNPAID' ? 'Selected' : 'Pending Due'}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-2xl sm:text-3xl font-black text-amber-500 dark:text-amber-400 font-mono">
+                      ₹{periodMetrics.unpaidSales.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </p>
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
+                      <span>{periodMetrics.unpaidCount} invoices due</span>
+                      <span className="text-amber-500 dark:text-amber-400 font-bold">Unpaid Invoices →</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Invoices Table Card */}
+            <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/40 flex-1 overflow-hidden flex flex-col">
+              <div className="px-5 py-3 border-b border-border/40 bg-muted/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Payment Filter Tabs */}
+                  <div className="flex items-center gap-1 bg-muted/80 p-1 rounded-xl border border-border/50 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentFilter('ALL')}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                        paymentFilter === 'ALL'
+                          ? 'bg-background text-foreground shadow-xs font-bold'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      All Invoices ({invoices.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentFilter('UNPAID')}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                        paymentFilter === 'UNPAID'
+                          ? 'bg-amber-500/20 text-amber-500 dark:text-amber-400 border border-amber-500/30 shadow-xs font-bold'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Unpaid (Collect) ({unpaidInvoicesCount})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentFilter('PAID')}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                        paymentFilter === 'PAID'
+                          ? 'bg-emerald-500/20 text-emerald-500 dark:text-emerald-400 border border-emerald-500/30 shadow-xs font-bold'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      <span>Paid ({paidInvoicesCount})</span>
+                    </button>
+                  </div>
+
+                  {filterTableByPeriod && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">
+                      Filtered: {activeDateRange.formattedRange}
+                    </span>
+                  )}
 
                 {/* Status Filter Tabs */}
                 <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border/40 text-xs">
@@ -1274,6 +1710,7 @@ function SalesInvoiceListContent() {
               </div>
             )}
           </div>
+          </>
         ) : (
           /* ================= CUSTOMERS DIRECTORY VIEW ================= */
           <div className="space-y-4 flex-1 flex flex-col">

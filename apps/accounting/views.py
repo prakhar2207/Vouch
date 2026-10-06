@@ -3147,6 +3147,129 @@ class PurchasePeriodSummaryAPIView(APIView):
         })
 
 
+class SalesPeriodSummaryAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get(self, request, company_id):
+        try:
+            company = Company.objects.get(id=company_id, users__user=request.user)
+        except Company.DoesNotExist:
+            return Response({"success": False, "error": "Company not found"}, status=404)
+
+        from apps.accounting.models import Voucher, LedgerEntry, PaymentAllocation, FinancialYear
+        from django.db.models import Sum, Count
+        from decimal import Decimal
+
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        fy_id = request.query_params.get('financial_year_id')
+
+        # Resolve date boundaries if not provided
+        if not start_date or not end_date:
+            if fy_id:
+                fy = FinancialYear.objects.filter(id=fy_id, company=company).first()
+            else:
+                fy = FinancialYear.objects.filter(company=company, is_closed=False).order_by('-start_date').first()
+            if fy:
+                start_date = start_date or str(fy.start_date)
+                end_date = end_date or str(fy.end_date)
+
+        # Base Sales QuerySet (strictly POSTED active sales)
+        s_qs = Voucher.objects.filter(
+            company=company,
+            voucher_type='SALES',
+            status='POSTED'
+        )
+        if start_date:
+            s_qs = s_qs.filter(voucher_date__gte=start_date)
+        if end_date:
+            s_qs = s_qs.filter(voucher_date__lte=end_date)
+
+        s_agg = s_qs.aggregate(
+            tot=Sum('total_amount'),
+            cnt=Count('id')
+        )
+        total_sales = s_agg['tot'] or Decimal('0.00')
+        sales_count = s_agg['cnt'] or 0
+
+        s_ids = list(s_qs.values_list('id', flat=True))
+
+        # Output GST aggregated from double-entry LedgerEntry on tax accounts
+        tax_entries = LedgerEntry.objects.filter(
+            voucher_id__in=s_ids,
+            ledger__ledger_type='TAX'
+        ).values('ledger__name').annotate(
+            tot_dr=Sum('debit_amount'),
+            tot_cr=Sum('credit_amount')
+        )
+
+        output_cgst = Decimal('0.00')
+        output_sgst = Decimal('0.00')
+        output_igst = Decimal('0.00')
+
+        for row in tax_entries:
+            name = row['ledger__name'].lower()
+            net = (row['tot_cr'] or Decimal('0.00')) - (row['tot_dr'] or Decimal('0.00'))
+            if 'cgst' in name:
+                output_cgst += net
+            elif 'sgst' in name:
+                output_sgst += net
+            elif 'igst' in name:
+                output_igst += net
+
+        total_output_gst = output_cgst + output_sgst + output_igst
+
+        # Payment Allocations against these sales
+        alloc_agg = PaymentAllocation.objects.filter(
+            invoice_voucher_id__in=s_ids
+        ).aggregate(
+            tot_paid=Sum('allocated_amount'),
+            cnt_paid=Count('invoice_voucher_id', distinct=True)
+        )
+        paid_sales = alloc_agg['tot_paid'] or Decimal('0.00')
+        paid_count = alloc_agg['cnt_paid'] or 0
+        unpaid_sales = max(Decimal('0.00'), total_sales - paid_sales)
+        unpaid_count = max(0, sales_count - paid_count)
+
+        # Purchases in period for comparative overview
+        p_qs = Voucher.objects.filter(
+            company=company,
+            voucher_type='PURCHASE',
+            status='POSTED'
+        )
+        if start_date:
+            p_qs = p_qs.filter(voucher_date__gte=start_date)
+        if end_date:
+            p_qs = p_qs.filter(voucher_date__lte=end_date)
+
+        p_agg = p_qs.aggregate(
+            tot=Sum('total_amount'),
+            cnt=Count('id')
+        )
+        total_purchases = p_agg['tot'] or Decimal('0.00')
+        purchase_count = p_agg['cnt'] or 0
+
+        return Response({
+            "success": True,
+            "data": {
+                "total_sales": float(total_sales),
+                "sales_count": sales_count,
+                "total_output_gst": float(total_output_gst),
+                "output_cgst": float(output_cgst),
+                "output_sgst": float(output_sgst),
+                "output_igst": float(output_igst),
+                "paid_sales": float(paid_sales),
+                "paid_count": paid_count,
+                "unpaid_sales": float(unpaid_sales),
+                "unpaid_count": unpaid_count,
+                "total_purchases": float(total_purchases),
+                "purchase_count": purchase_count,
+                "start_date": str(start_date) if start_date else None,
+                "end_date": str(end_date) if end_date else None,
+            }
+        })
+
+
 class CheckDuplicateVoucherAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
 

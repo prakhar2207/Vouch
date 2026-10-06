@@ -6,7 +6,7 @@ from .views import (
     CreatePaymentReceiptAPIView, ListPaymentReceiptAPIView, UniversalVoucherAPIView,
     SyncTaxLedgersAPIView, PartyRatesAPIView, RebuildBalancesAPIView,
     AgingReportAPIView, AutoFIFOReconciliationAPIView, VoucherAuditHistoryAPIView,
-    PurchasePeriodSummaryAPIView, CheckDuplicateVoucherAPIView
+    PurchasePeriodSummaryAPIView, CheckDuplicateVoucherAPIView, SalesPeriodSummaryAPIView
 )
 from .ocr_views import OCRExtractAPIView
 from .task_views import TaskStatusAPIView
@@ -51,6 +51,7 @@ urlpatterns = [
     path('reports/aging/', AgingReportAPIView.as_view(), name='aging_report'),
     path('reports/aging/<uuid:company_id>/', AgingReportAPIView.as_view(), name='aging_report_company'),
     path('reports/purchase-period-summary/<uuid:company_id>/', PurchasePeriodSummaryAPIView.as_view(), name='purchase_period_summary'),
+    path('reports/sales-period-summary/<uuid:company_id>/', SalesPeriodSummaryAPIView.as_view(), name='sales_period_summary'),
     path('allocation/auto-fifo/', AutoFIFOReconciliationAPIView.as_view(), name='auto_fifo_reconciliation'),
     path('allocation/auto-fifo/<uuid:company_id>/', AutoFIFOReconciliationAPIView.as_view(), name='auto_fifo_reconciliation_company'),
     path('vouchers/detail/<uuid:voucher_id>/', VoucherDetailAPIView.as_view(), name='voucher_detail'),
