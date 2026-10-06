@@ -2,7 +2,7 @@
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState, useMemo, useCallback } from "react";
 import axios from "axios";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -32,15 +32,19 @@ import {
   Clock,
   Filter,
   ArrowRight,
-  Check
+  Check,
+  Building2,
+  Users,
+  Search
 } from "lucide-react";
 import { offlineDb } from "@/lib/db/offlineDb";
 import { retryFailedVoucher, pullIncrementalChanges } from "@/lib/sync/sync-worker";
-import { vouchersRepository } from "@/lib/data";
+import { vouchersRepository, ledgersRepository } from "@/lib/data";
+import SemanticBalance from "@/components/accounting/SemanticBalance";
 import { PeriodPreset, computePeriodDateRange, formatFriendlyDate } from "@/utils/periodRanges";
 import { useAccountingPeriod } from "@/context/PeriodContext";
 
-export default function PurchaseInvoiceList() {
+function PurchaseInvoiceListContent() {
   const router = useRouter();
   const { toast } = useToast();
   const { companyId: activeCompanyId } = useCompany();
@@ -53,6 +57,40 @@ export default function PurchaseInvoiceList() {
   const [page, setPage] = useState<number>(1);
   const [pagination, setPagination] = useState<any>(null);
   const pageSize = 50;
+  const searchParams = useSearchParams();
+  const filterParam = searchParams.get('filter');
+  const tabParam = searchParams.get('tab');
+
+  // View toggle: Invoices vs Suppliers (Creditors)
+  const [activeTab, setActiveTab] = useState<'invoices' | 'suppliers'>(() => {
+    return tabParam === 'suppliers' ? 'suppliers' : 'invoices';
+  });
+
+  // Payment status filter: ALL | UNPAID (Bills to Pay) | PAID
+  const [paymentFilter, setPaymentFilter] = useState<'ALL' | 'UNPAID' | 'PAID'>(() => {
+    if (filterParam === 'unpaid') return 'UNPAID';
+    if (filterParam === 'paid') return 'PAID';
+    return 'ALL';
+  });
+
+  // Suppliers view state
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [loadingSuppliers, setLoadingSuppliers] = useState<boolean>(false);
+  const [supplierSearch, setSupplierSearch] = useState<string>('');
+  const [supplierFilter, setSupplierFilter] = useState<'ALL' | 'UNPAID'>('ALL');
+
+  useEffect(() => {
+    if (filterParam === 'unpaid') {
+      setPaymentFilter('UNPAID');
+      setActiveTab('invoices');
+    } else if (filterParam === 'paid') {
+      setPaymentFilter('PAID');
+      setActiveTab('invoices');
+    }
+    if (tabParam === 'suppliers') {
+      setActiveTab('suppliers');
+    }
+  }, [filterParam, tabParam]);
 
   // Period Selection & Overview State
   const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("ALL");
@@ -210,14 +248,99 @@ export default function PurchaseInvoiceList() {
     }
   }, [activeCompanyId, activeDateRange, activeFY, fromDate, toDate]);
 
+  const fetchSuppliers = useCallback(async (targetCompanyId?: string) => {
+    let companyId = targetCompanyId || activeCompanyId;
+    if (!companyId && typeof window !== "undefined") {
+      companyId = localStorage.getItem("vouch_active_company_id");
+    }
+    if (!companyId) return;
+
+    setLoadingSuppliers(true);
+    try {
+      const effectiveStartDate = (filterTableByPeriod && activeDateRange.startDate) ? activeDateRange.startDate : (fromDate || activeFY?.start_date);
+      const effectiveEndDate = (filterTableByPeriod && activeDateRange.endDate) ? activeDateRange.endDate : (toDate || activeFY?.end_date);
+      const { data } = await ledgersRepository.getParties(companyId, {
+        role: "SUPPLIER",
+        financialYearId: activeFY?.id,
+        startDate: effectiveStartDate,
+        endDate: effectiveEndDate,
+      });
+      setSuppliers(data || []);
+    } catch (err) {
+      console.error("fetchSuppliers error:", err);
+    } finally {
+      setLoadingSuppliers(false);
+    }
+  }, [activeCompanyId, activeFY?.id, filterTableByPeriod, activeDateRange.startDate, activeDateRange.endDate, fromDate, toDate]);
+
   useEffect(() => {
     if (!isAuthenticated()) {
       router.push("/login");
       return;
     }
     fetchInvoices(1);
+    fetchSuppliers();
     calculatePeriodMetrics();
-  }, [router, activeCompanyId, activeFY?.id, filterTableByPeriod, activeDateRange.startDate, activeDateRange.endDate, fromDate, toDate]);
+  }, [router, activeCompanyId, activeFY?.id, filterTableByPeriod, activeDateRange.startDate, activeDateRange.endDate, fromDate, toDate, fetchSuppliers]);
+
+  const isSupplierPayable = useCallback((p: any) => {
+    const state = String(p.balance_state || "").toUpperCase();
+    const dir = String(p.balance_direction || "").toUpperCase();
+    const bal = Number(p.current_balance || 0);
+    return state === "TO_PAY" || state === "CR" || dir === "PAYABLE" || (bal > 0 && p.normal_balance === "CREDIT");
+  }, []);
+
+  const suppliersToPayCount = useMemo(() => {
+    return suppliers.filter(isSupplierPayable).length;
+  }, [suppliers, isSupplierPayable]);
+
+  const totalPayableAmount = useMemo(() => {
+    return suppliers.reduce((sum, p) => {
+      if (isSupplierPayable(p)) {
+        const amt = p.display_amount !== undefined ? Number(p.display_amount) : Math.abs(Number(p.current_balance || 0));
+        return sum + (isNaN(amt) ? 0 : amt);
+      }
+      return sum;
+    }, 0);
+  }, [suppliers, isSupplierPayable]);
+
+  const filteredSuppliers = useMemo(() => {
+    return suppliers.filter((p) => {
+      if (supplierFilter === "UNPAID" && !isSupplierPayable(p)) {
+        return false;
+      }
+      if (supplierSearch.trim()) {
+        const q = supplierSearch.toLowerCase();
+        const matchName = p.name?.toLowerCase().includes(q);
+        const matchGstin = p.gstin?.toLowerCase().includes(q);
+        const matchPhone = p.phone?.toLowerCase().includes(q);
+        return matchName || matchGstin || matchPhone;
+      }
+      return true;
+    });
+  }, [suppliers, supplierFilter, supplierSearch, isSupplierPayable]);
+
+  const { unpaidInvoicesCount, paidInvoicesCount } = useMemo(() => {
+    let unpaid = 0;
+    let paid = 0;
+    for (const inv of invoices) {
+      if (inv.payment_status === "PAID") {
+        paid++;
+      } else {
+        unpaid++;
+      }
+    }
+    return { unpaidInvoicesCount: unpaid, paidInvoicesCount: paid };
+  }, [invoices]);
+
+  const displayedInvoices = useMemo(() => {
+    return invoices.filter((inv) => {
+      const isUnpaid = inv.payment_status === "UNPAID" || inv.payment_status === "PARTIAL";
+      if (paymentFilter === "UNPAID") return isUnpaid;
+      if (paymentFilter === "PAID") return inv.payment_status === "PAID";
+      return true;
+    });
+  }, [invoices, paymentFilter]);
 
   const fetchInvoices = async (targetPage: number = page) => {
     setLoading(true);
@@ -376,8 +499,8 @@ export default function PurchaseInvoiceList() {
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
 
   const scrollToInvoice = (index: number) => {
-    if (index >= 0 && index < invoices.length) {
-      const invId = invoices[index].id;
+    if (activeTab === 'invoices' && index >= 0 && index < displayedInvoices.length) {
+      const invId = displayedInvoices[index].id;
       const el = document.getElementById(`row-invoice-${invId}`);
       if (el) {
         el.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -388,6 +511,7 @@ export default function PurchaseInvoiceList() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isEditModalOpen || deleteConfirmParams !== null) return;
+      if (activeTab !== 'invoices') return;
 
       const activeElement = document.activeElement;
       const isInputFocused = activeElement && (
@@ -397,19 +521,19 @@ export default function PurchaseInvoiceList() {
       );
       if (isInputFocused) return;
 
-      if (invoices.length === 0) return;
+      if (displayedInvoices.length === 0) return;
 
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setFocusedIndex(prev => {
-          const next = prev < invoices.length - 1 ? prev + 1 : 0;
+          const next = prev < displayedInvoices.length - 1 ? prev + 1 : 0;
           scrollToInvoice(next);
           return next;
         });
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setFocusedIndex(prev => {
-          const next = prev > 0 ? prev - 1 : invoices.length - 1;
+          const next = prev > 0 ? prev - 1 : displayedInvoices.length - 1;
           scrollToInvoice(next);
           return next;
         });
@@ -419,29 +543,29 @@ export default function PurchaseInvoiceList() {
         scrollToInvoice(0);
       } else if (e.key === "End") {
         e.preventDefault();
-        setFocusedIndex(invoices.length - 1);
-        scrollToInvoice(invoices.length - 1);
+        setFocusedIndex(displayedInvoices.length - 1);
+        scrollToInvoice(displayedInvoices.length - 1);
       } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         // TALLY ALTER SHORTCUT: Ctrl + Enter opens the full Edit Invoice Modal!
-        if (focusedIndex >= 0 && focusedIndex < invoices.length) {
+        if (focusedIndex >= 0 && focusedIndex < displayedInvoices.length) {
           e.preventDefault();
-          handleStartEdit(invoices[focusedIndex]);
+          handleStartEdit(displayedInvoices[focusedIndex]);
         }
       } else if (e.key === "Enter") {
         // Enter views details of selected invoice
-        if (focusedIndex >= 0 && focusedIndex < invoices.length) {
+        if (focusedIndex >= 0 && focusedIndex < displayedInvoices.length) {
           e.preventDefault();
-          handleOpenVoucherDetail(invoices[focusedIndex].id);
+          handleOpenVoucherDetail(displayedInvoices[focusedIndex].id);
         }
       } else if (e.key.toLowerCase() === "e" && !e.ctrlKey && !e.metaKey) {
-        if (focusedIndex >= 0 && focusedIndex < invoices.length) {
+        if (focusedIndex >= 0 && focusedIndex < displayedInvoices.length) {
           e.preventDefault();
-          handleStartEdit(invoices[focusedIndex]);
+          handleStartEdit(displayedInvoices[focusedIndex]);
         }
       } else if ((e.altKey && e.key.toLowerCase() === "d") || e.key === "Delete") {
-        if (focusedIndex >= 0 && focusedIndex < invoices.length) {
+        if (focusedIndex >= 0 && focusedIndex < displayedInvoices.length) {
           e.preventDefault();
-          const target = invoices[focusedIndex];
+          const target = displayedInvoices[focusedIndex];
           handleDeleteInvoice(target.id, target.voucher_number);
         }
       } else if (e.key === "Escape") {
@@ -455,7 +579,7 @@ export default function PurchaseInvoiceList() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [invoices, focusedIndex, isEditModalOpen, selectedVoucher]);
+  }, [displayedInvoices, focusedIndex, isEditModalOpen, selectedVoucher, activeTab]);
 
   return (
     <DashboardLayout>
@@ -464,18 +588,101 @@ export default function PurchaseInvoiceList() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Purchase Invoices</h1>
-            <p className="text-xs text-muted-foreground mt-1">Inward supplier bills and attached documents</p>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+              {activeTab === 'invoices' ? 'Purchase Invoices' : 'Suppliers & Creditors'}
+            </h1>
+            <p className="text-xs text-muted-foreground mt-1">
+              {activeTab === 'invoices' 
+                ? 'Inward supplier bills, payment tracking, and Input GST (ITC)' 
+                : 'Manage suppliers, outstanding payable balances, and supplier ledgers'}
+            </p>
           </div>
-          <Link
-            href="/purchases/new"
-            className="w-full sm:w-auto justify-center bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2.5 rounded-xl text-xs font-bold shadow-md shadow-primary/20 transition-all flex items-center gap-1.5"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Create / Scan Invoice</span>
-            <kbd className="hidden sm:inline bg-primary-foreground/20 px-1.5 py-0.5 rounded text-[10px]">F9</kbd>
-          </Link>
+          <div className="flex items-center gap-2">
+            {activeTab === 'invoices' ? (
+              <Link
+                href="/purchases/new"
+                className="w-full sm:w-auto justify-center bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2.5 rounded-xl text-xs font-bold shadow-md shadow-primary/20 transition-all flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Create / Scan Invoice</span>
+                <kbd className="hidden sm:inline bg-primary-foreground/20 px-1.5 py-0.5 rounded text-[10px]">F9</kbd>
+              </Link>
+            ) : (
+              <Link
+                href="/purchases/suppliers/new"
+                className="w-full sm:w-auto justify-center bg-rose-600 hover:bg-rose-500 text-white px-4 py-2.5 rounded-xl text-xs font-bold shadow-md shadow-rose-600/20 transition-all flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add Supplier</span>
+              </Link>
+            )}
+          </div>
         </div>
+
+        {/* View Switcher: Invoices vs Suppliers */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card p-2 rounded-2xl border border-border/40 shadow-xs">
+          <div className="flex items-center gap-1.5 p-1 bg-muted/60 rounded-xl border border-border/40 text-xs">
+            <button
+              type="button"
+              onClick={() => setActiveTab('invoices')}
+              className={`px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                activeTab === 'invoices'
+                  ? 'bg-background text-foreground shadow-xs'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <FileText className="w-4 h-4 text-blue-500" />
+              <span>Purchase Invoices</span>
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                periodMetrics.unpaidCount > 0
+                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                  : 'bg-muted text-muted-foreground'
+              }`}>
+                {periodMetrics.unpaidCount > 0 ? `${periodMetrics.unpaidCount} Due` : invoices.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('suppliers')}
+              className={`px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                activeTab === 'suppliers'
+                  ? 'bg-background text-foreground shadow-xs'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Building2 className="w-4 h-4 text-rose-500" />
+              <span>Suppliers</span>
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                suppliersToPayCount > 0
+                  ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                  : 'bg-muted text-muted-foreground'
+              }`}>
+                {suppliersToPayCount > 0 ? `${suppliersToPayCount} To Pay` : suppliers.length}
+              </span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs text-muted-foreground px-2">
+            {activeTab === 'invoices' ? (
+              <span>
+                {paymentFilter === 'UNPAID' 
+                  ? 'Filtered to Unpaid Bills (Bills to Pay)' 
+                  : paymentFilter === 'PAID' 
+                  ? 'Filtered to Settled Bills' 
+                  : 'Showing all purchase bills'}
+              </span>
+            ) : (
+              <span>
+                {supplierFilter === 'UNPAID'
+                  ? `Showing ${filteredSuppliers.length} suppliers with bills to pay`
+                  : `Showing ${filteredSuppliers.length} suppliers`}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {activeTab === 'invoices' ? (
+          <>
 
         {/* Period Performance & Overview Section */}
         <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/40 p-4 sm:p-5 space-y-4">
@@ -638,7 +845,13 @@ export default function PurchaseInvoiceList() {
           {/* 4 Summary Cards Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
             {/* Card 1: Total Purchases */}
-            <div className="bg-muted/20 border border-blue-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-blue-500/40 transition-all">
+            <div 
+              onClick={() => setPaymentFilter('ALL')}
+              className={`bg-muted/20 border rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group transition-all cursor-pointer ${
+                paymentFilter === 'ALL' ? 'border-blue-500 ring-2 ring-blue-500/30 bg-blue-500/5' : 'border-blue-500/20 hover:border-blue-500/40'
+              }`}
+              title="Click to view all purchase bills"
+            >
               <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-blue-500 tracking-wider uppercase">
@@ -646,7 +859,7 @@ export default function PurchaseInvoiceList() {
                   <span>Total Purchases</span>
                 </div>
                 <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                  Inward
+                  {paymentFilter === 'ALL' ? 'Selected' : 'All Bills'}
                 </span>
               </div>
               <div>
@@ -654,8 +867,8 @@ export default function PurchaseInvoiceList() {
                   ₹{periodMetrics.totalPurchases.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </p>
                 <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
-                  <span>{periodMetrics.purchaseCount} purchase bills</span>
-                  <span>Avg: ₹{periodMetrics.purchaseCount > 0 ? Math.round(periodMetrics.totalPurchases / periodMetrics.purchaseCount).toLocaleString("en-IN") : "0"}</span>
+                  <span>{periodMetrics.purchaseCount} bills</span>
+                  <span className="text-blue-500 dark:text-blue-400 font-medium">Show all →</span>
                 </div>
               </div>
             </div>
@@ -687,7 +900,13 @@ export default function PurchaseInvoiceList() {
             </div>
 
             {/* Card 3: Paid Amount */}
-            <div className="bg-muted/20 border border-emerald-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-emerald-500/40 transition-all">
+            <div 
+              onClick={() => setPaymentFilter('PAID')}
+              className={`bg-muted/20 border rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group transition-all cursor-pointer ${
+                paymentFilter === 'PAID' ? 'border-emerald-500 ring-2 ring-emerald-500/30 bg-emerald-500/5' : 'border-emerald-500/20 hover:border-emerald-500/40'
+              }`}
+              title="Click to view paid bills"
+            >
               <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-500 tracking-wider uppercase">
@@ -695,7 +914,7 @@ export default function PurchaseInvoiceList() {
                   <span>Paid Amount</span>
                 </div>
                 <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Settled
+                  {paymentFilter === 'PAID' ? 'Selected' : 'Settled'}
                 </span>
               </div>
               <div>
@@ -704,21 +923,27 @@ export default function PurchaseInvoiceList() {
                 </p>
                 <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
                   <span>{periodMetrics.paidCount} bills settled</span>
-                  <span>{periodMetrics.totalPurchases > 0 ? Math.round((periodMetrics.paidPurchases / periodMetrics.totalPurchases) * 100) : 0}% cleared</span>
+                  <span className="text-emerald-500 dark:text-emerald-400 font-medium">Show paid →</span>
                 </div>
               </div>
             </div>
 
-            {/* Card 4: Yet to Pay */}
-            <div className="bg-muted/20 border border-amber-500/20 rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group hover:border-amber-500/40 transition-all">
+            {/* Card 4: Yet to Pay (Bills to Pay) */}
+            <div 
+              onClick={() => setPaymentFilter('UNPAID')}
+              className={`bg-muted/20 border rounded-xl p-4 shadow-xs flex flex-col justify-between relative overflow-hidden group transition-all cursor-pointer ${
+                paymentFilter === 'UNPAID' ? 'border-amber-500 ring-2 ring-amber-500/30 bg-amber-500/5' : 'border-amber-500/20 hover:border-amber-500/40'
+              }`}
+              title="Click to view unpaid purchase bills (Bills to Pay)"
+            >
               <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-bl-full pointer-events-none -mr-4 -mt-4" />
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-amber-500 tracking-wider uppercase">
                   <Clock className="w-3.5 h-3.5" />
-                  <span>Yet to Pay</span>
+                  <span>Bills to Pay (Due)</span>
                 </div>
                 <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                  Pending Due
+                  {paymentFilter === 'UNPAID' ? 'Selected' : 'Pending Due'}
                 </span>
               </div>
               <div>
@@ -727,7 +952,7 @@ export default function PurchaseInvoiceList() {
                 </p>
                 <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 font-mono">
                   <span>{periodMetrics.unpaidCount} bills due</span>
-                  <span>To Suppliers</span>
+                  <span className="text-amber-500 dark:text-amber-400 font-bold">Unpaid Bills →</span>
                 </div>
               </div>
             </div>
@@ -736,16 +961,58 @@ export default function PurchaseInvoiceList() {
 
         {/* Invoices Table Card */}
         <div className="bg-card text-card-foreground rounded-2xl shadow-sm border border-border/40 flex-1 overflow-hidden flex flex-col">
-          <div className="px-4 sm:px-5 py-3.5 border-b border-border/70 bg-muted/20 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Previous Invoices</span>
+          <div className="px-4 sm:px-5 py-3.5 border-b border-border/70 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                {paymentFilter === 'UNPAID' ? 'Unpaid Purchase Bills' : paymentFilter === 'PAID' ? 'Settled Bills' : 'All Purchase Invoices'}
+              </span>
+
+              {/* Payment Filter Pill Tabs */}
+              <div className="flex items-center gap-1 bg-muted/70 p-1 rounded-xl border border-border/50 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setPaymentFilter('ALL')}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                    paymentFilter === 'ALL'
+                      ? 'bg-background text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  All ({invoices.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentFilter('UNPAID')}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    paymentFilter === 'UNPAID'
+                      ? 'bg-amber-500/20 text-amber-500 dark:text-amber-400 border border-amber-500/30 shadow-xs font-bold'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Unpaid Bills ({unpaidInvoicesCount})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentFilter('PAID')}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    paymentFilter === 'PAID'
+                      ? 'bg-emerald-500/20 text-emerald-500 dark:text-emerald-400 border border-emerald-500/30 shadow-xs font-bold'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span>Paid ({paidInvoicesCount})</span>
+                </button>
+              </div>
+
               {filterTableByPeriod && (
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">
                   Filtered: {activeDateRange.formattedRange}
                 </span>
               )}
             </div>
-            <span className="text-xs text-muted-foreground hidden sm:inline">Click any row to inspect original bill &amp; line items</span>
+            <span className="text-xs text-muted-foreground hidden lg:inline">Click any row to inspect original bill &amp; line items</span>
           </div>
 
           {loading ? (
@@ -788,11 +1055,36 @@ export default function PurchaseInvoiceList() {
                 <span>Scan First Invoice</span>
               </Link>
             </div>
+          ) : displayedInvoices.length === 0 ? (
+            <div className="flex flex-col items-center justify-center p-16 text-center bg-card">
+              <div className="w-16 h-16 rounded-2xl bg-muted/60 text-muted-foreground flex items-center justify-center mb-3">
+                {paymentFilter === 'UNPAID' ? <CheckCircle className="w-8 h-8 text-emerald-500" /> : <FileText className="w-8 h-8" />}
+              </div>
+              <h3 className="text-xl font-bold mb-1">
+                {paymentFilter === 'UNPAID' ? 'All Bills Settled!' : paymentFilter === 'PAID' ? 'No Paid Bills Found' : 'No Bills Found'}
+              </h3>
+              <p className="text-muted-foreground max-w-md mx-auto mb-6 text-sm">
+                {paymentFilter === 'UNPAID' 
+                  ? 'There are currently no unpaid purchase bills to pay in this period.' 
+                  : paymentFilter === 'PAID'
+                  ? 'No fully paid bills found matching the current filter.'
+                  : 'No bills found matching this view.'}
+              </p>
+              {paymentFilter !== 'ALL' && (
+                <button
+                  type="button"
+                  onClick={() => setPaymentFilter('ALL')}
+                  className="px-4 py-2 bg-muted hover:bg-muted/80 text-foreground rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  View All Bills ({invoices.length})
+                </button>
+              )}
+            </div>
           ) : (
             <div className="flex-1 w-full overflow-auto">
               {/* Mobile Card List (< md) */}
               <div className="block md:hidden divide-y divide-border/40">
-                {invoices.map((inv, idx) => (
+                {displayedInvoices.map((inv, idx) => (
                   <div
                     key={inv.id}
                     onClick={() => {
@@ -915,7 +1207,7 @@ export default function PurchaseInvoiceList() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/40 text-xs">
-                  {invoices.map((inv, idx) => {
+                  {displayedInvoices.map((inv, idx) => {
                     const isFocused = focusedIndex === idx;
                     return (
                       <tr
@@ -1128,6 +1420,197 @@ export default function PurchaseInvoiceList() {
             </div>
           )}
         </div>
+        </>
+      ) : (
+        /* ================= SUPPLIERS DIRECTORY VIEW ================= */
+        <div className="space-y-4 flex-1 flex flex-col">
+          {/* Suppliers Toolbar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border/40 p-3 sm:p-4 rounded-2xl shadow-xs">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1">
+              {/* Search */}
+              <div className="relative flex-1 sm:max-w-xs">
+                <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search supplier name, phone, GSTIN..."
+                  value={supplierSearch}
+                  onChange={(e) => setSupplierSearch(e.target.value)}
+                  className="bg-muted/50 border border-border/50 text-foreground pl-9 pr-4 py-2 rounded-xl focus:ring-2 focus:ring-primary/40 outline-none w-full text-xs min-h-[36px]"
+                />
+                {supplierSearch && (
+                  <button
+                    onClick={() => setSupplierSearch('')}
+                    className="absolute right-3 top-2.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Filter Pills */}
+              <div className="flex items-center gap-1 bg-muted/70 p-1 rounded-xl border border-border/50 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setSupplierFilter('ALL')}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                    supplierFilter === 'ALL'
+                      ? 'bg-background text-foreground shadow-xs font-bold'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  All Suppliers ({suppliers.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSupplierFilter('UNPAID')}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    supplierFilter === 'UNPAID'
+                      ? 'bg-rose-500/20 text-rose-500 dark:text-rose-400 border border-rose-500/30 shadow-xs font-bold'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>With Bills to Pay ({suppliersToPayCount})</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Total Payable Summary */}
+            {totalPayableAmount > 0 && (
+              <div className="px-3.5 py-1.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-mono font-bold flex items-center justify-between sm:justify-end gap-2">
+                <span className="text-muted-foreground font-sans font-normal text-[11px]">Total Supplier Dues:</span>
+                <span>₹{totalPayableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Suppliers Content */}
+          {loadingSuppliers ? (
+            <div className="flex flex-col items-center justify-center p-20 text-muted-foreground gap-3 bg-card rounded-2xl border border-border/40">
+              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm font-medium">Loading suppliers &amp; balances...</span>
+            </div>
+          ) : filteredSuppliers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center text-center p-16 bg-card rounded-2xl border border-border/40 shadow-xs">
+              <Building2 className="w-16 h-16 text-muted-foreground mb-3 opacity-40" />
+              <h3 className="text-lg font-bold mb-1 text-foreground">
+                {supplierFilter === 'UNPAID' ? 'No Pending Bills to Pay' : 'No Suppliers Found'}
+              </h3>
+              <p className="text-muted-foreground text-xs max-w-md mx-auto mb-6">
+                {supplierSearch
+                  ? `No suppliers match "${supplierSearch}".`
+                  : supplierFilter === 'UNPAID'
+                  ? 'All supplier accounts are completely settled! No outstanding amounts to pay.'
+                  : 'No supplier accounts found for this company yet.'}
+              </p>
+              {supplierFilter === 'UNPAID' ? (
+                <button
+                  type="button"
+                  onClick={() => setSupplierFilter('ALL')}
+                  className="px-4 py-2 bg-muted hover:bg-muted/80 text-foreground rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  View All Suppliers ({suppliers.length})
+                </button>
+              ) : (
+                <Link
+                  href="/purchases/suppliers/new"
+                  className="bg-rose-600 hover:bg-rose-500 text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add First Supplier</span>
+                </Link>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredSuppliers.map((supplier) => {
+                const isPayable = isSupplierPayable(supplier);
+                return (
+                  <div
+                    key={supplier.id}
+                    className={`bg-card border rounded-2xl p-4.5 flex flex-col justify-between shadow-xs transition-all hover:border-border relative overflow-hidden group ${
+                      isPayable ? 'border-rose-500/30 hover:border-rose-500/50' : 'border-border/40'
+                    }`}
+                  >
+                    <div className={`absolute top-0 left-0 right-0 h-1 ${isPayable ? 'bg-rose-500' : 'bg-muted-foreground/30'}`} />
+
+                    <div>
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="min-w-0 flex-1">
+                          <h4 className="text-sm font-bold text-foreground truncate group-hover:text-primary transition-colors" title={supplier.name}>
+                            {supplier.name}
+                          </h4>
+                          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/20 font-semibold">
+                              Supplier
+                            </span>
+                            {supplier.gstin && (
+                              <span className="text-[10px] font-mono text-muted-foreground bg-muted/40 px-1.5 py-0.5 rounded border border-border/40 font-medium">
+                                {supplier.gstin}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <Link
+                          href={`/parties/${supplier.id}/edit`}
+                          className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                          title="Edit Supplier"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </Link>
+                      </div>
+
+                      {supplier.phone && (
+                        <div className="text-[11px] text-muted-foreground mb-2">
+                          Phone: <span className="text-foreground font-mono font-medium">{supplier.phone}</span>
+                        </div>
+                      )}
+
+                      <div className="pt-2 border-t border-border/40 flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground font-medium">Balance</span>
+                        <SemanticBalance
+                          balanceState={supplier.balance_state}
+                          displayAmount={supplier.display_amount}
+                          currentBalance={supplier.current_balance}
+                          normalBalance={supplier.normal_balance}
+                          balanceDirection={supplier.balance_direction}
+                          size="md"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-3.5 pt-3 border-t border-border/40 flex items-center justify-between gap-2">
+                      <Link
+                        href={`/parties/${supplier.id}/statement`}
+                        className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-1 group-hover:translate-x-0.5 transition-transform"
+                      >
+                        <span>Statement</span>
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                      </Link>
+
+                      {isPayable ? (
+                        <Link
+                          href={`/vouchers/new?type=PAYMENT&party=${supplier.id}`}
+                          className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-xs transition-colors flex items-center gap-1"
+                        >
+                          <span>Pay (F5)</span>
+                        </Link>
+                      ) : (
+                        <Link
+                          href={`/vouchers/new?type=PAYMENT&party=${supplier.id}`}
+                          className="px-3 py-1.5 rounded-xl bg-muted/70 hover:bg-muted text-foreground text-xs font-semibold border border-border/50 transition-colors"
+                        >
+                          <span>Record Payment</span>
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
         {/* Voucher Detail & Document Viewer Modal */}
         {(selectedVoucher || loadingDetail) && (
@@ -1347,5 +1830,22 @@ export default function PurchaseInvoiceList() {
         />
       </div>
     </DashboardLayout>
+  );
+}
+
+export default function PurchaseInvoiceList() {
+  return (
+    <React.Suspense
+      fallback={
+        <DashboardLayout>
+          <div className="flex flex-col items-center justify-center min-h-[400px] space-y-3">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            <div className="text-xs text-muted-foreground font-medium">Loading purchases...</div>
+          </div>
+        </DashboardLayout>
+      }
+    >
+      <PurchaseInvoiceListContent />
+    </React.Suspense>
   );
 }

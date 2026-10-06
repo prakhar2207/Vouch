@@ -2,7 +2,7 @@
 import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
@@ -31,16 +31,22 @@ import {
 type PaymentMode = 'CASH' | 'CHEQUE' | 'NEFT' | 'RTGS' | 'IMPS' | 'UPI' | 'BANK_TRANSFER';
 type PartyCategory = 'ALL' | 'SUPPLIER' | 'EXPENSE';
 
-export default function NewVoucherPage() {
+function NewVoucherPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const paramType = searchParams.get('type');
+  const paramParty = searchParams.get('party');
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [companyId, setCompanyId] = useState('');
   const [ledgers, setLedgers] = useState<any[]>([]);
 
-  const [voucherType, setVoucherType] = useState<'RECEIPT' | 'PAYMENT'>('RECEIPT');
+  const [voucherType, setVoucherType] = useState<'RECEIPT' | 'PAYMENT'>(() => {
+    if (paramType?.toUpperCase() === 'PAYMENT') return 'PAYMENT';
+    return 'RECEIPT';
+  });
   const [partyCategory, setPartyCategory] = useState<PartyCategory>('ALL');
-  const [partyLedgerId, setPartyLedgerId] = useState('');
+  const [partyLedgerId, setPartyLedgerId] = useState(() => paramParty || '');
   const [paymentLedgerId, setPaymentLedgerId] = useState('');
   const [amount, setAmount] = useState('');
   const [narration, setNarration] = useState('');
@@ -67,6 +73,17 @@ export default function NewVoucherPage() {
     if (!isAuthenticated()) { router.push('/login'); return; }
     fetchLedgers();
   }, [router]);
+
+  useEffect(() => {
+    if (paramType?.toUpperCase() === 'PAYMENT') {
+      setVoucherType('PAYMENT');
+    } else if (paramType?.toUpperCase() === 'RECEIPT') {
+      setVoucherType('RECEIPT');
+    }
+    if (paramParty) {
+      setPartyLedgerId(paramParty);
+    }
+  }, [paramType, paramParty]);
 
   // Real-time pre-check to prevent duplicate voucher creation
   useEffect(() => {
@@ -921,5 +938,20 @@ export default function NewVoucherPage() {
         )}
       </div>
     </DashboardLayout>
+  );
+}
+
+export default function NewVoucherPage() {
+  return (
+    <React.Suspense fallback={
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm font-medium text-muted-foreground">Loading form...</span>
+        </div>
+      </DashboardLayout>
+    }>
+      <NewVoucherPageContent />
+    </React.Suspense>
   );
 }

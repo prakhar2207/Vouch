@@ -663,7 +663,7 @@ export default function Dashboard() {
 
             {/* 2. Sundry Debtors (Money to Collect) */}
             <Link
-              href="/parties"
+              href="/sales?filter=unpaid"
               className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-teal-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
             >
               <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-teal-500 to-emerald-500" />
@@ -679,14 +679,14 @@ export default function Dashboard() {
               <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
                 <span>Customer receivables</span>
                 <span className="group-hover:translate-x-0.5 transition-transform text-teal-600 dark:text-teal-400 font-medium">
-                  Receive (F6) →
+                  Unpaid Invoices →
                 </span>
               </div>
             </Link>
 
             {/* 3. Sundry Creditors (Bills to Pay) */}
             <Link
-              href="/parties"
+              href="/purchases?filter=unpaid"
               className="group relative bg-card hover:bg-card/80 border border-border/60 hover:border-rose-500/40 rounded-2xl p-4 sm:p-5 shadow-xs transition-all cursor-pointer overflow-hidden block"
             >
               <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-rose-500 to-orange-500" />
@@ -702,7 +702,7 @@ export default function Dashboard() {
               <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
                 <span>Supplier liabilities</span>
                 <span className="group-hover:translate-x-0.5 transition-transform text-rose-600 dark:text-rose-400 font-medium">
-                  Pay (F5) →
+                  Unpaid Bills →
                 </span>
               </div>
             </Link>

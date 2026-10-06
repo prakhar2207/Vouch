@@ -31,7 +31,8 @@ import {
   Sparkles,
   LogIn,
   History,
-  Tag
+  Tag,
+  Maximize2
 } from 'lucide-react';
 import AuditHistoryModal from '@/components/modals/AuditHistoryModal';
 
@@ -122,6 +123,23 @@ export default function PrintInvoicePage() {
     setShowBrand(next);
     if (typeof window !== 'undefined') {
       localStorage.setItem('vouch_show_brand_in_sales_invoice', String(next));
+    }
+  };
+
+  // Fit to page mode (stretch invoice height to fill A4 page with zero leftover bottom space)
+  const [fitToPage, setFitToPage] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const val = localStorage.getItem('vouch_print_fit_to_page');
+      return val !== null ? val === 'true' : true;
+    }
+    return true;
+  });
+
+  const toggleFitToPage = () => {
+    const next = !fitToPage;
+    setFitToPage(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('vouch_print_fit_to_page', String(next));
     }
   };
 
@@ -973,13 +991,28 @@ export default function PrintInvoicePage() {
               size: A4 portrait;
               margin: 8mm 6mm;
             }
+            html, body {
+              height: 100% !important;
+              margin: 0 !important;
+              padding: 0 !important;
+            }
             #invoice-sheet {
               position: static !important;
               transform: none !important;
               width: 100% !important;
               min-width: 100% !important;
               max-width: 100% !important;
+              ${
+                fitToPage
+                  ? `
+              height: 280mm !important;
+              min-height: 280mm !important;
+              max-height: 280mm !important;
+              `
+                  : `
               min-height: 279mm !important;
+              `
+              }
               padding: 0 !important;
               margin: 0 !important;
               box-shadow: none !important;
@@ -989,6 +1022,32 @@ export default function PrintInvoicePage() {
               box-sizing: border-box !important;
               page-break-inside: avoid !important;
               break-inside: avoid !important;
+            }
+            ${
+              fitToPage
+                ? `
+            #invoice-sheet > .border-2 {
+              height: calc(100% - 16px) !important;
+              min-height: calc(100% - 16px) !important;
+              display: flex !important;
+              flex-direction: column !important;
+              justify-content: space-between !important;
+            }
+            #invoice-sheet .invoice-items-table-container {
+              flex: 1 1 auto !important;
+              display: flex !important;
+              flex-direction: column !important;
+              min-height: 0 !important;
+            }
+            #invoice-sheet .invoice-items-table-container table {
+              height: 100% !important;
+              display: table !important;
+            }
+            #invoice-sheet .invoice-items-table-container tbody {
+              height: 100% !important;
+            }
+            `
+                : ''
             }
             `
           }
