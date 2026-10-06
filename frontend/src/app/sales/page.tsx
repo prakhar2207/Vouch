@@ -67,11 +67,12 @@ function SalesInvoiceListContent() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState<boolean>(false);
   const [customerSearch, setCustomerSearch] = useState<string>('');
-  const [customerFilter, setCustomerFilter] = useState<'ALL' | 'UNPAID'>('ALL');
+  const [customerFilter, setCustomerFilter] = useState<'ALL' | 'UNPAID'>('UNPAID');
 
   useEffect(() => {
     if (filterParam === 'unpaid') {
       setPaymentFilter('UNPAID');
+      setCustomerFilter('UNPAID');
       setActiveTab('invoices');
     } else if (filterParam === 'paid') {
       setPaymentFilter('PAID');

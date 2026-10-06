@@ -77,11 +77,12 @@ function PurchaseInvoiceListContent() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [loadingSuppliers, setLoadingSuppliers] = useState<boolean>(false);
   const [supplierSearch, setSupplierSearch] = useState<string>('');
-  const [supplierFilter, setSupplierFilter] = useState<'ALL' | 'UNPAID'>('ALL');
+  const [supplierFilter, setSupplierFilter] = useState<'ALL' | 'UNPAID'>('UNPAID');
 
   useEffect(() => {
     if (filterParam === 'unpaid') {
       setPaymentFilter('UNPAID');
+      setSupplierFilter('UNPAID');
       setActiveTab('invoices');
     } else if (filterParam === 'paid') {
       setPaymentFilter('PAID');
