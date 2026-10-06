@@ -400,27 +400,45 @@ class AccountingIntegrityEngine:
                 if total_alloc > inv_total + Decimal('0.05'):
                     title = f"Invoice #{inv.voucher_number} is over-allocated"
                     active_overalloc_titles.add(title)
+
+                    # Forensic inspection: check if any allocations are cross-party
+                    linked_allocs = PaymentAllocation.objects.filter(invoice_voucher=inv).select_related('payment_voucher', 'payment_voucher__party_ledger')
+                    cross_party_details = []
+                    for la in linked_allocs:
+                        if la.payment_voucher and la.payment_voucher.party_ledger_id != inv.party_ledger_id:
+                            p_name = la.payment_voucher.party_ledger.name if la.payment_voucher.party_ledger else 'Unknown'
+                            cross_party_details.append(f"Payment #{la.payment_voucher.voucher_number} from '{p_name}' (₹{la.allocated_amount})")
+
+                    if cross_party_details:
+                        probable_cause = f"Invoice party was updated, but allocations from earlier party/cash remained attached: {', '.join(cross_party_details)}."
+                        suggested_action = "Decouple obsolete cross-party allocations to restore clean open invoice balance."
+                    else:
+                        probable_cause = f"Invoice total was reduced or payment allocated exceeds invoice amount by ₹{total_alloc - inv_total}."
+                        suggested_action = "Trim excess allocation and restore unallocated balance to payment voucher."
+
                     finding = cls._get_or_create_finding(
                         company=company,
                         category='PAYMENT',
                         title=title,
                         defaults={
                             "severity": "CRITICAL",
-                            "description": f"Invoice #{inv.voucher_number} total is ₹{inv.total_amount}, but total payments allocated equal ₹{total_alloc}.",
+                            "description": f"Invoice #{inv.voucher_number} ({inv.party_ledger.name if inv.party_ledger else 'Unknown'}) total is ₹{inv.total_amount}, but total payments allocated equal ₹{total_alloc} (excess: ₹{total_alloc - inv_total}).",
                             "evidence": {
                                 "voucher_id": str(inv.id),
                                 "voucher_number": inv.voucher_number,
                                 "party_id": str(inv.party_ledger_id) if inv.party_ledger_id else None,
+                                "party_name": inv.party_ledger.name if inv.party_ledger else "Unknown",
                                 "total_amount": str(inv.total_amount),
                                 "allocated_amount": str(total_alloc),
-                                "excess": str(total_alloc - inv.total_amount)
+                                "excess": str(total_alloc - inv.total_amount),
+                                "cross_party_details": cross_party_details
                             },
                             "expected_state": f"Allocations cannot exceed invoice total (₹{inv.total_amount}).",
                             "actual_state": f"Allocated: ₹{total_alloc}.",
-                            "probable_cause": "Payment was allocated twice or unallocated advance was miscalculated.",
-                            "suggested_action": "Re-run automated FIFO allocation for this party.",
-                            "confidence": 0.98,
-                            "fix_action": "RECONCILE_FIFO"
+                            "probable_cause": probable_cause,
+                            "suggested_action": suggested_action,
+                            "confidence": 0.99,
+                            "fix_action": "FIX_OVER_ALLOCATION"
                         },
                         existing_findings_map=existing_findings_map
                     )

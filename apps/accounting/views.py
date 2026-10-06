@@ -1011,6 +1011,29 @@ class VoucherDetailAPIView(APIView):
                             voucher.buyer_state_code = target_party.state_code
                         if target_party.phone:
                             voucher.buyer_phone = target_party.phone
+
+                    # Accountant-Grade Safeguard: Decouple prior payment allocations
+                    # When an invoice's party is changed, prior allocations to the old party/cash
+                    # cannot legally or accounting-wise apply to the new party.
+                    if voucher.voucher_type in ['SALES', 'PURCHASE']:
+                        from apps.accounting.models import PaymentAllocation, PaymentAllocationTask
+                        from django.db.models import Sum, Q
+                        allocs_to_unlink = PaymentAllocation.objects.filter(invoice_voucher=voucher)
+                        if allocs_to_unlink.exists():
+                            freed_payment_ids = list(set(allocs_to_unlink.values_list('payment_voucher_id', flat=True)))
+                            allocs_to_unlink.delete()
+                            for pv_id in freed_payment_ids:
+                                pv = Voucher.objects.filter(id=pv_id).first()
+                                if pv:
+                                    allocated_sum = PaymentAllocation.objects.filter(payment_voucher=pv).aggregate(total=Sum('allocated_amount'))['total'] or Decimal('0.00')
+                                    rem_funds = max(Decimal('0.00'), pv.total_amount - allocated_sum)
+                                    task = PaymentAllocationTask.objects.filter(payment_voucher=pv).first()
+                                    if task:
+                                        task.allocated_amount = allocated_sum
+                                        task.remaining_amount = rem_funds
+                                        task.status = 'COMPLETED' if rem_funds == Decimal('0.00') else ('PARTIALLY_ALLOCATED' if allocated_sum > Decimal('0.00') else 'PENDING')
+                                        task.save()
+
                     if not has_items and voucher.voucher_type in ['SALES', 'PURCHASE']:
                         if old_party:
                             voucher.ledger_entries.filter(ledger=old_party).update(ledger=target_party)
@@ -1227,6 +1250,33 @@ class VoucherDetailAPIView(APIView):
                     voucher.total_amount = rounded_total
                     voucher.status = 'DRAFT'
                     voucher.save()
+
+                    # Guard against over-allocation if invoice amount decreased:
+                    from apps.accounting.models import PaymentAllocation, PaymentAllocationTask
+                    from django.db.models import Sum, Q
+                    alloc_total = PaymentAllocation.objects.filter(invoice_voucher=voucher).aggregate(total=Sum('allocated_amount'))['total'] or Decimal('0.00')
+                    if alloc_total > voucher.total_amount:
+                        excess = alloc_total - voucher.total_amount
+                        for alloc in PaymentAllocation.objects.filter(invoice_voucher=voucher).order_by('-created_at'):
+                            if excess <= Decimal('0.00'):
+                                break
+                            pv = alloc.payment_voucher
+                            if alloc.allocated_amount <= excess:
+                                excess -= alloc.allocated_amount
+                                alloc.delete()
+                            else:
+                                alloc.allocated_amount -= excess
+                                alloc.save(update_fields=['allocated_amount'])
+                                excess = Decimal('0.00')
+                            if pv:
+                                p_alloc = PaymentAllocation.objects.filter(payment_voucher=pv).aggregate(total=Sum('allocated_amount'))['total'] or Decimal('0.00')
+                                p_rem = max(Decimal('0.00'), pv.total_amount - p_alloc)
+                                task = PaymentAllocationTask.objects.filter(payment_voucher=pv).first()
+                                if task:
+                                    task.allocated_amount = p_alloc
+                                    task.remaining_amount = p_rem
+                                    task.status = 'COMPLETED' if p_rem == Decimal('0.00') else ('PARTIALLY_ALLOCATED' if p_alloc > Decimal('0.00') else 'PENDING')
+                                    task.save()
 
                     from apps.ledgers.models import Ledger, LedgerGroup
 

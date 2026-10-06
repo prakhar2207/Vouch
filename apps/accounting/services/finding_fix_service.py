@@ -316,6 +316,60 @@ class FindingFixService:
                 "after": {"primary_balance": str(consolidated_bal), "duplicate_status": "ARCHIVED"}
             }
 
+        elif fix_action in ['FIX_OVER_ALLOCATION', 'RECONCILE_FIFO']:
+            from apps.accounting.models import PaymentAllocation, PaymentAllocationTask
+            v_id = evidence.get('voucher_id')
+            pv_id = evidence.get('payment_voucher_id')
+            inv = Voucher.objects.filter(id=v_id, company=finding.company).first() if v_id else None
+            if not inv and pv_id:
+                inv = Voucher.objects.filter(id=pv_id, company=finding.company).first()
+
+            if inv and inv.voucher_type in ['SALES', 'PURCHASE', 'OPENING_INVOICE', 'OPENING_BILL']:
+                curr_alloc = PaymentAllocation.objects.filter(invoice_voucher=inv).aggregate(total=Sum('allocated_amount'))['total'] or Decimal('0.00')
+                cross_allocs = PaymentAllocation.objects.filter(invoice_voucher=inv).exclude(payment_voucher__party_ledger=inv.party_ledger)
+                cross_sum = cross_allocs.aggregate(total=Sum('allocated_amount'))['total'] or Decimal('0.00')
+                target_alloc = max(Decimal('0.00'), min(curr_alloc - cross_sum, inv.total_amount))
+                freed_total = curr_alloc - target_alloc
+
+                party_name = inv.party_ledger.name if inv.party_ledger else "Counter Party"
+                preview_comparison = [
+                    {
+                        "account": f"Invoice #{inv.voucher_number} ({party_name})",
+                        "before_balance": f"₹{curr_alloc} Allocated",
+                        "after_balance": f"₹{target_alloc} Allocated",
+                        "impact": f"-₹{freed_total} (Corrected to invoice value ₹{inv.total_amount})"
+                    }
+                ]
+                return {
+                    "supported": True,
+                    "action": "FIX_OVER_ALLOCATION",
+                    "summary": f"Surgically correct allocations on Invoice #{inv.voucher_number} for {party_name}: unlink cross-party / excess ₹{freed_total} and restore pending bill balance.",
+                    "history_preservation_note": "Releases invalid cross-party or excess allocations without modifying unrelated accounts or running destructive global reconciliations.",
+                    "preview_comparison": preview_comparison,
+                    "before": {"allocated": str(curr_alloc), "invoice_total": str(inv.total_amount)},
+                    "after": {"allocated": str(target_alloc), "released": str(freed_total)}
+                }
+            else:
+                p_id = evidence.get('party_id')
+                party = Ledger.objects.filter(id=p_id, company=finding.company).first() if p_id else (inv.party_ledger if inv else None)
+                if party:
+                    return {
+                        "supported": True,
+                        "action": "RECONCILE_FIFO",
+                        "summary": f"Re-reconcile unallocated advances for {party.name} in FIFO sequence against open invoices.",
+                        "history_preservation_note": f"Strictly scoped to {party.name}. Unrelated parties will not be touched.",
+                        "preview_comparison": [
+                            {
+                                "account": f"Party: {party.name}",
+                                "before_balance": f"₹{party.current_balance}",
+                                "after_balance": f"₹{party.current_balance}",
+                                "impact": "Re-map payments FIFO"
+                            }
+                        ],
+                        "before": {"party": party.name},
+                        "after": {"party": party.name, "status": "FIFO RECONCILED"}
+                    }
+
         return {
             "supported": False,
             "reason": f"No automatic fix preview supported for action '{fix_action}'."
@@ -452,20 +506,70 @@ class FindingFixService:
                 "new_balance": str(new_bal)
             }
 
-        elif fix_action == 'RECONCILE_FIFO':
-            from apps.accounting.services.allocation_service import PaymentAllocationService
+        elif fix_action in ['FIX_OVER_ALLOCATION', 'RECONCILE_FIFO']:
+            from apps.accounting.models import PaymentAllocation, PaymentAllocationTask
             v_id = evidence.get('voucher_id')
             pv_id = evidence.get('payment_voucher_id')
             p_id = evidence.get('party_id')
             voucher = Voucher.objects.filter(id=v_id, company=finding.company).first() if v_id else None
             if not voucher and pv_id:
                 voucher = Voucher.objects.filter(id=pv_id, company=finding.company).first()
-            party = Ledger.objects.filter(id=p_id, company=finding.company).first() if p_id else (voucher.party_ledger if voucher else None)
 
-            if party:
-                res = PaymentAllocationService.auto_reconcile_all_unallocated(finding.company, party)
+            if voucher and voucher.voucher_type in ['SALES', 'PURCHASE', 'OPENING_INVOICE', 'OPENING_BILL']:
+                # Surgical Invoice-Level Fix (Accountant-Grade):
+                # 1. Unlink cross-party allocations
+                cross_allocs = PaymentAllocation.objects.filter(invoice_voucher=voucher).exclude(payment_voucher__party_ledger=voucher.party_ledger)
+                released_cross = Decimal('0.00')
+                affected_pvs = set()
+                for ca in cross_allocs:
+                    released_cross += ca.allocated_amount
+                    if ca.payment_voucher_id:
+                        affected_pvs.add(ca.payment_voucher)
+                    ca.delete()
+
+                # 2. If still over-allocated, trim excess from newest allocations
+                curr_alloc = PaymentAllocation.objects.filter(invoice_voucher=voucher).aggregate(total=Sum('allocated_amount'))['total'] or Decimal('0.00')
+                trimmed = Decimal('0.00')
+                if curr_alloc > voucher.total_amount:
+                    excess = curr_alloc - voucher.total_amount
+                    for alloc in PaymentAllocation.objects.filter(invoice_voucher=voucher).order_by('-created_at'):
+                        if excess <= Decimal('0.00'):
+                            break
+                        if alloc.payment_voucher:
+                            affected_pvs.add(alloc.payment_voucher)
+                        if alloc.allocated_amount <= excess:
+                            excess -= alloc.allocated_amount
+                            trimmed += alloc.allocated_amount
+                            alloc.delete()
+                        else:
+                            alloc.allocated_amount -= excess
+                            trimmed += excess
+                            alloc.save(update_fields=['allocated_amount'])
+                            excess = Decimal('0.00')
+
+                # Re-sync PaymentAllocationTasks for all affected payments
+                for pv in affected_pvs:
+                    p_alloc = PaymentAllocation.objects.filter(payment_voucher=pv).aggregate(total=Sum('allocated_amount'))['total'] or Decimal('0.00')
+                    p_rem = max(Decimal('0.00'), pv.total_amount - p_alloc)
+                    task = PaymentAllocationTask.objects.filter(payment_voucher=pv).first()
+                    if task:
+                        task.allocated_amount = p_alloc
+                        task.remaining_amount = p_rem
+                        task.status = 'COMPLETED' if p_rem == Decimal('0.00') else ('PARTIALLY_ALLOCATED' if p_alloc > Decimal('0.00') else 'PENDING')
+                        task.save()
+
+                if voucher.party_ledger:
+                    VoucherService.recalculate_ledger_balance(voucher.party_ledger)
+
+                msg = f"Surgically resolved allocation on Invoice #{voucher.voucher_number}: unlinked ₹{released_cross} cross-party, trimmed ₹{trimmed} excess."
             else:
-                res = {"success": True, "message": "Allocation task marked resolved."}
+                party = Ledger.objects.filter(id=p_id, company=finding.company).first() if p_id else (voucher.party_ledger if voucher else None)
+                if party:
+                    from apps.accounting.services.allocation_service import PaymentAllocationService
+                    res = PaymentAllocationService.auto_reconcile_all_unallocated(finding.company, party)
+                    msg = res.get('message', f"Reconciled allocations for {party.name}.")
+                else:
+                    msg = "Allocation finding marked resolved."
 
             finding.is_resolved = True
             finding.resolved_at = timezone.now()
@@ -478,13 +582,12 @@ class FindingFixService:
                 action='UPDATE',
                 model_name='PaymentAllocation',
                 record_id=finding.id,
-                changes={"action": "RECONCILE_FIFO", "party": party.name if party else "ALL", "result": res}
+                changes={"action": fix_action, "result": msg}
             )
 
             return {
                 "status": "SUCCESS",
-                "message": f"Successfully re-allocated payments via FIFO: {res.get('message', '')}",
-                "allocations_count": res.get("allocations_count", 0)
+                "message": msg
             }
 
         elif fix_action == 'VOID_DUPLICATE_VOUCHER':

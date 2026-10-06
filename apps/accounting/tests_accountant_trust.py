@@ -237,3 +237,56 @@ class AccountantTrustWorkflowTests(TestCase):
         new_vch.refresh_from_db()
         self.assertEqual(new_vch.status, 'CANCELLED')
 
+    def test_party_change_decouples_payment_allocations(self):
+        from apps.accounting.models import PaymentAllocation, PaymentAllocationTask
+        # Create Sales Invoice for Party A
+        inv = self._create_sample_voucher(self.party_a)
+
+        # Create Receipt from Party A
+        rcp = Voucher.objects.create(
+            company=self.company,
+            created_by=self.user,
+            voucher_type='RECEIPT',
+            voucher_number='RCP-TEST-001',
+            voucher_date=timezone.now().date(),
+            party_ledger=self.party_a,
+            total_amount=Decimal('5000.00'),
+            status='POSTED'
+        )
+        # Allocate Receipt to Invoice
+        PaymentAllocation.objects.create(
+            company=self.company,
+            payment_voucher=rcp,
+            invoice_voucher=inv,
+            allocated_amount=Decimal('5000.00')
+        )
+        task = PaymentAllocationTask.objects.create(
+            company=self.company,
+            payment_voucher=rcp,
+            target_amount=Decimal('5000.00'),
+            allocated_amount=Decimal('5000.00'),
+            remaining_amount=Decimal('0.00'),
+            status='COMPLETED'
+        )
+
+        # User edits invoice to change party from Party A to Party B
+        resp = self.client.patch(
+            f'/api/v1/accounting/vouchers/detail/{inv.id}/',
+            {"party_ledger_id": str(self.party_b.id)},
+            format='json'
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+        inv.refresh_from_db()
+        self.assertEqual(inv.party_ledger_id, self.party_b.id)
+
+        # Allocations must be cleanly decoupled
+        self.assertEqual(PaymentAllocation.objects.filter(invoice_voucher=inv).count(), 0)
+
+        # Party A receipt must have unallocated funds restored
+        task.refresh_from_db()
+        self.assertEqual(task.allocated_amount, Decimal('0.00'))
+        self.assertEqual(task.remaining_amount, Decimal('5000.00'))
+        self.assertEqual(task.status, 'PENDING')
+
+
