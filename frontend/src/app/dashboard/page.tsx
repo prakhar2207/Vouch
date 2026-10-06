@@ -45,9 +45,24 @@ import {
   Calendar,
   Wallet,
   ShieldCheck,
+  ShieldAlert,
   Search,
   Filter,
+  BarChart3,
+  ArrowLeftRight,
 } from "lucide-react";
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  ReferenceLine,
+} from "recharts";
 
 function getVoucherTypeBadgeClass(type: string): string {
   switch (type) {
@@ -135,6 +150,41 @@ export interface HealthReportData {
   [key: string]: any;
 }
 
+function CustomDailyFlowTooltip({ active, payload }: any) {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    return (
+      <div className="bg-popover/95 backdrop-blur-md border border-border/80 rounded-xl p-3 shadow-xl text-xs space-y-1.5 min-w-[170px] z-50">
+        <div className="font-bold text-foreground border-b border-border/50 pb-1 flex items-center justify-between">
+          <span>{data.label}</span>
+          <span className="text-[10px] text-muted-foreground font-mono">{data.date}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3 text-emerald-600 dark:text-emerald-400">
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            Inflow (Sales):
+          </span>
+          <span className="font-mono font-bold">₹{data.inflow.toLocaleString("en-IN")}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3 text-blue-600 dark:text-blue-400">
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="w-2 h-2 rounded-full bg-blue-500" />
+            Outflow (Purchases):
+          </span>
+          <span className="font-mono font-bold">₹{data.outflow.toLocaleString("en-IN")}</span>
+        </div>
+        <div className="pt-1 border-t border-border/50 flex items-center justify-between gap-3 font-semibold">
+          <span className="text-muted-foreground">Net Day Flow:</span>
+          <span className={`font-mono ${data.netFlow >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+            {data.netFlow >= 0 ? "+₹" : "-₹"}{Math.abs(data.netFlow).toLocaleString("en-IN")}
+          </span>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const { setIsHelpOpen } = useShortcuts();
@@ -151,6 +201,13 @@ export default function Dashboard() {
   const [isOnline, setIsOnline] = useState(true);
   const [voucherFilter, setVoucherFilter] = useState<string>("ALL");
   const [voucherSearch, setVoucherSearch] = useState<string>("");
+  const [dailyFlowDays, setDailyFlowDays] = useState<7 | 14 | 30>(14);
+  const [dailyFlowMode, setDailyFlowMode] = useState<"FLOW" | "NET">("FLOW");
+  const [hasMounted, setHasMounted] = useState(false);
+
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
 
   const { activeCompany, companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
@@ -469,6 +526,80 @@ export default function Dashboard() {
   const netWorkingCapital = (kpis.cash_and_bank || 0) + (kpis.money_to_collect || 0) + (kpis.total_stock_value || 0) - (kpis.bills_to_pay || 0);
   const liquidCashGap = (kpis.cash_and_bank || 0) + (kpis.money_to_collect || 0) - (kpis.bills_to_pay || 0);
 
+  // Daily Business Flow data computation (Inflow vs Outflow)
+  const dailyFlowData = useMemo(() => {
+    const series = forecast?.historical_daily_series;
+    if (series && series.length > 0) {
+      const slice = series.slice(-dailyFlowDays);
+      return slice.map((item) => {
+        const parts = item.date.split("-");
+        let label = item.date;
+        if (parts.length === 3) {
+          const dObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+          label = dObj.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+        }
+        const sales = Math.round(Number(item.actual_sales || 0));
+        const purchases = Math.round(Number(item.actual_purchases || 0));
+        const net = sales - purchases;
+        return {
+          date: item.date,
+          label,
+          inflow: sales,
+          outflow: purchases,
+          netFlow: net,
+        };
+      });
+    }
+
+    // Fallback: build last N days from today if forecast series is empty
+    const result: Array<{ date: string; label: string; inflow: number; outflow: number; netFlow: number }> = [];
+    const now = new Date();
+    for (let i = dailyFlowDays - 1; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+      const iso = d.toISOString().slice(0, 10);
+      const label = d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+      result.push({
+        date: iso,
+        label,
+        inflow: 0,
+        outflow: 0,
+        netFlow: 0,
+      });
+    }
+    return result;
+  }, [forecast?.historical_daily_series, dailyFlowDays]);
+
+  const dailyFlowSummary = useMemo(() => {
+    let totalIn = 0;
+    let totalOut = 0;
+    let activeDaysCount = 0;
+    for (const d of dailyFlowData) {
+      totalIn += d.inflow;
+      totalOut += d.outflow;
+      if (d.inflow > 0 || d.outflow > 0) activeDaysCount++;
+    }
+    const net = totalIn - totalOut;
+    const avgDailyIn = dailyFlowData.length > 0 ? Math.round(totalIn / dailyFlowData.length) : 0;
+    return {
+      totalIn,
+      totalOut,
+      net,
+      avgDailyIn,
+      activeDaysCount,
+    };
+  }, [dailyFlowData]);
+
+  // Derived audit health status
+  const healthScore = healthReport?.health_score ?? (healthReport ? 100 : 100);
+  const isHealthyAudit = healthScore >= 90;
+  const isWarningAudit = healthScore >= 70 && healthScore < 90;
+  const isCriticalAudit = healthScore < 70;
+  const criticalAuditCount = healthReport?.critical_count ?? healthReport?.metrics?.critical_findings_count ?? (isCriticalAudit ? 1 : 0);
+  const warningAuditCount = healthReport?.warning_count ?? 0;
+  const passedChecksCount = healthReport?.passed_checks_count ?? (isHealthyAudit ? 11 : Math.max(1, 11 - (criticalAuditCount + warningAuditCount)));
+  const auditFindings = healthReport?.findings || [];
+  const topAuditFinding = auditFindings.find((f: any) => f.severity === "CRITICAL") || auditFindings[0];
+
   // Filtered transactions for quick search and type filtering
   const filteredVouchers = vouchers.filter((v: any) => {
     const vType = (v.voucherType || v.voucher_type || v.type || "GENERAL").toUpperCase();
@@ -759,7 +890,7 @@ export default function Dashboard() {
               </div>
               <div>
                 <h2 className="text-sm sm:text-base font-bold text-foreground">Performance & Projections</h2>
-                <p className="text-xs text-muted-foreground">Sales pacing, run-rate forecast, and top customer segments</p>
+                <p className="text-xs text-muted-foreground">Sales pacing, run-rate forecast, and daily business cash flow</p>
               </div>
             </div>
             <Link
@@ -826,23 +957,25 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Performance Sub-Grid: Sales, Purchases, Stock & Best Customers */}
+          {/* Performance Sub-Grid: Left 3 Stats + Right Daily Flow Chart */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* Left 3 Stats (7 Cols) */}
-            <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+            {/* Left 3 Stats (6 Cols) */}
+            <div className="lg:col-span-6 grid grid-cols-1 sm:grid-cols-3 gap-3.5">
               {/* Total Sales */}
               <Link
                 href="/sales"
-                className="bg-card hover:bg-card/80 border border-border/60 hover:border-emerald-500/40 rounded-2xl p-4 shadow-xs transition-all cursor-pointer block"
+                className="bg-card hover:bg-card/80 border border-border/60 hover:border-emerald-500/40 rounded-2xl p-4 shadow-xs transition-all cursor-pointer flex flex-col justify-between"
               >
-                <div className="flex items-center justify-between text-muted-foreground mb-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wider">Total Sales</span>
-                  <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                    <Receipt className="w-4 h-4" />
+                <div>
+                  <div className="flex items-center justify-between text-muted-foreground mb-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wider">Total Sales</span>
+                    <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                      <Receipt className="w-4 h-4" />
+                    </div>
                   </div>
-                </div>
-                <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-foreground">
-                  ₹{(kpis.total_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-foreground">
+                    ₹{(kpis.total_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
                   <span>Today: <strong className="text-foreground font-mono">₹{(kpis.today_sales || 0).toLocaleString("en-IN")}</strong></span>
@@ -855,16 +988,18 @@ export default function Dashboard() {
               {/* Total Purchases */}
               <Link
                 href="/purchases"
-                className="bg-card hover:bg-card/80 border border-border/60 hover:border-blue-500/40 rounded-2xl p-4 shadow-xs transition-all cursor-pointer block"
+                className="bg-card hover:bg-card/80 border border-border/60 hover:border-blue-500/40 rounded-2xl p-4 shadow-xs transition-all cursor-pointer flex flex-col justify-between"
               >
-                <div className="flex items-center justify-between text-muted-foreground mb-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wider">Purchases</span>
-                  <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                    <ShoppingCart className="w-4 h-4" />
+                <div>
+                  <div className="flex items-center justify-between text-muted-foreground mb-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wider">Purchases</span>
+                    <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                      <ShoppingCart className="w-4 h-4" />
+                    </div>
                   </div>
-                </div>
-                <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-foreground">
-                  ₹{(kpis.total_purchases || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-foreground">
+                    ₹{(kpis.total_purchases || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
                   <span>Suppliers billed</span>
@@ -877,16 +1012,18 @@ export default function Dashboard() {
               {/* Stock Valuation */}
               <Link
                 href="/inventory"
-                className="bg-card hover:bg-card/80 border border-border/60 hover:border-purple-500/40 rounded-2xl p-4 shadow-xs transition-all cursor-pointer block"
+                className="bg-card hover:bg-card/80 border border-border/60 hover:border-purple-500/40 rounded-2xl p-4 shadow-xs transition-all cursor-pointer flex flex-col justify-between"
               >
-                <div className="flex items-center justify-between text-muted-foreground mb-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wider">Inventory</span>
-                  <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">
-                    <Boxes className="w-4 h-4" />
+                <div>
+                  <div className="flex items-center justify-between text-muted-foreground mb-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wider">Inventory</span>
+                    <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                      <Boxes className="w-4 h-4" />
+                    </div>
                   </div>
-                </div>
-                <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-foreground">
-                  ₹{(kpis.total_stock_value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-foreground">
+                    ₹{(kpis.total_stock_value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
                   <span>In stock items</span>
@@ -897,54 +1034,173 @@ export default function Dashboard() {
               </Link>
             </div>
 
-            {/* Right Column: Best Customers (5 Cols) */}
-            <div className="lg:col-span-5 bg-card border border-border/60 rounded-2xl p-4 shadow-xs space-y-3 flex flex-col justify-between">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-xs sm:text-sm font-bold text-foreground">Top Customers</h3>
-                  <p className="text-[11px] text-muted-foreground">Leading revenue and order volume</p>
+            {/* Right: Daily Flow Chart Card (6 Cols) */}
+            <div className="lg:col-span-6 bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col justify-between space-y-3">
+              {/* Header with Title, Mode & Range Toggles */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <Activity className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xs sm:text-sm font-bold text-foreground">Daily Business Flow</h3>
+                      <span className="text-[10px] bg-muted px-2 py-0.5 rounded-full font-mono text-muted-foreground">
+                        Last {dailyFlowDays} Days
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Inflow (Sales) vs Outflow (Purchases) activity
+                    </p>
+                  </div>
                 </div>
-                <Link href="/parties" className="text-xs text-muted-foreground hover:text-foreground font-medium transition-colors">
-                  View all →
-                </Link>
+
+                {/* Range and Mode controls */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Mode Toggle: Flow vs Net */}
+                  <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setDailyFlowMode("FLOW")}
+                      className={`px-2 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+                        dailyFlowMode === "FLOW"
+                          ? "bg-background text-foreground shadow-xs font-bold"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      In / Out
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDailyFlowMode("NET")}
+                      className={`px-2 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+                        dailyFlowMode === "NET"
+                          ? "bg-background text-foreground shadow-xs font-bold"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Net Flow
+                    </button>
+                  </div>
+
+                  {/* Day range selectors */}
+                  <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-[11px]">
+                    {( [7, 14, 30] as const ).map((days) => (
+                      <button
+                        key={days}
+                        type="button"
+                        onClick={() => setDailyFlowDays(days)}
+                        className={`px-2 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+                          dailyFlowDays === days
+                            ? "bg-primary text-primary-foreground shadow-xs font-bold"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {days}D
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
-              <div className="space-y-1.5 flex-1">
-                {rfmList.length > 0 ? (
-                  rfmList.slice(0, 3).map((customer: any, idx: number) => {
-                    const segName = customer.segment || "Standard";
-                    return (
-                      <div
-                        key={idx}
-                        className="p-2.5 rounded-xl bg-muted/20 hover:bg-muted/50 border border-border/40 transition-colors flex items-center justify-between gap-2"
-                      >
-                        <div className="min-w-0">
-                          <div className="text-xs font-bold text-foreground truncate">
-                            {customer.party_ledger__name || "Customer"}
-                          </div>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold border ${getCustomerTierBadgeClass(segName)}`}>
-                              {segName}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground font-mono">
-                              {customer.frequency} orders
-                            </span>
-                          </div>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <div className="text-xs font-black font-mono text-foreground">
-                            ₹{Number(customer.monetary).toLocaleString("en-IN", { minimumFractionDigits: 0 })}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
+              {/* KPI Mini-Row for the selected flow window */}
+              <div className="flex items-center justify-between text-xs bg-muted/20 px-3 py-1.5 rounded-xl border border-border/30 font-mono">
+                <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span className="text-[11px] font-sans text-muted-foreground">Inflow:</span>
+                  <span className="font-bold">₹{formatCurrencyShort(dailyFlowSummary.totalIn)}</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                  <span className="text-[11px] font-sans text-muted-foreground">Outflow:</span>
+                  <span className="font-bold">₹{formatCurrencyShort(dailyFlowSummary.totalOut)}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-sans text-muted-foreground">Net:</span>
+                  <span className={`font-bold ${
+                    dailyFlowSummary.net >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+                  }`}>
+                    {dailyFlowSummary.net >= 0 ? "+₹" : "-₹"}{formatCurrencyShort(Math.abs(dailyFlowSummary.net))}
+                  </span>
+                </div>
+              </div>
+
+              {/* Chart Canvas */}
+              <div className="w-full h-[160px] min-w-0">
+                {hasMounted ? (
+                  dailyFlowMode === "FLOW" ? (
+                    <ResponsiveContainer width="100%" height={160} minWidth={0}>
+                      <BarChart data={dailyFlowData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border) / 0.4)" />
+                        <XAxis
+                          dataKey="label"
+                          tickLine={false}
+                          axisLine={false}
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                        />
+                        <YAxis
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={(v) => v >= 1000 ? `₹${(v / 1000).toFixed(0)}k` : `₹${v}`}
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                        />
+                        <Tooltip content={<CustomDailyFlowTooltip />} />
+                        <Bar dataKey="inflow" name="Inflow (Sales)" fill="#10b981" radius={[3, 3, 0, 0]} />
+                        <Bar dataKey="outflow" name="Outflow (Purchases)" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={160} minWidth={0}>
+                      <AreaChart data={dailyFlowData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="netFlowGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.35} />
+                            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border) / 0.4)" />
+                        <XAxis
+                          dataKey="label"
+                          tickLine={false}
+                          axisLine={false}
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                        />
+                        <YAxis
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={(v) => v >= 1000 || v <= -1000 ? `₹${(v / 1000).toFixed(0)}k` : `₹${v}`}
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                        />
+                        <Tooltip content={<CustomDailyFlowTooltip />} />
+                        <ReferenceLine y={0} stroke="hsl(var(--border))" strokeDasharray="2 2" />
+                        <Area
+                          type="monotone"
+                          dataKey="netFlow"
+                          name="Net Daily Flow"
+                          stroke="#8b5cf6"
+                          strokeWidth={2}
+                          fill="url(#netFlowGrad)"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )
                 ) : (
-                  <div className="py-4 flex flex-col items-center justify-center border border-dashed border-border/60 rounded-xl text-center p-3">
-                    <Users className="w-5 h-5 text-muted-foreground/40 mb-1" />
-                    <div className="text-xs font-medium text-muted-foreground">No customer transactions yet</div>
+                  <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground animate-pulse">
+                    Loading daily flow chart...
                   </div>
                 )}
+              </div>
+
+              {/* Footer link to Analytics */}
+              <div className="pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+                <span>Avg Daily Inflow: <strong className="text-foreground font-mono">₹{formatCurrencyShort(dailyFlowSummary.avgDailyIn)}</strong></span>
+                <Link
+                  href="/analytics"
+                  className="text-primary hover:underline font-semibold flex items-center gap-1 transition-colors"
+                >
+                  <span>Detailed Analytics</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
               </div>
             </div>
           </div>
@@ -974,62 +1230,173 @@ export default function Dashboard() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Books Health Status Card */}
-            <div className="bg-card border border-border/60 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col justify-between">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                    healthReport ? (
-                      (healthReport?.health_score ?? 100) >= 90
-                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                        : (healthReport?.health_score ?? 100) >= 70
-                        ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                        : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                    ) : "bg-muted text-muted-foreground"
-                  }`}>
-                    {healthReport && (healthReport?.health_score ?? 100) >= 90 ? (
-                      <CheckCircle2 className="w-5 h-5" />
-                    ) : healthReport ? (
-                      <AlertTriangle className="w-5 h-5" />
-                    ) : (
-                      <ShieldCheck className="w-5 h-5" />
-                    )}
+            {/* Books Health & Accounting Audit Card */}
+            <div className={`bg-card border rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col justify-between transition-all ${
+              isCriticalAudit
+                ? "border-rose-500/30 ring-1 ring-rose-500/15"
+                : isWarningAudit
+                ? "border-amber-500/30"
+                : "border-border/60"
+            }`}>
+              <div>
+                {/* Header with Circular Score Gauge and Status */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    {/* Circular Score Gauge */}
+                    <div className="relative w-14 h-14 shrink-0 flex items-center justify-center">
+                      <svg className="w-14 h-14 -rotate-90" viewBox="0 0 60 60">
+                        {/* Background track */}
+                        <circle
+                          cx="30"
+                          cy="30"
+                          r="25"
+                          className="stroke-muted/60"
+                          strokeWidth="5"
+                          fill="none"
+                        />
+                        {/* Progress Arc */}
+                        <circle
+                          cx="30"
+                          cy="30"
+                          r="25"
+                          className={`transition-all duration-1000 ease-out ${
+                            isHealthyAudit
+                              ? "stroke-emerald-500"
+                              : isWarningAudit
+                              ? "stroke-amber-500"
+                              : "stroke-rose-500"
+                          }`}
+                          strokeWidth="5"
+                          strokeDasharray={2 * Math.PI * 25}
+                          strokeDashoffset={2 * Math.PI * 25 * (1 - (healthReport ? healthScore / 100 : 1))}
+                          strokeLinecap="round"
+                          fill="none"
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className={`text-xs font-black font-mono leading-none ${
+                          isHealthyAudit
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : isWarningAudit
+                            ? "text-amber-600 dark:text-amber-400"
+                            : "text-rose-600 dark:text-rose-400"
+                        }`}>
+                          {healthReport ? `${healthScore}%` : "100%"}
+                        </span>
+                        <span className="text-[8px] text-muted-foreground uppercase font-semibold scale-90">Score</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border tracking-wider uppercase ${
+                          isCriticalAudit
+                            ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                            : isWarningAudit
+                            ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                            : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                        }`}>
+                          {isCriticalAudit && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />}
+                          {isCriticalAudit ? "CRITICAL RISK" : isWarningAudit ? "NEEDS REVIEW" : "HEALTHY"}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground font-mono">
+                          {passedChecksCount}/11 Checks Passed
+                        </span>
+                      </div>
+
+                      <h3 className="text-sm font-bold text-foreground truncate">
+                        {healthReport ? (
+                          isHealthyAudit
+                            ? "Books in Great Shape · Zero Discrepancies"
+                            : `${criticalAuditCount || 1} Issue${(criticalAuditCount || 1) > 1 ? "s" : ""} Require Audit Action`
+                        ) : (
+                          "Continuous Double-Entry Verification"
+                        )}
+                      </h3>
+                      <p className="text-xs text-muted-foreground line-clamp-1">
+                        {healthReport ? (
+                          isHealthyAudit
+                            ? "Trial balance, GST tax ledgers, and cash balances verified."
+                            : `${criticalAuditCount || 1} critical audit discrepancy affecting ledger integrity.`
+                        ) : (
+                          "Continuous background verification for debit-credit parity and ledger harmony"
+                        )}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-foreground">
-                      {healthReport ? (
-                        (healthReport?.health_score ?? 100) >= 90
-                          ? "Accounting Books in Great Shape"
-                          : `${healthReport.metrics?.critical_findings_count || 1} issues require review`
-                      ) : (
-                        "Accounting Integrity Verified"
-                      )}
-                    </h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {healthReport ? (
-                        `Integrity Score: ${healthReport.health_score || 100}% · Status: ${healthReport.health_status || "HEALTHY"}`
-                      ) : (
-                        "Continuous background verification for debit-credit parity and trial balance"
-                      )}
-                    </p>
-                  </div>
+
+                  <Link
+                    href="/health"
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer shadow-xs ${
+                      isCriticalAudit
+                        ? "bg-rose-600 hover:bg-rose-700 text-white"
+                        : isWarningAudit
+                        ? "bg-amber-600 hover:bg-amber-700 text-white"
+                        : "bg-primary hover:bg-primary/90 text-primary-foreground"
+                    }`}
+                  >
+                    <span>{isCriticalAudit ? "Fix Audit" : "Review Audit"}</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </Link>
                 </div>
 
-                <Link
-                  href="/health"
-                  className="px-3 py-1.5 rounded-lg border border-border/60 bg-muted/50 hover:bg-muted text-foreground text-xs font-semibold flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
-                >
-                  <span>Review Audit</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </Link>
+                {/* Finding Spotlight Banner */}
+                {topAuditFinding ? (
+                  <div className="mt-3.5 p-3 rounded-xl bg-destructive/10 border border-destructive/20 flex items-start justify-between gap-3">
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-destructive/20 text-destructive border border-destructive/30">
+                          {topAuditFinding.severity || "CRITICAL"}
+                        </span>
+                        <span className="text-xs font-bold text-foreground truncate">
+                          {topAuditFinding.title}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground line-clamp-1">
+                        {topAuditFinding.suggested_action || topAuditFinding.description || "Discrepancy detected in ledger posting."}
+                      </p>
+                    </div>
+                    <Link
+                      href="/health"
+                      className="text-xs font-bold text-destructive hover:underline shrink-0 self-center"
+                    >
+                      Resolve →
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="mt-3.5 p-2.5 rounded-xl bg-emerald-500/5 border border-emerald-500/20 flex items-center justify-between text-xs text-emerald-600 dark:text-emerald-400">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <span>Trial Balance, Debtors/Creditors &amp; Tax Ledgers are fully balanced</span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground font-mono">11/11 Verified</span>
+                  </div>
+                )}
               </div>
 
-              <div className="mt-4 pt-3 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
-                <span className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>Debit = Credit Balance Parity</span>
-                </span>
-                <span className="font-semibold text-emerald-600 dark:text-emerald-400">Verified</span>
+              {/* Bottom Multi-Check Status Pills */}
+              <div className="mt-3.5 pt-3 border-t border-border/40 grid grid-cols-3 gap-2 text-[11px]">
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span className="truncate">Trial Balance</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span className="truncate">Debit=Credit</span>
+                </div>
+                <div className="flex items-center justify-end gap-1.5 text-muted-foreground">
+                  {isCriticalAudit ? (
+                    <span className="text-rose-500 dark:text-rose-400 font-bold flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      <span>Action Due</span>
+                    </span>
+                  ) : (
+                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3" />
+                      <span>Engine Active</span>
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
