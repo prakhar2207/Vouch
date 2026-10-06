@@ -362,6 +362,29 @@ class GSTRMarkPeriodFiledAPIView(APIView):
         tax_amount = Decimal(str(request.data.get('total_tax_amount', '0.00')))
         invoices_count = int(request.data.get('invoices_count', 0))
 
+        # Check if caller wants to unmark / revert filing
+        is_unmark = bool(request.data.get('unmark') or request.data.get('status') in ['PENDING', 'UNFILED', 'NOT_FILED', 'DRAFT'])
+        candidate_periods = [period]
+        if '-' in period and len(period) == 7:
+            parts = period.split('-')
+            candidate_periods.append(f"{parts[1]}{parts[0]}")
+        elif len(period) == 6 and period.isdigit():
+            candidate_periods.append(f"{period[2:]}-{period[:2]}")
+
+        if is_unmark:
+            GSTFilingRecord.objects.filter(
+                company=company,
+                return_type=return_type,
+                return_period__in=candidate_periods
+            ).update(status='DRAFT')
+            return Response({
+                "success": True,
+                "message": f"GST return for period '{period}' marked as unfiled.",
+                "status": "DRAFT",
+                "return_period": period,
+                "return_type": return_type,
+            })
+
         # P0-08: Strictly eliminate pseudo-government ARNs!
         # If user provides genuine government ARN, persist it.
         # Otherwise, keep arn blank and use provider_reference for internal tracking.

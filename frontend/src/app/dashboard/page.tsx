@@ -479,53 +479,6 @@ export default function Dashboard() {
     setSyncMessage("");
   };
 
-  if (loading) {
-    return (
-      <DashboardLayout>
-        <div className="flex flex-col items-center justify-center min-h-[400px] space-y-3">
-          <div className="w-9 h-9 border-3 border-primary border-t-transparent rounded-full animate-spin"></div>
-          <div className="text-sm text-muted-foreground font-medium">Opening your books...</div>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  if (error) {
-    return (
-      <DashboardLayout>
-        <div className="p-6 bg-destructive/10 border border-destructive/20 rounded-2xl text-destructive text-sm max-w-lg mx-auto my-12">
-          <div className="font-semibold mb-1">Notice</div>
-          {error}
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  const kpis = insights?.kpis || {
-    today_sales: 0,
-    today_collections: 0,
-    money_to_collect: 0,
-    bills_to_pay: 0,
-    cash_and_bank: 0,
-    total_sales: 0,
-    total_purchases: 0,
-    sales_vouchers_count: 0,
-    purchase_vouchers_count: 0,
-    total_stock_value: 0,
-    total_in_stock_items: 0,
-    total_stock_qty: 0,
-  };
-
-  const alerts = insights?.actionable_alerts || [];
-  const rfmList = insights?.rfm_clusters || [];
-  const hasTransactions = vouchers.length > 0;
-  const momComparison = forecast?.monthly_comparison?.mom_comparison;
-  const currentMonthData = forecast?.monthly_comparison?.current_month;
-
-  // Tri-partite financial calculations (Standard GAAP NWC = Current Assets [Cash + Debtors + Stock] - Current Liabilities [Creditors])
-  const netWorkingCapital = (kpis.cash_and_bank || 0) + (kpis.money_to_collect || 0) + (kpis.total_stock_value || 0) - (kpis.bills_to_pay || 0);
-  const liquidCashGap = (kpis.cash_and_bank || 0) + (kpis.money_to_collect || 0) - (kpis.bills_to_pay || 0);
-
   // Daily Business Flow data computation (Inflow vs Outflow)
   const dailyFlowData = useMemo(() => {
     const series = forecast?.historical_daily_series;
@@ -588,6 +541,53 @@ export default function Dashboard() {
       activeDaysCount,
     };
   }, [dailyFlowData]);
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center min-h-[400px] space-y-3">
+          <div className="w-9 h-9 border-3 border-primary border-t-transparent rounded-full animate-spin"></div>
+          <div className="text-sm text-muted-foreground font-medium">Opening your books...</div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <DashboardLayout>
+        <div className="p-6 bg-destructive/10 border border-destructive/20 rounded-2xl text-destructive text-sm max-w-lg mx-auto my-12">
+          <div className="font-semibold mb-1">Notice</div>
+          {error}
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  const kpis = insights?.kpis || {
+    today_sales: 0,
+    today_collections: 0,
+    money_to_collect: 0,
+    bills_to_pay: 0,
+    cash_and_bank: 0,
+    total_sales: 0,
+    total_purchases: 0,
+    sales_vouchers_count: 0,
+    purchase_vouchers_count: 0,
+    total_stock_value: 0,
+    total_in_stock_items: 0,
+    total_stock_qty: 0,
+  };
+
+  const alerts = insights?.actionable_alerts || [];
+  const rfmList = insights?.rfm_clusters || [];
+  const hasTransactions = vouchers.length > 0;
+  const momComparison = forecast?.monthly_comparison?.mom_comparison;
+  const currentMonthData = forecast?.monthly_comparison?.current_month;
+
+  // Tri-partite financial calculations (Standard GAAP NWC = Current Assets [Cash + Debtors + Stock] - Current Liabilities [Creditors])
+  const netWorkingCapital = (kpis.cash_and_bank || 0) + (kpis.money_to_collect || 0) + (kpis.total_stock_value || 0) - (kpis.bills_to_pay || 0);
+  const liquidCashGap = (kpis.cash_and_bank || 0) + (kpis.money_to_collect || 0) - (kpis.bills_to_pay || 0);
 
   // Derived audit health status
   const healthScore = healthReport?.health_score ?? (healthReport ? 100 : 100);

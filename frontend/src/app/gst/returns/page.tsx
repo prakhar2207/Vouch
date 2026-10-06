@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
@@ -68,6 +68,8 @@ export default function GSTReturnCenterPage() {
   const [gstr3bData, setGstr3bData] = useState<any>(null);
   const [gstr9Data, setGstr9Data] = useState<any>(null);
   const [filingStatus, setFilingStatus] = useState<string | null>(null);
+  const [filingRecords, setFilingRecords] = useState<any[]>([]);
+  const [markingFiling, setMarkingFiling] = useState(false);
 
   // Quick Edit Modal state
   const [editingVoucher, setEditingVoucher] = useState<any | null>(null);
@@ -162,15 +164,21 @@ export default function GSTReturnCenterPage() {
       const headers = { Authorization: `Bearer ${token}` };
 
       if (activeTab === "annual") {
-        const res = await axios.get(`${API_BASE_URL}/api/v1/gst/reports/gstr9/${companyId}/?year_code=${selectedYear}`, { headers });
-        setGstr9Data(res.data.data);
+        const [g9Res, filingsRes] = await Promise.all([
+          axios.get(`${API_BASE_URL}/api/v1/gst/reports/gstr9/${companyId}/?year_code=${selectedYear}`, { headers }),
+          axios.get(`${API_BASE_URL}/api/v1/gst/returns/mark-filed/${companyId}/`, { headers }).catch(() => ({ data: { filings: [] } })),
+        ]);
+        setGstr9Data(g9Res.data.data);
+        setFilingRecords(filingsRes.data?.filings || []);
       } else {
-        const [excRes, g3bRes] = await Promise.all([
+        const [excRes, g3bRes, filingsRes] = await Promise.all([
           axios.get(`${API_BASE_URL}/api/v1/gst/returns/exceptions/${companyId}/?start_date=${startDate}&end_date=${endDate}`, { headers }),
           axios.get(`${API_BASE_URL}/api/v1/gst/reports/gstr3b/${companyId}/?start_date=${startDate}&end_date=${endDate}`, { headers }),
+          axios.get(`${API_BASE_URL}/api/v1/gst/returns/mark-filed/${companyId}/`, { headers }).catch(() => ({ data: { filings: [] } })),
         ]);
         setExceptionsData(excRes.data.data);
         setGstr3bData(g3bRes.data.data);
+        setFilingRecords(filingsRes.data?.filings || []);
       }
     } catch (err) {
       console.error(err);
@@ -178,6 +186,21 @@ export default function GSTReturnCenterPage() {
       setLoading(false);
     }
   }, [companyId, activeTab, selectedMonth, selectedQuarter, selectedYear]);
+
+  const isCurrentPeriodFiled = useMemo(() => {
+    const { periodLabel } = getStartAndEndDate();
+    const [y, m] = selectedMonth ? selectedMonth.split("-") : ["", ""];
+    const mmyyyy = m && y ? `${m}${y}` : "";
+    const yyyymm = m && y ? `${y}-${m}` : "";
+
+    return filingRecords.some((f: any) => {
+      const isStatusFiled = f.status === "FILED" || f.status === "SUBMITTED";
+      if (!isStatusFiled) return false;
+      if (f.return_period === periodLabel) return true;
+      if (selectedMonth && (f.return_period === selectedMonth || f.return_period === mmyyyy || f.return_period === yyyymm)) return true;
+      return false;
+    });
+  }, [filingRecords, selectedMonth, selectedQuarter, selectedYear, activeTab]);
 
   useEffect(() => {
     if (companyId) {
@@ -190,15 +213,39 @@ export default function GSTReturnCenterPage() {
     window.open(`${API_BASE_URL}/api/v1/gst/reports/gstr1/${companyId}/?start_date=${startDate}&end_date=${endDate}&download=1`, "_blank");
   };
 
-  const handleMarkAsFiled = async () => {
+  const handleToggleFilingStatus = async () => {
     const { periodLabel } = getStartAndEndDate();
+    setMarkingFiling(true);
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
-      await axios.post(`${API_BASE_URL}/api/v1/gst/returns/mark-filed/${companyId}/`, { period: periodLabel }, { headers });
-      setFilingStatus(`✓ Return for ${periodLabel} recorded as filed.`);
-    } catch (e) {
+      const currentlyFiled = isCurrentPeriodFiled;
+
+      const payload: any = {
+        period: periodLabel,
+        return_type: "GSTR1",
+        unmark: currentlyFiled,
+      };
+      if (!currentlyFiled && exceptionsData) {
+        payload.total_taxable_value = exceptionsData.clean_total_amount || 0;
+        payload.invoices_count = exceptionsData.clean_count || 0;
+      }
+
+      await axios.post(`${API_BASE_URL}/api/v1/gst/returns/mark-filed/${companyId}/`, payload, { headers });
+
+      const filingsRes = await axios.get(`${API_BASE_URL}/api/v1/gst/returns/mark-filed/${companyId}/`, { headers });
+      setFilingRecords(filingsRes.data?.filings || []);
+
+      if (currentlyFiled) {
+        setFilingStatus(`Return for ${periodLabel} marked as unfiled.`);
+      } else {
+        setFilingStatus(`✓ Return for ${periodLabel} recorded as filed.`);
+      }
+    } catch (e: any) {
       console.error(e);
+      alert(e.response?.data?.error || "Failed to update filing status");
+    } finally {
+      setMarkingFiling(false);
     }
   };
 
@@ -294,6 +341,10 @@ export default function GSTReturnCenterPage() {
         setUploadAck(res.data);
         setPortalStep("success");
         setFilingStatus(`✓ GSTR-1 for ${periodLabel} successfully transmitted to GST Portal API. Reference ID: ${res.data.reference_id}`);
+        try {
+          const filingsRes = await axios.get(`${API_BASE_URL}/api/v1/gst/returns/mark-filed/${companyId}/`, { headers });
+          setFilingRecords(filingsRes.data?.filings || []);
+        } catch (_) {}
       } else {
         setPortalError(res.data.error || "GST Portal rejected the return batch.");
       }
@@ -326,6 +377,11 @@ export default function GSTReturnCenterPage() {
                     !hasTransactions ? (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-muted text-muted-foreground border border-border">
                         No Transactions in {getStartAndEndDate().periodLabel}
+                      </span>
+                    ) : isCurrentPeriodFiled ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 shadow-xs">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        <span>Return Filed</span>
                       </span>
                     ) : isFullyClean ? (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
@@ -1076,10 +1132,21 @@ export default function GSTReturnCenterPage() {
                     <span>Export JSON File</span>
                   </button>
                   <button
-                    onClick={handleMarkAsFiled}
-                    className="px-4 py-2.5 bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded-xl text-xs font-semibold border border-border cursor-pointer transition-colors"
+                    onClick={handleToggleFilingStatus}
+                    disabled={markingFiling}
+                    title={isCurrentPeriodFiled ? "Click to unmark as filed" : "Click to mark period as filed"}
+                    className={`px-4 py-2.5 rounded-xl text-xs font-semibold border cursor-pointer transition-all flex items-center gap-2 ${
+                      isCurrentPeriodFiled
+                        ? "bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 font-bold shadow-xs"
+                        : "bg-secondary hover:bg-secondary/80 text-secondary-foreground border-border"
+                    } ${markingFiling ? "opacity-60 cursor-not-allowed" : ""}`}
                   >
-                    Mark Period as Filed
+                    {markingFiling ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : isCurrentPeriodFiled ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    ) : null}
+                    <span>{isCurrentPeriodFiled ? "Filed" : "Mark Period as Filed"}</span>
                   </button>
                 </div>
               </div>

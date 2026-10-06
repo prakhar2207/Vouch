@@ -315,6 +315,17 @@ class GSTIntegrationTests(TestCase):
         self.assertEqual(len(get_res.data['filings']), 1)
         self.assertEqual(get_res.data['filings'][0]['return_period'], '082026')
 
+        # Test unmarking / toggling filing back to DRAFT
+        unmark_res = client.post(
+            f'/api/v1/gst/returns/mark-filed/{self.company.id}/',
+            data={'period': '082026', 'return_type': 'GSTR1', 'unmark': True},
+            format='json'
+        )
+        self.assertEqual(unmark_res.status_code, 200)
+        self.assertEqual(unmark_res.data['status'], 'DRAFT')
+        filing.refresh_from_db()
+        self.assertEqual(filing.status, 'DRAFT')
+
     def test_08_gst_credential_rbac_protection(self):
         """Test that VIEWER role is strictly blocked from modifying company GST credentials."""
         from apps.companies.models import UserCompany
