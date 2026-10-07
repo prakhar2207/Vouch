@@ -74,6 +74,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const userMenuRef = useRef<HTMLDivElement>(null);
   const fyRef = useRef<HTMLDivElement>(null);
   const companyRef = useRef<HTMLDivElement>(null);
+  const salesCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleOpenSales = () => {
+    if (salesCloseTimeoutRef.current) {
+      clearTimeout(salesCloseTimeoutRef.current);
+      salesCloseTimeoutRef.current = null;
+    }
+    setIsSalesOpen(true);
+  };
+
+  const handleCloseSalesWithDelay = () => {
+    if (salesCloseTimeoutRef.current) {
+      clearTimeout(salesCloseTimeoutRef.current);
+    }
+    salesCloseTimeoutRef.current = setTimeout(() => {
+      setIsSalesOpen(false);
+    }, 200); // 200ms grace period so dragging cursor into the dropdown never prematurely retracts
+  };
+
+  const handleCloseSalesImmediately = () => {
+    if (salesCloseTimeoutRef.current) {
+      clearTimeout(salesCloseTimeoutRef.current);
+      salesCloseTimeoutRef.current = null;
+    }
+    setIsSalesOpen(false);
+  };
 
   const { setIsHelpOpen, setIsDateOpen, workingDate, startTour, isCalculatorOpen, setIsCalculatorOpen } = useShortcuts();
   const { activeFY, availableFYs, setActiveFY, isReadOnly, setIsClosingModalOpen } = useFinancialYear();
@@ -88,10 +114,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
   }, [user, router]);
 
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (salesCloseTimeoutRef.current) {
+        clearTimeout(salesCloseTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // Close dropdowns on route change
   useEffect(() => {
+    handleCloseSalesImmediately();
     setIsMobileNavOpen(false);
-    setIsSalesOpen(false);
     setIsReportsOpen(false);
     setIsMoreOpen(false);
     setIsUserMenuOpen(false);
@@ -103,7 +138,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (salesRef.current && !salesRef.current.contains(target)) setIsSalesOpen(false);
+      if (salesRef.current && !salesRef.current.contains(target)) handleCloseSalesImmediately();
       if (reportsRef.current && !reportsRef.current.contains(target)) setIsReportsOpen(false);
       if (moreRef.current && !moreRef.current.contains(target)) setIsMoreOpen(false);
       if (userMenuRef.current && !userMenuRef.current.contains(target)) setIsUserMenuOpen(false);
@@ -113,7 +148,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setIsSalesOpen(false);
+        handleCloseSalesImmediately();
         setIsReportsOpen(false);
         setIsMoreOpen(false);
         setIsUserMenuOpen(false);
@@ -214,8 +249,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <div 
                 ref={salesRef} 
                 className="relative shrink-0 flex items-center"
-                onMouseEnter={() => setIsSalesOpen(true)}
-                onMouseLeave={() => setIsSalesOpen(false)}
+                onMouseEnter={handleOpenSales}
+                onMouseLeave={handleCloseSalesWithDelay}
               >
                 <Link
                   id="tour-sales-nav"
@@ -233,7 +268,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <button
                   type="button"
                   onClick={() => {
-                    setIsSalesOpen(!isSalesOpen);
+                    if (salesCloseTimeoutRef.current) {
+                      clearTimeout(salesCloseTimeoutRef.current);
+                      salesCloseTimeoutRef.current = null;
+                    }
+                    setIsSalesOpen((prev) => !prev);
                     setIsReportsOpen(false);
                     setIsMoreOpen(false);
                   }}
@@ -254,51 +293,58 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <div
                     role="menu"
                     aria-label="Sales and Quotations"
-                    className="absolute left-0 top-full mt-1.5 w-72 bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 z-50 animate-in fade-in zoom-in-95 space-y-1"
+                    onMouseEnter={handleOpenSales}
+                    onMouseLeave={handleCloseSalesWithDelay}
+                    className="absolute left-0 top-full pt-1.5 w-72 z-50 animate-in fade-in zoom-in-95"
                   >
-                    <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
-                      Sales & Quotations
+                    {/* Invisible hover bridge to eliminate any mouse hit-test gap */}
+                    <div className="absolute -top-3 left-0 right-0 h-4 pointer-events-auto" aria-hidden="true" />
+
+                    <div className="w-full bg-card/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl shadow-black/10 p-2 space-y-1">
+                      <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                        Sales & Quotations
+                      </div>
+                      <Link
+                        href="/sales"
+                        role="menuitem"
+                        onClick={handleCloseSalesImmediately}
+                        className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                      >
+                        <div>
+                          <div className="font-semibold text-foreground flex items-center gap-1.5">
+                            <span>Sales Invoices (GST)</span>
+                            <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.2 rounded font-mono font-semibold">F8</span>
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">Outward tax invoices & receivables</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/sales/proforma"
+                        role="menuitem"
+                        onClick={handleCloseSalesImmediately}
+                        className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                      >
+                        <div>
+                          <div className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                            <span>Proformas & Estimates</span>
+                            <span className="text-[9px] bg-blue-500/15 text-blue-600 dark:text-blue-400 px-1 rounded font-bold">Quotes</span>
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">Commercial quotes & 1-click GST convert</div>
+                        </div>
+                      </Link>
+                      <div className="border-t border-border/40 my-1"></div>
+                      <Link
+                        href="/sales?tab=customers"
+                        role="menuitem"
+                        onClick={handleCloseSalesImmediately}
+                        className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                      >
+                        <div>
+                          <div className="font-semibold text-foreground">Customers & Receivables</div>
+                          <div className="text-[11px] text-muted-foreground">Debtors directory & balance ledger</div>
+                        </div>
+                      </Link>
                     </div>
-                    <Link
-                      href="/sales"
-                      role="menuitem"
-                      onClick={() => setIsSalesOpen(false)}
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
-                    >
-                      <div>
-                        <div className="font-semibold text-foreground flex items-center gap-1.5">
-                          <span>Sales Invoices (GST)</span>
-                          <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.2 rounded font-mono font-semibold">F8</span>
-                        </div>
-                        <div className="text-[11px] text-muted-foreground">Outward tax invoices & receivables</div>
-                      </div>
-                    </Link>
-                    <Link
-                      href="/sales/proforma"
-                      role="menuitem"
-                      onClick={() => setIsSalesOpen(false)}
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
-                    >
-                      <div>
-                        <div className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
-                          <span>Proformas & Estimates</span>
-                          <span className="text-[9px] bg-blue-500/15 text-blue-600 dark:text-blue-400 px-1 rounded font-bold">Quotes</span>
-                        </div>
-                        <div className="text-[11px] text-muted-foreground">Commercial quotes & 1-click GST convert</div>
-                      </div>
-                    </Link>
-                    <div className="border-t border-border/40 my-1"></div>
-                    <Link
-                      href="/sales?tab=customers"
-                      role="menuitem"
-                      onClick={() => setIsSalesOpen(false)}
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
-                    >
-                      <div>
-                        <div className="font-semibold text-foreground">Customers & Receivables</div>
-                        <div className="text-[11px] text-muted-foreground">Debtors directory & balance ledger</div>
-                      </div>
-                    </Link>
                   </div>
                 )}
               </div>
@@ -640,6 +686,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                           <span className="text-[9px] bg-amber-500/15 px-1 rounded font-bold">Audit</span>
                         </div>
                         <div className="text-[11px] text-muted-foreground">1-Click preview and fix imbalances</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/import"
+                      onClick={() => setIsMoreOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                          <span>Universal Import Hub</span>
+                          <span className="text-[9px] bg-blue-500/15 text-blue-600 dark:text-blue-400 px-1 rounded font-bold">Import</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">Import Tally, Vyapar, myBillBook, Zoho, Excel</div>
                       </div>
                     </Link>
                     <Link
@@ -1292,6 +1351,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 }`}
               >
                 <span>Books Health</span>
+              </Link>
+              <Link
+                href="/import"
+                onClick={() => setIsMobileNavOpen(false)}
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                  pathname.startsWith("/import") ? "bg-muted font-semibold text-blue-500" : "text-muted-foreground hover:bg-muted/60"
+                }`}
+              >
+                <span>Universal Import Hub</span>
+                <span className="text-[9px] bg-blue-500/10 text-blue-500 font-bold px-1.5 py-0.5 rounded">Import</span>
               </Link>
               <Link
                 href="/export/tally"

@@ -7,7 +7,7 @@ import { setTokens } from "@/utils/auth";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import StateSelect from "@/components/StateSelect";
-import { UploadCloud, CheckCircle2, Image as ImageIcon, X, AlertCircle } from "lucide-react";
+import { UploadCloud, CheckCircle2, Image as ImageIcon, X, AlertCircle, FileSpreadsheet, ArrowRight, Sparkles, LayoutDashboard } from "lucide-react";
 
 export default function Register() {
   const [step, setStep] = useState(1);
@@ -118,7 +118,8 @@ export default function Register() {
 
       if (res.data.success) {
         setTokens(res.data.access, res.data.refresh);
-        router.push("/dashboard");
+        // Seamlessly move to Step 4 Onboarding Selection
+        setStep(4);
       } else {
         setError(res.data.error || "Registration failed. Please check your details.");
       }
@@ -141,18 +142,27 @@ export default function Register() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background text-foreground py-6 sm:py-12 px-3 sm:px-4">
-      <div className="bg-card text-card-foreground p-5 sm:p-8 rounded-2xl shadow-xl border border-border w-full max-w-lg">
+      <div className={`bg-card text-card-foreground p-5 sm:p-8 rounded-2xl shadow-xl border border-border w-full ${step === 4 ? "max-w-2xl" : "max-w-lg"}`}>
         
         {/* Header */}
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-black mb-2 tracking-tight">Create your Vouch Account</h1>
+          <h1 className="text-2xl font-black mb-2 tracking-tight">
+            {step === 4 ? "Welcome to Vouch! 🚀" : "Create your Vouch Account"}
+          </h1>
           <p className="text-muted-foreground text-xs">
-            Step {step} of 3: {step === 1 ? "Account Credentials" : step === 2 ? "Firm & GSTIN Details" : "Proprietor & Signature"}
+            {step === 1
+              ? "Step 1 of 3: Account Credentials"
+              : step === 2
+              ? "Step 2 of 3: Firm & GSTIN Details"
+              : step === 3
+              ? "Step 3 of 3: Proprietor & Signature"
+              : "Step 4 of 4: Setup & Migration"}
           </p>
           <div className="flex gap-2 justify-center mt-4">
             <div className={`h-1.5 w-12 rounded-full transition-all ${step >= 1 ? "bg-blue-600" : "bg-muted"}`}></div>
             <div className={`h-1.5 w-12 rounded-full transition-all ${step >= 2 ? "bg-blue-600" : "bg-muted"}`}></div>
             <div className={`h-1.5 w-12 rounded-full transition-all ${step >= 3 ? "bg-blue-600" : "bg-muted"}`}></div>
+            <div className={`h-1.5 w-12 rounded-full transition-all ${step >= 4 ? "bg-emerald-500" : "bg-muted"}`}></div>
           </div>
         </div>
 
@@ -164,250 +174,327 @@ export default function Register() {
           </div>
         )}
 
-        <form onSubmit={step === 3 ? handleRegister : handleNext} className="space-y-5">
-          
-          {/* STEP 1: AUTH */}
-          {step === 1 && (
-            <div className="space-y-4 animate-in fade-in duration-200">
-              <div>
-                <label htmlFor="reg-email" className="block text-xs font-semibold mb-1.5 text-foreground">Login Email *</label>
-                <input
-                  id="reg-email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="admin@yourbusiness.com"
-                />
-              </div>
-              <div>
-                <label htmlFor="reg-password" className="block text-xs font-semibold mb-1.5 text-foreground">Password *</label>
-                <input
-                  id="reg-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="•••••••• (Min 6 chars)"
-                />
-              </div>
+        {step === 4 ? (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <div className="text-center space-y-1">
+              <h2 className="text-lg sm:text-xl font-bold text-foreground">How would you like to set up your books?</h2>
+              <p className="text-xs text-muted-foreground">
+                You can migrate your existing business data in 60 seconds or start fresh with blank books.
+              </p>
             </div>
-          )}
 
-          {/* STEP 2: FIRM DETAILS */}
-          {step === 2 && (
-            <div className="space-y-4 animate-in fade-in duration-200">
-              <div>
-                <label htmlFor="reg-firm" className="block text-xs font-semibold mb-1.5 text-foreground">Firm Name *</label>
-                <input
-                  id="reg-firm"
-                  type="text"
-                  value={firmName}
-                  onChange={(e) => setFirmName(e.target.value)}
-                  required
-                  className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="Acme Industrial Supplies Pvt Ltd"
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="reg-gstin" className="block text-xs font-semibold mb-1.5 text-foreground">GSTIN *</label>
-                  <input
-                    id="reg-gstin"
-                    type="text"
-                    value={gstin}
-                    onChange={(e) => setGstin(e.target.value.toUpperCase())}
-                    required
-                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none font-mono uppercase"
-                    placeholder="27AAACA1234A1Z5"
-                    maxLength={15}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="reg-phone" className="block text-xs font-semibold mb-1.5 text-foreground">Mobile No. *</label>
-                  <input
-                    id="reg-phone"
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    required
-                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none font-mono"
-                    placeholder="9876543210"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="reg-company-email" className="block text-xs font-semibold mb-1.5 text-foreground">Company Email (Optional)</label>
-                  <input
-                    id="reg-company-email"
-                    type="email"
-                    value={companyEmail}
-                    onChange={(e) => setCompanyEmail(e.target.value)}
-                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
-                    placeholder="sales@business.com"
-                  />
-                </div>
-                <div>
-                  <StateSelect
-                    value={stateCode}
-                    onChange={(code) => setStateCode(code)}
-                    label="State / Union Territory *"
-                    placeholder="Search state..."
-                    required
-                  />
-                </div>
-              </div>
-              <div>
-                <label htmlFor="reg-address" className="block text-xs font-semibold mb-1.5 text-foreground">Billing Address *</label>
-                <textarea
-                  id="reg-address"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  required
-                  rows={2}
-                  className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-                  placeholder="Plot 42, Industrial Area, City..."
-                />
-              </div>
-            </div>
-          )}
-
-          {/* STEP 3: PROPRIETOR DETAILS & SIGNATURE UPLOAD */}
-          {step === 3 && (
-            <div className="space-y-4 animate-in fade-in duration-200">
-              <div className="bg-blue-500/10 border border-blue-500/20 p-3.5 rounded-xl">
-                <p className="text-xs text-blue-600 dark:text-blue-300 leading-relaxed">
-                  <strong className="text-blue-600 dark:text-blue-400">Invoice Readiness:</strong> These details appear on your printed GST Tax Invoices and Authorized Signatory stamp.
-                </p>
-              </div>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="reg-proprietor-name" className="block text-xs font-semibold mb-1.5 text-foreground">Proprietor / Signatory Name</label>
-                  <input
-                    id="reg-proprietor-name"
-                    type="text"
-                    value={proprietorName}
-                    onChange={(e) => setProprietorName(e.target.value)}
-                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
-                    placeholder="e.g. Rahul Sharma"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="reg-proprietor-phone" className="block text-xs font-semibold mb-1.5 text-foreground">Proprietor Phone</label>
-                  <input
-                    id="reg-proprietor-phone"
-                    type="tel"
-                    value={proprietorPhone}
-                    onChange={(e) => setProprietorPhone(e.target.value)}
-                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none font-mono"
-                    placeholder="9876543210"
-                  />
-                </div>
-              </div>
-
-              {/* Digital Signature File Upload */}
-              <div>
-                <label htmlFor="reg-signature-file" className="block text-xs font-semibold mb-1.5 text-foreground">
-                  Digital Signature Image (Optional)
-                </label>
-                
-                <input
-                  id="reg-signature-file"
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleSignatureChange}
-                  accept="image/png, image/jpeg, image/webp"
-                  className="hidden"
-                />
-
-                {signaturePreview ? (
-                  <div className="p-4 bg-muted/50 border border-input rounded-xl flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-16 h-12 bg-white rounded-lg p-1 flex items-center justify-center overflow-hidden border border-zinc-600">
-                        <img src={signaturePreview} alt="Signature Preview" className="max-h-full object-contain" />
-                      </div>
-                      <div>
-                        <div className="text-xs font-bold text-foreground truncate max-w-[180px]">
-                          {signatureFile?.name || "signature.png"}
-                        </div>
-                        <div className="text-[10px] text-green-400 flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span>Signature loaded</span>
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={removeSignature}
-                      className="p-1.5 text-muted-foreground hover:text-red-400 hover:bg-muted rounded-lg transition-colors cursor-pointer"
-                      title="Remove signature"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                ) : (
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className="border-2 border-dashed border-input hover:border-blue-500/60 rounded-xl p-6 text-center bg-muted/50/40 hover:bg-muted/50/80 transition-all cursor-pointer space-y-2"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-muted text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Option A: Migrate from Existing Software (Recommended) */}
+              <div 
+                onClick={() => router.push("/import?welcome=1")}
+                className="group relative bg-gradient-to-b from-blue-500/10 via-background to-background border-2 border-blue-500/40 hover:border-blue-500 p-5 rounded-2xl cursor-pointer transition-all hover:shadow-lg hover:shadow-blue-500/10 flex flex-col justify-between"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-500 flex items-center justify-center">
                       <UploadCloud className="w-5 h-5" />
                     </div>
-                    <div className="text-xs font-semibold text-foreground">
-                      Click to upload Signature image
-                    </div>
-                    <p className="text-[10px] text-muted-foreground">
-                      PNG, JPG, or WEBP (Transparent background recommended)
+                    <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-500/20 text-blue-500 px-2 py-0.5 rounded-full border border-blue-500/30">
+                      Recommended
+                    </span>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-foreground group-hover:text-blue-500 transition-colors">
+                      Migrate from Existing Software
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                      1-click import customers, suppliers, inventory items & opening balances directly from your current software.
                     </p>
                   </div>
-                )}
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {["Tally XML", "Vyapar", "myBillBook", "Zoho Books", "Excel"].map((app) => (
+                      <span key={app} className="text-[10px] bg-muted px-2 py-0.5 rounded-md font-medium text-foreground">
+                        {app}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-4 mt-4 border-t border-border flex items-center justify-between text-xs font-bold text-blue-500 group-hover:translate-x-1 transition-transform">
+                  <span>Import My Books</span>
+                  <ArrowRight className="w-4 h-4" />
+                </div>
+              </div>
+
+              {/* Option B: Start Fresh */}
+              <div 
+                onClick={() => router.push("/dashboard")}
+                className="group relative bg-muted/30 hover:bg-muted/50 border border-border hover:border-foreground/20 p-5 rounded-2xl cursor-pointer transition-all flex flex-col justify-between"
+              >
+                <div className="space-y-3">
+                  <div className="w-10 h-10 rounded-xl bg-muted text-foreground flex items-center justify-center">
+                    <LayoutDashboard className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-foreground">
+                      Start Fresh with Blank Books
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                      Begin with clean accounts and add your customers, items, and vouchers manually as you trade.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-4 mt-4 border-t border-border flex items-center justify-between text-xs font-bold text-muted-foreground group-hover:text-foreground transition-colors">
+                  <span>Go to Dashboard</span>
+                  <ArrowRight className="w-4 h-4" />
+                </div>
               </div>
             </div>
-          )}
-
-          {/* Form Actions */}
-          <div className="flex gap-3 pt-4 border-t border-border">
-            {step > 1 && (
-              <button
-                type="button"
-                onClick={() => setStep(step - 1)}
-                className="flex-1 bg-muted text-foreground py-3 rounded-xl text-xs font-bold hover:bg-zinc-700 transition-colors cursor-pointer"
-              >
-                Back
-              </button>
-            )}
-            
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex-1 bg-blue-600 text-foreground py-3 rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/25 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
-            >
-              {loading ? (
-                <>
-                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                  <span>Creating Account...</span>
-                </>
-              ) : step === 3 ? (
-                "Complete Registration"
-              ) : (
-                "Next Step →"
-              )}
-            </button>
           </div>
-          
-        </form>
+        ) : (
+          <form onSubmit={step === 3 ? handleRegister : handleNext} className="space-y-5">
+            
+            {/* STEP 1: AUTH */}
+            {step === 1 && (
+              <div className="space-y-4 animate-in fade-in duration-200">
+                <div>
+                  <label htmlFor="reg-email" className="block text-xs font-semibold mb-1.5 text-foreground">Login Email *</label>
+                  <input
+                    id="reg-email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
+                    placeholder="admin@yourbusiness.com"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="reg-password" className="block text-xs font-semibold mb-1.5 text-foreground">Password *</label>
+                  <input
+                    id="reg-password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    minLength={6}
+                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
+                    placeholder="•••••••• (Min 6 chars)"
+                  />
+                </div>
+              </div>
+            )}
 
-        <div className="mt-6 text-center text-xs text-muted-foreground">
-          Already have an account?{" "}
-          <Link href="/login" className="text-blue-600 dark:text-blue-400 hover:underline font-semibold">
-            Log in
-          </Link>
-        </div>
+            {/* STEP 2: FIRM DETAILS */}
+            {step === 2 && (
+              <div className="space-y-4 animate-in fade-in duration-200">
+                <div>
+                  <label htmlFor="reg-firm" className="block text-xs font-semibold mb-1.5 text-foreground">Firm Name *</label>
+                  <input
+                    id="reg-firm"
+                    type="text"
+                    value={firmName}
+                    onChange={(e) => setFirmName(e.target.value)}
+                    required
+                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
+                    placeholder="Acme Industrial Supplies Pvt Ltd"
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="reg-gstin" className="block text-xs font-semibold mb-1.5 text-foreground">GSTIN *</label>
+                    <input
+                      id="reg-gstin"
+                      type="text"
+                      value={gstin}
+                      onChange={(e) => setGstin(e.target.value.toUpperCase())}
+                      required
+                      className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none font-mono uppercase"
+                      placeholder="27AAACA1234A1Z5"
+                      maxLength={15}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="reg-phone" className="block text-xs font-semibold mb-1.5 text-foreground">Mobile No. *</label>
+                    <input
+                      id="reg-phone"
+                      type="tel"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      required
+                      className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                      placeholder="9876543210"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="reg-company-email" className="block text-xs font-semibold mb-1.5 text-foreground">Company Email (Optional)</label>
+                    <input
+                      id="reg-company-email"
+                      type="email"
+                      value={companyEmail}
+                      onChange={(e) => setCompanyEmail(e.target.value)}
+                      className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
+                      placeholder="sales@business.com"
+                    />
+                  </div>
+                  <div>
+                    <StateSelect
+                      value={stateCode}
+                      onChange={(code) => setStateCode(code)}
+                      label="State / Union Territory *"
+                      placeholder="Search state..."
+                      required
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="reg-address" className="block text-xs font-semibold mb-1.5 text-foreground">Billing Address *</label>
+                  <textarea
+                    id="reg-address"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    required
+                    rows={2}
+                    className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                    placeholder="Plot 42, Industrial Area, City..."
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* STEP 3: PROPRIETOR DETAILS & SIGNATURE UPLOAD */}
+            {step === 3 && (
+              <div className="space-y-4 animate-in fade-in duration-200">
+                <div className="bg-blue-500/10 border border-blue-500/20 p-3.5 rounded-xl">
+                  <p className="text-xs text-blue-600 dark:text-blue-300 leading-relaxed">
+                    <strong className="text-blue-600 dark:text-blue-400">Invoice Readiness:</strong> These details appear on your printed GST Tax Invoices and Authorized Signatory stamp.
+                  </p>
+                </div>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="reg-proprietor-name" className="block text-xs font-semibold mb-1.5 text-foreground">Proprietor / Signatory Name</label>
+                    <input
+                      id="reg-proprietor-name"
+                      type="text"
+                      value={proprietorName}
+                      onChange={(e) => setProprietorName(e.target.value)}
+                      className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none"
+                      placeholder="e.g. Rahul Sharma"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="reg-proprietor-phone" className="block text-xs font-semibold mb-1.5 text-foreground">Proprietor Phone</label>
+                    <input
+                      id="reg-proprietor-phone"
+                      type="tel"
+                      value={proprietorPhone}
+                      onChange={(e) => setProprietorPhone(e.target.value)}
+                      className="w-full bg-muted/50 border border-input p-3 rounded-xl text-xs text-foreground placeholder-muted-foreground focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                      placeholder="9876543210"
+                    />
+                  </div>
+                </div>
+
+                {/* Digital Signature File Upload */}
+                <div>
+                  <label htmlFor="reg-signature-file" className="block text-xs font-semibold mb-1.5 text-foreground">
+                    Digital Signature Image (Optional)
+                  </label>
+                  
+                  <input
+                    id="reg-signature-file"
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleSignatureChange}
+                    accept="image/png, image/jpeg, image/webp"
+                    className="hidden"
+                  />
+
+                  {signaturePreview ? (
+                    <div className="p-4 bg-muted/50 border border-input rounded-xl flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-16 h-12 bg-white rounded-lg p-1 flex items-center justify-center overflow-hidden border border-zinc-600">
+                          <img src={signaturePreview} alt="Signature Preview" className="max-h-full object-contain" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-foreground truncate max-w-[180px]">
+                            {signatureFile?.name || "signature.png"}
+                          </div>
+                          <div className="text-[10px] text-green-400 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>Signature loaded</span>
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={removeSignature}
+                        className="p-1.5 text-muted-foreground hover:text-red-400 hover:bg-muted rounded-lg transition-colors cursor-pointer"
+                        title="Remove signature"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="border-2 border-dashed border-input hover:border-blue-500/60 rounded-xl p-6 text-center bg-muted/50/40 hover:bg-muted/50/80 transition-all cursor-pointer space-y-2"
+                    >
+                      <div className="w-10 h-10 rounded-full bg-muted text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
+                        <UploadCloud className="w-5 h-5" />
+                      </div>
+                      <div className="text-xs font-semibold text-foreground">
+                        Click to upload Signature image
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">
+                        PNG, JPG, or WEBP (Transparent background recommended)
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Form Actions */}
+            <div className="flex gap-3 pt-4 border-t border-border">
+              {step > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setStep(step - 1)}
+                  className="flex-1 bg-muted text-foreground py-3 rounded-xl text-xs font-bold hover:bg-zinc-700 transition-colors cursor-pointer"
+                >
+                  Back
+                </button>
+              )}
+              
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex-1 bg-blue-600 text-foreground py-3 rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/25 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
+              >
+                {loading ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    <span>Creating Account...</span>
+                  </>
+                ) : step === 3 ? (
+                  "Complete Registration"
+                ) : (
+                  "Next Step →"
+                )}
+              </button>
+            </div>
+            
+          </form>
+        )}
+
+        {step < 4 && (
+          <div className="mt-6 text-center text-xs text-muted-foreground">
+            Already have an account?{" "}
+            <Link href="/login" className="text-blue-600 dark:text-blue-400 hover:underline font-semibold">
+              Log in
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );

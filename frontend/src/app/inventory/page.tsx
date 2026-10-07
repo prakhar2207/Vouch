@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
-import { Boxes, Tag, Layers, TrendingUp, Plus } from 'lucide-react';
+import { Boxes, Tag, Layers, TrendingUp, Plus, UploadCloud } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
 import { offlineDb } from '@/lib/db/offlineDb';
 import { useCompany } from '@/context/CompanyContext';
@@ -265,10 +265,20 @@ export default function InventoryPage() {
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Inventory</h1>
             <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">Manage your products and stock</p>
           </div>
-          <Link href="/inventory/categories/new" className="bg-primary text-primary-foreground px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl shadow-md shadow-primary/20 hover:bg-primary/90 transition-all font-medium flex items-center justify-center gap-2 text-xs sm:text-sm">
-            <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
-            <span>New Category</span>
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link 
+              href="/import?type=inventory" 
+              className="bg-card hover:bg-muted text-foreground border border-border/70 px-3.5 py-2 sm:py-2.5 rounded-xl shadow-xs transition-colors text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5"
+              title="Bulk import products & stock balances from Tally, Vyapar, Zoho, myBillBook, Excel"
+            >
+              <UploadCloud className="w-4 h-4 text-blue-500" />
+              <span>Import Stock</span>
+            </Link>
+            <Link href="/inventory/categories/new" className="bg-primary text-primary-foreground px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl shadow-md shadow-primary/20 hover:bg-primary/90 transition-all font-medium flex items-center justify-center gap-2 text-xs sm:text-sm">
+              <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
+              <span>New Category</span>
+            </Link>
+          </div>
         </div>
 
         {/* Operational Inventory Summary Banner */}

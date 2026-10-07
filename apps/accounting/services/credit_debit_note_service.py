@@ -44,7 +44,9 @@ class CreditDebitNoteService:
         reason: str = "Sales Return",
         original_invoice_number: str = None,
         voucher_date = None,
-        narration: str = ""
+        narration: str = "",
+        original_invoice: Voucher = None,
+        allow_excess: bool = False
     ) -> Voucher:
         """
         Creates and generates double-entry entries for a Credit Note (Customer Return / Discount).
@@ -59,17 +61,26 @@ class CreditDebitNoteService:
 
         seq_num, fy = InvoiceSequenceService.get_next_number(company, 'CREDIT_NOTE', v_date)
 
+        # Resolve original invoice if not directly supplied
+        if not original_invoice and original_invoice_number:
+            original_invoice = Voucher.objects.filter(
+                company=company,
+                voucher_type='SALES',
+                voucher_number__iexact=str(original_invoice_number).strip()
+            ).first()
+
         voucher = Voucher.objects.create(
             company=company,
             financial_year=fy,
             voucher_type='CREDIT_NOTE',
             voucher_number=seq_num,
-            reference_number=original_invoice_number or "",
+            reference_number=original_invoice_number or (original_invoice.voucher_number if original_invoice else ""),
+            original_invoice=original_invoice,
             voucher_date=v_date,
             party_ledger=party_ledger,
             status='DRAFT',
             total_amount=Decimal('0.00'),
-            narration=narration or f"Credit Note: {reason}" + (f" against {original_invoice_number}" if original_invoice_number else ""),
+            narration=narration or f"Credit Note: {reason}" + (f" against {original_invoice_number or (original_invoice.voucher_number if original_invoice else '')}" if (original_invoice_number or original_invoice) else ""),
             created_by=user
         )
 
@@ -139,6 +150,22 @@ class CreditDebitNoteService:
 
         voucher.total_amount = total_gross
         voucher.save(update_fields=['total_amount'])
+
+        if original_invoice:
+            existing_cns = Voucher.objects.filter(
+                company=company,
+                original_invoice=original_invoice,
+                voucher_type='CREDIT_NOTE',
+                status__in=['POSTED', 'VALIDATING', 'DRAFT']
+            ).exclude(id=voucher.id)
+            prior_reversals = sum(v.total_amount for v in existing_cns)
+            if (prior_reversals + total_gross) > original_invoice.total_amount and not allow_excess:
+                from django.core.exceptions import ValidationError
+                raise ValidationError(
+                    f"Credit Note amount (₹{total_gross}) plus prior reversals (₹{prior_reversals}) "
+                    f"exceeds original sales invoice #{original_invoice.voucher_number} total of ₹{original_invoice.total_amount}. "
+                    f"Set allow_excess=True if this is an approved special commercial adjustment."
+                )
 
         # Double-entry Accounting
         sales_ret_ledger = cls._resolve_sales_return_ledger(company)
@@ -209,7 +236,9 @@ class CreditDebitNoteService:
         reason: str = "Purchase Return",
         original_invoice_number: str = None,
         voucher_date = None,
-        narration: str = ""
+        narration: str = "",
+        original_invoice: Voucher = None,
+        allow_excess: bool = False
     ) -> Voucher:
         """
         Creates and generates double-entry entries for a Debit Note (Supplier Return / Deduction).
@@ -224,17 +253,26 @@ class CreditDebitNoteService:
 
         seq_num, fy = InvoiceSequenceService.get_next_number(company, 'DEBIT_NOTE', v_date)
 
+        # Resolve original invoice if not directly supplied
+        if not original_invoice and original_invoice_number:
+            original_invoice = Voucher.objects.filter(
+                company=company,
+                voucher_type='PURCHASE',
+                voucher_number__iexact=str(original_invoice_number).strip()
+            ).first()
+
         voucher = Voucher.objects.create(
             company=company,
             financial_year=fy,
             voucher_type='DEBIT_NOTE',
             voucher_number=seq_num,
-            reference_number=original_invoice_number or "",
+            reference_number=original_invoice_number or (original_invoice.voucher_number if original_invoice else ""),
+            original_invoice=original_invoice,
             voucher_date=v_date,
             party_ledger=party_ledger,
             status='DRAFT',
             total_amount=Decimal('0.00'),
-            narration=narration or f"Debit Note: {reason}" + (f" against {original_invoice_number}" if original_invoice_number else ""),
+            narration=narration or f"Debit Note: {reason}" + (f" against {original_invoice_number or (original_invoice.voucher_number if original_invoice else '')}" if (original_invoice_number or original_invoice) else ""),
             created_by=user
         )
 
@@ -304,6 +342,22 @@ class CreditDebitNoteService:
 
         voucher.total_amount = total_gross
         voucher.save(update_fields=['total_amount'])
+
+        if original_invoice:
+            existing_dns = Voucher.objects.filter(
+                company=company,
+                original_invoice=original_invoice,
+                voucher_type='DEBIT_NOTE',
+                status__in=['POSTED', 'VALIDATING', 'DRAFT']
+            ).exclude(id=voucher.id)
+            prior_reversals = sum(v.total_amount for v in existing_dns)
+            if (prior_reversals + total_gross) > original_invoice.total_amount and not allow_excess:
+                from django.core.exceptions import ValidationError
+                raise ValidationError(
+                    f"Debit Note amount (₹{total_gross}) plus prior reversals (₹{prior_reversals}) "
+                    f"exceeds original purchase bill #{original_invoice.voucher_number} total of ₹{original_invoice.total_amount}. "
+                    f"Set allow_excess=True if this is an approved special commercial adjustment."
+                )
 
         # Double-entry Accounting
         pur_ret_ledger = cls._resolve_purchase_return_ledger(company)

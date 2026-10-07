@@ -97,6 +97,7 @@ class AccountingIntegrityEngine:
         findings.extend(cls.check_bank_reconciliation(company, existing_findings_map=existing_findings_map, bank_status_counts=bank_status_counts))
         findings.extend(cls.check_cash_and_liquidity(company, existing_findings_map=existing_findings_map))
         findings.extend(cls.check_document_numbering(company, existing_findings_map=existing_findings_map))
+        findings.extend(cls.check_tds_compliance(company, existing_findings_map=existing_findings_map))
 
         # Retire/resolve any historical MARGIN_RISK / UNUSUAL_ACTIVITY findings
         AccountingFinding.objects.filter(
@@ -972,8 +973,10 @@ class AccountingIntegrityEngine:
 
     @classmethod
     def check_document_numbering(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
-        """11. Check: Duplicate voucher sequence numbers within same FY."""
+        """11. Check: Duplicate voucher sequence numbers and missing sequence gaps within same FY."""
+        import re
         findings = []
+        # 1. Duplicate sequence check
         dups = Voucher.objects.filter(company=company).values('financial_year', 'voucher_type', 'voucher_number').annotate(c=Count('id')).filter(c__gt=1)
         for item in dups[:3]:
             finding = cls._get_or_create_finding(
@@ -994,6 +997,101 @@ class AccountingIntegrityEngine:
             )
             findings.append(finding)
 
+        # 2. Sequence gap check for statutory document series (SALES, CREDIT_NOTE, DEBIT_NOTE, PURCHASE)
+        for v_type in ['SALES', 'PURCHASE', 'CREDIT_NOTE', 'DEBIT_NOTE']:
+            v_nums = list(
+                Voucher.objects.filter(
+                    company=company,
+                    voucher_type=v_type,
+                    status__in=['POSTED', 'DRAFT', 'VALIDATING']
+                ).values_list('voucher_number', flat=True)
+            )
+            num_map = {}
+            for vn in v_nums:
+                m = re.search(r'(\d+)$', vn)
+                if m:
+                    try:
+                        val = int(m.group(1))
+                        prefix = vn[:m.start(1)]
+                        num_map.setdefault(prefix, []).append((val, vn))
+                    except ValueError:
+                        pass
+
+            for prefix, val_list in num_map.items():
+                if len(val_list) >= 2:
+                    sorted_vals = sorted(val_list, key=lambda x: x[0])
+                    for i in range(len(sorted_vals) - 1):
+                        curr_num, curr_vn = sorted_vals[i]
+                        next_num, next_vn = sorted_vals[i + 1]
+                        if (next_num - curr_num) > 1 and (next_num - curr_num) <= 10:
+                            missing_sample = f"{prefix}{curr_num + 1}"
+                            finding = cls._get_or_create_finding(
+                                company=company,
+                                category='NUMBERING',
+                                title=f"Sequence gap in {v_type}: missing {missing_sample}",
+                                defaults={
+                                    "severity": "WARNING",
+                                    "description": f"A gap of {next_num - curr_num - 1} number(s) was found between {curr_vn} and {next_vn} in {v_type} series.",
+                                    "evidence": {"series": prefix, "from": curr_vn, "to": next_vn, "gap_count": next_num - curr_num - 1},
+                                    "expected_state": "Continuous sequential document numbering (required for GSTR-1 Table 13).",
+                                    "actual_state": f"Jumped from {curr_vn} to {next_vn}.",
+                                    "probable_cause": "A deleted or unrecorded invoice in the sequential series.",
+                                    "suggested_action": "Check if an invoice was cancelled or skipped, or document reason for audit trail.",
+                                    "confidence": 0.90
+                                },
+                                existing_findings_map=existing_findings_map
+                            )
+                            findings.append(finding)
+                            break # Limit to 1 gap finding per series to prevent spamming
+
+        return findings
+
+    @classmethod
+    def check_tds_compliance(cls, company: Company, existing_findings_map: Optional[Dict[str, Any]] = None) -> List[AccountingFinding]:
+        """
+        12. Check: Validates TDS statutory compliance:
+        - Flags vendors with TDS deducted who have missing or invalid PANs (Section 206AA penal rate risk).
+        """
+        findings = []
+        tds_vouchers = list(Voucher.objects.filter(
+            company=company,
+            tds_amount__gt=Decimal('0.00'),
+            status='POSTED'
+        ).select_related('party_ledger')[:50])
+
+        from apps.accounting.services.tds_service import TDSService
+        for v in tds_vouchers:
+            party = v.party_ledger
+            party_pan = getattr(party, 'pan', None) or (getattr(party, 'gstin', '')[:10] if getattr(party, 'gstin', '') else None)
+            if not TDSService.validate_pan(party_pan):
+                finding = cls._get_or_create_finding(
+                    company=company,
+                    category='GST',
+                    title=f"Missing payee PAN on TDS deduction: Bill #{v.voucher_number}",
+                    defaults={
+                        "severity": "WARNING",
+                        "description": (
+                            f"Voucher #{v.voucher_number} has TDS deducted (₹{v.tds_amount} u/s {v.tds_section}), "
+                            f"but vendor '{party.name if party else 'Unknown'}' is missing a valid 10-digit PAN. "
+                            f"Under Section 206AA of the Income Tax Act, failure to furnish PAN mandates a 20% penal deduction rate and invalidates Form 26Q."
+                        ),
+                        "evidence": {
+                            "voucher_id": str(v.id),
+                            "voucher_number": v.voucher_number,
+                            "party_name": party.name if party else None,
+                            "tds_section": v.tds_section,
+                            "tds_amount": str(v.tds_amount)
+                        },
+                        "expected_state": "Valid 10-character PAN required for all TDS deductees.",
+                        "actual_state": f"PAN is '{party_pan or 'None'}'.",
+                        "probable_cause": "Supplier PAN was not entered in ledger master.",
+                        "suggested_action": "Update party master with valid PAN before filing quarterly Form 26Q return.",
+                        "confidence": 0.95,
+                        "fix_action": "UPDATE_PARTY_PAN"
+                    },
+                    existing_findings_map=existing_findings_map
+                )
+                findings.append(finding)
         return findings
 
     @classmethod
@@ -1305,3 +1403,6 @@ class AccountingIntegrityEngine:
             "causes": causes[:5],
             "recommended_actions": [c.get("suggested_fix") for c in causes if c.get("suggested_fix")]
         }
+
+# Backward compatibility alias
+IntegrityEngine = AccountingIntegrityEngine

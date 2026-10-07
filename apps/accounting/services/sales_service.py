@@ -29,7 +29,8 @@ class SalesInvoiceService:
         buyer_phone=None,
         cartage_amount: Decimal = Decimal('0.00'),
         cartage_ledger: Ledger = None,
-        due_date=None
+        due_date=None,
+        is_reverse_charge: bool = False
     ):
         """
         End-to-End orchestration of a Sales Invoice.
@@ -111,6 +112,7 @@ class SalesInvoiceService:
             buyer_gstin=buyer_gstin,
             buyer_state_code=buyer_state_code,
             buyer_phone=buyer_phone,
+            is_reverse_charge=bool(is_reverse_charge),
             status='DRAFT',
             created_by=user,
             narration=narration_text

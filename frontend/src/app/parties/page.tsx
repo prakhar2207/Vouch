@@ -22,7 +22,8 @@ import {
   UserCheck, 
   ArrowUpRight,
   Plus,
-  RefreshCw
+  RefreshCw,
+  UploadCloud
 } from 'lucide-react';
 
 export default function PartiesPage() {
@@ -291,6 +292,14 @@ export default function PartiesPage() {
 
             {/* Create Buttons */}
             <div className="flex items-center gap-2">
+              <Link 
+                href="/import?type=parties" 
+                className="bg-card hover:bg-muted text-foreground border border-border/70 px-3.5 py-2.5 rounded-xl shadow-xs transition-colors text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 min-h-[40px]"
+                title="Bulk import customers & suppliers from Tally, Vyapar, Zoho, myBillBook, Excel"
+              >
+                <UploadCloud className="w-4 h-4 text-blue-500" />
+                <span>Import</span>
+              </Link>
               <Link 
                 href="/purchases/suppliers/new" 
                 className="bg-red-600/90 hover:bg-red-600 text-white px-4 py-2.5 rounded-xl shadow transition-colors text-sm font-semibold whitespace-nowrap flex items-center gap-2 min-h-[40px]"

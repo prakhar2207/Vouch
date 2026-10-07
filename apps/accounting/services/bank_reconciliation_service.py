@@ -793,6 +793,202 @@ class BankReconciliationService:
         }
 
     @classmethod
+    def generate_statutory_brs(
+        cls,
+        company: Company,
+        bank_ledger_id: str,
+        as_of_date: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Generates classical statutory Bank Reconciliation Statement (BRS) as of as_of_date.
+        Strict 2-Column Format (Tally & Zoho Books Standard):
+        -------------------------------------------------------------
+        1. Balance as per Company Books (Ledger Balance): B_books
+        2. Additions:
+           - Unpresented Cheques / Outward payments in books not yet debited by bank
+           - Direct Credits in bank statement not yet recorded in books
+        3. Deductions:
+           - Uncleared Cheques / Inward receipts in books not yet credited by bank
+           - Direct Debits / bank charges in statement not yet recorded in books
+        4. Reconciled Balance as per Bank Statement: B_reconciled
+        5. Actual Statement Balance (Passbook): B_statement
+        6. Difference / Variance: |B_reconciled - B_statement|
+        -------------------------------------------------------------
+        """
+        d_as_of = as_of_date
+        if d_as_of and not isinstance(d_as_of, datetime.date):
+            d_as_of = datetime.date.fromisoformat(str(d_as_of).split('T')[0])
+        elif not d_as_of:
+            d_as_of = timezone.now().date()
+
+        bank_ledger = Ledger.objects.get(id=bank_ledger_id, company=company)
+
+        # 1. Authoritative Book Ledger Balance as of cutoff date
+        book_balance = cls.get_bank_balance_as_of(bank_ledger, cutoff_date=d_as_of)
+
+        # 2. Reconciled vouchers set up to cutoff date
+        rec_voucher_ids = set(
+            BankTransaction.objects.filter(
+                company=company,
+                bank_ledger=bank_ledger,
+                status='RECONCILED',
+                matched_voucher__isnull=False,
+                transaction_date__lte=d_as_of
+            ).values_list('matched_voucher_id', flat=True)
+        )
+
+        # 3. Unreconciled book entries up to cutoff date
+        unrec_entries = LedgerEntry.objects.filter(
+            ledger=bank_ledger,
+            voucher__company=company,
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
+            voucher__voucher_date__lte=d_as_of
+        ).exclude(voucher_id__in=rec_voucher_ids).exclude(
+            voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
+        ).select_related('voucher', 'voucher__party_ledger').order_by('voucher__voucher_date', 'voucher__voucher_number')
+
+        unpresented_payments_list = []
+        uncleared_deposits_list = []
+        tot_unpresented = Decimal('0.00')
+        tot_uncleared = Decimal('0.00')
+
+        for entry in unrec_entries:
+            v = entry.voucher
+            party_name = v.party_ledger.name if v.party_ledger else "Direct Entry"
+            # Credit to Bank in books = Money paid / Cheque issued by company
+            if entry.credit_amount > Decimal('0.00'):
+                unpresented_payments_list.append({
+                    "voucher_id": str(v.id),
+                    "voucher_number": v.voucher_number,
+                    "voucher_date": str(v.voucher_date),
+                    "voucher_type": v.voucher_type,
+                    "party_name": party_name,
+                    "amount": str(entry.credit_amount),
+                    "narration": v.narration
+                })
+                tot_unpresented += entry.credit_amount
+            # Debit to Bank in books = Money received / Cheque deposited by company
+            elif entry.debit_amount > Decimal('0.00'):
+                uncleared_deposits_list.append({
+                    "voucher_id": str(v.id),
+                    "voucher_number": v.voucher_number,
+                    "voucher_date": str(v.voucher_date),
+                    "voucher_type": v.voucher_type,
+                    "party_name": party_name,
+                    "amount": str(entry.debit_amount),
+                    "narration": v.narration
+                })
+                tot_uncleared += entry.debit_amount
+
+        # 4. Unreconciled bank statement transactions up to cutoff date
+        unrec_statement_txs = BankTransaction.objects.filter(
+            company=company,
+            bank_ledger=bank_ledger,
+            transaction_date__lte=d_as_of,
+            is_excluded=False
+        ).exclude(status__in=['RECONCILED', 'IGNORED']).order_by('transaction_date')
+
+        unrecorded_bank_credits_list = []
+        unrecorded_bank_debits_list = []
+        tot_unrecorded_credits = Decimal('0.00')
+        tot_unrecorded_debits = Decimal('0.00')
+
+        for tx in unrec_statement_txs:
+            # Statement credit = Money received in bank but not yet entered in books
+            if tx.credit_amount > Decimal('0.00'):
+                unrecorded_bank_credits_list.append({
+                    "transaction_id": str(tx.id),
+                    "transaction_date": str(tx.transaction_date),
+                    "description": tx.description,
+                    "amount": str(tx.credit_amount),
+                    "reference_number": tx.reference_number
+                })
+                tot_unrecorded_credits += tx.credit_amount
+            # Statement debit = Money deducted by bank (e.g. charges/EMI) not yet entered in books
+            elif tx.debit_amount > Decimal('0.00'):
+                unrecorded_bank_debits_list.append({
+                    "transaction_id": str(tx.id),
+                    "transaction_date": str(tx.transaction_date),
+                    "description": tx.description,
+                    "amount": str(tx.debit_amount),
+                    "reference_number": tx.reference_number
+                })
+                tot_unrecorded_debits += tx.debit_amount
+
+        # 5. Determine Actual Statement Closing Balance (Passbook)
+        latest_tx = BankTransaction.objects.filter(
+            company=company,
+            bank_ledger=bank_ledger,
+            transaction_date__lte=d_as_of,
+            is_excluded=False
+        ).exclude(balance__isnull=True).order_by('-transaction_date', '-created_at').first()
+
+        statement_balance = Decimal('0.00')
+        if latest_tx and latest_tx.balance is not None:
+            statement_balance = latest_tx.balance
+        else:
+            stmt = BankStatementImport.objects.filter(
+                company=company,
+                bank_ledger=bank_ledger,
+                statement_end_date__lte=d_as_of,
+                is_excluded=False
+            ).order_by('-statement_end_date', '-created_at').first()
+            if stmt and stmt.closing_balance is not None:
+                statement_balance = stmt.closing_balance
+
+        # 6. Compute Reconciled Balance
+        # B_reconciled = B_books + Unpresented Payments + Unrecorded Credits - Uncleared Deposits - Unrecorded Debits
+        reconciled_balance = (
+            book_balance + tot_unpresented + tot_unrecorded_credits - tot_uncleared - tot_unrecorded_debits
+        ).quantize(Decimal('0.01'))
+
+        variance = abs(reconciled_balance - statement_balance).quantize(Decimal('0.01'))
+        is_reconciled = (variance <= Decimal('0.01'))
+
+        return {
+            "company_name": company.name,
+            "bank_account_name": bank_ledger.name,
+            "bank_account_number": bank_ledger.bank_account_number or "",
+            "as_of_date": d_as_of.isoformat(),
+            "balance_as_per_books": str(book_balance),
+            "additions": {
+                "unpresented_payments": {
+                    "total": str(tot_unpresented),
+                    "count": len(unpresented_payments_list),
+                    "items": unpresented_payments_list,
+                    "description": "Cheques issued / outward payments recorded in books but not yet presented/cleared in bank."
+                },
+                "unrecorded_bank_credits": {
+                    "total": str(tot_unrecorded_credits),
+                    "count": len(unrecorded_bank_credits_list),
+                    "items": unrecorded_bank_credits_list,
+                    "description": "Direct customer deposits / interest credited by bank but not yet entered in books."
+                },
+                "total_additions": str(tot_unpresented + tot_unrecorded_credits)
+            },
+            "deductions": {
+                "uncleared_deposits": {
+                    "total": str(tot_uncleared),
+                    "count": len(uncleared_deposits_list),
+                    "items": uncleared_deposits_list,
+                    "description": "Cheques received / inward receipts recorded in books but not yet credited/cleared by bank."
+                },
+                "unrecorded_bank_debits": {
+                    "total": str(tot_unrecorded_debits),
+                    "count": len(unrecorded_bank_debits_list),
+                    "items": unrecorded_bank_debits_list,
+                    "description": "Bank charges / direct debits processed by bank but not yet entered in books."
+                },
+                "total_deductions": str(tot_uncleared + tot_unrecorded_debits)
+            },
+            "reconciled_balance": str(reconciled_balance),
+            "actual_statement_balance": str(statement_balance),
+            "variance": str(variance),
+            "is_reconciled": is_reconciled,
+            "reconciliation_status": "PERFECTLY_RECONCILED" if is_reconciled else "VARIANCE_DETECTED"
+        }
+
+    @classmethod
     @transaction.atomic
     def exclude_transaction(cls, bank_tx: BankTransaction, reason: str = "User excluded from books", user=None) -> Dict[str, Any]:
         """

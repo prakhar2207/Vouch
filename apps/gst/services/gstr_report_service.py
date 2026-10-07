@@ -179,17 +179,19 @@ class GSTRReportService:
             if v.voucher_type in ['CREDIT_NOTE', 'DEBIT_NOTE']:
                 # Table 9B: Credit / Debit Notes
                 nt_type = 'C' if v.voucher_type == 'CREDIT_NOTE' else 'D'
+                orig_num = v.original_invoice.voucher_number if v.original_invoice else (v.reference_number or v.voucher_number)
+                orig_dt = v.original_invoice.voucher_date.strftime('%d-%m-%Y') if v.original_invoice else v.voucher_date.strftime('%d-%m-%Y')
                 note_obj = {
                     "nt_num": v.voucher_number,
                     "nt_dt": v.voucher_date.strftime('%d-%m-%Y'),
                     "ntty": nt_type,
                     "val": float(v.total_amount),
                     "pos": pos,
-                    "rchrg": "N",
+                    "rchrg": "Y" if getattr(v, "is_reverse_charge", False) else "N",
                     "p_gst": "N",
                     "itms": inv_items,
-                    "inum": v.reference_number or v.voucher_number,
-                    "idt": v.voucher_date.strftime('%d-%m-%Y'),
+                    "inum": orig_num,
+                    "idt": orig_dt,
                 }
                 if is_registered_b2b:
                     cdnr_by_gstin[party_gstin].append(note_obj)
@@ -209,7 +211,7 @@ class GSTRReportService:
                     "idt": v.voucher_date.strftime('%d-%m-%Y'),
                     "val": float(v.total_amount),
                     "pos": pos,
-                    "rchrg": "N",
+                    "rchrg": "Y" if getattr(v, "is_reverse_charge", False) else "N",
                     "inv_typ": "R",
                     "itms": inv_items
                 }
@@ -281,6 +283,100 @@ class GSTRReportService:
             ]
         }
 
+        # -------------------------------------------------------------
+        # Table 11A: Tax on Advances Received (Rule 50)
+        # -------------------------------------------------------------
+        from apps.accounting.models import PaymentAllocation
+        advance_vouchers = Voucher.objects.filter(
+            company=company,
+            is_advance=True,
+            voucher_type='RECEIPT',
+            voucher_date__gte=start_date,
+            voucher_date__lte=end_date,
+            status__in=EffectiveVoucherService.ACTIVE_STATUSES
+        ).select_related('party_ledger')
+
+        at_by_pos = defaultdict(lambda: defaultdict(lambda: {
+            "ad_amt": Decimal('0.00'), "iamt": Decimal('0.00'), "camt": Decimal('0.00'), "samt": Decimal('0.00'), "csamt": Decimal('0.00')
+        }))
+
+        for av in advance_vouchers:
+            pos = (av.party_ledger.state_code if av.party_ledger and av.party_ledger.state_code else company_state).zfill(2)
+            rate = av.advance_tax_rate or Decimal('18.00')
+            at_by_pos[pos][rate]["ad_amt"] += av.total_amount
+            at_by_pos[pos][rate]["iamt"] += av.advance_igst
+            at_by_pos[pos][rate]["camt"] += av.advance_cgst
+            at_by_pos[pos][rate]["samt"] += av.advance_sgst
+
+        at_list = []
+        for pos, rates in at_by_pos.items():
+            sply_ty = "INTRA" if pos == company_state else "INTER"
+            itms = []
+            for rate, vals in rates.items():
+                itms.append({
+                    "rt": float(rate),
+                    "ad_amt": float(vals["ad_amt"]),
+                    "iamt": float(vals["iamt"]),
+                    "camt": float(vals["camt"]),
+                    "samt": float(vals["samt"]),
+                    "csamt": 0.0
+                })
+            at_list.append({
+                "pos": pos,
+                "sply_ty": sply_ty,
+                "itms": itms
+            })
+
+        # -------------------------------------------------------------
+        # Table 11B: Tax on Advances Adjusted against subsequent Invoices
+        # -------------------------------------------------------------
+        adjusted_allocations = PaymentAllocation.objects.filter(
+            company=company,
+            payment_voucher__is_advance=True,
+            invoice_voucher__voucher_date__gte=start_date,
+            invoice_voucher__voucher_date__lte=end_date,
+            invoice_voucher__status__in=EffectiveVoucherService.ACTIVE_STATUSES
+        ).select_related('payment_voucher', 'invoice_voucher', 'payment_voucher__party_ledger')
+
+        atadj_by_pos = defaultdict(lambda: defaultdict(lambda: {
+            "ad_amt": Decimal('0.00'), "iamt": Decimal('0.00'), "camt": Decimal('0.00'), "samt": Decimal('0.00'), "csamt": Decimal('0.00')
+        }))
+
+        for alloc in adjusted_allocations:
+            pv = alloc.payment_voucher
+            pos = (pv.party_ledger.state_code if pv.party_ledger and pv.party_ledger.state_code else company_state).zfill(2)
+            rate = pv.advance_tax_rate or Decimal('18.00')
+            adj_amt = alloc.allocated_amount
+            adj_tax = alloc.adjusted_advance_tax
+            is_intra = (pos == company_state)
+            adj_cgst = (adj_tax / Decimal('2.00')).quantize(Decimal('0.01')) if is_intra else Decimal('0.00')
+            adj_sgst = (adj_tax - adj_cgst) if is_intra else Decimal('0.00')
+            adj_igst = adj_tax if not is_intra else Decimal('0.00')
+
+            atadj_by_pos[pos][rate]["ad_amt"] += adj_amt
+            atadj_by_pos[pos][rate]["iamt"] += adj_igst
+            atadj_by_pos[pos][rate]["camt"] += adj_cgst
+            atadj_by_pos[pos][rate]["samt"] += adj_sgst
+
+        atadj_list = []
+        for pos, rates in atadj_by_pos.items():
+            sply_ty = "INTRA" if pos == company_state else "INTER"
+            itms = []
+            for rate, vals in rates.items():
+                itms.append({
+                    "rt": float(rate),
+                    "ad_amt": float(vals["ad_amt"]),
+                    "iamt": float(vals["iamt"]),
+                    "camt": float(vals["camt"]),
+                    "samt": float(vals["samt"]),
+                    "csamt": 0.0
+                })
+            atadj_list.append({
+                "pos": pos,
+                "sply_ty": sply_ty,
+                "itms": itms
+            })
+
         # Return full GSTR-1 payload conforming to GSTN schema
         return {
             "gstin": company.gstin or "09AAACB1234C1Z1",
@@ -290,6 +386,8 @@ class GSTRReportService:
             "b2b": b2b_list,
             "b2cs": b2cs_list,
             "cdnr": cdnr_list,
+            "at": at_list,
+            "atadj": atadj_list,
             "hsn": {"data": hsn_list},
             "doc_issue": doc_issue,
             "summary": {
@@ -299,6 +397,8 @@ class GSTRReportService:
                 "b2b_invoices_count": sum([len(invs) for invs in b2b_by_gstin.values()]),
                 "b2cs_entries_count": len(b2cs_list),
                 "cdnr_count": sum([len(notes) for notes in cdnr_by_gstin.values()]),
+                "advances_received_count": len(at_list),
+                "advances_adjusted_count": len(atadj_list)
             }
         }
 
@@ -335,12 +435,19 @@ class GSTRReportService:
             voucher__voucher_date__gte=start_date,
             voucher__voucher_date__lte=end_date,
             voucher__status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        )
+        ).select_related('voucher')
         
         pur_txval = sum([i.taxable_amount for i in purchase_items], Decimal('0.00'))
         itc_igst = sum([i.igst_amount for i in purchase_items], Decimal('0.00'))
         itc_cgst = sum([i.cgst_amount for i in purchase_items], Decimal('0.00'))
         itc_sgst = sum([i.sgst_amount for i in purchase_items], Decimal('0.00'))
+
+        # Separate RCM Inward Supplies (Section 9(3)/9(4) Reverse Charge)
+        rcm_purchase_items = [i for i in purchase_items if getattr(i.voucher, 'is_reverse_charge', False)]
+        rcm_txval = sum([i.taxable_amount for i in rcm_purchase_items], Decimal('0.00'))
+        rcm_igst = sum([i.igst_amount for i in rcm_purchase_items], Decimal('0.00'))
+        rcm_cgst = sum([i.cgst_amount for i in rcm_purchase_items], Decimal('0.00'))
+        rcm_sgst = sum([i.sgst_amount for i in rcm_purchase_items], Decimal('0.00'))
 
         # Fallback / Dual Check: Read tax entries from LedgerEntry level if item-level tax is unpopulated
         from apps.accounting.models import LedgerEntry
@@ -534,6 +641,15 @@ class GSTRReportService:
                 "sgst": float(effective_sales_sgst),
                 "cess": 0.0,
             },
+            "table_3_1_d_rcm_supplies": {
+                "nature": "Inward supplies liable to reverse charge (Section 9(3) / 9(4))",
+                "taxable_value": float(rcm_txval),
+                "total_tax": float(rcm_igst + rcm_cgst + rcm_sgst),
+                "igst": float(rcm_igst),
+                "cgst": float(rcm_cgst),
+                "sgst": float(rcm_sgst),
+                "cess": 0.0,
+            },
             "table_4_eligible_itc": {
                 "nature": "All other ITC (Inward supplies from registered persons)",
                 "taxable_value": float(pur_txval),
@@ -542,6 +658,15 @@ class GSTRReportService:
                 "igst": float(effective_itc_igst),
                 "cgst": float(effective_itc_cgst),
                 "sgst": float(effective_itc_sgst),
+                "cess": 0.0,
+            },
+            "table_4_a_3_rcm_itc": {
+                "nature": "Inward supplies liable to reverse charge (other than 1 & 2 above)",
+                "taxable_value": float(rcm_txval),
+                "total_itc": float(rcm_igst + rcm_cgst + rcm_sgst),
+                "igst": float(rcm_igst),
+                "cgst": float(rcm_cgst),
+                "sgst": float(rcm_sgst),
                 "cess": 0.0,
             },
             "net_tax_payable": {

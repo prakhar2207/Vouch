@@ -93,6 +93,11 @@ export default function SalesPage() {
   const router = useRouter();
   const { toast } = useToast();
   const [isPostingImpactOpen, setIsPostingImpactOpen] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const { workingDate, registerSaveHandler, registerAltCCallback, registerDeleteLineHandler, registerEditMasterHandler, setIsCalculatorOpen } = useShortcuts();
   const { activeFY, isReadOnly } = useFinancialYear();
@@ -558,7 +563,8 @@ export default function SalesPage() {
           if (!itemCopy.category_id) delete itemCopy.category_id;
           return itemCopy;
         }),
-        post_immediately: true
+        post_immediately: true,
+        is_reverse_charge: false,
       };
       if (buyerName.trim()) payload.buyer_name = buyerName.trim();
       if (buyerPhone.trim()) payload.buyer_phone = buyerPhone.trim();
@@ -1318,7 +1324,7 @@ export default function SalesPage() {
             </Link>
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold">New Sales Invoice</h1>
-              {activeFY && (
+              {isMounted && activeFY && (
                 <div className="text-xs text-muted-foreground mt-0.5">
                   Financial Year: <span className="font-semibold text-foreground">{activeFY.name}</span> ({activeFY.start_date} ~ {activeFY.end_date})
                 </div>
@@ -1342,7 +1348,7 @@ export default function SalesPage() {
         <div className="bg-card border border-border rounded-xl shadow-sm p-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
             <h2 className="text-lg font-semibold text-foreground">Billing Details</h2>
-            {seqPreview && (
+            {isMounted && seqPreview && (
               <span className={`text-xs font-mono font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 w-fit ${
                 enableManualInvoice 
                   ? 'bg-amber-500/15 text-amber-500 border-amber-500/30' 
@@ -1448,9 +1454,9 @@ export default function SalesPage() {
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-sm font-medium text-muted-foreground">
-                  Invoice Date {activeFY && <span className="text-muted-foreground font-normal font-mono">({activeFY.code})</span>}
+                  Invoice Date {isMounted && activeFY && <span className="text-muted-foreground font-normal font-mono">({activeFY.code})</span>}
                 </label>
-                {activeFY && (
+                {isMounted && activeFY && (
                   <span className="text-[11px] text-muted-foreground font-mono">
                     FY: {activeFY.start_date} ~ {activeFY.end_date}
                   </span>

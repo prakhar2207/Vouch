@@ -17,6 +17,11 @@ from .b2b_views import (
     InwardVoucherInboxView, InwardVoucherDetailView, InwardVoucherAcceptView, InwardVoucherRejectView
 )
 from .tally_views import TallyExportAPIView
+from .import_views import (
+    UniversalImportPreviewAPIView,
+    UniversalImportExecuteAPIView,
+    UniversalImportTemplateAPIView,
+)
 from .claim_views import (
     InvoiceClaimPreviewAPIView,
     InvoicePDFDownloadAPIView,
@@ -77,8 +82,11 @@ urlpatterns = [
     path('vouchers/<uuid:voucher_id>/dispatch-details/', InvoiceDispatchDetailsAPIView.as_view(), name='invoice_dispatch_details'),
 
 
-    # Tally Export
+    # Tally Export & Universal Import Hub
     path('export/tally/xml/', TallyExportAPIView.as_view(), name='export_tally_xml'),
+    path('import/preview/', UniversalImportPreviewAPIView.as_view(), name='import_preview'),
+    path('import/execute/', UniversalImportExecuteAPIView.as_view(), name='import_execute'),
+    path('import/templates/', UniversalImportTemplateAPIView.as_view(), name='import_templates'),
 
     # Tax Ledgers Auto-healing & Sync
     path('sync-tax-ledgers/', SyncTaxLedgersAPIView.as_view(), name='sync_tax_ledgers'),
@@ -104,6 +112,8 @@ urlpatterns = [
     path('banking/mappings/', apps.accounting.banking_views.PartyMappingListAPIView.as_view(), name='banking_mappings'),
     path('banking/mappings/<uuid:pk>/', apps.accounting.banking_views.PartyMappingListAPIView.as_view(), name='banking_mapping_detail'),
     path('banking/summary/', apps.accounting.banking_views.BankSummaryAPIView.as_view(), name='banking_summary'),
+    path('banking/brs/', apps.accounting.banking_views.BankReconciliationStatementAPIView.as_view(), name='banking_brs'),
+    path('banking/brs/<uuid:bank_ledger_id>/', apps.accounting.banking_views.BankReconciliationStatementAPIView.as_view(), name='banking_brs_detail'),
 
     # Accounting Health & Vouch Assistant
     path('health/', apps.accounting.health_views.AccountingHealthAPIView.as_view(), name='accounting_health'),
@@ -131,5 +141,11 @@ urlpatterns = [
 
     # Multi-Entity Consolidated Financials & Group MIS
     path('consolidated-financials/', apps.accounting.inter_company_views.ConsolidatedFinancialsAPIView.as_view(), name='consolidated_financials'),
+
+    # Accounting Books Period Lock & Statutory Freeze
+    path('period-lock/', apps.accounting.period_views.PeriodLockAPIView.as_view(), name='period_lock'),
+
+    # Statutory TDS Quarterly Audit & Form 26Q Summary
+    path('tds/summary/', apps.accounting.period_views.TDSSummaryAPIView.as_view(), name='tds_summary'),
 ]
 

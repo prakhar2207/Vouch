@@ -158,3 +158,78 @@ class SplitCompanyExecuteAPIView(APIView):
             return Response({"success": False, "error": str(ve.message if hasattr(ve, 'message') else ve)}, status=400)
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
+
+
+class PeriodLockAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        company = Company.objects.filter(users__user=request.user).first()
+        if not company:
+            return Response({"success": False, "error": "Company not found"}, status=404)
+
+        settings = getattr(company, 'settings', None)
+        lock_date = getattr(settings, 'books_lock_date', None) if settings else None
+
+        return Response({
+            "success": True,
+            "company_name": company.name,
+            "books_lock_date": str(lock_date) if lock_date else None,
+            "is_locked": lock_date is not None
+        })
+
+    def post(self, request):
+        company = Company.objects.filter(users__user=request.user).first()
+        if not company:
+            return Response({"success": False, "error": "Company not found"}, status=404)
+
+        from apps.companies.models import UserCompany, CompanySettings
+        user_company = UserCompany.objects.filter(user=request.user, company=company).first()
+        if not user_company or user_company.role not in ['ADMIN', 'OWNER']:
+            return Response({"success": False, "error": "Only company Administrators or Owners can manage period lock dates."}, status=403)
+
+        lock_date_val = request.data.get('books_lock_date')
+        settings, _ = CompanySettings.objects.get_or_create(company=company)
+
+        if lock_date_val:
+            try:
+                parsed_date = datetime.date.fromisoformat(str(lock_date_val).split('T')[0])
+                settings.books_lock_date = parsed_date
+                settings.save(update_fields=['books_lock_date'])
+                return Response({
+                    "success": True,
+                    "message": f"Accounting books successfully locked up to {parsed_date}.",
+                    "books_lock_date": str(parsed_date),
+                    "is_locked": True
+                })
+            except Exception as e:
+                return Response({"success": False, "error": f"Invalid date format: {str(e)}"}, status=400)
+        else:
+            settings.books_lock_date = None
+            settings.save(update_fields=['books_lock_date'])
+            return Response({
+                "success": True,
+                "message": "Accounting books lock removed.",
+                "books_lock_date": None,
+                "is_locked": False
+            })
+
+
+class TDSSummaryAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        company = Company.objects.filter(users__user=request.user).first()
+        if not company:
+            return Response({"success": False, "error": "Company not found"}, status=404)
+
+        from apps.accounting.services.tds_service import TDSService
+        from apps.accounting.models import FinancialYear
+
+        fy_id = request.query_params.get('financial_year_id')
+        quarter = request.query_params.get('quarter')
+
+        fy = FinancialYear.objects.filter(id=fy_id, company=company).first() if fy_id else None
+        summary = TDSService.generate_tds_summary(company=company, financial_year=fy, quarter=quarter)
+
+        return Response({"success": True, "data": summary})

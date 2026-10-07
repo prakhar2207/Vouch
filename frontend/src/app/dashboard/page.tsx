@@ -203,6 +203,7 @@ export default function Dashboard() {
   const [voucherSearch, setVoucherSearch] = useState<string>("");
   const [dailyFlowDays, setDailyFlowDays] = useState<7 | 14 | 30>(14);
   const [dailyFlowMode, setDailyFlowMode] = useState<"FLOW" | "NET">("FLOW");
+  const [isMigrationBannerDismissed, setIsMigrationBannerDismissed] = useState(false);
   const [hasMounted, setHasMounted] = useState(false);
 
   useEffect(() => {
@@ -744,6 +745,52 @@ export default function Dashboard() {
             </Link>
           </div>
         </div>
+
+        {/* Universal Migration Banner for New / Empty Books */}
+        {!hasTransactions && !isMigrationBannerDismissed && (
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-600/10 via-indigo-600/10 to-purple-600/10 border border-blue-500/30 p-5 sm:p-6 shadow-sm animate-in fade-in">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 relative z-10">
+              <div className="space-y-2 max-w-2xl">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Universal Migration Hub</span>
+                </div>
+                <h2 className="text-lg sm:text-xl font-black text-foreground tracking-tight">
+                  Switching to Vouch? Import your existing books in 1 minute.
+                </h2>
+                <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                  Seamlessly bring your existing customers, suppliers, inventory items, and opening balances. 
+                  Our fault-tolerant parser automatically detects and ingests files from <strong>Tally</strong>, <strong>Vyapar</strong>, <strong>myBillBook</strong>, <strong>Zoho Books</strong>, and <strong>Excel</strong>.
+                </p>
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-card/80 border border-border text-foreground">Tally XML</span>
+                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-card/80 border border-border text-foreground">Vyapar Excel/CSV</span>
+                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-card/80 border border-border text-foreground">myBillBook</span>
+                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-card/80 border border-border text-foreground">Zoho Books</span>
+                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-card/80 border border-border text-foreground">Custom Excel / CSV</span>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row md:flex-col lg:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
+                <Link
+                  href="/import?welcome=1"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/20 transition-all cursor-pointer"
+                >
+                  <CloudUpload className="w-4 h-4" />
+                  <span>Launch Importer</span>
+                  <ArrowRight className="w-4 h-4" />
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setIsMigrationBannerDismissed(true)}
+                  className="inline-flex items-center justify-center px-3 py-2 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ========================================================= */}
         {/* PILLAR 1: 💰 MONEY (Liquidity & Working Capital)          */}

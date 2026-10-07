@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 from django.db import models
 from django.db.models import Q
 from apps.companies.models import Company
@@ -133,6 +134,21 @@ class Voucher(models.Model):
     external_invoice_number = models.CharField(max_length=100, null=True, blank=True, db_index=True)
     reversal_voucher = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='reverses_vouchers')
     corrects_voucher = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='corrected_by_vouchers')
+    original_invoice = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='credit_debit_notes', help_text="Original invoice referenced by Credit/Debit Note")
+    is_reverse_charge = models.BooleanField(default=False, db_default=False, db_index=True, help_text="Reverse Charge Mechanism (RCM) applicable under GST Section 9(3) or 9(4)")
+    tds_section = models.CharField(max_length=20, null=True, blank=True, help_text="TDS section applied (e.g. 194C, 194J, 194Q)")
+    tds_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="TDS rate percentage applied")
+    tds_amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'), db_default=Decimal('0.00'), help_text="Total TDS deducted on this voucher")
+    tds_ledger = models.ForeignKey('ledgers.Ledger', on_delete=models.SET_NULL, null=True, blank=True, related_name='tds_vouchers', help_text="Ledger tracking TDS Payable for this voucher")
+    
+    # Statutory Advance Receipt & GST Adjustment Fields (GST Section 31(3)(d) & GSTR-1 Table 11)
+    is_advance = models.BooleanField(default=False, db_default=False, db_index=True, help_text="True if this receipt/payment represents an Advance subject to GST advance rules")
+    advance_tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'), db_default=Decimal('0.00'), null=True, blank=True, help_text="GST rate applicable on the advance")
+    advance_tax_amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'), db_default=Decimal('0.00'), help_text="Total GST tax component included in advance")
+    advance_cgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'), db_default=Decimal('0.00'))
+    advance_sgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'), db_default=Decimal('0.00'))
+    advance_igst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'), db_default=Decimal('0.00'))
+    advance_adjusted_amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'), db_default=Decimal('0.00'), help_text="Cumulative advance knocked off against tax invoices")
     
     # Revision / History relationships (P0 & P1)
     revision_of = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='revisions')
@@ -292,6 +308,7 @@ class PaymentAllocation(models.Model):
     payment_voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='allocations_made')
     invoice_voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='allocations_received')
     allocated_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    adjusted_advance_tax = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'), db_default=Decimal('0.00'), help_text="GST advance tax knocked off by this allocation for GSTR-1 Table 11B")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

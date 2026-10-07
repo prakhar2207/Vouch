@@ -45,12 +45,44 @@ class VoucherService:
         return cogs_ledger, inv_ledger
 
     @staticmethod
+    def _get_or_create_round_off_ledger(company):
+        """
+        Provisions or fetches the standard Round Off ledger (Indirect Expenses).
+        """
+        indirect_grp = LedgerGroup.objects.filter(company=company, name__iexact="Indirect Expenses").first() or \
+                       LedgerGroup.objects.filter(company=company, name__icontains="Indirect Expense").first()
+        if not indirect_grp:
+            indirect_grp, _ = LedgerGroup.objects.get_or_create(
+                company=company,
+                name="Indirect Expenses",
+                defaults={"nature": "EXPENSE"}
+            )
+        round_off = Ledger.objects.filter(company=company, name__iexact="Round Off").first()
+        if not round_off:
+            round_off = Ledger.objects.create(
+                company=company,
+                group=indirect_grp,
+                name="Round Off",
+                ledger_type="ROUND_OFF"
+            )
+        return round_off
+
+    @staticmethod
     @transaction.atomic
-    def post_voucher(voucher: Voucher, process_stock=True, force_duplicate=False):
+    def post_voucher(voucher: Voucher, process_stock=True, force_duplicate=False, override_period_lock=False):
         if voucher.status == 'POSTED':
             raise ValidationError("Voucher is already posted.")
         if voucher.status == 'CANCELLED':
             raise ValidationError("Cannot post a cancelled voucher.")
+
+        # 0. Enforce Statutory Period Lock & Closed Financial Year Invariants
+        if voucher.financial_year and voucher.financial_year.is_closed and not override_period_lock:
+            raise ValidationError(f"Cannot post voucher into closed financial year '{voucher.financial_year.name}'.")
+
+        company_settings = getattr(voucher.company, 'settings', None)
+        lock_date = getattr(company_settings, 'books_lock_date', None) if company_settings else None
+        if lock_date and voucher.voucher_date <= lock_date and not override_period_lock:
+            raise ValidationError(f"Accounting books are locked up to {lock_date}. Cannot post vouchers on or before this date.")
 
         # Real-time Deduplication Gatekeeper
         if not force_duplicate and voucher.voucher_type in ('RECEIPT', 'PAYMENT', 'SALES', 'PURCHASE'):
@@ -89,12 +121,60 @@ class VoucherService:
         
         # Enforce Double-Entry Invariant: Sum(Debits) == Sum(Credits)
         if total_debit != total_credit:
+            diff = (total_debit - total_credit).quantize(Decimal('0.01'))
+            # Auto-balance fractional rounding difference (up to ₹1.00) using Round Off ledger
+            # Providing Tally-grade resilience for line-item rounding nuances while strictly ensuring zero-variance
+            if abs(diff) <= Decimal('1.00') and voucher.voucher_type in ('SALES', 'PURCHASE', 'CREDIT_NOTE', 'DEBIT_NOTE', 'JOURNAL'):
+                round_off_ledger = VoucherService._get_or_create_round_off_ledger(voucher.company)
+                if diff > Decimal('0.00'):
+                    # Total Debit > Total Credit by diff -> add Credit to Round Off
+                    LedgerEntry.objects.create(
+                        voucher=voucher,
+                        company=voucher.company,
+                        ledger=round_off_ledger,
+                        debit_amount=Decimal('0.00'),
+                        credit_amount=diff,
+                        narration="Auto-balanced rounding difference"
+                    )
+                else:
+                    # Total Credit > Total Debit by abs(diff) -> add Debit to Round Off
+                    LedgerEntry.objects.create(
+                        voucher=voucher,
+                        company=voucher.company,
+                        ledger=round_off_ledger,
+                        debit_amount=abs(diff),
+                        credit_amount=Decimal('0.00'),
+                        narration="Auto-balanced rounding difference"
+                    )
+                entries = list(voucher.ledger_entries.select_related('ledger').all())
+                total_debit = sum(entry.debit_amount for entry in entries)
+                total_credit = sum(entry.credit_amount for entry in entries)
+
+        if total_debit != total_credit:
             voucher.status = 'DRAFT'
             voucher.save(update_fields=['status'])
             raise ValidationError(
                 f"Double-entry invariant violated for {voucher.voucher_number}. "
                 f"Total Debit ({total_debit}) does not equal Total Credit ({total_credit})."
             )
+
+        # Credit Note / Debit Note safeguard against original invoice
+        if voucher.voucher_type in ('CREDIT_NOTE', 'DEBIT_NOTE') and voucher.original_invoice:
+            orig = voucher.original_invoice
+            from django.db.models import Sum
+            prior_reversals = Voucher.objects.filter(
+                company=voucher.company,
+                original_invoice=orig,
+                voucher_type=voucher.voucher_type,
+                status='POSTED'
+            ).exclude(id=voucher.id).aggregate(tot=Sum('total_amount'))['tot'] or Decimal('0.00')
+            if (prior_reversals + voucher.total_amount) > orig.total_amount and not getattr(voucher, '_allow_excess_reversal', False):
+                voucher.status = 'DRAFT'
+                voucher.save(update_fields=['status'])
+                raise ValidationError(
+                    f"Cumulative {voucher.get_voucher_type_display()} amount (₹{prior_reversals + voucher.total_amount}) "
+                    f"exceeds original invoice #{orig.voucher_number} total (₹{orig.total_amount})."
+                )
             
         # Ensure company is populated on all ledger entries
         for entry in entries:
@@ -151,10 +231,19 @@ class VoucherService:
 
     @staticmethod
     @transaction.atomic
-    def cancel_voucher(voucher: Voucher, user=None):
+    def cancel_voucher(voucher: Voucher, user=None, override_period_lock=False):
         if voucher.status not in ['POSTED', 'VALIDATING']:
             raise ValidationError(f"Only posted or validating vouchers can be cancelled (current status: {voucher.status}).")
-            
+
+        # Statutory Period Lock & Closed Financial Year Invariants
+        if voucher.financial_year and voucher.financial_year.is_closed and not override_period_lock:
+            raise ValidationError(f"Cannot cancel vouchers in closed financial year '{voucher.financial_year.name}'.")
+
+        company_settings = getattr(voucher.company, 'settings', None)
+        lock_date = getattr(company_settings, 'books_lock_date', None) if company_settings else None
+        if lock_date and voucher.voucher_date <= lock_date and not override_period_lock:
+            raise ValidationError(f"Accounting books are locked up to {lock_date}. Cannot cancel vouchers on or before this date.")
+
         # 1. Revert Stock
         if voucher.voucher_type in ['SALES', 'PURCHASE']:
             from apps.inventory.services.stock_service import StockService
@@ -510,3 +599,128 @@ class VoucherService:
         locked_ledger.save(update_fields=['current_balance'])
         ledger.current_balance = locked_ledger.current_balance
         return locked_ledger.current_balance
+
+    @staticmethod
+    @transaction.atomic
+    def update_voucher(
+        voucher: Voucher,
+        user=None,
+        voucher_date=None,
+        voucher_number=None,
+        party_ledger=None,
+        narration=None,
+        buyer_details: dict = None,
+        reason: str = "Voucher Revision",
+        override_period_lock: bool = False
+    ) -> Voucher:
+        """
+        Updates voucher header and tracking details atomically.
+        If party or date is altered, affected ledgers' balances are recalculated.
+        If voucher is older than 30 days (historical), triggers balance rebuild for affected ledgers.
+        Enforces closed FY and books_lock_date invariants.
+        Logs comprehensive audit trail.
+        """
+        # Statutory Period Lock & Closed Financial Year Invariants
+        if voucher.financial_year and voucher.financial_year.is_closed and not override_period_lock:
+            raise ValidationError(f"Cannot edit vouchers in closed financial year '{voucher.financial_year.name}'.")
+
+        company_settings = getattr(voucher.company, 'settings', None)
+        lock_date = getattr(company_settings, 'books_lock_date', None) if company_settings else None
+        if lock_date and not override_period_lock:
+            if voucher.voucher_date <= lock_date:
+                raise ValidationError(f"Accounting books are locked up to {lock_date}. Cannot edit vouchers on or before this date.")
+            if voucher_date and voucher_date <= lock_date:
+                raise ValidationError(f"Accounting books are locked up to {lock_date}. Cannot backdate vouchers to or before this date.")
+
+        from apps.audit.services.audit_service import AuditService
+        from apps.accounting.services.balance_rebuild import BalanceRebuildService
+
+        old_snapshot = {
+            "voucher_id": str(voucher.id),
+            "voucher_number": voucher.voucher_number,
+            "voucher_date": str(voucher.voucher_date),
+            "party_ledger_id": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
+            "narration": voucher.narration,
+            "total_amount": str(voucher.total_amount),
+            "status": voucher.status
+        }
+
+        affected_ledger_ids = set(voucher.ledger_entries.values_list('ledger_id', flat=True))
+        if voucher.party_ledger_id:
+            affected_ledger_ids.add(voucher.party_ledger_id)
+
+        update_fields = []
+        is_historical = False
+        if voucher.voucher_date:
+            days_old = (timezone.now().date() - voucher.voucher_date).days
+            if days_old > 30:
+                is_historical = True
+
+        if voucher_date and voucher_date != voucher.voucher_date:
+            voucher.voucher_date = voucher_date
+            update_fields.append('voucher_date')
+            new_days_old = (timezone.now().date() - voucher.voucher_date).days
+            if new_days_old > 30:
+                is_historical = True
+
+        if voucher_number and str(voucher_number).strip() != voucher.voucher_number:
+            v_num_clean = str(voucher_number).strip()
+            if Voucher.objects.filter(company=voucher.company, financial_year=voucher.financial_year, voucher_number__iexact=v_num_clean).exclude(id=voucher.id).exists():
+                raise ValidationError(f'Voucher number "{v_num_clean}" already exists in this financial year.')
+            voucher.voucher_number = v_num_clean
+            voucher.reference_number = v_num_clean
+            update_fields.extend(['voucher_number', 'reference_number'])
+
+        if narration is not None:
+            voucher.narration = str(narration).strip()
+            update_fields.append('narration')
+
+        if party_ledger and party_ledger.id != voucher.party_ledger_id:
+            old_party = voucher.party_ledger
+            voucher.party_ledger = party_ledger
+            update_fields.append('party_ledger')
+            affected_ledger_ids.add(party_ledger.id)
+            if old_party:
+                voucher.ledger_entries.filter(ledger=old_party).update(ledger=party_ledger)
+
+        if buyer_details:
+            for k in ['buyer_name', 'buyer_address', 'buyer_gstin', 'buyer_phone', 'buyer_email', 'buyer_state_code']:
+                if k in buyer_details:
+                    setattr(voucher, k, buyer_details[k])
+                    update_fields.append(k)
+
+        if update_fields:
+            voucher.save(update_fields=list(set(update_fields)))
+
+        # Recalculate or rebuild balances for all affected ledgers
+        for lid in affected_ledger_ids:
+            l = Ledger.objects.filter(id=lid).first()
+            if l:
+                if is_historical:
+                    BalanceRebuildService.rebuild_ledger_balance(l)
+                else:
+                    VoucherService.recalculate_ledger_balance(l)
+
+        AuditService.log_action(
+            company=voucher.company,
+            user=user or voucher.created_by,
+            action='UPDATE',
+            model_name='Voucher',
+            record_id=voucher.id,
+            changes={
+                "reason": reason,
+                "is_historical": is_historical,
+                "before": old_snapshot,
+                "after": {
+                    "voucher_id": str(voucher.id),
+                    "voucher_number": voucher.voucher_number,
+                    "voucher_date": str(voucher.voucher_date),
+                    "party_ledger_id": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
+                    "narration": voucher.narration,
+                    "total_amount": str(voucher.total_amount),
+                    "status": voucher.status
+                }
+            }
+        )
+
+        return voucher

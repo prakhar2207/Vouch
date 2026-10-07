@@ -653,3 +653,35 @@ class BankTransactionToggleDirectionAPIView(APIView):
                 "match_notes": tx.match_notes
             }
         }, status=status.HTTP_200_OK)
+
+
+class BankReconciliationStatementAPIView(APIView):
+    """
+    Statutory Bank Reconciliation Statement (BRS) Endpoint.
+    Generates classical 2-column BRS report for any bank ledger as of a specific date.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, bank_ledger_id=None):
+        company = get_authorized_company(request)
+        target_bank_id = bank_ledger_id or request.query_params.get('bank_ledger_id')
+
+        if not target_bank_id:
+            first_bank = Ledger.objects.filter(company=company, ledger_type__in=['BANK', 'BANK_OD', 'BANK_OCC', 'OD', 'CC'], is_active=True).first()
+            if not first_bank:
+                return Response({"success": False, "error": "No bank accounts found for this company."}, status=status.HTTP_404_NOT_FOUND)
+            target_bank_id = str(first_bank.id)
+
+        as_of_date = request.query_params.get('as_of_date') or request.query_params.get('date')
+
+        try:
+            brs_data = BankReconciliationService.generate_statutory_brs(
+                company=company,
+                bank_ledger_id=target_bank_id,
+                as_of_date=as_of_date
+            )
+            return Response({"success": True, "data": brs_data}, status=status.HTTP_200_OK)
+        except Ledger.DoesNotExist:
+            return Response({"success": False, "error": "Bank ledger not found."}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

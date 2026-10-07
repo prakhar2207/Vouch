@@ -81,6 +81,7 @@ class CompanySettings(models.Model):
     enable_manual_invoice_number = models.BooleanField(default=False)
     enable_advanced_item_creation = models.BooleanField(default=False)
     enforce_credit_limit = models.BooleanField(default=False, help_text="If True, blocks sales when credit limit exceeded; if False, only warns")
+    books_lock_date = models.DateField(null=True, blank=True, help_text="Accounting lock date: vouchers on or prior to this date cannot be created, modified, or cancelled without authorization.")
     document_branding = models.JSONField(default=dict, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 

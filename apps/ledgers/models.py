@@ -59,6 +59,11 @@ class Ledger(models.Model):
     
     is_active = models.BooleanField(default=True)
     is_archived = models.BooleanField(default=False)
+    is_rcm = models.BooleanField(default=False, db_default=False, help_text="True if this ledger is an RCM Tax Liability or RCM ITC ledger")
+    pan = models.CharField(max_length=10, null=True, blank=True, help_text="Party PAN (Permanent Account Number)")
+    tds_applicable = models.BooleanField(default=False, db_default=False, help_text="Whether TDS deduction applies to this ledger/vendor")
+    tds_section = models.CharField(max_length=20, null=True, blank=True, help_text="Default TDS section: 194C, 194J, 194I, 194Q")
+    tds_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="Default TDS rate percentage")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

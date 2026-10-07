@@ -24,10 +24,16 @@ class PurchaseInvoiceService:
         cartage_amount: Decimal = Decimal('0.00'),
         cartage_ledger: Ledger = None,
         exclude_voucher_id = None,
-        round_off: Decimal = None
+        round_off: Decimal = None,
+        is_reverse_charge: bool = False,
+        tds_section: str = None,
+        tds_rate: Decimal = None,
+        tds_amount: Decimal = None,
+        auto_tds: bool = False
     ):
         """
         End-to-End orchestration of a Purchase Invoice.
+        Supports standard purchases and Reverse Charge Mechanism (RCM Section 9(3)/9(4)).
         """
         # 0. Safeguard: Ensure tax ledgers are strictly INPUT tax ledgers (never Output)
         if party_ledger and party_ledger.company_id != company.id:
@@ -108,8 +114,9 @@ class PurchaseInvoiceService:
             voucher_date=v_date,
             party_ledger=party_ledger,
             status='DRAFT',
+            is_reverse_charge=is_reverse_charge,
             created_by=user,
-            narration=f"Purchase from {party_ledger.name if party_ledger else 'Supplier'}" + (f" (Bill #{ext_invoice_num})" if ext_invoice_num else "")
+            narration=f"Purchase from {party_ledger.name if party_ledger else 'Supplier'}" + (f" (Bill #{ext_invoice_num})" if ext_invoice_num else "") + (" [RCM]" if is_reverse_charge else "")
         )
         
         total_invoice_value = Decimal('0.00')
@@ -334,9 +341,13 @@ class PurchaseInvoiceService:
             cartage_amt = Decimal('0.00')
 
         # Round Off calculation:
-        # If manual round_off is explicitly provided: use it!
-        # Otherwise: If decimal value < 0.5 then floor, if >= 0.5 then ceiling
-        unrounded_total = total_invoice_value + cartage_amt
+        # If Reverse Charge (RCM) applies, the supplier does NOT bill or receive the tax.
+        # Party payable is strictly taxable amount + cartage.
+        if is_reverse_charge:
+            unrounded_total = total_taxable_value + cartage_amt
+        else:
+            unrounded_total = total_invoice_value + cartage_amt
+
         custom_round_off = None
         if round_off is not None:
             try:
@@ -358,14 +369,64 @@ class PurchaseInvoiceService:
         voucher.total_amount = rounded_total
         voucher.save(update_fields=['total_amount'])
         
-        # 3. Generate strict Ledger Entries (The Double Entry)
-        # Credit the Supplier (Party) with rounded total payable amount
+        # 3. TDS (Tax Deducted at Source) Deduction Engine
+        from apps.accounting.services.tds_service import TDSService
+        applied_tds_section = tds_section or (getattr(party_ledger, 'tds_section', None) if getattr(party_ledger, 'tds_applicable', False) else None)
+        applied_tds_rate = tds_rate
+        applied_tds_amt = Decimal('0.00')
+
+        if (applied_tds_section or auto_tds or tds_amount is not None):
+            if tds_amount is not None:
+                applied_tds_amt = Decimal(str(tds_amount)).quantize(Decimal('0.01'))
+                applied_tds_section = applied_tds_section or '194C'
+                applied_tds_rate = applied_tds_rate or Decimal('2.00')
+            else:
+                tds_calc = TDSService.calculate_tds(
+                    company=company,
+                    party_ledger=party_ledger,
+                    taxable_amount=total_taxable_value,
+                    section=applied_tds_section,
+                    rate=applied_tds_rate,
+                    voucher_date=v_date,
+                    check_threshold=not bool(tds_section or tds_rate)
+                )
+                if tds_calc['applicable']:
+                    applied_tds_amt = tds_calc['tds_amount']
+                    applied_tds_section = tds_calc['section']
+                    applied_tds_rate = tds_calc['rate']
+
+        party_payable = (rounded_total - applied_tds_amt).quantize(Decimal('0.01'))
+        if party_payable < Decimal('0.00'):
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(f"TDS amount (₹{applied_tds_amt}) cannot exceed invoice total (₹{rounded_total}).")
+
+        tds_payable_ledger = None
+        if applied_tds_amt > Decimal('0.00'):
+            tds_payable_ledger = TDSService.get_or_create_tds_payable_ledger(company, applied_tds_section)
+            voucher.tds_section = applied_tds_section
+            voucher.tds_rate = applied_tds_rate
+            voucher.tds_amount = applied_tds_amt
+            voucher.tds_ledger = tds_payable_ledger
+            voucher.save(update_fields=['tds_section', 'tds_rate', 'tds_amount', 'tds_ledger'])
+
+        # 4. Generate strict Ledger Entries (The Double Entry)
+        # Credit the Supplier (Party) with net payable amount
         LedgerEntry.objects.create(
             voucher=voucher,
             ledger=party_ledger,
             debit_amount=Decimal('0.00'),
-            credit_amount=rounded_total
+            credit_amount=party_payable
         )
+
+        # Credit TDS Payable Ledger if TDS was deducted
+        if applied_tds_amt > Decimal('0.00') and tds_payable_ledger:
+            LedgerEntry.objects.create(
+                voucher=voucher,
+                ledger=tds_payable_ledger,
+                debit_amount=Decimal('0.00'),
+                credit_amount=applied_tds_amt,
+                narration=f"TDS u/s {applied_tds_section} @ {applied_tds_rate}% on bill #{ext_invoice_num or v_num}"
+            )
         
         # Debit the Purchase Account
         LedgerEntry.objects.create(
@@ -375,28 +436,85 @@ class PurchaseInvoiceService:
             credit_amount=Decimal('0.00')
         )
         
-        # Debit Tax Accounts (Input Tax Credit)
-        if total_cgst > 0:
-            LedgerEntry.objects.create(
-                voucher=voucher,
-                ledger=input_cgst_ledger,
-                debit_amount=total_cgst,
-                credit_amount=Decimal('0.00')
-            )
-        if total_sgst > 0:
-            LedgerEntry.objects.create(
-                voucher=voucher,
-                ledger=input_sgst_ledger,
-                debit_amount=total_sgst,
-                credit_amount=Decimal('0.00')
-            )
-        if total_igst > 0:
-            LedgerEntry.objects.create(
-                voucher=voucher,
-                ledger=input_igst_ledger,
-                debit_amount=total_igst,
-                credit_amount=Decimal('0.00')
-            )
+        if not is_reverse_charge:
+            # Standard Inward ITC: Debit Tax Accounts (Input Tax Credit)
+            if total_cgst > 0:
+                LedgerEntry.objects.create(
+                    voucher=voucher,
+                    ledger=input_cgst_ledger,
+                    debit_amount=total_cgst,
+                    credit_amount=Decimal('0.00')
+                )
+            if total_sgst > 0:
+                LedgerEntry.objects.create(
+                    voucher=voucher,
+                    ledger=input_sgst_ledger,
+                    debit_amount=total_sgst,
+                    credit_amount=Decimal('0.00')
+                )
+            if total_igst > 0:
+                LedgerEntry.objects.create(
+                    voucher=voucher,
+                    ledger=input_igst_ledger,
+                    debit_amount=total_igst,
+                    credit_amount=Decimal('0.00')
+                )
+        else:
+            # Reverse Charge Mechanism (RCM):
+            # Recipient self-assesses GST:
+            # 1. Credit RCM Tax Liability (Payable to Govt in cash)
+            # 2. Debit Input Tax Credit (RCM) (Claimed as ITC Asset)
+            if total_cgst > 0:
+                rcm_liab_cgst = PurchaseInvoiceService._get_or_create_rcm_tax_ledger(company, 'CGST', is_liability=True)
+                rcm_itc_cgst = PurchaseInvoiceService._get_or_create_rcm_tax_ledger(company, 'CGST', is_liability=False)
+                LedgerEntry.objects.create(
+                    voucher=voucher,
+                    ledger=rcm_liab_cgst,
+                    debit_amount=Decimal('0.00'),
+                    credit_amount=total_cgst,
+                    narration="RCM CGST Tax Liability"
+                )
+                LedgerEntry.objects.create(
+                    voucher=voucher,
+                    ledger=rcm_itc_cgst,
+                    debit_amount=total_cgst,
+                    credit_amount=Decimal('0.00'),
+                    narration="RCM CGST Input Tax Credit"
+                )
+            if total_sgst > 0:
+                rcm_liab_sgst = PurchaseInvoiceService._get_or_create_rcm_tax_ledger(company, 'SGST', is_liability=True)
+                rcm_itc_sgst = PurchaseInvoiceService._get_or_create_rcm_tax_ledger(company, 'SGST', is_liability=False)
+                LedgerEntry.objects.create(
+                    voucher=voucher,
+                    ledger=rcm_liab_sgst,
+                    debit_amount=Decimal('0.00'),
+                    credit_amount=total_sgst,
+                    narration="RCM SGST Tax Liability"
+                )
+                LedgerEntry.objects.create(
+                    voucher=voucher,
+                    ledger=rcm_itc_sgst,
+                    debit_amount=total_sgst,
+                    credit_amount=Decimal('0.00'),
+                    narration="RCM SGST Input Tax Credit"
+                )
+            if total_igst > 0:
+                rcm_liab_igst = PurchaseInvoiceService._get_or_create_rcm_tax_ledger(company, 'IGST', is_liability=True)
+                rcm_itc_igst = PurchaseInvoiceService._get_or_create_rcm_tax_ledger(company, 'IGST', is_liability=False)
+                LedgerEntry.objects.create(
+                    voucher=voucher,
+                    ledger=rcm_liab_igst,
+                    debit_amount=Decimal('0.00'),
+                    credit_amount=total_igst,
+                    narration="RCM IGST Tax Liability"
+                )
+                LedgerEntry.objects.create(
+                    voucher=voucher,
+                    ledger=rcm_itc_igst,
+                    debit_amount=total_igst,
+                    credit_amount=Decimal('0.00'),
+                    narration="RCM IGST Input Tax Credit"
+                )
 
         # Debit Cartage / Freight Inward entry (Direct Expenses)
         if cartage_amt > Decimal('0.00'):
@@ -517,4 +635,34 @@ class PurchaseInvoiceService:
                 name=target_name,
                 defaults={'group': tax_grp, 'ledger_type': 'TAX'}
             )[0]
+        return ledger
+
+    @staticmethod
+    def _get_or_create_rcm_tax_ledger(company: Company, tax_type: str, is_liability: bool = True) -> Ledger:
+        """
+        Gets or creates standard RCM (Reverse Charge Mechanism) tax ledgers.
+        If is_liability=True:  'RCM <TAX> Liability' under Duties & Taxes (Liability)
+        If is_liability=False: 'Input <TAX> (RCM)' under Duties & Taxes (Asset)
+        """
+        from apps.ledgers.models import LedgerGroup
+        tax_grp, _ = LedgerGroup.objects.get_or_create(
+            company=company,
+            name='Duties & Taxes',
+            defaults={'nature': 'LIABILITY'}
+        )
+        if is_liability:
+            target_name = f"RCM {tax_type.upper()} Liability"
+        else:
+            target_name = f"Input {tax_type.upper()} (RCM)"
+
+        ledger = Ledger.objects.filter(company=company, name__iexact=target_name).first()
+        if not ledger:
+            ledger, _ = Ledger.objects.get_or_create(
+                company=company,
+                name=target_name,
+                defaults={'group': tax_grp, 'ledger_type': 'TAX', 'is_rcm': True}
+            )
+        elif not getattr(ledger, 'is_rcm', False):
+            ledger.is_rcm = True
+            ledger.save(update_fields=['is_rcm'])
         return ledger
