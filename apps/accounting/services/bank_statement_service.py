@@ -1189,7 +1189,7 @@ class BankStatementService:
                     proc_mime = img_mime
 
                 response = client.models.generate_content(
-                    model="gemini-3.1-flash-lite",
+                    model="gemini-2.0-flash",
                     contents=[
                         types.Part.from_bytes(data=proc_bytes, mime_type=proc_mime),
                         prompt

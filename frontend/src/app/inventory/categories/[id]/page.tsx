@@ -1,5 +1,5 @@
 "use client";
-import { API_BASE_URL } from '@/utils/api';
+import api, { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
 import { useRouter, useParams } from 'next/navigation';
@@ -134,11 +134,7 @@ export default function CategoryDetailPage() {
         console.warn('Could not read from local offline cache', cacheErr);
       }
 
-      const token = getAccessToken();
-      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
-      if (resolvedCid) headers['X-Company-ID'] = resolvedCid;
-
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+      const compRes = await api.get(`/api/v1/companies/`);
       const compList = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
       const comp = (resolvedCid ? compList.find((c: any) => c.id === resolvedCid) : null) || compList[0];
       const cid = comp?.id;
@@ -146,14 +142,14 @@ export default function CategoryDetailPage() {
       setCompanyId(cid);
       offlineDb.masters.put({ key: `company_${cid}`, data: comp, updatedAt: Date.now() }).catch(() => {});
 
-      const catRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cid}/`, { headers });
+      const catRes = await api.get(`/api/v1/inventory/categories/${cid}/`);
       const cat = (catRes.data.data || []).find((c: any) => c.id === categoryId);
       if (cat) {
         setCategory(cat);
         offlineDb.masters.put({ key: `category_${categoryId}`, data: cat, updatedAt: Date.now() }).catch(() => {});
       }
 
-      const prodRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/products/${cid}/?category=${categoryId}`, { headers });
+      const prodRes = await api.get(`/api/v1/inventory/products/${cid}/?category=${categoryId}`);
       const prodList = prodRes.data.data || [];
       setProducts(prodList);
       offlineDb.masters.put({ key: `category_products_${categoryId}`, data: prodList, updatedAt: Date.now() }).catch(() => {});
@@ -168,12 +164,7 @@ export default function CategoryDetailPage() {
     if (!companyId) return;
     setIsMerging(true);
     try {
-      const token = getAccessToken();
-      const res = await axios.post(
-        `${API_BASE_URL}/api/v1/inventory/combine-items/${companyId}/`,
-        {},
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      const res = await api.post(`/api/v1/inventory/combine-items/${companyId}/`, {});
       if (res.data.success) {
         toast.success(
           "Items Combined Successfully",
@@ -229,12 +220,9 @@ export default function CategoryDetailPage() {
           : undefined
       };
 
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.patch(
-        `${API_BASE_URL}/api/v1/inventory/products/${companyId}/${productId}/`,
-        payload,
-        { headers }
+      const res = await api.patch(
+        `/api/v1/inventory/products/${companyId}/${productId}/`,
+        payload
       );
       if (res.data.success) {
         setProducts(prev => {
@@ -264,11 +252,8 @@ export default function CategoryDetailPage() {
 
   const executeDelete = async (productId: string) => {
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.delete(
-        `${API_BASE_URL}/api/v1/inventory/products/${companyId}/${productId}/`,
-        { headers }
+      const res = await api.delete(
+        `/api/v1/inventory/products/${companyId}/${productId}/`
       );
       if (res.data.success) {
         toast.success("Item deleted successfully!");
@@ -300,12 +285,9 @@ export default function CategoryDetailPage() {
   const saveCategoryEdit = async () => {
     setSavingCategory(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.patch(
-        `${API_BASE_URL}/api/v1/inventory/categories/${companyId}/${categoryId}/`,
-        categoryEditData,
-        { headers }
+      const res = await api.patch(
+        `/api/v1/inventory/categories/${companyId}/${categoryId}/`,
+        categoryEditData
       );
       if (res.data.success) {
         setCategory({ ...category, ...categoryEditData });
@@ -588,7 +570,7 @@ export default function CategoryDetailPage() {
                 />
               ) : (
                 <h1 className="text-xl sm:text-2xl font-black tracking-tight text-foreground flex items-center gap-2">
-                  <span className="truncate">{category?.name || 'Loading Category...'}</span>
+                  <span className="truncate" suppressHydrationWarning>{category?.name || 'Loading Category...'}</span>
                   <button onClick={startCategoryEdit} className="text-muted-foreground hover:text-blue-400 p-1 shrink-0" title="Edit Category Name">
                     <Edit2 className="w-4 h-4" />
                   </button>
@@ -596,23 +578,23 @@ export default function CategoryDetailPage() {
               )}
 
               {/* Category Meta Badges */}
-              <div className="flex items-center gap-2 mt-2 flex-wrap text-xs">
-                <span className="font-mono bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20 px-2.5 py-0.5 rounded-md font-semibold">
+              <div className="flex items-center gap-2 mt-2 flex-wrap text-xs" suppressHydrationWarning>
+                <span className="font-mono bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20 px-2.5 py-0.5 rounded-md font-semibold" suppressHydrationWarning>
                   {products.length} {products.length === 1 ? 'item' : 'items'}
                 </span>
 
-                <span className="font-mono bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20 px-2.5 py-0.5 rounded-md font-semibold flex items-center gap-1.5">
+                <span className="font-mono bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20 px-2.5 py-0.5 rounded-md font-semibold flex items-center gap-1.5" suppressHydrationWarning>
                   <Boxes className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                  <span>Stock Value: ₹{categoryStockValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <span suppressHydrationWarning>Stock Value: ₹{categoryStockValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   {categoryStockQty > 0 && (
-                    <span className="text-emerald-700/80 dark:text-emerald-400/70 font-normal">({categoryStockQty.toLocaleString('en-IN')} units)</span>
+                    <span className="text-emerald-700/80 dark:text-emerald-400/70 font-normal" suppressHydrationWarning>({categoryStockQty.toLocaleString('en-IN')} units)</span>
                   )}
                 </span>
 
-                <span className="font-mono bg-muted/50 px-2 py-0.5 rounded border border-border/60 text-foreground/80 dark:text-muted-foreground font-medium">
+                <span className="font-mono bg-muted/50 px-2 py-0.5 rounded border border-border/60 text-foreground/80 dark:text-muted-foreground font-medium" suppressHydrationWarning>
                   HSN: {category?.hsn_code || 'None'}
                 </span>
-                <span className="font-mono bg-muted/50 px-2 py-0.5 rounded border border-border/60 text-foreground/80 dark:text-muted-foreground font-medium">
+                <span className="font-mono bg-muted/50 px-2 py-0.5 rounded border border-border/60 text-foreground/80 dark:text-muted-foreground font-medium" suppressHydrationWarning>
                   GST: {category?.gst_rate || 0}%
                 </span>
               </div>
@@ -691,12 +673,17 @@ export default function CategoryDetailPage() {
         </div>
 
         {/* Content Section */}
-        {products.length === 0 ? (
+        {loading ? (
           <div className="flex flex-col items-center justify-center text-center p-16 bg-card rounded-2xl border border-border/70 shadow-sm">
+            <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground mb-4" />
+            <p className="text-sm text-muted-foreground">Loading items...</p>
+          </div>
+        ) : products.length === 0 ? (
+          <div className="flex flex-col items-center justify-center text-center p-16 bg-card rounded-2xl border border-border/70 shadow-sm" suppressHydrationWarning>
             <div className="w-16 h-16 rounded-2xl bg-blue-500/10 text-blue-400 flex items-center justify-center mb-4">
               <Layers className="w-8 h-8" />
             </div>
-            <h3 className="text-xl font-bold mb-1">No Items in {category?.name}</h3>
+            <h3 className="text-xl font-bold mb-1" suppressHydrationWarning>No Items in {category?.name || 'this category'}</h3>
             <p className="text-sm text-muted-foreground max-w-md mx-auto mb-6">
               Create individual items manually or import a distributor price list (CSV, Excel, PDF) to populate items and MRPs in bulk.
             </p>

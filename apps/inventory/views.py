@@ -103,14 +103,40 @@ class ProductCategoryListView(APIView):
             if d.get('purchase_ledger_id'):
                 purchase_ledger = Ledger.objects.get(id=d['purchase_ledger_id'], company=company)
 
-            category = ProductCategory.objects.create(
-                company=company,
-                name=d.get('name'),
-                hsn_code=d.get('hsn_code', ''),
-                gst_rate=d.get('gst_rate', 18.00),
-                sales_ledger=sales_ledger,
-                purchase_ledger=purchase_ledger
-            )
+            cat_name = str(d.get('name') or '').strip()
+            if not cat_name:
+                return Response({"success": False, "error": "Category name is required."}, status=400)
+
+            # Prevent duplicate key constraint error: look up existing category first
+            category = ProductCategory.objects.filter(company=company, name__iexact=cat_name).first()
+            if not category:
+                try:
+                    category = ProductCategory.objects.create(
+                        company=company,
+                        name=cat_name,
+                        hsn_code=d.get('hsn_code', ''),
+                        gst_rate=d.get('gst_rate', 18.00),
+                        sales_ledger=sales_ledger,
+                        purchase_ledger=purchase_ledger
+                    )
+                except Exception:
+                    # In case of concurrent creation or case-insensitive collisions, fallback to existing
+                    category = ProductCategory.objects.filter(company=company, name__iexact=cat_name).first()
+                    if not category:
+                        raise
+            else:
+                updated = False
+                if d.get('hsn_code') and not category.hsn_code:
+                    category.hsn_code = d.get('hsn_code')
+                    updated = True
+                if sales_ledger and not category.sales_ledger:
+                    category.sales_ledger = sales_ledger
+                    updated = True
+                if purchase_ledger and not category.purchase_ledger:
+                    category.purchase_ledger = purchase_ledger
+                    updated = True
+                if updated:
+                    category.save()
 
             # Auto-update complexity
             cat_count = ProductCategory.objects.filter(company=company).count()

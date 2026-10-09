@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
 import axios from "axios";
-import { API_BASE_URL } from "@/utils/api";
+import api, { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
 import { useToast } from "@/context/ToastContext";
 import { offlineDb } from "@/lib/db/offlineDb";
@@ -263,9 +263,26 @@ export default function PriceListImportModal({
         }
 
         let res;
+        // Auto-detect brand from filename if not specified yet
+        let targetBrand = brand.trim();
+        if (!targetBrand) {
+          const lowerName = selectedFile.name.toLowerCase();
+          const matchExisting = existingBrands?.find((b) => b && lowerName.includes(b.toLowerCase()));
+          if (matchExisting) {
+            targetBrand = matchExisting;
+            setBrand(targetBrand);
+          } else {
+            const cleanBase = selectedFile.name.replace(/\.[^/.]+$/, "");
+            const firstToken = cleanBase.split(/[\s\-_]+/)[0];
+            if (firstToken && firstToken.length >= 3 && isNaN(Number(firstToken))) {
+              targetBrand = firstToken.toUpperCase();
+              setBrand(targetBrand);
+            }
+          }
+        }
+
         // If file <= 15MB, use Base64 JSON for resilient cross-origin parsing (identical to Purchase OCR)
         if (selectedFile.size <= 15 * 1024 * 1024) {
-          headers["Content-Type"] = "application/json";
           const base64Data = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result as string);
@@ -273,15 +290,15 @@ export default function PriceListImportModal({
             reader.readAsDataURL(selectedFile);
           });
 
-          res = await axios.post(
-            `${API_BASE_URL}/api/v1/inventory/parse-price-list-pdf/${companyId}/`,
+          res = await api.post(
+            `/api/v1/inventory/parse-price-list-pdf/${companyId}/`,
             {
               file_base64: base64Data,
               filename: selectedFile.name,
-              brand: brand.trim(),
+              brand: targetBrand,
               scan_mode: "printed",
             },
-            { headers, timeout: 120000 }
+            { timeout: 120000 }
           );
         } else {
           // For very large files > 15MB, use FormData without setting Content-Type so browser sets boundary
@@ -289,15 +306,19 @@ export default function PriceListImportModal({
           formData.append("file", selectedFile);
           formData.append("filename", selectedFile.name);
           formData.append("scan_mode", "printed");
-          if (brand.trim()) {
-            formData.append("brand", brand.trim());
+          if (targetBrand) {
+            formData.append("brand", targetBrand);
           }
 
-          res = await axios.post(
-            `${API_BASE_URL}/api/v1/inventory/parse-price-list-pdf/${companyId}/`,
+          res = await api.post(
+            `/api/v1/inventory/parse-price-list-pdf/${companyId}/`,
             formData,
-            { headers, timeout: 120000 }
+            { timeout: 120000 }
           );
+        }
+
+        if (res.data?.detected_brand && !brand) {
+          setBrand(res.data.detected_brand);
         }
 
         // Cache successful response in local IndexedDB for zero-load instant reloads!
@@ -400,19 +421,12 @@ export default function PriceListImportModal({
 
     setImporting(true);
     try {
-      const token = getAccessToken();
-      const res = await axios.post(
-        `${API_BASE_URL}/api/v1/inventory/price-list-import/${companyId}/`,
+      const res = await api.post(
+        `/api/v1/inventory/price-list-import/${companyId}/`,
         {
           category_id: categoryId,
           brand: brand.trim(),
           items: parsedItems,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
         }
       );
 

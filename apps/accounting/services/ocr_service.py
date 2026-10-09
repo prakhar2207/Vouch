@@ -153,22 +153,11 @@ class InvoiceOCRService:
             # Smart Hybrid Engine selection:
             # - 'handwritten' / 'complex': prioritizes 3.6-flash for deep handwritten reasoning
             # - 'printed' / 'auto': prioritizes 3.1-flash-lite for maximum RPD quota & ultra-fast speed
-            if scan_mode in ["handwritten", "complex", "deep"]:
-                models_to_try = [
-                    "gemini-3.6-flash",
-                    "gemini-3.1-flash-lite",
-                    "gemini-2.5-flash",
-                    "gemini-2.0-flash",
-                    "gemini-1.5-flash",
-                ]
-            else:
-                models_to_try = [
-                    "gemini-3.1-flash-lite",
-                    "gemini-3.6-flash",
-                    "gemini-2.5-flash",
-                    "gemini-2.0-flash",
-                    "gemini-1.5-flash",
-                ]
+            models_to_try = [
+                "gemini-2.0-flash",
+                "gemini-1.5-flash",
+                "gemini-2.0-flash-lite",
+            ]
 
             max_retries = 2
             last_gemini_error = ""
@@ -196,9 +185,9 @@ class InvoiceOCRService:
                             result = json.loads(response.text)
                             items = result.get("line_items", []) if isinstance(result, dict) else []
 
-                            # Smart Auto-Promotion: If Flash-Lite parsed 0 items, auto-promote to 3.6-flash
-                            if "lite" in model_name.lower() and (not items or len(items) == 0) and "gemini-3.6-flash" in models_to_try:
-                                print(f"[Hybrid OCR Engine] {model_name} parsed 0 items. Auto-promoting to gemini-3.6-flash for deeper vision...")
+                            # Smart Auto-Promotion: If Flash-Lite parsed 0 items, auto-promote to gemini-2.0-flash
+                            if "lite" in model_name.lower() and (not items or len(items) == 0) and "gemini-2.0-flash" in models_to_try:
+                                print(f"[Hybrid OCR Engine] {model_name} parsed 0 items. Auto-promoting to gemini-2.0-flash for deeper vision...")
                                 continue
 
                             if result and (result.get("invoice_number") or result.get("supplier_name") or items):

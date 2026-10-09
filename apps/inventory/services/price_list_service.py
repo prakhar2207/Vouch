@@ -211,7 +211,11 @@ class PriceListService:
         # Fast (0.2s), handles 95% of digital manufacturer vector PDFs
         # -------------------------------------------------------------
         if reader and scan_mode not in ["handwritten", "complex", "deep"]:
-            brand_candidates = ["PIX", "NBC", "SKF", "FENNER", "GATES", "TIMKEN", "FAG", "NTN", "KOYO", "SCHAEFFLER", "CONTITECH", "BANDO", "OPTIBELT"]
+            brand_candidates = [
+                "PIX", "NBC", "SKF", "FENNER", "GATES", "TIMKEN", "FAG", "NTN", "KOYO",
+                "SCHAEFFLER", "CONTITECH", "BANDO", "OPTIBELT", "JAINTEX", "ENDURA",
+                "CYSTO", "GIMPEX", "MEDICORD", "POLY F", "POLY-F", "CONTI", "DUNLOP"
+            ]
 
             for b in brand_candidates:
                 if re.search(r'\b' + b + r'\b', fname, re.IGNORECASE):
@@ -376,22 +380,11 @@ class PriceListService:
                     print(f"[PriceListService] PDF slicing fallback: {slice_err}")
                     gemini_bytes = raw_bytes
 
-            if scan_mode in ["handwritten", "complex", "deep"]:
-                models_to_try = [
-                    "gemini-3.6-flash",
-                    "gemini-3.1-flash-lite",
-                    "gemini-2.5-flash",
-                    "gemini-2.0-flash",
-                    "gemini-1.5-flash",
-                ]
-            else:
-                models_to_try = [
-                    "gemini-3.1-flash-lite",
-                    "gemini-3.6-flash",
-                    "gemini-2.5-flash",
-                    "gemini-2.0-flash",
-                    "gemini-1.5-flash",
-                ]
+            models_to_try = [
+                "gemini-2.0-flash",
+                "gemini-1.5-flash",
+                "gemini-2.0-flash-lite",
+            ]
             try:
                 from google import genai
                 from google.genai import types
@@ -430,9 +423,9 @@ class PriceListService:
                         parsed_json = json.loads(response.text)
                         raw_items = parsed_json.get("items") if isinstance(parsed_json, dict) else []
 
-                        # If flash-lite returned 0 items, auto-promote to 3.6-flash
-                        if "lite" in model_name.lower() and (not raw_items or len(raw_items) == 0) and "gemini-3.6-flash" in models_to_try:
-                            print(f"[PriceList Hybrid] {model_name} returned 0 items; auto-promoting to gemini-3.6-flash...")
+                        # If model returned 0 items, auto-promote to next model
+                        if (not raw_items or len(raw_items) == 0):
+                            print(f"[PriceList Hybrid] {model_name} returned 0 items; trying fallback model...")
                             continue
 
                         if isinstance(parsed_json, dict) and "items" in parsed_json and len(parsed_json["items"]) > 0:

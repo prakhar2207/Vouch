@@ -1084,14 +1084,20 @@ class VoucherDetailAPIView(APIView):
                             except Exception:
                                 pass
                         elif category_name and str(category_name).strip():
-                            category = ProductCategory.objects.filter(name__iexact=str(category_name).strip(), company=company).first()
+                            c_name_clean = str(category_name).strip()
+                            category = ProductCategory.objects.filter(name__iexact=c_name_clean, company=company).first()
                             if not category:
-                                category = ProductCategory.objects.create(
-                                    company=company,
-                                    name=str(category_name).strip(),
-                                    hsn_code=hsn,
-                                    gst_rate=gst_pct
-                                )
+                                try:
+                                    category = ProductCategory.objects.create(
+                                        company=company,
+                                        name=c_name_clean,
+                                        hsn_code=hsn,
+                                        gst_rate=gst_pct
+                                    )
+                                except Exception:
+                                    category = ProductCategory.objects.filter(name__iexact=c_name_clean, company=company).first()
+                                    if not category:
+                                        category = ProductCategory.objects.filter(company=company).first()
 
                         cat_name = category.name if category else None
                         clean_item_name = normalize_product_name(raw_name, cat_name)
@@ -1161,12 +1167,18 @@ class VoucherDetailAPIView(APIView):
                                     category = ProductCategory.objects.filter(company=company).first()
                             
                             if not category:
-                                category = ProductCategory.objects.create(
-                                    company=company,
-                                    name="General Belts" if "BELT" in clean_item_name.upper() else "General Products",
-                                    hsn_code=hsn,
-                                    gst_rate=gst_pct
-                                )
+                                default_cat_name = "General Belts" if "BELT" in clean_item_name.upper() else "General Products"
+                                category = ProductCategory.objects.filter(name__iexact=default_cat_name, company=company).first()
+                                if not category:
+                                    try:
+                                        category = ProductCategory.objects.create(
+                                            company=company,
+                                            name=default_cat_name,
+                                            hsn_code=hsn,
+                                            gst_rate=gst_pct
+                                        )
+                                    except Exception:
+                                        category = ProductCategory.objects.filter(company=company).first()
                             import uuid
                             sku = f"{clean_item_name[:4].upper()}-{uuid.uuid4().hex[:6].upper()}"
                             product = Product.objects.create(

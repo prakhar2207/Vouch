@@ -1,5 +1,5 @@
 "use client";
-import { API_BASE_URL } from '@/utils/api';
+import api, { API_BASE_URL } from '@/utils/api';
 import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
@@ -179,10 +179,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
     if (companyId) {
       const fetchCategories = async () => {
         try {
-          const token = getAccessToken();
-          const res = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${companyId}/`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
+          const res = await api.get(`/api/v1/inventory/categories/${companyId}/`);
           const cats = res.data.data || [];
           setCategories(cats);
           if (cats.length > 0) {
@@ -368,20 +365,14 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           await new Promise((res) => setTimeout(res, 2000));
         }
 
-        const token = getAccessToken();
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-        }
-
-        const res = await axios.post(
-          `${API_BASE_URL}/api/ocr/extract/`,
+        const res = await api.post(
+          `/api/ocr/extract/`,
           {
             file_base64: base64,
             mime_type: mime,
             scan_mode: activeMode,
           },
-          { headers, timeout: 120000 }
+          { timeout: 120000 }
         );
 
         if (res.data.success) {
@@ -570,40 +561,70 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
       let effectiveCategoryId = selectedCategoryId;
 
-      // 1. Create Category FIRST in database before purchase voucher if user specified new category
+      // 1. Resolve or Create Category FIRST in database before purchase voucher
       if (isCreatingNewCategory && newCategoryName.trim()) {
-        const defaultHsn = invoice.line_items[0]?.hsn_code || "";
-        const defaultGst = invoice.line_items[0]?.gst_rate || 18;
-        const catRes = await axios.post(
-          `${API_BASE_URL}/api/v1/inventory/categories/${companyId}/`,
-          {
-            name: newCategoryName.trim(),
-            hsn_code: defaultHsn,
-            gst_rate: defaultGst,
-          },
-          { headers }
+        const trimmedNewName = newCategoryName.trim();
+        const existingMatch = categories.find(
+          (c) => (c.name || "").trim().toLowerCase() === trimmedNewName.toLowerCase()
         );
-        if (catRes.data.success && catRes.data.data?.id) {
-          effectiveCategoryId = catRes.data.data.id;
-          setCategories((prev) => [...prev, catRes.data.data]);
+
+        if (existingMatch) {
+          effectiveCategoryId = existingMatch.id;
           setSelectedCategoryId(effectiveCategoryId);
           setIsCreatingNewCategory(false);
         } else {
-          throw new Error(catRes.data.error || "Failed to create category in database.");
+          const defaultHsn = invoice.line_items[0]?.hsn_code || "";
+          const defaultGst = invoice.line_items[0]?.gst_rate || 18;
+          try {
+            const catRes = await api.post(
+              `/api/v1/inventory/categories/${companyId}/`,
+              {
+                name: trimmedNewName,
+                hsn_code: defaultHsn,
+                gst_rate: defaultGst,
+              }
+            );
+            if (catRes.data.success && catRes.data.data?.id) {
+              effectiveCategoryId = catRes.data.data.id;
+              setCategories((prev) => [...prev, catRes.data.data]);
+              setSelectedCategoryId(effectiveCategoryId);
+              setIsCreatingNewCategory(false);
+            } else {
+              throw new Error(catRes.data.error || "Failed to create category in database.");
+            }
+          } catch (catErr: any) {
+            // If already created or error, fallback to re-fetching categories
+            try {
+              const refetchRes = await api.get(`/api/v1/inventory/categories/${companyId}/`);
+              const catList = refetchRes.data.data || [];
+              const found = catList.find(
+                (c: any) => (c.name || "").trim().toLowerCase() === trimmedNewName.toLowerCase()
+              );
+              if (found) {
+                effectiveCategoryId = found.id;
+                setCategories(catList);
+                setSelectedCategoryId(found.id);
+                setIsCreatingNewCategory(false);
+              } else {
+                throw catErr;
+              }
+            } catch {
+              throw catErr;
+            }
+          }
         }
       }
 
       // 2. Create or get Party Ledger for the Supplier
-      const partyRes = await axios.post(
-        `${API_BASE_URL}/api/v1/ledgers/${companyId}/`,
+      const partyRes = await api.post(
+        `/api/v1/ledgers/${companyId}/`,
         {
           name: invoice.supplier_name,
           group_name: "Creditors",
           ledger_type: "SUPPLIER",
           gstin: invoice.supplier_gstin,
           state_code: invoice.state_code,
-        },
-        { headers }
+        }
       );
 
       const partyLedgerId = partyRes.data.data?.id;
@@ -621,7 +642,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         category_id: effectiveCategoryId || undefined,
       }));
 
-      // 3. Post to Universal Voucher Engine with attached document
+      // 4. Post to Universal Voucher Engine with attached document
       const payload = {
         company_id: companyId,
         voucher_type: "PURCHASE",
@@ -638,10 +659,10 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
       let res;
       try {
-        res = await axios.post(`${API_BASE_URL}/api/vouchers/`, payload, { headers });
+        res = await api.post(`/api/vouchers/`, payload);
       } catch (postErr: any) {
         if (postErr.response?.status === 405) {
-          res = await axios.post(`${API_BASE_URL}/api/v1/accounting/purchase-invoice/`, payload, { headers });
+          res = await api.post(`/api/v1/accounting/purchase-invoice/`, payload);
         } else {
           throw postErr;
         }
