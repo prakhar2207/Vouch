@@ -1446,7 +1446,7 @@ export default function SalesPage() {
 
     return (
       <div 
-        className={`absolute top-full mt-1.5 z-50 bg-card border border-border rounded-xl shadow-2xl overflow-hidden max-h-80 sm:max-h-96 overflow-y-auto ${
+        className={`absolute top-full mt-1.5 z-50 bg-card border border-border rounded-xl shadow-2xl overflow-y-auto overflow-x-hidden max-h-80 sm:max-h-96 ${
           isMobile 
             ? 'left-0 right-0 w-full max-w-full' 
             : 'left-0 w-full min-w-full sm:min-w-[420px] max-w-[calc(100vw-2rem)] sm:max-w-[620px]'
@@ -1990,8 +1990,8 @@ export default function SalesPage() {
         </div>
 
         {/* Line Items Card */}
-        <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
-            <div className="p-4 sm:p-6 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="bg-card border border-border rounded-xl shadow-sm">
+            <div className="p-4 sm:p-6 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-t-xl">
                 <div>
                   <div className="flex items-center gap-2">
                     <h2 className="text-lg font-semibold text-foreground">Line Items by Category</h2>
@@ -2043,8 +2043,8 @@ export default function SalesPage() {
             
             <div className="p-2 sm:p-4 space-y-6">
                 {groupedItems.map((group, gIndex) => (
-                    <div key={gIndex} className="border border-border rounded-xl bg-card shadow-sm overflow-hidden">
-                        <div className="p-3 sm:p-4 bg-muted/40 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div key={gIndex} className={`border border-border rounded-xl bg-card shadow-sm ${activeSearch?.startsWith(`${gIndex}-`) ? 'relative z-30' : 'relative z-0'}`}>
+                        <div className="p-3 sm:p-4 bg-muted/40 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-t-xl">
                             <div className="flex-1 max-w-md flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                                 <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Category:</label>
                                 <select 
@@ -2248,8 +2248,8 @@ export default function SalesPage() {
                         </div>
 
                         {/* 2. Desktop Table (hidden sm:block) */}
-                        <div className="hidden sm:block overflow-x-auto">
-                            <table className="w-full min-w-[700px] text-left border-collapse">
+                        <div className="hidden sm:block overflow-visible">
+                            <table className="w-full text-left border-collapse">
                                 <thead className="bg-muted/60 text-muted-foreground text-xs uppercase tracking-wider">
                                     <tr>
                                         <th className="p-3 font-semibold">
@@ -2425,7 +2425,7 @@ export default function SalesPage() {
                                 </tbody>
                             </table>
                         </div>
-                        <div className="p-3 bg-muted/20 border-t border-border/60">
+                        <div className="p-3 bg-muted/20 border-t border-border/60 rounded-b-xl">
                             <button onClick={() => addRow(gIndex)} className="text-sm text-primary hover:text-primary/80 font-semibold flex items-center gap-1.5 transition-colors cursor-pointer">
                                 <Plus className="w-4 h-4" />
                                 <span>Add item in {categories.find(c=>c.id===group.category_id)?.name || 'this category'}</span>
@@ -2435,7 +2435,7 @@ export default function SalesPage() {
                 ))}
             </div>
             
-            <div className="p-4 border-t border-border bg-muted/20 flex items-center">
+            <div className="p-4 border-t border-border bg-muted/20 flex items-center rounded-b-xl">
                 <button onClick={addCategoryGroup} className="text-sm text-foreground bg-card hover:bg-accent border border-border hover:border-input px-4 py-2.5 rounded-xl shadow-xs transition-colors font-semibold flex items-center justify-center gap-2 cursor-pointer w-full sm:w-auto">
                     <Plus className="w-4 h-4 text-primary" />
                     <span>Add Another Category Block</span>

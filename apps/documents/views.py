@@ -70,11 +70,23 @@ class VoucherPDFStreamAPIView(APIView):
         if not voucher:
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
 
+        copy_type = request.query_params.get('copy', 'ORIGINAL').upper()
         bypass_cache = request.query_params.get('fresh') == '1' or request.query_params.get('download') == '1'
-        pdf_bytes = DocumentPDFService.generate_pdf_for_voucher(voucher, bypass_cache=bypass_cache)
+        pdf_bytes = DocumentPDFService.generate_pdf_for_voucher(voucher, bypass_cache=bypass_cache, copy_type=copy_type)
 
         disposition = 'attachment' if request.query_params.get('download') == '1' else 'inline'
-        filename = f"{voucher.voucher_number.replace('/', '_')}.pdf"
+        
+        suffix = ''
+        if copy_type == 'TRANSPORTER':
+            suffix = '_Transporter_Copy'
+        elif copy_type in ['SUPPLIER', 'SUPPLIER_LOCAL']:
+            suffix = '_Supplier_Copy'
+        elif copy_type in ['BUNDLE_LOCAL', 'BUNDLE_2']:
+            suffix = '_Local_2Copies'
+        elif copy_type in ['BUNDLE_TRANSPORT', 'BUNDLE_3', 'ALL']:
+            suffix = '_Triplicate_3Copies'
+
+        filename = f"{voucher.voucher_number.replace('/', '_')}{suffix}.pdf"
 
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = f'{disposition}; filename="{filename}"'

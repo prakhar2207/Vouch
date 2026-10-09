@@ -74,7 +74,36 @@ class InvoicePDFRenderer:
     """
 
     @classmethod
-    def render(cls, dto: Dict[str, Any], watermark: bool = False) -> bytes:
+    def render(cls, dto: Dict[str, Any], watermark: bool = False, copy_type: str = 'ORIGINAL') -> bytes:
+        copy_upper = str(copy_type or 'ORIGINAL').upper()
+
+        # Multi-copy bundle handling via pypdf merging
+        if copy_upper in ['BUNDLE_LOCAL', 'BUNDLE_2']:
+            pdf_rec = cls.render_single(dto, watermark=watermark, copy_type='ORIGINAL')
+            pdf_sup = cls.render_single(dto, watermark=watermark, copy_type='SUPPLIER_LOCAL')
+            return cls._merge_pdfs([pdf_rec, pdf_sup])
+        elif copy_upper in ['BUNDLE_TRANSPORT', 'BUNDLE_3', 'ALL']:
+            pdf_rec = cls.render_single(dto, watermark=watermark, copy_type='ORIGINAL')
+            pdf_trans = cls.render_single(dto, watermark=watermark, copy_type='TRANSPORTER')
+            pdf_sup = cls.render_single(dto, watermark=watermark, copy_type='SUPPLIER')
+            return cls._merge_pdfs([pdf_rec, pdf_trans, pdf_sup])
+
+        return cls.render_single(dto, watermark=watermark, copy_type=copy_upper)
+
+    @staticmethod
+    def _merge_pdfs(pdf_list: list) -> bytes:
+        from pypdf import PdfReader, PdfWriter
+        writer = PdfWriter()
+        for pdf_bytes in pdf_list:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            for page in reader.pages:
+                writer.add_page(page)
+        out = io.BytesIO()
+        writer.write(out)
+        return out.getvalue()
+
+    @classmethod
+    def render_single(cls, dto: Dict[str, Any], watermark: bool = False, copy_type: str = 'ORIGINAL') -> bytes:
         buffer = io.BytesIO()
 
         PAGE_WIDTH, PAGE_HEIGHT = A4  # 595.275 x 841.89 pt
@@ -133,10 +162,22 @@ class InvoicePDFRenderer:
             rcvr_sig_text = "Customer Acceptance :"
         else:
             header_title_text = "<u>TAX INVOICE</u>"
-            sub_copy_text = "Original For Recipient"
+            copy_upper = str(copy_type or 'ORIGINAL').upper()
+            if copy_upper == 'TRANSPORTER':
+                sub_copy_text = "Duplicate For Transporter"
+                rcvr_sig_text = "Transporter / Driver Signature :"
+            elif copy_upper in ['SUPPLIER_LOCAL', 'SUPPLIER_DUPLICATE']:
+                sub_copy_text = "Duplicate For Supplier"
+                rcvr_sig_text = "Customer's Acknowledgment :"
+            elif copy_upper == 'SUPPLIER':
+                sub_copy_text = "Triplicate For Supplier"
+                rcvr_sig_text = "Customer's Acknowledgment :"
+            else:
+                sub_copy_text = "Original For Recipient"
+                rcvr_sig_text = "Receiver's Signature :"
+
             inv_no_label = "Invoice No."
-            canvas_footer_text = "This is a Computer Generated Invoice"
-            rcvr_sig_text = "Receiver's Signature :"
+            canvas_footer_text = f"This is a Computer Generated Invoice — {sub_copy_text}"
 
         # Typography Styles
         s_gstin = ParagraphStyle('GSTIN', fontName=f_bold, fontSize=9.0, leading=11, textColor=colors.black)

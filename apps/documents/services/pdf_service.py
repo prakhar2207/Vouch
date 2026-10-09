@@ -33,13 +33,15 @@ class DocumentPDFService:
         snapshot: DocumentSnapshot,
         watermark: bool = False,
         show_logo: bool = True,
+        copy_type: str = 'ORIGINAL',
     ) -> str:
         version = getattr(snapshot, 'source_version', 1) or 1
         updated_ts = ''
         if isinstance(snapshot.snapshot_json, dict):
             updated_ts = snapshot.snapshot_json.get('_voucher_updated_at') or snapshot.snapshot_json.get('_proforma_updated_at') or ''
         ts_clean = ''.join(c for c in str(updated_ts) if c.isalnum())
-        return f"vouch_pdf_{snapshot.id}_v{version}_{ts_clean}_{snapshot.template_version}_wm{int(watermark)}_lg{int(show_logo)}"
+        cp_clean = ''.join(c for c in str(copy_type or 'ORIGINAL').upper() if c.isalnum())
+        return f"vouch_pdf_{snapshot.id}_v{version}_{ts_clean}_{snapshot.template_version}_wm{int(watermark)}_lg{int(show_logo)}_cp{cp_clean}"
 
     @classmethod
     def invalidate_cache_for_snapshot(cls, snapshot: DocumentSnapshot):
@@ -55,8 +57,9 @@ class DocumentPDFService:
         bypass_cache: bool = False,
         watermark: bool = False,
         show_logo: bool = True,
+        copy_type: str = 'ORIGINAL',
     ) -> bytes:
-        cache_key = cls.get_cache_key(snapshot, watermark=watermark, show_logo=show_logo)
+        cache_key = cls.get_cache_key(snapshot, watermark=watermark, show_logo=show_logo, copy_type=copy_type)
 
         if not bypass_cache:
             cached_data = cache.get(cache_key)
@@ -77,7 +80,7 @@ class DocumentPDFService:
                 dto, watermark=watermark, show_logo=show_logo
             )
         elif doc_type in ['SALES_INVOICE', 'PURCHASE_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE']:
-            pdf_bytes = InvoicePDFRenderer.render(dto, watermark=watermark)
+            pdf_bytes = InvoicePDFRenderer.render(dto, watermark=watermark, copy_type=copy_type)
         elif doc_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL']:
             pdf_bytes = VoucherPDFRenderer.render(dto)
         elif doc_type in ['CUSTOMER_STATEMENT', 'SUPPLIER_STATEMENT', 'LEDGER']:
@@ -86,7 +89,7 @@ class DocumentPDFService:
             pdf_bytes = ReportPDFRenderer.render(dto)
         else:
             # Fallback to invoice renderer
-            pdf_bytes = InvoicePDFRenderer.render(dto, watermark=watermark)
+            pdf_bytes = InvoicePDFRenderer.render(dto, watermark=watermark, copy_type=copy_type)
 
         # Store in ephemeral cache
         try:
@@ -101,6 +104,7 @@ class DocumentPDFService:
         cls,
         voucher: Voucher,
         bypass_cache: bool = False,
+        copy_type: str = 'ORIGINAL',
     ) -> bytes:
         """
         Convenience method to render any Voucher (Sales, Purchase, Payment, etc.).
@@ -109,7 +113,7 @@ class DocumentPDFService:
         snapshot = DocumentSnapshotService.get_or_create_voucher_snapshot(
             voucher, force_refresh=bypass_cache
         )
-        return cls.generate_pdf_from_snapshot(snapshot, bypass_cache=bypass_cache)
+        return cls.generate_pdf_from_snapshot(snapshot, bypass_cache=bypass_cache, copy_type=copy_type)
 
     @classmethod
     def generate_pdf_for_statement(
