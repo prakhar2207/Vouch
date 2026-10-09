@@ -12,6 +12,7 @@ import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { useFinancialYear } from "@/context/FinancialYearContext";
+import { useCompany } from "@/context/CompanyContext";
 import { ledgersRepository } from "@/lib/data/ledgers-repository";
 import { ingestVoucherLocally } from "@/lib/sync/sync-worker";
 import {
@@ -80,6 +81,7 @@ function AgGridVoucherEntryContent() {
   const searchParams = useSearchParams();
   const { workingDate, registerSaveHandler, registerAltCCallback } = useShortcuts();
   const { activeFY, isReadOnly } = useFinancialYear();
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
 
   const [companyId, setCompanyId] = useState<string>("");
   const [ledgers, setLedgers] = useState<any[]>([]);
@@ -152,15 +154,28 @@ function AgGridVoucherEntryContent() {
       router.push("/login");
       return;
     }
-    fetchLedgers();
+    const targetCid = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") : null);
+    fetchLedgers(targetCid || undefined);
   }, [router]);
 
-  const fetchLedgers = async () => {
+  useEffect(() => {
+    if (activeCompanyId && activeCompanyId !== companyId) {
+      setCompanyId(activeCompanyId);
+      fetchLedgers(activeCompanyId);
+    }
+  }, [activeCompanyId]);
+
+  const fetchLedgers = async (explicitCid?: string) => {
     try {
+      const resolvedCid = explicitCid || activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") : null);
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (resolvedCid) headers["X-Company-ID"] = resolvedCid;
+
       const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const cid = compRes.data.data?.[0]?.id;
+      const compList = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+      const comp = (resolvedCid ? compList.find((c: any) => c.id === resolvedCid) : null) || compList[0];
+      const cid = comp?.id;
       if (!cid) return;
       setCompanyId(cid);
 

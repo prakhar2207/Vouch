@@ -6,6 +6,7 @@ import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useCompany } from '@/context/CompanyContext';
 import StateSelect from '@/components/StateSelect';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 import { useToast } from '@/context/ToastContext';
@@ -17,6 +18,7 @@ export default function EditPartyPage() {
   const partyId = params.id;
   const { toast } = useToast();
 
+  const { companyId: activeCompanyId } = useCompany();
   const [companyId, setCompanyId] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -40,15 +42,21 @@ export default function EditPartyPage() {
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
     fetchParty();
-  }, [router, partyId]);
+  }, [router, partyId, activeCompanyId]);
 
   const fetchParty = async () => {
     try {
+      const resolvedCid = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (resolvedCid) headers['X-Company-ID'] = resolvedCid;
 
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const cid = compRes.data.data[0]?.id;
+      let cid = resolvedCid;
+      if (!cid) {
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+        const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+        cid = list[0]?.id;
+      }
       if (!cid) return;
       setCompanyId(cid);
 

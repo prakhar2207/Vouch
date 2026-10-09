@@ -84,10 +84,32 @@ function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
     if (!config.headers) config.headers = {} as InternalAxiosRequestConfig['headers'];
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  // Automatic tenant isolation: attach X-Company-ID from localStorage
+  if (typeof window !== 'undefined') {
+    const activeCompanyId = localStorage.getItem('vouch_active_company_id');
+    if (activeCompanyId && !config.headers?.['X-Company-ID']) {
+      if (!config.headers) config.headers = {} as InternalAxiosRequestConfig['headers'];
+      config.headers['X-Company-ID'] = activeCompanyId;
+    }
+  }
+
   return config;
 }
 
 api.interceptors.request.use(recordAndGuardRequest, (error) => Promise.reject(error));
+
+// Also configure global axios interceptor for any direct axios calls
+if (typeof window !== 'undefined') {
+  axios.interceptors.request.use((config) => {
+    const activeCompanyId = localStorage.getItem('vouch_active_company_id');
+    if (activeCompanyId && !config.headers?.['X-Company-ID']) {
+      if (!config.headers) config.headers = {} as any;
+      config.headers['X-Company-ID'] = activeCompanyId;
+    }
+    return config;
+  }, (error) => Promise.reject(error));
+}
 
 // ---------------------------------------------------------------------------
 // Automatic 401 Unauthorized Session Refresh & Retry Interceptor

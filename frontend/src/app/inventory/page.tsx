@@ -40,33 +40,37 @@ export default function InventoryPage() {
   const fetchCategories = async () => {
     setLoading(true);
     try {
-      // 1. Try local offline cache first
-      try {
-        const cachedComp = await offlineDb.masters.get('company');
-        if (cachedComp?.data?.id) setCompanyId(cachedComp.data.id);
-
-        const cachedCats = await offlineDb.masters.get('categories');
-        const cachedSummary = await offlineDb.masters.get('inventory_summary');
-        if (cachedCats?.data?.length) {
-          setCategories(cachedCats.data);
-          if (cachedSummary?.data) setSummary(cachedSummary.data);
-          setLoading(false);
-          // If cached within the last 5 minutes, do not make repeated network requests
-          if (cachedCats.updatedAt && Date.now() - cachedCats.updatedAt < 5 * 60 * 1000) {
-            return;
-          }
-        }
-      } catch (cacheErr) {
-        console.warn('Could not read categories from offline cache', cacheErr);
-      }
-
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      
       let cid = activeCompanyId;
       if (!cid && typeof window !== 'undefined') {
         cid = localStorage.getItem('vouch_active_company_id');
       }
+
+      // 1. Try local offline cache first (company-scoped)
+      if (cid) {
+        try {
+          const cachedComp = await offlineDb.masters.get(`company_${cid}`);
+          if (cachedComp?.data?.id) setCompanyId(cachedComp.data.id);
+
+          const cachedCats = await offlineDb.masters.get(`categories_${cid}`);
+          const cachedSummary = await offlineDb.masters.get(`inventory_summary_${cid}`);
+          if (cachedCats?.data?.length) {
+            setCategories(cachedCats.data);
+            if (cachedSummary?.data) setSummary(cachedSummary.data);
+            setLoading(false);
+            // If cached within the last 5 minutes, do not make repeated network requests
+            if (cachedCats.updatedAt && Date.now() - cachedCats.updatedAt < 5 * 60 * 1000) {
+              return;
+            }
+          }
+        } catch (cacheErr) {
+          console.warn('Could not read categories from offline cache', cacheErr);
+        }
+      }
+
+      const token = getAccessToken();
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (cid) headers['X-Company-ID'] = cid;
+      
       if (!cid) {
         const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
         const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
@@ -74,16 +78,16 @@ export default function InventoryPage() {
       }
       if (!cid) return;
       setCompanyId(cid);
-      offlineDb.masters.put({ key: 'company', data: activeCompany || { id: cid }, updatedAt: Date.now() }).catch(() => {});
+      offlineDb.masters.put({ key: `company_${cid}`, data: activeCompany || { id: cid }, updatedAt: Date.now() }).catch(() => {});
 
       const res = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cid}/`, { headers });
-      const catList = res.data.data || [];
-      const sumData = res.data.summary || null;
+      const catList = res.data?.data || (Array.isArray(res.data) ? res.data : []);
+      const sumData = res.data?.summary || null;
       setCategories(catList);
       setSummary(sumData);
-      offlineDb.masters.put({ key: 'categories', data: catList, updatedAt: Date.now() }).catch(() => {});
+      offlineDb.masters.put({ key: `categories_${cid}`, data: catList, updatedAt: Date.now() }).catch(() => {});
       if (sumData) {
-        offlineDb.masters.put({ key: 'inventory_summary', data: sumData, updatedAt: Date.now() }).catch(() => {});
+        offlineDb.masters.put({ key: `inventory_summary_${cid}`, data: sumData, updatedAt: Date.now() }).catch(() => {});
       }
     } catch (err) {
       console.error('Network fetch failed in inventory, using offline cache if available:', err);

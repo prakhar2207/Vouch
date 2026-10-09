@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { API_BASE_URL } from '@/utils/api';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useCompany } from '@/context/CompanyContext';
 import { useToast } from '@/context/ToastContext';
 import {
   ShieldCheck,
@@ -41,6 +42,7 @@ interface AuditEntry {
 export default function AuditPage() {
   const router = useRouter();
   const { toast } = useToast();
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
 
   const [company, setCompany] = useState<any>(null);
   const [logs, setLogs] = useState<AuditEntry[]>([]);
@@ -63,18 +65,21 @@ export default function AuditPage() {
       return;
     }
     fetchLogs(1);
-  }, [actionFilter, modelFilter, router]);
+  }, [actionFilter, modelFilter, router, activeCompanyId]);
 
   const fetchLogs = async (targetPage = 1) => {
     setLoading(true);
     try {
+      const targetCid = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (targetCid) headers['X-Company-ID'] = targetCid;
 
       let activeComp = company;
-      if (!activeComp) {
+      if (!activeComp || (targetCid && activeComp.id !== targetCid)) {
         const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-        activeComp = compRes.data?.data?.[0];
+        const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+        activeComp = (targetCid ? list.find((c: any) => c.id === targetCid) : null) || list[0];
         setCompany(activeComp);
       }
 

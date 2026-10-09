@@ -6,6 +6,7 @@ import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useCompany } from '@/context/CompanyContext';
 import { useToast } from '@/context/ToastContext';
 import PriceListImportModal from '@/components/modals/PriceListImportModal';
 import BulkBrandDiscountModal from '@/components/modals/BulkBrandDiscountModal';
@@ -63,6 +64,7 @@ export default function CategoryDetailPage() {
   const params = useParams();
   const categoryId = params.id as string;
   const { toast } = useToast();
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
 
   const [category, setCategory] = useState<any>(null);
   const [products, setProducts] = useState<any[]>([]);
@@ -104,16 +106,20 @@ export default function CategoryDetailPage() {
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
     fetchData();
-  }, [router, categoryId]);
+  }, [router, categoryId, activeCompanyId]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
+      const resolvedCid = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
+
       // 1. First, attempt to load cached masters from offline IndexedDB
       try {
-        const cachedComp = await offlineDb.masters.get('company');
-        if (cachedComp?.data?.id) {
-          setCompanyId(cachedComp.data.id);
+        if (resolvedCid) {
+          const cachedComp = await offlineDb.masters.get(`company_${resolvedCid}`);
+          if (cachedComp?.data?.id) {
+            setCompanyId(cachedComp.data.id);
+          }
         }
         const cachedCat = await offlineDb.masters.get(`category_${categoryId}`);
         if (cachedCat?.data) {
@@ -129,13 +135,16 @@ export default function CategoryDetailPage() {
       }
 
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (resolvedCid) headers['X-Company-ID'] = resolvedCid;
+
       const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const comp = compRes.data.data[0];
+      const compList = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+      const comp = (resolvedCid ? compList.find((c: any) => c.id === resolvedCid) : null) || compList[0];
       const cid = comp?.id;
       if (!cid) return;
       setCompanyId(cid);
-      offlineDb.masters.put({ key: 'company', data: comp, updatedAt: Date.now() }).catch(() => {});
+      offlineDb.masters.put({ key: `company_${cid}`, data: comp, updatedAt: Date.now() }).catch(() => {});
 
       const catRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cid}/`, { headers });
       const cat = (catRes.data.data || []).find((c: any) => c.id === categoryId);

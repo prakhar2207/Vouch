@@ -294,7 +294,7 @@ class GSTRReportService:
             voucher_date__gte=start_date,
             voucher_date__lte=end_date,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).select_related('party_ledger')
+        ).select_related('party_ledger').defer('attachment_data', 'attachment_mime')
 
         at_by_pos = defaultdict(lambda: defaultdict(lambda: {
             "ad_amt": Decimal('0.00'), "iamt": Decimal('0.00'), "camt": Decimal('0.00'), "samt": Decimal('0.00'), "csamt": Decimal('0.00')
@@ -336,7 +336,12 @@ class GSTRReportService:
             invoice_voucher__voucher_date__gte=start_date,
             invoice_voucher__voucher_date__lte=end_date,
             invoice_voucher__status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).select_related('payment_voucher', 'invoice_voucher', 'payment_voucher__party_ledger')
+        ).select_related(
+            'payment_voucher', 'invoice_voucher', 'payment_voucher__party_ledger'
+        ).defer(
+            'payment_voucher__attachment_data', 'payment_voucher__attachment_mime',
+            'invoice_voucher__attachment_data', 'invoice_voucher__attachment_mime'
+        )
 
         atadj_by_pos = defaultdict(lambda: defaultdict(lambda: {
             "ad_amt": Decimal('0.00'), "iamt": Decimal('0.00'), "camt": Decimal('0.00'), "samt": Decimal('0.00'), "csamt": Decimal('0.00')
@@ -435,7 +440,7 @@ class GSTRReportService:
             voucher__voucher_date__gte=start_date,
             voucher__voucher_date__lte=end_date,
             voucher__status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).select_related('voucher')
+        ).select_related('voucher').defer('voucher__attachment_data', 'voucher__attachment_mime')
         
         pur_txval = sum([i.taxable_amount for i in purchase_items], Decimal('0.00'))
         itc_igst = sum([i.igst_amount for i in purchase_items], Decimal('0.00'))

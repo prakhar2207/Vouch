@@ -37,7 +37,8 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
         const token = getAccessToken();
         const headers = { Authorization: `Bearer ${token}` };
         const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-        cid = compRes.data.data?.[0]?.id;
+        const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+        cid = list[0]?.id;
       }
       if (!cid) return;
 

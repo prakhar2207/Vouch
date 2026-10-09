@@ -8,6 +8,7 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useShortcuts } from '@/context/ShortcutContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
+import { useCompany } from '@/context/CompanyContext';
 import { useToast } from '@/context/ToastContext';
 import {
   ChevronDown,
@@ -33,6 +34,7 @@ import {
   Tag,
   Check,
   Layers,
+  Trash2,
 } from 'lucide-react';
 import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
@@ -92,6 +94,7 @@ function resolvePartyRateForBrand(
 export default function SalesPage() {
   const router = useRouter();
   const { toast } = useToast();
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
   const [isPostingImpactOpen, setIsPostingImpactOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
@@ -283,71 +286,133 @@ export default function SalesPage() {
       router.push('/login');
       return;
     }
-    fetchBaseData();
+    const targetCid = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
+    fetchBaseData(targetCid || undefined);
   }, [router]);
 
-  const fetchBaseData = async () => {
-    try {
-      // First, attempt to load cached masters from offline IndexedDB immediately
-      try {
-        const cachedComp = await offlineDb.masters.get('company');
-        const cachedLedgers = await offlineDb.masters.get('ledgers');
-        const cachedCats = await offlineDb.masters.get('categories');
-        const cachedProds = await offlineDb.masters.get('products');
+  // Reactive listener: when user switches company in DashboardLayout, automatically switch everything
+  useEffect(() => {
+    if (activeCompanyId && activeCompanyId !== companyId) {
+      setPartyLedgerId('');
+      setPartyRates({});
+      setSelectedBankLedgerId('');
+      setGroupedItems([{
+        group_title: 'Main Items',
+        items: [{
+          product_id: null,
+          product_name: '',
+          sku: '',
+          hsn_code: '',
+          quantity: 1,
+          unit: 'PCS',
+          rate: 0,
+          discount_percent: 0,
+          purchase_cost: 0,
+          taxable_amount: 0,
+          tax_rate: 18,
+          cgst_rate: 9,
+          sgst_rate: 9,
+          igst_rate: 0,
+          cgst_amount: 0,
+          sgst_amount: 0,
+          igst_amount: 0,
+          total_amount: 0,
+          is_custom_item: false,
+          brand: '',
+          last_party_rate: null,
+          last_party_date: null,
+          last_party_vnum: null
+        }]
+      }]);
+      if (activeCompany) {
+        setCompany(activeCompany);
+        setCompanyId(activeCompany.id);
+        setCompanyStateCode(activeCompany.state_code || '');
+        setUpiId(activeCompany.upi_id || '');
+        setEnableLedgerMapping(activeCompany.settings?.enable_ledger_mapping || false);
+        setEnableManualInvoice(activeCompany.settings?.enable_manual_invoice_number || false);
+      }
+      fetchBaseData(activeCompanyId);
+    }
+  }, [activeCompanyId, activeCompany]);
 
-        if (cachedComp?.data) {
-          setCompany(cachedComp.data);
-          setCompanyId(cachedComp.data.id);
-          setCompanyStateCode(cachedComp.data.state_code || '');
-          if (cachedComp.data.upi_id) setUpiId(cachedComp.data.upi_id);
-          setEnableLedgerMapping(cachedComp.data.settings?.enable_ledger_mapping || false);
-          setEnableManualInvoice(cachedComp.data.settings?.enable_manual_invoice_number || false);
+  const fetchBaseData = async (targetCompanyId?: string) => {
+    try {
+      const resolvedCompanyId = targetCompanyId || activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
+
+      // Purge legacy unscoped offline cache keys to prevent cross-tenant contamination
+      offlineDb.masters.bulkDelete(['company', 'ledgers', 'categories', 'products']).catch(() => {});
+
+      // 1. Attempt to load company-scoped cached masters immediately
+      if (resolvedCompanyId) {
+        try {
+          const [cachedComp, cachedLedgers, cachedCats, cachedProds] = await Promise.all([
+            offlineDb.masters.get(`company_${resolvedCompanyId}`),
+            offlineDb.masters.get(`ledgers_${resolvedCompanyId}`),
+            offlineDb.masters.get(`categories_${resolvedCompanyId}`),
+            offlineDb.masters.get(`products_${resolvedCompanyId}`),
+          ]);
+
+          if (cachedComp?.data) {
+            setCompany(cachedComp.data);
+            setCompanyId(cachedComp.data.id);
+            setCompanyStateCode(cachedComp.data.state_code || '');
+            setUpiId(cachedComp.data.upi_id || '');
+            setEnableLedgerMapping(cachedComp.data.settings?.enable_ledger_mapping || false);
+            setEnableManualInvoice(cachedComp.data.settings?.enable_manual_invoice_number || false);
+          }
+          if (cachedLedgers?.data?.length) {
+            setLedgers(cachedLedgers.data);
+            applyDefaultLedgers(cachedLedgers.data, cachedComp?.data?.settings?.enable_ledger_mapping || false, resolvedCompanyId);
+          }
+          if (cachedCats?.data?.length) setCategories(cachedCats.data);
+          if (cachedProds?.data?.length) setProducts(cachedProds.data);
+        } catch (cacheErr) {
+          console.warn('Could not read from local offline cache', cacheErr);
         }
-        if (cachedLedgers?.data?.length) {
-          setLedgers(cachedLedgers.data);
-          applyDefaultLedgers(cachedLedgers.data, cachedComp?.data?.settings?.enable_ledger_mapping || false, cachedComp?.data?.id);
-        }
-        if (cachedCats?.data?.length) setCategories(cachedCats.data);
-        if (cachedProds?.data?.length) setProducts(cachedProds.data);
-      } catch (cacheErr) {
-        console.warn('Could not read from local offline cache', cacheErr);
       }
 
+      // 2. Fetch fresh masters from server
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (resolvedCompanyId) {
+        headers['X-Company-ID'] = resolvedCompanyId;
+      }
       const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const comp = compRes.data.data[0];
+      const compList = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+      const comp = (resolvedCompanyId ? compList.find((c: any) => c.id === resolvedCompanyId) : null) || compList[0];
       const cId = comp?.id;
       if (!cId) return;
+
       setCompany(comp);
       setCompanyId(cId);
       setCompanyStateCode(comp.state_code || '');
-      if (comp.upi_id) setUpiId(comp.upi_id);
+      setUpiId(comp.upi_id || '');
       
       const isMappingEnabled = comp.settings?.enable_ledger_mapping || false;
       setEnableLedgerMapping(isMappingEnabled);
       setEnableManualInvoice(comp.settings?.enable_manual_invoice_number || false);
 
-      // Cache company
-      offlineDb.masters.put({ key: 'company', data: comp, updatedAt: Date.now() }).catch(() => {});
+      // Cache scoped by company
+      offlineDb.masters.put({ key: `company_${cId}`, data: comp, updatedAt: Date.now() }).catch(() => {});
 
       const [ledgersRes, catsRes, prodsRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/api/v1/ledgers/${cId}/`, { headers }),
         axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cId}/`, { headers }),
         axios.get(`${API_BASE_URL}/api/v1/inventory/products/${cId}/`, { headers }).catch(() => ({ data: { data: [] } }))
       ]);
-      const ledgerList = ledgersRes.data.data || [];
-      const catList = catsRes.data.data || [];
-      const prodList = prodsRes.data?.data || [];
+      const ledgerList = ledgersRes.data?.data || (Array.isArray(ledgersRes.data) ? ledgersRes.data : []);
+      const catList = catsRes.data?.data || (Array.isArray(catsRes.data) ? catsRes.data : []);
+      const prodList = prodsRes.data?.data || (Array.isArray(prodsRes.data) ? prodsRes.data : []);
 
       setLedgers(ledgerList);
       setCategories(catList);
       setProducts(prodList);
       
-      // Save freshly fetched data to local offline DB for offline use
-      offlineDb.masters.put({ key: 'ledgers', data: ledgerList, updatedAt: Date.now() }).catch(() => {});
-      offlineDb.masters.put({ key: 'categories', data: catList, updatedAt: Date.now() }).catch(() => {});
-      offlineDb.masters.put({ key: 'products', data: prodList, updatedAt: Date.now() }).catch(() => {});
+      // Save freshly fetched data to company-scoped offline DB
+      offlineDb.masters.put({ key: `ledgers_${cId}`, data: ledgerList, updatedAt: Date.now() }).catch(() => {});
+      offlineDb.masters.put({ key: `categories_${cId}`, data: catList, updatedAt: Date.now() }).catch(() => {});
+      offlineDb.masters.put({ key: `products_${cId}`, data: prodList, updatedAt: Date.now() }).catch(() => {});
 
       applyDefaultLedgers(ledgerList, isMappingEnabled, cId);
     } catch (err) {
@@ -358,7 +423,11 @@ export default function SalesPage() {
   };
 
   const applyDefaultLedgers = (ledgerList: any[], isMappingEnabled: boolean, cId?: string) => {
-    const party = ledgerList.find((l:any) => l.name.includes('Customer') || l.group.includes('Debtors'));
+    const debtors = ledgerList.filter((l: any) => 
+      l.ledger_type === 'CUSTOMER' ||
+      (l.group && (l.group.toLowerCase().includes('debtor') || l.group.toLowerCase().includes('customer')))
+    );
+    const party = debtors.find((l: any) => l.name.toLowerCase().includes('customer')) || debtors[0];
     const genericSales = ledgerList.find((l:any) => l.name === 'Sales Account' || l.name === 'Local Sales') || ledgerList.find((l:any) => l.name.toLowerCase().includes('sales'));
     const sales = isMappingEnabled 
         ? ledgerList.find((l:any) => l.name.toLowerCase().includes('sales')) 
@@ -504,7 +573,7 @@ export default function SalesPage() {
           }
         };
         setCompany(updatedComp);
-        offlineDb.masters.put({ key: 'company', data: updatedComp, updatedAt: Date.now() }).catch(() => {});
+        offlineDb.masters.put({ key: `company_${targetCid}`, data: updatedComp, updatedAt: Date.now() }).catch(() => {});
       }
     }
   };
@@ -1312,6 +1381,366 @@ export default function SalesPage() {
     );
   }
 
+  // Helper to render Autocomplete dropdown (shared between mobile cards & desktop table)
+  const renderProductAutocomplete = (gIndex: number, iIndex: number, item: any, group: any, isMobile: boolean = false) => {
+    const query = String(item.product_name || '').trim().toLowerCase();
+    const queryAlpha = query.replace(/[\s\-_/.]/g, '');
+    const filteredProds = products.filter((p: any) => {
+      if (group.category_id && p.category_id !== group.category_id) return false;
+      if (!query) return true;
+      const pName = (p.name || '').toLowerCase();
+      const pAlpha = pName.replace(/[\s\-_/.]/g, '');
+      const pBrand = (p.brand || '').toLowerCase();
+      const pAlias = (p.alias || '').toLowerCase();
+      const pSku = (p.sku || '').toLowerCase();
+      const pDesc = (p.description || '').toLowerCase();
+      return (
+        pName.includes(query) ||
+        pAlpha.includes(queryAlpha) ||
+        pBrand.includes(query) ||
+        pAlias.includes(query) ||
+        pSku.includes(query) ||
+        pDesc.includes(query)
+      );
+    });
+
+    const sizeMatch = queryAlpha.match(/([a-z]{0,3}\d{2,5}[a-z]{0,2})/);
+    const coreSizeToken = sizeMatch ? sizeMatch[0] : (queryAlpha.length >= 2 ? queryAlpha : '');
+    const crossBrandEquivalents = coreSizeToken.length >= 2 ? products.filter((p: any) => {
+      const pAlpha = (p.name || '').toLowerCase().replace(/[\s\-_/.]/g, '');
+      const aAlpha = (p.alias || '').toLowerCase().replace(/[\s\-_/.]/g, '');
+      const dAlpha = (p.description || '').toLowerCase().replace(/[\s\-_/.]/g, '');
+      return pAlpha.includes(coreSizeToken) || aAlpha.includes(coreSizeToken) || dAlpha.includes(coreSizeToken);
+    }) : [];
+
+    return (
+      <div 
+        className={`absolute top-full mt-1.5 z-50 bg-card border border-border rounded-xl shadow-2xl overflow-hidden max-h-80 sm:max-h-96 overflow-y-auto ${
+          isMobile 
+            ? 'left-0 right-0 w-full max-w-full' 
+            : 'left-0 w-full min-w-full sm:min-w-[420px] max-w-[calc(100vw-2rem)] sm:max-w-[620px]'
+        }`}
+        onMouseDown={(e) => e.preventDefault()}
+      >
+        {filteredProds.length === 0 && crossBrandEquivalents.length === 0 ? (
+          <div className="p-3 text-xs text-muted-foreground italic">
+            No catalog product found. Enter details manually.
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {/* Cross-Brand Equivalents Bar */}
+            {crossBrandEquivalents.length > 1 && (
+              <div className="bg-gradient-to-r from-blue-50/90 via-indigo-50/80 to-blue-50/90 dark:from-blue-950/60 dark:via-indigo-950/40 dark:to-blue-950/60 border-b border-blue-100 dark:border-blue-800/40 p-2.5 sm:p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-blue-800 dark:text-blue-300">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin-slow text-blue-600 dark:text-blue-400" />
+                    <span className="truncate">Cross-Brand ({crossBrandEquivalents.length} in &quot;{coreSizeToken.toUpperCase()}&quot;)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveSearch(null);
+                      setBrandSearchQuery('');
+                      setBrandModalTarget({ gIndex, iIndex });
+                    }}
+                    className="text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-600/50 dark:hover:bg-blue-600/70 dark:text-blue-100 border border-blue-600 dark:border-blue-500/40 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg cursor-pointer transition-colors flex items-center gap-1 shadow-xs shrink-0"
+                    title="Open unified brand selector modal"
+                  >
+                    <Tag className="w-3 h-3" />
+                    <span>View All Brands</span>
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {crossBrandEquivalents.map((altProd: any) => {
+                    const altStock = Number(altProd.stock_quantity ?? 0);
+                    const isAltStocked = altStock > 0;
+                    const altMrp = parseFloat(altProd.selling_price) || 0;
+                    const altPast = resolvePartyRateForBrand(partyRates, altProd.id, altProd.name, altProd.brand);
+                    return (
+                      <button
+                        key={altProd.id}
+                        type="button"
+                        onClick={() => {
+                          selectProduct(gIndex, iIndex, altProd);
+                          setActiveSearch(null);
+                        }}
+                        className={`p-2 sm:p-2.5 rounded-xl border text-left text-xs transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
+                          isAltStocked 
+                            ? 'bg-card hover:bg-emerald-50/60 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/50 shadow-2xs' 
+                            : 'bg-muted/30 hover:bg-muted/60 border-border/80 opacity-80'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="font-bold text-xs text-blue-700 dark:text-blue-400">
+                              {altProd.brand || 'Unbranded'}
+                            </div>
+                            <div className="text-[11px] font-mono text-foreground truncate font-semibold">
+                              {altProd.name}
+                            </div>
+                          </div>
+                          <span className={`text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full shrink-0 ${
+                            isAltStocked
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30'
+                              : 'bg-muted text-muted-foreground border border-border'
+                          }`}>
+                            {isAltStocked ? `${altStock} in Stock` : 'Out of stock'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/40">
+                          {altPast && Number(altPast.rate) > 0 ? (
+                            <div className="text-blue-700 dark:text-blue-400 font-bold">
+                              Last: ₹{Number(altPast.rate).toFixed(2)}
+                            </div>
+                          ) : altMrp > 0 ? (
+                            <div className="text-foreground/80 font-medium">
+                              MRP: ₹{altMrp.toFixed(2)}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground italic text-[10px]">No price set</span>
+                          )}
+                          {Number(altProd.purchase_price) > 0 && (
+                            <span className="text-[10px] text-muted-foreground">
+                              Cost: ₹{Number(altProd.purchase_price).toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="bg-muted/40 px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex justify-between border-b border-border">
+              <span>Matching Catalog SKUs</span>
+              <span>{filteredProds.length} result{filteredProds.length > 1 ? 's' : ''}</span>
+            </div>
+            {filteredProds.map((p: any) => {
+              const mrp = parseFloat(p.selling_price) || 0;
+              const stock = Number(p.stock_quantity ?? 0);
+              const isSelected = item.product_id === p.id;
+              const pPast = resolvePartyRateForBrand(partyRates, p.id, p.name, p.brand);
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    selectProduct(gIndex, iIndex, p);
+                    setActiveSearch(null);
+                  }}
+                  className={`w-full text-left p-2.5 sm:p-3 hover:bg-muted/60 flex items-center justify-between gap-3 cursor-pointer transition-colors border-b border-border/60 last:border-b-0 ${
+                    isSelected ? 'bg-blue-50/80 dark:bg-blue-600/15 border-l-4 border-l-blue-600 dark:border-l-blue-500' : ''
+                  }`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                      <span className="font-semibold text-foreground text-sm truncate">{p.name}</span>
+                      {p.brand ? (
+                        <span className="text-[10px] px-1.5 sm:px-2 py-0.5 rounded-md font-bold uppercase bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/30">
+                          {p.brand}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium text-muted-foreground bg-muted border border-border">
+                          Unbranded
+                        </span>
+                      )}
+                      {pPast && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40">
+                          Party: ₹{Number(pPast.rate).toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+                      {p.category} {p.sku ? `• SKU: ${p.sku}` : ''} {p.description ? `• ${p.description}` : ''}
+                    </div>
+                  </div>
+                  <div className="text-right whitespace-nowrap pl-2">
+                    <div className="text-xs font-mono font-bold text-foreground">
+                      {mrp > 0 ? `MRP: ₹${mrp.toFixed(2)}` : 'No MRP'}
+                    </div>
+                    {pPast && (
+                      <div className="text-[11px] font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                        Party: ₹{Number(pPast.rate).toFixed(2)}
+                      </div>
+                    )}
+                    <div className={`text-[10px] font-mono font-medium ${stock > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                      Avail: {stock} {p.unit || 'PCS'}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Helper to render HUD badges & pill buttons for an item
+  const renderItemBadges = (gIndex: number, iIndex: number, item: any, group: any) => {
+    if (!item.product_name) return null;
+
+    const cleanName = String(item.product_name || '').trim().toLowerCase();
+    const alphaVal = cleanName.replace(/[\s\-_/.]/g, '');
+    const matched = products.find((p: any) => 
+      (item.product_id && p.id === item.product_id) || 
+      (p.name.toLowerCase() === cleanName && 
+       (!item.brand || (p.brand || '').toLowerCase() === item.brand.toLowerCase()))
+    );
+    const sameNameProducts = products.filter((p: any) => 
+      (!group.category_id || p.category_id === group.category_id) &&
+      (p.name.toLowerCase() === cleanName || p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)
+    );
+
+    // Strict brand-specific party rate
+    const pastInfo = resolvePartyRateForBrand(
+      partyRates, 
+      item.product_id || matched?.id, 
+      item.product_name, 
+      item.brand || matched?.brand
+    );
+    
+    const pastRate = item.last_party_rate ?? (pastInfo ? Number(pastInfo.rate) : null);
+    const purchaseCost = Number(
+      (matched?.purchase_price && parseFloat(matched.purchase_price) > 0)
+        ? matched.purchase_price
+        : (item.purchase_cost || pastInfo?.purchase_cost || 0)
+    );
+    const catalogMrp = parseFloat(matched?.selling_price || item.mrp || 0);
+    const currentRate = Number(item.rate || 0);
+    
+    const vNum = item.last_party_vnum || pastInfo?.voucher_number;
+    const vDate = item.last_party_date || pastInfo?.voucher_date;
+    const partyName = ledgers.find(l => l.id === partyLedgerId)?.name || 'Customer';
+
+    const isBelowCost = currentRate > 0 && purchaseCost > 0 && currentRate < purchaseCost;
+    const marginPercent = currentRate > 0 && purchaseCost > 0 
+      ? ((currentRate - purchaseCost) / currentRate) * 100 
+      : null;
+    const availStock = Number(matched?.stock_quantity ?? item.stock_quantity ?? 0);
+
+    return (
+      <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+        {/* 1. Unified Brand Pill Button */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setBrandSearchQuery('');
+            setBrandModalTarget({ gIndex, iIndex });
+          }}
+          className={`text-[10px] px-2.5 py-1 rounded-lg border font-semibold flex items-center gap-1.5 cursor-pointer transition-all ${
+            item.brand
+              ? 'bg-blue-50 hover:bg-blue-100/80 text-blue-800 border-blue-200 dark:bg-blue-500/15 dark:hover:bg-blue-500/25 dark:text-blue-300 dark:border-blue-500/40 shadow-2xs'
+              : 'bg-amber-50 hover:bg-amber-100/80 text-amber-900 border-amber-200 dark:bg-amber-500/10 dark:hover:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30'
+          }`}
+          title="Click to select or switch brand variant"
+        >
+          <Tag className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+          <span>Brand: <strong className="text-foreground">{item.brand || 'Select Brand'}</strong></span>
+          {sameNameProducts.length > 1 && (
+            <span className="text-[9px] bg-blue-600 text-white rounded-full px-1.5 font-mono font-bold">
+              {sameNameProducts.length}
+            </span>
+          )}
+          <ChevronDown className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+        </button>
+
+        {/* 2. Stock Pill */}
+        {matched && (
+          <span className={`text-[10px] font-mono px-2 py-0.5 rounded-md border font-medium flex items-center gap-1 ${
+            availStock > 0 
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/30' 
+              : 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-500/15 dark:text-rose-400 dark:border-rose-500/30'
+          }`}>
+            <span>● Stock:</span>
+            <strong>{availStock} {matched.unit || 'PCS'}</strong>
+          </span>
+        )}
+
+        {/* 3. Brand-Specific Last Billed HUD Card */}
+        {pastRate && pastRate > 0 ? (
+          <div 
+            className="text-[10px] font-mono inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-900 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-500/30 px-2 py-0.5 rounded-md shadow-2xs"
+            title={`Last billed to ${partyName} on ${vDate || 'past invoice'} @ ₹${pastRate.toFixed(2)}${vNum ? ` (${vNum})` : ''}`}
+          >
+            <span className="text-emerald-700 dark:text-emerald-400 font-sans font-semibold">Last Sold{item.brand ? ` (${item.brand})` : ''}:</span>
+            <strong className="text-emerald-950 dark:text-emerald-200 font-bold">₹{pastRate.toFixed(2)}</strong>
+            {vDate && <span className="text-emerald-600 dark:text-emerald-400/70 text-[9px]">({vDate})</span>}
+            {Number(item.rate) !== pastRate && (
+              <button
+                type="button"
+                onClick={() => updateItem(gIndex, iIndex, 'rate', pastRate)}
+                className="text-[9px] bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-500/25 dark:hover:bg-emerald-500/40 dark:text-emerald-100 px-1.5 py-0.5 rounded font-sans cursor-pointer transition-colors shadow-xs"
+                title="Apply party's last billed rate"
+              >
+                Apply
+              </button>
+            )}
+          </div>
+        ) : (
+          partyLedgerId && (
+            <span className="text-[10px] font-sans text-muted-foreground/80 bg-muted/40 px-2 py-0.5 rounded border border-border/60">
+              No prior bill{item.brand ? ` (${item.brand})` : ''}
+            </span>
+          )
+        )}
+
+        {/* 4. Purchase Cost HUD Card */}
+        {purchaseCost > 0 && (
+          <div 
+            className="text-[10px] font-mono inline-flex items-center gap-1.5 bg-slate-100 text-slate-800 border border-slate-200 dark:bg-slate-800/70 dark:text-slate-300 dark:border-slate-700 px-2 py-0.5 rounded-md"
+            title={`Latest purchase cost: ₹${purchaseCost.toFixed(2)}. Click '+25%' to apply standard 25% wholesale margin.`}
+          >
+            <span className="text-slate-600 dark:text-slate-400 font-sans font-semibold">Cost:</span>
+            <strong className="text-slate-900 dark:text-slate-200 font-bold">₹{purchaseCost.toFixed(2)}</strong>
+            <button
+              type="button"
+              onClick={() => updateItem(gIndex, iIndex, 'rate', Math.round(purchaseCost * 1.25 * 100) / 100)}
+              className="text-[9px] bg-blue-600 hover:bg-blue-700 text-white dark:bg-blue-500/20 dark:hover:bg-blue-500/30 dark:text-blue-300 px-1.5 py-0.5 rounded font-sans cursor-pointer transition-colors shadow-xs font-semibold"
+              title="Set rate to Cost + 25% margin"
+            >
+              +25%
+            </button>
+          </div>
+        )}
+
+        {/* 5. Live Margin / Loss Badge */}
+        {currentRate > 0 && purchaseCost > 0 && (
+          <div 
+            className={`text-[10px] font-mono inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-semibold ${
+              isBelowCost 
+                ? 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/50' 
+                : marginPercent! >= 20
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'
+                : 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30'
+            }`}
+            title={isBelowCost ? `⚠️ Selling below cost (-₹${(purchaseCost - currentRate).toFixed(2)} loss/unit)!` : `Current gross margin on this line: ${marginPercent!.toFixed(1)}%`}
+          >
+            <span className="font-sans">
+              {isBelowCost ? '⚠️ Loss:' : 'Margin:'}
+            </span>
+            <span>{marginPercent!.toFixed(1)}%</span>
+          </div>
+        )}
+
+        {/* 6. Master MRP (Catalog price) */}
+        {catalogMrp > 0 && Number(item.rate) !== catalogMrp && (
+          <button
+            type="button"
+            onClick={() => updateItem(gIndex, iIndex, 'rate', catalogMrp)}
+            className="text-[10px] font-mono inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 border border-slate-200 dark:bg-muted/60 dark:hover:bg-muted dark:text-muted-foreground dark:hover:text-foreground dark:border-border px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+            title="Click to apply catalog MRP"
+          >
+            <span>MRP: ₹{catalogMrp.toFixed(2)} [Use]</span>
+          </button>
+        )}
+      </div>
+    );
+  };
+
   return (
     <DashboardLayout>
       <div className="max-w-6xl mx-auto space-y-6 pb-20">
@@ -1538,7 +1967,7 @@ export default function SalesPage() {
         </div>
 
         {/* Line Items Card */}
-        <div className="bg-card border border-border rounded-xl shadow-sm">
+        <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
             <div className="p-4 sm:p-6 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-2">
@@ -1589,9 +2018,9 @@ export default function SalesPage() {
                 </div>
             </div>
             
-            <div className="p-2 space-y-6">
+            <div className="p-2 sm:p-4 space-y-6">
                 {groupedItems.map((group, gIndex) => (
-                    <div key={gIndex} className="border border-border rounded-xl bg-card shadow-sm">
+                    <div key={gIndex} className="border border-border rounded-xl bg-card shadow-sm overflow-hidden">
                         <div className="p-3 sm:p-4 bg-muted/40 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div className="flex-1 max-w-md flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                                 <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Category:</label>
@@ -1618,14 +2047,175 @@ export default function SalesPage() {
                                         <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">SGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
                                     </div>
                                 )}
-                                <button onClick={() => removeCategoryGroup(gIndex)} className="text-red-500 hover:text-red-400 ml-auto sm:ml-4 p-1 cursor-pointer" title="Delete category group">
-                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                <button onClick={() => removeCategoryGroup(gIndex)} className="text-red-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 cursor-pointer ml-auto sm:ml-4 transition-colors" title="Delete category group">
+                                    <Trash2 className="w-4.5 h-4.5" />
                                 </button>
                             </div>
                         </div>
                         
-                        <div className="overflow-visible">
-                            <table className="w-full text-left border-collapse">
+                        {/* 1. Mobile Item Cards (sm:hidden) */}
+                        <div className="sm:hidden divide-y divide-border/60">
+                            {group.items.map((item: any, iIndex: number) => {
+                                const gross = Number(item.quantity) * Number(item.rate);
+                                const discount = gross * (Number(item.discount_percent)/100);
+                                const taxable = gross - discount;
+                                const cost = Number(item.purchase_cost || 0);
+                                const rate = Number(item.rate || 0);
+                                const isBelowCost = cost > 0 && rate > 0 && rate < cost;
+                                const cleanName = String(item.product_name || '').trim().toLowerCase();
+                                const matched = products.find((p: any) => 
+                                    (item.product_id && p.id === item.product_id) || 
+                                    p.name.toLowerCase() === cleanName
+                                );
+
+                                return (
+                                    <div 
+                                        key={iIndex} 
+                                        className={`p-3 space-y-2.5 transition-colors ${
+                                            activeRow?.gIndex === gIndex && activeRow?.iIndex === iIndex 
+                                                ? 'bg-muted/40' 
+                                                : 'bg-card'
+                                        }`}
+                                        onClick={() => setActiveRow({ gIndex, iIndex })}
+                                    >
+                                        {/* Card Header: Item # and Delete + Line Taxable */}
+                                        <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-border/40">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <span className="text-xs font-bold text-muted-foreground bg-muted px-2 py-0.5 rounded-md font-mono shrink-0">
+                                                    #{iIndex + 1}
+                                                </span>
+                                                {item.product_name ? (
+                                                    <span className="text-xs font-semibold text-foreground truncate">
+                                                        {item.product_name}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-xs text-muted-foreground italic">
+                                                        New Item
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="flex items-center gap-2 shrink-0">
+                                                <div className="text-right">
+                                                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider block font-medium leading-none mb-0.5">Taxable</span>
+                                                    <span className="text-sm font-bold font-mono text-foreground tabular-nums leading-none">
+                                                        ₹{taxable.toFixed(2)}
+                                                    </span>
+                                                </div>
+                                                <button 
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        removeRow(gIndex, iIndex);
+                                                    }} 
+                                                    className="text-muted-foreground hover:text-destructive active:scale-95 transition-all p-1.5 rounded-lg hover:bg-destructive/10 min-w-[32px] min-h-[32px] flex items-center justify-center cursor-pointer ml-1" 
+                                                    title="Remove line item"
+                                                >
+                                                    <Trash2 className="w-4 h-4 text-red-500/80" />
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Product Name Search */}
+                                        <div className="relative">
+                                            <div className="relative">
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="e.g. Item Name, Size, or Brand" 
+                                                    value={item.product_name} 
+                                                    onChange={e => {
+                                                        updateItem(gIndex, iIndex, 'product_name', e.target.value);
+                                                        setActiveSearch(`${gIndex}-${iIndex}`);
+                                                    }} 
+                                                    onFocus={() => {
+                                                        setActiveSearch(`${gIndex}-${iIndex}`);
+                                                        setActiveRow({ gIndex, iIndex });
+                                                    }} 
+                                                    onBlur={() => setTimeout(() => setActiveSearch(null), 250)}
+                                                    className="w-full min-h-[38px] bg-background border border-border/80 hover:border-input focus:border-primary focus:bg-background rounded-lg px-3 py-2 outline-none text-foreground transition-all text-sm font-medium" 
+                                                />
+                                            </div>
+                                            {activeSearch === `${gIndex}-${iIndex}` && renderProductAutocomplete(gIndex, iIndex, item, group, true)}
+                                        </div>
+
+                                        {/* Product Badges (Brand, Stock, Last Sold, Cost, Margin, MRP) */}
+                                        {renderItemBadges(gIndex, iIndex, item, group)}
+
+                                        {/* Numerical Inputs Grid: Qty, Rate, Disc% */}
+                                        <div className="grid grid-cols-3 gap-2 pt-1">
+                                            <div>
+                                                <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">
+                                                    Qty
+                                                </label>
+                                                <input 
+                                                    type="number" 
+                                                    step="1"
+                                                    min="1" 
+                                                    value={item.quantity} 
+                                                    onChange={e => updateItem(gIndex, iIndex, 'quantity', e.target.value)} 
+                                                    onFocus={() => setActiveRow({ gIndex, iIndex })}
+                                                    className="w-full min-h-[38px] bg-background border border-border/80 hover:border-input focus:border-primary focus:bg-background rounded-lg px-2.5 py-1.5 outline-none text-foreground transition-all text-center text-sm font-mono tabular-nums font-semibold" 
+                                                />
+                                                {matched && Number(matched.stock_quantity ?? 0) < Number(item.quantity) && (
+                                                    <div className="text-[10px] text-amber-500 font-mono tabular-nums text-center font-medium mt-1">
+                                                        Avail: {matched.stock_quantity ?? 0}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div>
+                                                <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">
+                                                    Rate (₹)
+                                                </label>
+                                                <input 
+                                                    type="number" 
+                                                    step="0.01" 
+                                                    min="0" 
+                                                    placeholder="0.00" 
+                                                    value={item.rate === 0 && !item.product_name ? '' : item.rate} 
+                                                    onChange={e => updateItem(gIndex, iIndex, 'rate', e.target.value)} 
+                                                    onFocus={() => setActiveRow({ gIndex, iIndex })}
+                                                    className={`w-full min-h-[38px] rounded-lg px-2.5 py-1.5 outline-none transition-all text-right text-sm font-mono tabular-nums font-semibold ${
+                                                        isBelowCost 
+                                                            ? 'bg-rose-500/10 border-rose-500 text-rose-300 focus:border-rose-400 ring-2 ring-rose-500/30' 
+                                                            : 'bg-background border border-border/80 hover:border-input focus:border-primary focus:bg-background text-foreground'
+                                                    }`} 
+                                                />
+                                                {isBelowCost && (
+                                                    <div className="text-[10px] text-rose-400 font-mono tabular-nums text-right font-semibold mt-1">
+                                                        ⚠️ Below Cost
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div>
+                                                <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">
+                                                    Disc %
+                                                </label>
+                                                <input 
+                                                    type="number" 
+                                                    step="0.01" 
+                                                    min="0" 
+                                                    max="100" 
+                                                    value={item.discount_percent} 
+                                                    onChange={e => updateItem(gIndex, iIndex, 'discount_percent', e.target.value)} 
+                                                    onFocus={() => setActiveRow({ gIndex, iIndex })}
+                                                    className="w-full min-h-[38px] bg-background border border-border/80 hover:border-input focus:border-primary focus:bg-background rounded-lg px-2.5 py-1.5 outline-none text-foreground transition-all text-center text-sm font-mono tabular-nums font-semibold" 
+                                                />
+                                                {currentPartyDiscount > 0 && (
+                                                    <div className="text-[10px] text-primary font-mono text-center mt-1">
+                                                        {currentPartyDiscount}% party
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* 2. Desktop Table (hidden sm:block) */}
+                        <div className="hidden sm:block overflow-x-auto">
+                            <table className="w-full min-w-[700px] text-left border-collapse">
                                 <thead className="bg-muted/60 text-muted-foreground text-xs uppercase tracking-wider">
                                     <tr>
                                         <th className="p-3 font-semibold">
@@ -1705,368 +2295,11 @@ export default function SalesPage() {
                                                         className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-sm font-medium" 
                                                     />
 
-                                                    {/* Autocomplete Dropdown Popover with Cross-Brand Search */}
-                                                    {activeSearch === `${gIndex}-${iIndex}` && (
-                                                        <div 
-                                                            className="absolute left-0 top-full mt-1.5 z-50 w-full min-w-[420px] max-w-[620px] bg-card border border-border rounded-2xl shadow-2xl overflow-hidden max-h-96 overflow-y-auto"
-                                                            onMouseDown={(e) => e.preventDefault()}
-                                                        >
-                                                            {(() => {
-                                                                const query = String(item.product_name || '').trim().toLowerCase();
-                                                                const queryAlpha = query.replace(/[\s\-_/.]/g, '');
-                                                                const filteredProds = products.filter((p: any) => {
-                                                                    if (group.category_id && p.category_id !== group.category_id) return false;
-                                                                    if (!query) return true;
-                                                                    const pName = (p.name || '').toLowerCase();
-                                                                    const pAlpha = pName.replace(/[\s\-_/.]/g, '');
-                                                                    const pBrand = (p.brand || '').toLowerCase();
-                                                                    const pAlias = (p.alias || '').toLowerCase();
-                                                                    const pSku = (p.sku || '').toLowerCase();
-                                                                    const pDesc = (p.description || '').toLowerCase();
-                                                                    return (
-                                                                        pName.includes(query) ||
-                                                                        pAlpha.includes(queryAlpha) ||
-                                                                        pBrand.includes(query) ||
-                                                                        pAlias.includes(query) ||
-                                                                        pSku.includes(query) ||
-                                                                        pDesc.includes(query)
-                                                                    );
-                                                                });
-
-                                                                // Extract core dimension / size token for cross-brand comparison (e.g. "c88", "b65", "6204", "2235")
-                                                                const sizeMatch = queryAlpha.match(/([a-z]{0,3}\d{2,5}[a-z]{0,2})/);
-                                                                const coreSizeToken = sizeMatch ? sizeMatch[0] : (queryAlpha.length >= 2 ? queryAlpha : '');
-                                                                const crossBrandEquivalents = coreSizeToken.length >= 2 ? products.filter((p: any) => {
-                                                                    const pAlpha = (p.name || '').toLowerCase().replace(/[\s\-_/.]/g, '');
-                                                                    const aAlpha = (p.alias || '').toLowerCase().replace(/[\s\-_/.]/g, '');
-                                                                    const dAlpha = (p.description || '').toLowerCase().replace(/[\s\-_/.]/g, '');
-                                                                    return pAlpha.includes(coreSizeToken) || aAlpha.includes(coreSizeToken) || dAlpha.includes(coreSizeToken);
-                                                                }) : [];
-
-                                                                if (filteredProds.length === 0 && crossBrandEquivalents.length === 0) {
-                                                                    return (
-                                                                        <div className="p-3 text-xs text-muted-foreground italic">
-                                                                            No catalog product found. Enter details manually.
-                                                                        </div>
-                                                                    );
-                                                                }
-
-                                                                return (
-                                                                    <div className="divide-y divide-border">
-                                                                        {/* Cross-Brand Equivalents Bar (Wholesale Reality) */}
-                                                                        {crossBrandEquivalents.length > 1 && (
-                                                                            <div className="bg-gradient-to-r from-blue-50/90 via-indigo-50/80 to-blue-50/90 dark:from-blue-950/60 dark:via-indigo-950/40 dark:to-blue-950/60 border-b border-blue-100 dark:border-blue-800/40 p-3">
-                                                                                <div className="flex items-center justify-between mb-2">
-                                                                                    <div className="flex items-center gap-1.5 text-xs font-bold text-blue-800 dark:text-blue-300">
-                                                                                        <RefreshCw className="w-3.5 h-3.5 animate-spin-slow text-blue-600 dark:text-blue-400" />
-                                                                                        <span>Cross-Brand Equivalents ({crossBrandEquivalents.length} brands in size &quot;{coreSizeToken.toUpperCase()}&quot;)</span>
-                                                                                    </div>
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        onClick={(e) => {
-                                                                                            e.stopPropagation();
-                                                                                            setActiveSearch(null);
-                                                                                            setBrandSearchQuery('');
-                                                                                            setBrandModalTarget({ gIndex, iIndex });
-                                                                                        }}
-                                                                                        className="text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-600/50 dark:hover:bg-blue-600/70 dark:text-blue-100 border border-blue-600 dark:border-blue-500/40 px-2.5 py-1 rounded-lg cursor-pointer transition-colors flex items-center gap-1 shadow-xs"
-                                                                                        title="Open unified brand selector modal"
-                                                                                    >
-                                                                                        <Tag className="w-3 h-3" />
-                                                                                        <span>View All Brands</span>
-                                                                                    </button>
-                                                                                </div>
-                                                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                                                                    {crossBrandEquivalents.map((altProd: any) => {
-                                                                                        const altStock = Number(altProd.stock_quantity ?? 0);
-                                                                                        const isAltStocked = altStock > 0;
-                                                                                        const altMrp = parseFloat(altProd.selling_price) || 0;
-                                                                                        const altPast = resolvePartyRateForBrand(partyRates, altProd.id, altProd.name, altProd.brand);
-                                                                                        return (
-                                                                                            <button
-                                                                                                key={altProd.id}
-                                                                                                type="button"
-                                                                                                onClick={() => {
-                                                                                                    selectProduct(gIndex, iIndex, altProd);
-                                                                                                    setActiveSearch(null);
-                                                                                                }}
-                                                                                                className={`p-2.5 rounded-xl border text-left text-xs transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
-                                                                                                    isAltStocked 
-                                                                                                        ? 'bg-white hover:bg-emerald-50/60 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/50 shadow-2xs' 
-                                                                                                        : 'bg-slate-50/70 hover:bg-slate-100/90 dark:bg-muted/40 dark:hover:bg-muted/70 border-slate-200 dark:border-border/80 opacity-80'
-                                                                                                }`}
-                                                                                            >
-                                                                                                <div className="flex items-start justify-between gap-2">
-                                                                                                    <div className="min-w-0">
-                                                                                                        <div className="font-bold text-xs text-blue-700 dark:text-blue-400">
-                                                                                                            {altProd.brand || 'Unbranded'}
-                                                                                                        </div>
-                                                                                                        <div className="text-[11px] font-mono text-slate-800 dark:text-slate-200 truncate font-semibold">
-                                                                                                            {altProd.name}
-                                                                                                        </div>
-                                                                                                    </div>
-                                                                                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
-                                                                                                        isAltStocked
-                                                                                                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30'
-                                                                                                            : 'bg-slate-100 text-slate-500 dark:bg-muted dark:text-muted-foreground border border-slate-200 dark:border-border'
-                                                                                                    }`}>
-                                                                                                        {isAltStocked ? `${altStock} in Stock` : 'Out of stock'}
-                                                                                                    </span>
-                                                                                                </div>
-                                                                                                <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-100 dark:border-border/40">
-                                                                                                    {altPast && Number(altPast.rate) > 0 ? (
-                                                                                                        <div className="text-blue-700 dark:text-blue-400 font-bold">
-                                                                                                            Last Sold: ₹{Number(altPast.rate).toFixed(2)}
-                                                                                                        </div>
-                                                                                                    ) : altMrp > 0 ? (
-                                                                                                        <div className="text-slate-700 dark:text-slate-300 font-medium">
-                                                                                                            MRP: ₹{altMrp.toFixed(2)}
-                                                                                                        </div>
-                                                                                                    ) : (
-                                                                                                        <span className="text-muted-foreground italic text-[10px]">No price set</span>
-                                                                                                    )}
-                                                                                                    {Number(altProd.purchase_price) > 0 && (
-                                                                                                        <span className="text-[10px] text-muted-foreground">
-                                                                                                            Cost: ₹{Number(altProd.purchase_price).toFixed(2)}
-                                                                                                        </span>
-                                                                                                    )}
-                                                                                                </div>
-                                                                                            </button>
-                                                                                        );
-                                                                                    })}
-                                                                                </div>
-                                                                            </div>
-                                                                        )}
-
-                                                                        <div className="bg-slate-50 dark:bg-muted px-3 py-1.5 text-[10px] font-semibold text-slate-600 dark:text-muted-foreground uppercase tracking-wider flex justify-between border-b border-border">
-                                                                            <span>Matching Catalog SKUs</span>
-                                                                            <span>{filteredProds.length} result{filteredProds.length > 1 ? 's' : ''}</span>
-                                                                        </div>
-                                                                        {filteredProds.map((p: any) => {
-                                                                            const mrp = parseFloat(p.selling_price) || 0;
-                                                                            const stock = Number(p.stock_quantity ?? 0);
-                                                                            const isSelected = item.product_id === p.id;
-                                                                            const pPast = resolvePartyRateForBrand(partyRates, p.id, p.name, p.brand);
-                                                                            return (
-                                                                                <button
-                                                                                    key={p.id}
-                                                                                    type="button"
-                                                                                    onClick={() => {
-                                                                                        selectProduct(gIndex, iIndex, p);
-                                                                                        setActiveSearch(null);
-                                                                                    }}
-                                                                                    className={`w-full text-left p-3 hover:bg-slate-50 dark:hover:bg-muted/60 flex items-center justify-between gap-3 cursor-pointer transition-colors border-b border-slate-100 dark:border-border/60 last:border-b-0 ${
-                                                                                        isSelected ? 'bg-blue-50/80 dark:bg-blue-600/15 border-l-4 border-l-blue-600 dark:border-l-blue-500' : ''
-                                                                                    }`}
-                                                                                >
-                                                                                    <div className="flex-1 min-w-0">
-                                                                                        <div className="flex items-center gap-2 flex-wrap">
-                                                                                            <span className="font-semibold text-slate-900 dark:text-foreground text-sm truncate">{p.name}</span>
-                                                                                            {p.brand ? (
-                                                                                                <span className="text-[10px] px-2 py-0.5 rounded-md font-bold uppercase bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/30">
-                                                                                                    {p.brand}
-                                                                                                </span>
-                                                                                            ) : (
-                                                                                            <span className="text-[10px] px-2 py-0.5 rounded-md font-medium text-slate-600 bg-slate-100 border border-slate-200 dark:text-muted-foreground dark:bg-muted dark:border-border">
-                                                                                                Unbranded
-                                                                                            </span>
-                                                                                            )}
-                                                                                            {pPast && (
-                                                                                                <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40" title={`Last invoiced to this party at ₹${Number(pPast.rate).toFixed(2)} on ${pPast.voucher_date || 'past bill'}`}>
-                                                                                                    Party Rate: ₹{Number(pPast.rate).toFixed(2)}
-                                                                                                </span>
-                                                                                            )}
-                                                                                        </div>
-                                                                                        <div className="text-[11px] text-muted-foreground truncate mt-0.5">
-                                                                                            {p.category} {p.sku ? `• SKU: ${p.sku}` : ''} {p.description ? `• ${p.description}` : ''}
-                                                                                        </div>
-                                                                                    </div>
-                                                                                    <div className="text-right whitespace-nowrap pl-2">
-                                                                                        <div className="text-xs font-mono font-bold text-slate-900 dark:text-foreground">
-                                                                                            {mrp > 0 ? `MRP: ₹${mrp.toFixed(2)}` : 'No MRP'}
-                                                                                        </div>
-                                                                                        {pPast && (
-                                                                                            <div className="text-[11px] font-mono font-bold text-emerald-700 dark:text-emerald-400">
-                                                                                                Party: ₹{Number(pPast.rate).toFixed(2)}
-                                                                                            </div>
-                                                                                        )}
-                                                                                        <div className={`text-[10px] font-mono font-medium ${stock > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                                                                                            Avail: {stock} {p.unit || 'PCS'}
-                                                                                        </div>
-                                                                                    </div>
-                                                                                </button>
-                                                                            );
-                                                                        })}
-                                                                    </div>
-                                                                );
-                                                            })()}
-                                                        </div>
-                                                    )}
+                                                    {/* Autocomplete Dropdown Popover */}
+                                                    {activeSearch === `${gIndex}-${iIndex}` && renderProductAutocomplete(gIndex, iIndex, item, group, false)}
                                                 </div>
 
-                                                {item.product_name && (
-                                                    <div className="flex items-center gap-1.5 mt-1.5 px-0.5 flex-wrap">
-                                                        {(() => {
-                                                            const cleanName = String(item.product_name || '').trim().toLowerCase();
-                                                            const alphaVal = cleanName.replace(/[\s\-_/.]/g, '');
-                                                            const matched = products.find((p: any) => 
-                                                                (item.product_id && p.id === item.product_id) || 
-                                                                (p.name.toLowerCase() === cleanName && 
-                                                                 (!item.brand || (p.brand || '').toLowerCase() === item.brand.toLowerCase()))
-                                                            );
-                                                            const sameNameProducts = products.filter((p: any) => 
-                                                                (!group.category_id || p.category_id === group.category_id) &&
-                                                                (p.name.toLowerCase() === cleanName || p.name.toLowerCase().replace(/[\s\-_/.]/g, '') === alphaVal)
-                                                            );
-
-                                                            // Strict brand-specific party rate
-                                                            const pastInfo = resolvePartyRateForBrand(
-                                                                partyRates, 
-                                                                item.product_id || matched?.id, 
-                                                                item.product_name, 
-                                                                item.brand || matched?.brand
-                                                            );
-                                                            
-                                                            const pastRate = item.last_party_rate ?? (pastInfo ? Number(pastInfo.rate) : null);
-                                                            const purchaseCost = Number(
-                                                                (matched?.purchase_price && parseFloat(matched.purchase_price) > 0)
-                                                                    ? matched.purchase_price
-                                                                    : (item.purchase_cost || pastInfo?.purchase_cost || 0)
-                                                            );
-                                                            const catalogMrp = parseFloat(matched?.selling_price || item.mrp || 0);
-                                                            const currentRate = Number(item.rate || 0);
-                                                            
-                                                            const vNum = item.last_party_vnum || pastInfo?.voucher_number;
-                                                            const vDate = item.last_party_date || pastInfo?.voucher_date;
-                                                            const partyName = ledgers.find(l => l.id === partyLedgerId)?.name || 'Customer';
-
-                                                            const isBelowCost = currentRate > 0 && purchaseCost > 0 && currentRate < purchaseCost;
-                                                            const marginPercent = currentRate > 0 && purchaseCost > 0 
-                                                                ? ((currentRate - purchaseCost) / currentRate) * 100 
-                                                                : null;
-                                                            const availStock = Number(matched?.stock_quantity ?? item.stock_quantity ?? 0);
-
-                                                            return (
-                                                                <>
-                                                                    {/* 1. Unified Brand Pill Button */}
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            setBrandSearchQuery('');
-                                                                            setBrandModalTarget({ gIndex, iIndex });
-                                                                        }}
-                                                                        className={`text-[10px] px-2.5 py-1 rounded-lg border font-semibold flex items-center gap-1.5 cursor-pointer transition-all ${
-                                                                            item.brand
-                                                                                ? 'bg-blue-50 hover:bg-blue-100/80 text-blue-800 border-blue-200 dark:bg-blue-500/15 dark:hover:bg-blue-500/25 dark:text-blue-300 dark:border-blue-500/40 shadow-2xs'
-                                                                                : 'bg-amber-50 hover:bg-amber-100/80 text-amber-900 border-amber-200 dark:bg-amber-500/10 dark:hover:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30'
-                                                                        }`}
-                                                                        title="Click to select or switch brand variant"
-                                                                    >
-                                                                        <Tag className="w-3 h-3 text-blue-600 dark:text-blue-400" />
-                                                                        <span>Brand: <strong className="text-slate-900 dark:text-foreground">{item.brand || 'Select Brand'}</strong></span>
-                                                                        {sameNameProducts.length > 1 && (
-                                                                            <span className="text-[9px] bg-blue-600 text-white rounded-full px-1.5 font-mono font-bold">
-                                                                                {sameNameProducts.length}
-                                                                            </span>
-                                                                        )}
-                                                                        <ChevronDown className="w-3 h-3 text-blue-600 dark:text-blue-400" />
-                                                                    </button>
-
-                                                                    {/* 2. Stock Pill */}
-                                                                    {matched && (
-                                                                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded-md border font-medium flex items-center gap-1 ${
-                                                                            availStock > 0 
-                                                                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/30' 
-                                                                                : 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-500/15 dark:text-rose-400 dark:border-rose-500/30'
-                                                                        }`}>
-                                                                            <span>● Stock:</span>
-                                                                            <strong>{availStock} {matched.unit || 'PCS'}</strong>
-                                                                        </span>
-                                                                    )}
-
-                                                                    {/* 3. Brand-Specific Last Billed HUD Card */}
-                                                                    {pastRate && pastRate > 0 ? (
-                                                                        <div 
-                                                                            className="text-[10px] font-mono inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-900 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-500/30 px-2 py-0.5 rounded-md shadow-2xs"
-                                                                            title={`Last billed to ${partyName} on ${vDate || 'past invoice'} @ ₹${pastRate.toFixed(2)}${vNum ? ` (${vNum})` : ''}`}
-                                                                        >
-                                                                            <span className="text-emerald-700 dark:text-emerald-400 font-sans font-semibold">Last Sold{item.brand ? ` (${item.brand})` : ''}:</span>
-                                                                            <strong className="text-emerald-950 dark:text-emerald-200 font-bold">₹{pastRate.toFixed(2)}</strong>
-                                                                            {vDate && <span className="text-emerald-600 dark:text-emerald-400/70 text-[9px]">({vDate})</span>}
-                                                                            {Number(item.rate) !== pastRate && (
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => updateItem(gIndex, iIndex, 'rate', pastRate)}
-                                                                                    className="text-[9px] bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-500/25 dark:hover:bg-emerald-500/40 dark:text-emerald-100 px-1.5 py-0.5 rounded font-sans cursor-pointer transition-colors shadow-xs"
-                                                                                    title="Apply party's last billed rate"
-                                                                                >
-                                                                                    Apply
-                                                                                </button>
-                                                                            )}
-                                                                        </div>
-                                                                    ) : (
-                                                                        partyLedgerId && (
-                                                                            <span className="text-[10px] font-sans text-muted-foreground/80 bg-muted/40 px-2 py-0.5 rounded border border-border/60">
-                                                                                No prior bill{item.brand ? ` (${item.brand})` : ''}
-                                                                            </span>
-                                                                        )
-                                                                    )}
-
-                                                                    {/* 4. Purchase Cost HUD Card */}
-                                                                    {purchaseCost > 0 && (
-                                                                        <div 
-                                                                            className="text-[10px] font-mono inline-flex items-center gap-1.5 bg-slate-100 text-slate-800 border border-slate-200 dark:bg-slate-800/70 dark:text-slate-300 dark:border-slate-700 px-2 py-0.5 rounded-md"
-                                                                            title={`Latest purchase cost: ₹${purchaseCost.toFixed(2)}. Click '+25%' to apply standard 25% wholesale margin.`}
-                                                                        >
-                                                                            <span className="text-slate-600 dark:text-slate-400 font-sans font-semibold">Cost:</span>
-                                                                            <strong className="text-slate-900 dark:text-slate-200 font-bold">₹{purchaseCost.toFixed(2)}</strong>
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={() => updateItem(gIndex, iIndex, 'rate', Math.round(purchaseCost * 1.25 * 100) / 100)}
-                                                                                className="text-[9px] bg-blue-600 hover:bg-blue-700 text-white dark:bg-blue-500/20 dark:hover:bg-blue-500/30 dark:text-blue-300 px-1.5 py-0.5 rounded font-sans cursor-pointer transition-colors shadow-xs font-semibold"
-                                                                                title="Set rate to Cost + 25% margin"
-                                                                            >
-                                                                                +25%
-                                                                            </button>
-                                                                        </div>
-                                                                    )}
-
-                                                                    {/* 5. Live Margin / Loss Badge */}
-                                                                    {currentRate > 0 && purchaseCost > 0 && (
-                                                                        <div 
-                                                                            className={`text-[10px] font-mono inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-semibold ${
-                                                                                isBelowCost 
-                                                                                    ? 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/50' 
-                                                                                    : marginPercent! >= 20
-                                                                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'
-                                                                                    : 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30'
-                                                                            }`}
-                                                                            title={isBelowCost ? `⚠️ Selling below cost (-₹${(purchaseCost - currentRate).toFixed(2)} loss/unit)!` : `Current gross margin on this line: ${marginPercent!.toFixed(1)}%`}
-                                                                        >
-                                                                            <span className="font-sans">
-                                                                                {isBelowCost ? '⚠️ Loss:' : 'Margin:'}
-                                                                            </span>
-                                                                            <span>{marginPercent!.toFixed(1)}%</span>
-                                                                        </div>
-                                                                    )}
-
-                                                                    {/* 6. Master MRP (Catalog price) */}
-                                                                    {catalogMrp > 0 && Number(item.rate) !== catalogMrp && (
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => updateItem(gIndex, iIndex, 'rate', catalogMrp)}
-                                                                            className="text-[10px] font-mono inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 border border-slate-200 dark:bg-muted/60 dark:hover:bg-muted dark:text-muted-foreground dark:hover:text-foreground dark:border-border px-1.5 py-0.5 rounded cursor-pointer transition-colors"
-                                                                            title="Click to apply catalog MRP"
-                                                                        >
-                                                                            <span>MRP: ₹{catalogMrp.toFixed(2)} [Use]</span>
-                                                                        </button>
-                                                                    )}
-                                                                </>
-                                                            );
-                                                        })()}
-                                                    </div>
-                                                )}
+                                                {renderItemBadges(gIndex, iIndex, item, group)}
                                             </td>
                                             <td className="p-2">
                                                 <input 
@@ -2149,7 +2382,7 @@ export default function SalesPage() {
                                                     className="text-muted-foreground hover:text-destructive transition-colors p-1.5 rounded hover:bg-destructive/10 min-w-[32px] min-h-[32px] inline-flex items-center justify-center cursor-pointer" 
                                                     title="Remove line item (Alt + D)"
                                                 >
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                                    <Trash2 className="w-4 h-4 text-red-500/80" />
                                                 </button>
                                             </td>
                                         </tr>
@@ -2169,7 +2402,7 @@ export default function SalesPage() {
             </div>
             
             <div className="p-4 border-t border-border bg-muted/20 flex items-center">
-                <button onClick={addCategoryGroup} className="text-sm text-foreground bg-card hover:bg-accent border border-border hover:border-input px-4 py-2 rounded-xl shadow-xs transition-colors font-semibold flex items-center gap-2 cursor-pointer">
+                <button onClick={addCategoryGroup} className="text-sm text-foreground bg-card hover:bg-accent border border-border hover:border-input px-4 py-2.5 rounded-xl shadow-xs transition-colors font-semibold flex items-center justify-center gap-2 cursor-pointer w-full sm:w-auto">
                     <Plus className="w-4 h-4 text-primary" />
                     <span>Add Another Category Block</span>
                 </button>
@@ -2786,6 +3019,21 @@ export default function SalesPage() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* Bottom Save Action for Mobile PWA */}
+        <div className="flex sm:hidden justify-end pt-2 pb-6">
+          <button
+            onClick={handleSave}
+            disabled={saving || isReadOnly}
+            className={`w-full justify-center px-6 py-3.5 rounded-xl shadow-lg font-bold text-base transition-all flex items-center gap-2 cursor-pointer ${
+              isReadOnly
+                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 cursor-not-allowed opacity-80'
+                : 'bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white disabled:opacity-50'
+            }`}
+          >
+            {saving ? 'Posting Invoice...' : isReadOnly ? 'Period Closed (Read-Only)' : 'Post Invoice'}
+          </button>
         </div>
 
       </div>

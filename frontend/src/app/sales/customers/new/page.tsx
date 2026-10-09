@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useCompany } from '@/context/CompanyContext';
 import StateSelect from '@/components/StateSelect';
 import { useToast } from '@/context/ToastContext';
 import { Plus, Trash2, AlertCircle, CheckCircle2, ArrowLeft, Sparkles, Loader2, ShieldCheck } from 'lucide-react';
@@ -21,6 +22,7 @@ interface PendingInvoice {
 export default function NewCustomerPage() {
   const router = useRouter();
   const { toast } = useToast();
+  const { companyId: activeCompanyId } = useCompany();
   const [companyId, setCompanyId] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -100,12 +102,19 @@ export default function NewCustomerPage() {
       router.push('/login');
       return;
     }
+    const targetCid = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
+    if (targetCid) {
+      setCompanyId(targetCid);
+      return;
+    }
     const token = getAccessToken();
     const headers = { Authorization: `Bearer ${token}` };
     axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers }).then(res => {
-      setCompanyId(res.data.data[0]?.id);
+      const list = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      const found = (targetCid ? list.find((c: any) => c.id === targetCid) : null) || list[0];
+      if (found?.id) setCompanyId(found.id);
     });
-  }, [router]);
+  }, [router, activeCompanyId]);
 
   // Invoices sum vs Opening balance reconciliation
   const invoicesSum = useMemo(() => {

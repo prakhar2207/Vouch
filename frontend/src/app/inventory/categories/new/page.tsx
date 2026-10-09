@@ -6,14 +6,17 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useCompany } from '@/context/CompanyContext';
 import { useToast } from '@/context/ToastContext';
 
 export default function NewCategoryPage() {
   const router = useRouter();
   const { toast } = useToast();
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
   const [saving, setSaving] = useState(false);
   const [complexityLevel, setComplexityLevel] = useState(1);
   const [enableLedgerMapping, setEnableLedgerMapping] = useState(false);
+  const [companyId, setCompanyId] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     hsn_code: '',
@@ -26,20 +29,26 @@ export default function NewCategoryPage() {
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
     fetchLedgers();
-  }, [router]);
+  }, [router, activeCompanyId]);
 
   const fetchLedgers = async () => {
     try {
+      const resolvedCid = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (resolvedCid) headers['X-Company-ID'] = resolvedCid;
+
       const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const comp = compRes.data.data[0];
+      const compList = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+      const comp = (resolvedCid ? compList.find((c: any) => c.id === resolvedCid) : null) || compList[0];
       if (!comp) return;
+
+      setCompanyId(comp.id);
       setComplexityLevel(comp.settings?.complexity_level || 1);
       setEnableLedgerMapping(comp.settings?.enable_ledger_mapping || false);
 
       const ledRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${comp.id}/`, { headers });
-      setLedgers(ledRes.data.data || []);
+      setLedgers(ledRes.data?.data || (Array.isArray(ledRes.data) ? ledRes.data : []));
     } catch (err) {
       console.error(err);
     }
@@ -49,16 +58,20 @@ export default function NewCategoryPage() {
     e.preventDefault();
     setSaving(true);
     try {
+      const targetCid = companyId || activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
+      if (!targetCid) {
+        toast.error('No company selected');
+        setSaving(false);
+        return;
+      }
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const companyId = compRes.data.data[0]?.id;
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}`, 'X-Company-ID': targetCid };
 
       const payload: any = { ...formData };
       if (formData.sales_ledger_id === '') delete payload.sales_ledger_id;
       if (formData.purchase_ledger_id === '') delete payload.purchase_ledger_id;
 
-      const res = await axios.post(`${API_BASE_URL}/api/v1/inventory/categories/${companyId}/`, payload, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/v1/inventory/categories/${targetCid}/`, payload, { headers });
       if (res.data.success) {
         toast.success(`Category "${res.data.data.name}" created successfully!`);
         router.push('/inventory');

@@ -6,6 +6,7 @@ import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useCompany } from '@/context/CompanyContext';
 import { useToast } from '@/context/ToastContext';
 
 export default function NewItemInCategoryPage() {
@@ -13,6 +14,7 @@ export default function NewItemInCategoryPage() {
   const params = useParams();
   const categoryId = params.id as string;
   const { toast } = useToast();
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
 
   const [saving, setSaving] = useState(false);
   const [category, setCategory] = useState<any>(null);
@@ -56,21 +58,26 @@ export default function NewItemInCategoryPage() {
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
     fetchData();
-  }, [router, categoryId]);
+  }, [router, categoryId, activeCompanyId]);
 
   const fetchData = async () => {
     try {
+      const resolvedCid = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (resolvedCid) headers['X-Company-ID'] = resolvedCid;
+
       const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const comp = compRes.data.data[0];
+      const compList = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+      const comp = (resolvedCid ? compList.find((c: any) => c.id === resolvedCid) : null) || compList[0];
       if (!comp) return;
+
       setCompanyId(comp.id);
       setComplexityLevel(comp.settings?.complexity_level || 1);
       setEnableAdvancedItemCreation(comp.settings?.enable_advanced_item_creation || false);
 
       const catRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${comp.id}/`, { headers });
-      const cat = (catRes.data.data || []).find((c: any) => c.id === categoryId);
+      const cat = (catRes.data?.data || (Array.isArray(catRes.data) ? catRes.data : [])).find((c: any) => c.id === categoryId);
       setCategory(cat);
       
       const whRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/warehouses/${comp.id}/`, { headers }).catch(() => null);

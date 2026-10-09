@@ -77,31 +77,35 @@ export default function EditPurchaseInvoiceModal({
   }, [isOpen, voucher?.id]);
 
   const fetchMasters = async (companyId?: string) => {
-    const cid = companyId || voucher?.company_id || voucher?.company?.id;
+    const cid = companyId || voucher?.company_id || voucher?.company?.id || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
 
     // 1. Try reading from offline cache
-    try {
-      const [cachedCats, cachedLedgers, cachedProds] = await Promise.all([
-        offlineDb.masters.get("categories"),
-        offlineDb.masters.get("ledgers"),
-        offlineDb.masters.get("products"),
-      ]);
-      if (cachedCats?.data?.length) setCategories(cachedCats.data);
-      if (cachedLedgers?.data?.length) setLedgers(cachedLedgers.data);
-      if (cachedProds?.data?.length) setProducts(cachedProds.data);
-    } catch (cacheErr) {
-      // ignore
+    if (cid) {
+      try {
+        const [cachedCats, cachedLedgers, cachedProds] = await Promise.all([
+          offlineDb.masters.get(`categories_${cid}`),
+          offlineDb.masters.get(`ledgers_${cid}`),
+          offlineDb.masters.get(`products_${cid}`),
+        ]);
+        if (cachedCats?.data?.length) setCategories(cachedCats.data);
+        if (cachedLedgers?.data?.length) setLedgers(cachedLedgers.data);
+        if (cachedProds?.data?.length) setProducts(cachedProds.data);
+      } catch (cacheErr) {
+        // ignore
+      }
     }
 
     // 2. Fetch fresh masters from API
     try {
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (cid) headers['X-Company-ID'] = cid;
 
       let targetCid = cid;
       if (!targetCid) {
         const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-        targetCid = compRes.data?.data?.[0]?.id;
+        const compList = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+        targetCid = compList[0]?.id;
       }
 
       if (targetCid) {
@@ -111,21 +115,21 @@ export default function EditPurchaseInvoiceModal({
           axios.get(`${API_BASE_URL}/api/v1/inventory/products/${targetCid}/`, { headers }).catch(() => ({ data: { data: [] } })),
         ]);
 
-        const catList = catsRes.data?.data || [];
-        const ledgerList = ledgersRes.data?.data || [];
-        const prodList = prodsRes.data?.data || [];
+        const catList = catsRes.data?.data || (Array.isArray(catsRes.data) ? catsRes.data : []);
+        const ledgerList = ledgersRes.data?.data || (Array.isArray(ledgersRes.data) ? ledgersRes.data : []);
+        const prodList = prodsRes.data?.data || (Array.isArray(prodsRes.data) ? prodsRes.data : []);
 
         if (catList.length) {
           setCategories(catList);
-          offlineDb.masters.put({ key: "categories", data: catList, updatedAt: Date.now() }).catch(() => {});
+          offlineDb.masters.put({ key: `categories_${targetCid}`, data: catList, updatedAt: Date.now() }).catch(() => {});
         }
         if (ledgerList.length) {
           setLedgers(ledgerList);
-          offlineDb.masters.put({ key: "ledgers", data: ledgerList, updatedAt: Date.now() }).catch(() => {});
+          offlineDb.masters.put({ key: `ledgers_${targetCid}`, data: ledgerList, updatedAt: Date.now() }).catch(() => {});
         }
         if (prodList.length) {
           setProducts(prodList);
-          offlineDb.masters.put({ key: "products", data: prodList, updatedAt: Date.now() }).catch(() => {});
+          offlineDb.masters.put({ key: `products_${targetCid}`, data: prodList, updatedAt: Date.now() }).catch(() => {});
         }
       }
     } catch (e) {

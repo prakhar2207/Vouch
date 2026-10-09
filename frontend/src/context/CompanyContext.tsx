@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import axios from "axios";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
+import { offlineDb } from "@/lib/db/offlineDb";
 
 export interface Company {
   id: string;
@@ -126,6 +127,7 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
     setActiveCompanyState(company);
     if (typeof window !== "undefined" && company) {
       localStorage.setItem(STORAGE_KEY, company.id);
+      offlineDb.masters.bulkDelete(["company", "ledgers", "categories", "products"]).catch(() => {});
     }
   };
 

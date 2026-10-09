@@ -217,16 +217,20 @@ export default function LedgersPage() {
       const headers = { Authorization: `Bearer ${token}` };
 
       let cid = activeCompanyId;
+      if (!cid && typeof window !== 'undefined') {
+        cid = localStorage.getItem('vouch_active_company_id');
+      }
       if (!cid) {
         const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-        cid = compRes.data?.data?.[0]?.id || compRes.data?.[0]?.id;
+        const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+        cid = list[0]?.id;
       }
       if (!cid) return;
       setCompanyId(cid);
 
-      // 1. Fetch groups locally or from server first
+      // 1. Fetch groups locally or from server first (company-scoped)
       let grpList: LedgerGroupItem[] = [];
-      const cachedGroups = await offlineDb.masters.get('ledger_groups').catch(() => null);
+      const cachedGroups = await offlineDb.masters.get(`ledger_groups_${cid}`).catch(() => null);
       if (cachedGroups?.data?.length) {
         grpList = cachedGroups.data;
         setGroups(grpList);
@@ -235,7 +239,7 @@ export default function LedgersPage() {
         grpList = groupsRes.data?.data || [];
         setGroups(grpList);
         if (grpList.length > 0) {
-          offlineDb.masters.put({ key: 'ledger_groups', data: grpList, updatedAt: Date.now() }).catch(() => {});
+          offlineDb.masters.put({ key: `ledger_groups_${cid}`, data: grpList, updatedAt: Date.now() }).catch(() => {});
         }
       }
 

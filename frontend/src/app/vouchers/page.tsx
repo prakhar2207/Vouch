@@ -61,7 +61,8 @@ export default function VouchersPage() {
         const token = getAccessToken();
         const headers = { Authorization: `Bearer ${token}` };
         const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-        companyId = compRes.data?.data?.[0]?.id || compRes.data?.[0]?.id;
+        const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+        companyId = list[0]?.id;
       }
       if (!companyId) return;
 

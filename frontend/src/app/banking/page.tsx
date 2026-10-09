@@ -31,9 +31,7 @@ import {
   PartyMappingItem,
   BankingActiveTab,
   BankingActionType,
-  BankAccountSummaryCard,
-  ReconciliationComparisonCard,
-  ReconciliationOverviewCard,
+  ReconciliationCockpit,
   ReconciliationStatsBar,
   BankTransactionCard,
   BankingModalsContainer,
@@ -107,6 +105,7 @@ export default function BankingPage() {
   const [actionRemarks, setActionRemarks] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [directionTogglingId, setDirectionTogglingId] = useState<string | null>(null);
+  const [resolvingTxId, setResolvingTxId] = useState<string | null>(null);
   const [isBulkResolving, setIsBulkResolving] = useState<boolean>(false);
 
   const [confirmModalConfig, setConfirmModalConfig] = useState<{
@@ -804,6 +803,77 @@ export default function BankingPage() {
     }
   };
 
+  const handleOneClickConfirm = async (tx: BankTransactionItem) => {
+    if (resolvingTxId) return;
+    setResolvingTxId(tx.id);
+    try {
+      const headers = getHeaders();
+      const isExpenseMatch =
+        tx.matched_party?.ledger_type === "EXPENSE" ||
+        (typeof tx.match_notes === "object" && (tx.match_notes as any)?.is_bank_expense);
+
+      const actionType = isExpenseMatch ? "RECORD_EXPENSE" : "MATCH_PARTY";
+      const payload: any = isExpenseMatch
+        ? { expense_ledger_id: tx.matched_party?.id, narration: tx.description }
+        : { party_id: tx.matched_party?.id, narration: tx.description };
+
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/resolve/`,
+        { action: actionType, payload },
+        { headers }
+      );
+
+      toast.success(
+        "Transaction Reconciled",
+        res.data.voucher_number
+          ? `Balanced Voucher ${res.data.voucher_number} created and reconciled.`
+          : res.data.message || "Reconciled successfully."
+      );
+      await fetchTransactionsAndSummary();
+    } catch (err: any) {
+      console.error(err);
+      toast.error(
+        "Resolution Failed",
+        err.response?.data?.error || err.message || "Could not reconcile transaction."
+      );
+    } finally {
+      setResolvingTxId(null);
+    }
+  };
+
+  const handleInlineResolve = async (
+    tx: BankTransactionItem,
+    actionType: BankingActionType,
+    payload: any
+  ) => {
+    if (resolvingTxId) return;
+    setResolvingTxId(tx.id);
+    try {
+      const headers = getHeaders();
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/resolve/`,
+        { action: actionType, payload },
+        { headers }
+      );
+
+      toast.success(
+        "Transaction Reconciled",
+        res.data.voucher_number
+          ? `Balanced Voucher ${res.data.voucher_number} created and applied.`
+          : res.data.message || "Reconciled successfully."
+      );
+      await fetchTransactionsAndSummary();
+    } catch (err: any) {
+      console.error(err);
+      toast.error(
+        "Resolution Failed",
+        err.response?.data?.error || err.message || "Could not complete resolution action."
+      );
+    } finally {
+      setResolvingTxId(null);
+    }
+  };
+
   const handleBulkResolve = async () => {
     if (!summary?.needs_review_count || summary.needs_review_count === 0) {
       toast.info("No Transactions", "There are no suggested transactions pending review.");
@@ -1057,21 +1127,17 @@ export default function BankingPage() {
           </div>
         </div>
 
-        {/* Bank Account Selector & Status Bar */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <BankAccountSummaryCard
-            selectedBankId={selectedBankId}
-            onSelectBankId={setSelectedBankId}
-            bankLedgers={bankLedgers}
-            bankOptions={bankOptions}
-            onAddNewBank={() => setIsAddBankOpen(true)}
-          />
-          <ReconciliationComparisonCard summary={summary} />
-          <ReconciliationOverviewCard
-            summary={summary}
-            onSelectTab={setActiveTab}
-          />
-        </div>
+        {/* Hero Reconciliation Cockpit */}
+        <ReconciliationCockpit
+          selectedBankId={selectedBankId}
+          onSelectBankId={setSelectedBankId}
+          bankLedgers={bankLedgers}
+          bankOptions={bankOptions}
+          onAddNewBank={() => setIsAddBankOpen(true)}
+          summary={summary}
+          activeTab={activeTab}
+          onSelectTab={setActiveTab}
+        />
 
         {/* Filter Tabs & Search Bar */}
         <ReconciliationStatsBar
@@ -1154,6 +1220,13 @@ export default function BankingPage() {
                   onExclude={handleExcludeTransaction}
                   onRestore={handleRestoreTransaction}
                   onViewVouchers={() => router.push("/vouchers")}
+                  partyOptions={partyOptions}
+                  expenseOptions={expenseOptions}
+                  contraOptions={contraOptions}
+                  sisterCompanies={sisterCompanies}
+                  onOneClickConfirm={handleOneClickConfirm}
+                  onInlineResolve={handleInlineResolve}
+                  isResolving={resolvingTxId === tx.id}
                 />
               );
             })}

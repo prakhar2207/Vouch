@@ -69,10 +69,16 @@ export default function QuickCreateModal() {
 
   const fetchCompany = async () => {
     try {
+      const resolvedCid = typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null;
+      if (resolvedCid) {
+        setCompanyId(resolvedCid);
+        return;
+      }
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const cid = compRes.data.data?.[0]?.id;
+      const compList = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+      const cid = compList[0]?.id;
       if (cid) setCompanyId(cid);
     } catch (e) {
       console.error(e);

@@ -8,6 +8,7 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import PurchaseOcrSplitView from '@/components/PurchaseOcrSplitView';
 import { useShortcuts } from '@/context/ShortcutContext';
+import { useCompany } from '@/context/CompanyContext';
 import { useToast } from '@/context/ToastContext';
 import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
@@ -15,6 +16,7 @@ import { offlineDb } from '@/lib/db/offlineDb';
 export default function PurchasePage() {
   const router = useRouter();
   const { toast } = useToast();
+  const { activeCompany, companyId: activeCompanyId } = useCompany();
   const { workingDate, registerSaveHandler, registerAltCCallback } = useShortcuts();
   const [activeTab, setActiveTab] = useState<'OCR' | 'MANUAL'>('OCR');
   const [companyId, setCompanyId] = useState('');
@@ -109,56 +111,91 @@ export default function PurchasePage() {
       router.push('/login');
       return;
     }
-    fetchBaseData();
+    const targetCid = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
+    fetchBaseData(targetCid || undefined);
   }, [router]);
 
-  const fetchBaseData = async () => {
-    try {
-      // First, attempt to load cached masters from offline IndexedDB
-      try {
-        const cachedComp = await offlineDb.masters.get('company');
-        const cachedLedgers = await offlineDb.masters.get('ledgers');
-        const cachedCats = await offlineDb.masters.get('categories');
+  // Reactive listener: when user switches company in DashboardLayout, automatically switch everything
+  useEffect(() => {
+    if (activeCompanyId && activeCompanyId !== companyId) {
+      setPartyLedgerId('');
+      setPartyRates({});
+      setGroupedItems([
+        { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 } ] }
+      ]);
+      if (activeCompany) {
+        setCompanyId(activeCompany.id);
+        setCompanyStateCode(activeCompany.state_code || '');
+        setEnableLedgerMapping(activeCompany.settings?.enable_ledger_mapping || false);
+      }
+      fetchBaseData(activeCompanyId);
+    }
+  }, [activeCompanyId, activeCompany]);
 
-        if (cachedComp?.data) {
-          setCompanyId(cachedComp.data.id);
-          setCompanyStateCode(cachedComp.data.state_code || '');
-          setEnableLedgerMapping(cachedComp.data.settings?.enable_ledger_mapping || false);
+  const fetchBaseData = async (targetCompanyId?: string) => {
+    try {
+      const resolvedCompanyId = targetCompanyId || activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
+
+      // Purge legacy unscoped offline cache keys to prevent cross-tenant contamination
+      offlineDb.masters.bulkDelete(['company', 'ledgers', 'categories', 'products']).catch(() => {});
+
+      // 1. Attempt to load company-scoped cached masters immediately
+      if (resolvedCompanyId) {
+        try {
+          const [cachedComp, cachedLedgers, cachedCats] = await Promise.all([
+            offlineDb.masters.get(`company_${resolvedCompanyId}`),
+            offlineDb.masters.get(`ledgers_${resolvedCompanyId}`),
+            offlineDb.masters.get(`categories_${resolvedCompanyId}`),
+          ]);
+
+          if (cachedComp?.data) {
+            setCompanyId(cachedComp.data.id);
+            setCompanyStateCode(cachedComp.data.state_code || '');
+            setEnableLedgerMapping(cachedComp.data.settings?.enable_ledger_mapping || false);
+          }
+          if (cachedLedgers?.data?.length) {
+            setLedgers(cachedLedgers.data);
+            applyDefaultPurchaseLedgers(cachedLedgers.data, cachedComp?.data?.settings?.enable_ledger_mapping || false);
+          }
+          if (cachedCats?.data?.length) setCategories(cachedCats.data);
+        } catch (cacheErr) {
+          console.warn('Could not read from local offline cache', cacheErr);
         }
-        if (cachedLedgers?.data?.length) {
-          setLedgers(cachedLedgers.data);
-          applyDefaultPurchaseLedgers(cachedLedgers.data, cachedComp?.data?.settings?.enable_ledger_mapping || false);
-        }
-        if (cachedCats?.data?.length) setCategories(cachedCats.data);
-      } catch (cacheErr) {
-        console.warn('Could not read from local offline cache', cacheErr);
       }
 
+      // 2. Fetch fresh masters from server
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (resolvedCompanyId) {
+        headers['X-Company-ID'] = resolvedCompanyId;
+      }
       const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const comp = compRes.data.data[0];
+      const compList = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+      const comp = (resolvedCompanyId ? compList.find((c: any) => c.id === resolvedCompanyId) : null) || compList[0];
       const cId = comp?.id;
       if (!cId) return;
+
       setCompanyId(cId);
       setCompanyStateCode(comp.state_code || '');
       
       const isMappingEnabled = comp.settings?.enable_ledger_mapping || false;
       setEnableLedgerMapping(isMappingEnabled);
 
-      // Cache company
-      offlineDb.masters.put({ key: 'company', data: comp, updatedAt: Date.now() }).catch(() => {});
+      // Cache scoped by company
+      offlineDb.masters.put({ key: `company_${cId}`, data: comp, updatedAt: Date.now() }).catch(() => {});
 
-      const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cId}/`, { headers });
-      const ledgerList = ledgersRes.data.data || [];
+      const [ledgersRes, catsRes] = await Promise.all([
+        axios.get(`${API_BASE_URL}/api/v1/ledgers/${cId}/`, { headers }),
+        axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cId}/`, { headers }),
+      ]);
+      const ledgerList = ledgersRes.data?.data || (Array.isArray(ledgersRes.data) ? ledgersRes.data : []);
+      const catList = catsRes.data?.data || (Array.isArray(catsRes.data) ? catsRes.data : []);
+
       setLedgers(ledgerList);
-      
-      const catsRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cId}/`, { headers });
-      const catList = catsRes.data.data || [];
       setCategories(catList);
 
-      offlineDb.masters.put({ key: 'ledgers', data: ledgerList, updatedAt: Date.now() }).catch(() => {});
-      offlineDb.masters.put({ key: 'categories', data: catList, updatedAt: Date.now() }).catch(() => {});
+      offlineDb.masters.put({ key: `ledgers_${cId}`, data: ledgerList, updatedAt: Date.now() }).catch(() => {});
+      offlineDb.masters.put({ key: `categories_${cId}`, data: catList, updatedAt: Date.now() }).catch(() => {});
 
       applyDefaultPurchaseLedgers(ledgerList, isMappingEnabled);
     } catch (err) {
@@ -169,7 +206,11 @@ export default function PurchasePage() {
   };
 
   const applyDefaultPurchaseLedgers = (ledgerList: any[], isMappingEnabled: boolean) => {
-    const party = ledgerList.find((l:any) => l.name.includes('Supplier') || l.group.includes('Creditor'));
+    const creditors = ledgerList.filter((l: any) => 
+      l.ledger_type === 'SUPPLIER' ||
+      (l.group && (l.group.toLowerCase().includes('creditor') || l.group.toLowerCase().includes('supplier')))
+    );
+    const party = creditors.find((l: any) => l.name.toLowerCase().includes('supplier')) || creditors[0];
     const genericPurchase = ledgerList.find((l:any) => l.name === 'Purchase Account' || l.name === 'Local Purchases') || ledgerList.find((l:any) => l.name.toLowerCase().includes('purchase'));
     const purchase = isMappingEnabled 
         ? ledgerList.find((l:any) => l.name.toLowerCase().includes('purchase')) 

@@ -9,6 +9,7 @@
 *.key
 *.enc
 backups/database/
+canva_assets/
 
 # Python & Virtual Environment
 venv/

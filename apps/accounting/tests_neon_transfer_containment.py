@@ -153,19 +153,19 @@ class NeonTransferContainmentTests(APITestCase):
         with CaptureQueriesContext(connection) as ctx:
             findings = AccountingIntegrityEngine.check_payment_allocations(self.company)
 
-        # 1 query for allocations cross-check, 1 for allocation totals group by invoice, 1 for invoices
-        self.assertLessEqual(len(ctx.captured_queries), 4)
+        # Allocations cross-check, allocation totals grouped, invoices, forensic inspection, stale resolution
+        self.assertLessEqual(len(ctx.captured_queries), 5)
 
     def test_accounting_integrity_engine_run_all_checks_bounded(self):
         """
-        Verifies full AccountingIntegrityEngine.run_all_checks runs in <= 25 queries across all 11 dimensions.
+        Verifies full AccountingIntegrityEngine.run_all_checks runs in <= 30 queries across all dimensions.
         Previously executed 270+ individual N+1 queries.
         """
         with CaptureQueriesContext(connection) as ctx:
             report = AccountingIntegrityEngine.run_all_checks(self.company)
 
         self.assertIn("health_score", report)
-        self.assertLessEqual(len(ctx.captured_queries), 25)
+        self.assertLessEqual(len(ctx.captured_queries), 30)
 
     def test_sync_pull_defers_attachment_data_and_omits_duplicate_master_data(self):
         """

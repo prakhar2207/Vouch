@@ -72,12 +72,17 @@ export default function EditPaymentReceiptModal({
       const headers = { Authorization: `Bearer ${token}` };
 
       // 1. Fetch company and ledgers
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
-      const cid = compRes.data.data[0]?.id;
+      const resolvedCid = voucher?.company_id || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
+      let cid = resolvedCid;
+      if (!cid) {
+        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+        const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+        cid = list[0]?.id;
+      }
       if (cid) {
         setCompanyId(cid);
         const ledgersRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/`, { headers });
-        setLedgers(ledgersRes.data.data || []);
+        setLedgers(ledgersRes.data?.data || (Array.isArray(ledgersRes.data) ? ledgersRes.data : []));
       }
 
       // 2. Fetch specific voucher details
