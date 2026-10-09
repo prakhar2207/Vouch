@@ -1,3 +1,4 @@
+import re
 import datetime
 from decimal import Decimal
 from typing import Dict, Any, List, Optional
@@ -229,12 +230,24 @@ class TransactionDeduplicationEngine:
     def scan_duplicate_vouchers(cls, company: Company) -> List[Dict[str, Any]]:
         """
         Scans all effective vouchers in the company to find duplicate clusters:
-        1. Identical vouchers by (voucher_type, party_ledger, total_amount, voucher_date)
-        2. Duplicate payment allocations against the same invoice
+        1. Exact-date identical vouchers by (voucher_type, party_ledger, total_amount, voucher_date)
+        2. Near-date duplicate vouchers (1 to 3 days clearing latency) sharing cheque/reference digits
+           or created via bank statement upload while manual entry already exists
+        3. Duplicate payment allocations against the same invoice
         """
         findings_data = []
+        flagged_voucher_ids = set()
 
-        # Cluster by (voucher_type, party_ledger, total_amount, voucher_date)
+        # Cache bank transactions matched to vouchers for fast collision detection
+        bank_tx_matched_map = {
+            bt.matched_voucher_id: bt
+            for bt in BankTransaction.objects.filter(
+                company=company,
+                matched_voucher_id__isnull=False
+            ).select_related('bank_ledger')
+        }
+
+        # 1. Exact-date duplicate clusters:
         duplicate_groups = (
             Voucher.objects.filter(
                 company=company,
@@ -277,10 +290,12 @@ class TransactionDeduplicationEngine:
             def rank_primary(v: Voucher):
                 score = 0
                 if bool(v.allocations_made.all()):
-                    score += 10
+                    score += 20
                 if bool(v.allocations_received.all()):
-                    score += 10
+                    score += 20
                 if bool(v.items.all()):
+                    score += 10
+                if v.id in bank_tx_matched_map:
                     score += 5
                 # Earliest creation date preferred if scores tie
                 return (score, -v.created_at.timestamp())
@@ -289,18 +304,12 @@ class TransactionDeduplicationEngine:
             primary_v = sorted_vouchers[0]
             duplicate_vs = sorted_vouchers[1:]
 
-            v_ids = [v.id for v in vouchers]
-            bank_txs_map = {
-                bt.matched_voucher_id: bt
-                for bt in BankTransaction.objects.filter(
-                    company=company,
-                    matched_voucher_id__in=v_ids
-                ).select_related('bank_ledger')
-            }
-
             for dup_v in duplicate_vs:
+                flagged_voucher_ids.add(dup_v.id)
+                flagged_voucher_ids.add(primary_v.id)
+
                 # Detect origin / cause
-                linked_bank_tx = bank_txs_map.get(dup_v.id)
+                linked_bank_tx = bank_tx_matched_map.get(dup_v.id)
                 is_bank_recon = bool(linked_bank_tx)
                 is_rapid = (dup_v.created_at - primary_v.created_at).total_seconds() < 300
 
@@ -342,6 +351,144 @@ class TransactionDeduplicationEngine:
                     "confidence": 0.98,
                     "fix_action": "VOID_DUPLICATE_VOUCHER"
                 })
+
+        # 2. Near-date duplicate detection (1 to 3 days apart for same party & amount):
+        # Catches bank statement clearing latency collisions & manual cross-day double entries
+        near_groups = (
+            Voucher.objects.filter(
+                company=company,
+                status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
+                party_ledger__isnull=False
+            )
+            .values('voucher_type', 'party_ledger', 'total_amount')
+            .annotate(count=Count('id'))
+            .filter(count__gt=1)
+        )
+
+        for ng in near_groups:
+            party = Ledger.objects.filter(id=ng['party_ledger']).first()
+            if not party:
+                continue
+
+            v_list = list(
+                Voucher.objects.filter(
+                    company=company,
+                    voucher_type=ng['voucher_type'],
+                    party_ledger=party,
+                    total_amount=ng['total_amount'],
+                    status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
+                )
+                .order_by('voucher_date', 'created_at')
+                .prefetch_related('allocations_made', 'allocations_received', 'items')
+                .defer('attachment_data', 'attachment_mime')
+            )
+
+            if len(v_list) < 2:
+                continue
+
+            for i in range(len(v_list)):
+                for j in range(i + 1, len(v_list)):
+                    v1 = v_list[i]
+                    v2 = v_list[j]
+
+                    if v1.id in flagged_voucher_ids and v2.id in flagged_voucher_ids:
+                        continue
+
+                    day_diff = abs((v2.voucher_date - v1.voucher_date).days)
+                    if not (0 < day_diff <= 3):
+                        continue
+
+                    # Reference number digits check (strip leading zeroes)
+                    r1_digits = {n.lstrip('0') for n in re.findall(r'\d+', v1.reference_number or '') if n.lstrip('0')}
+                    r2_digits = {n.lstrip('0') for n in re.findall(r'\d+', v2.reference_number or '') if n.lstrip('0')}
+                    ext1_digits = {n.lstrip('0') for n in re.findall(r'\d+', v1.external_invoice_number or '') if n.lstrip('0')}
+                    ext2_digits = {n.lstrip('0') for n in re.findall(r'\d+', v2.external_invoice_number or '') if n.lstrip('0')}
+
+                    common_digits = (r1_digits & r2_digits) | (ext1_digits & ext2_digits)
+                    ref_digit_match = bool(common_digits)
+
+                    ref_str_match = bool(
+                        v1.reference_number and v2.reference_number and
+                        v1.reference_number.strip().lower() == v2.reference_number.strip().lower()
+                    )
+                    ext_str_match = bool(
+                        v1.external_invoice_number and v2.external_invoice_number and
+                        v1.external_invoice_number.strip().lower() == v2.external_invoice_number.strip().lower()
+                    )
+
+                    # Bank reconciliation collision: one from statement import, one manual
+                    bt1 = bank_tx_matched_map.get(v1.id)
+                    bt2 = bank_tx_matched_map.get(v2.id)
+                    is_bank_collision = bool((bt1 is not None) != (bt2 is not None))
+
+                    # Must satisfy at least one deterministic correlation factor
+                    if not (ref_digit_match or ref_str_match or ext_str_match or is_bank_collision):
+                        continue
+
+                    def rank_primary_near(v: Voucher):
+                        score = 0
+                        if bool(v.allocations_made.all()):
+                            score += 20
+                        if bool(v.allocations_received.all()):
+                            score += 20
+                        if bool(v.items.all()):
+                            score += 10
+                        if v.id in bank_tx_matched_map:
+                            score += 5
+                        return (score, -v.created_at.timestamp())
+
+                    primary_v, dup_v = (v1, v2) if rank_primary_near(v1) >= rank_primary_near(v2) else (v2, v1)
+                    if dup_v.id in flagged_voucher_ids:
+                        continue
+
+                    flagged_voucher_ids.add(dup_v.id)
+
+                    linked_bank_tx = bank_tx_matched_map.get(dup_v.id) or bank_tx_matched_map.get(primary_v.id)
+                    if is_bank_collision:
+                        if dup_v.id in bank_tx_matched_map:
+                            source_desc = f"Bank statement import created duplicate #{dup_v.voucher_number} while manual voucher #{primary_v.voucher_number} already existed ({day_diff} day difference)"
+                        else:
+                            source_desc = f"Manual entry #{dup_v.voucher_number} duplicates cleared bank statement voucher #{primary_v.voucher_number} ({day_diff} day difference)"
+                    elif ref_digit_match or ref_str_match:
+                        match_ref = next(iter(common_digits), dup_v.reference_number)
+                        source_desc = f"Duplicate {ng['voucher_type']} recorded {day_diff} day(s) apart with matching reference/cheque digits ({match_ref})"
+                    else:
+                        source_desc = f"Identical {ng['voucher_type']} recorded {day_diff} day(s) apart"
+
+                    findings_data.append({
+                        "type": "DUPLICATE_VOUCHER",
+                        "category": "DUPLICATE",
+                        "severity": "CRITICAL" if ng['voucher_type'] in ['RECEIPT', 'PAYMENT'] else "WARNING",
+                        "title": f"Duplicate {ng['voucher_type'].title()} #{dup_v.voucher_number} for {party.name}",
+                        "description": (
+                            f"Found duplicate {ng['voucher_type']} entry #{dup_v.voucher_number} for ₹{dup_v.total_amount} "
+                            f"dated {dup_v.voucher_date} matching #{primary_v.voucher_number} dated {primary_v.voucher_date} "
+                            f"({day_diff} day clearing difference). Primary voucher #{primary_v.voucher_number} is kept. {source_desc}."
+                        ),
+                        "evidence": {
+                            "duplicate_voucher_id": str(dup_v.id),
+                            "duplicate_voucher_number": dup_v.voucher_number,
+                            "primary_voucher_id": str(primary_v.id),
+                            "primary_voucher_number": primary_v.voucher_number,
+                            "party_id": str(party.id),
+                            "party_name": party.name,
+                            "voucher_type": ng['voucher_type'],
+                            "amount": str(dup_v.total_amount),
+                            "voucher_date": str(dup_v.voucher_date),
+                            "primary_voucher_date": str(primary_v.voucher_date),
+                            "days_difference": day_diff,
+                            "source_description": source_desc,
+                            "has_linked_bank_tx": bool(linked_bank_tx),
+                            "linked_bank_tx_id": str(linked_bank_tx.id) if linked_bank_tx else None,
+                            "linked_bank_tx_desc": linked_bank_tx.description if linked_bank_tx else None,
+                        },
+                        "expected_state": f"Single {ng['voucher_type']} voucher #{primary_v.voucher_number} for ₹{primary_v.total_amount}.",
+                        "actual_state": f"Duplicate {ng['voucher_type']} #{dup_v.voucher_number} posted within {day_diff} day(s) of #{primary_v.voucher_number}.",
+                        "probable_cause": source_desc,
+                        "suggested_action": f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}.",
+                        "confidence": 0.98 if (ref_digit_match and is_bank_collision) else 0.95,
+                        "fix_action": "VOID_DUPLICATE_VOUCHER"
+                    })
 
         # Check duplicate payment allocations against the same invoice
         dup_allocs = (

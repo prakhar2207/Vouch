@@ -293,3 +293,110 @@ class TransactionDeduplicationEngineTestCase(TestCase):
             self.assertEqual(comp2.id, self.company.id)
             self.assertIs(comp1, comp2)
 
+    def test_near_date_bank_statement_duplicate_detection(self):
+        """
+        Verify that deduplication engine catches near-date (1-3 days apart) duplicate receipts
+        caused by bank statement uploads colliding with manual entries, matching cheque digits.
+        """
+        day1 = datetime.date.today() - datetime.timedelta(days=1)
+        day2 = datetime.date.today()
+
+        # 1. Bank statement imported voucher on Day 1
+        v_bank = Voucher.objects.create(
+            company=self.company,
+            financial_year=self.fy,
+            voucher_type="RECEIPT",
+            voucher_number="RCP-BANK-01",
+            voucher_date=day1,
+            party_ledger=self.customer,
+            total_amount=Decimal("4040.00"),
+            reference_number="000000000638",
+            status="POSTED",
+            created_by=self.user
+        )
+        LedgerEntry.objects.create(
+            company=self.company, voucher=v_bank, ledger=self.bank_ledger, debit_amount=Decimal("4040.00"), credit_amount=Decimal("0.00")
+        )
+        LedgerEntry.objects.create(
+            company=self.company, voucher=v_bank, ledger=self.customer, debit_amount=Decimal("0.00"), credit_amount=Decimal("4040.00")
+        )
+
+        bank_tx = BankTransaction.objects.create(
+            company=self.company,
+            bank_ledger=self.bank_ledger,
+            transaction_date=day1,
+            description="BY CLG:DEL ACCTS-BOB, UNIQUE Chq: 000000000638",
+            reference_number="000000000638",
+            credit_amount=Decimal("4040.00"),
+            debit_amount=Decimal("0.00"),
+            status="RECONCILED",
+            matched_voucher=v_bank,
+            matched_party=self.customer
+        )
+
+        # 2. Manual entry voucher on Day 2
+        v_manual = Voucher.objects.create(
+            company=self.company,
+            financial_year=self.fy,
+            voucher_type="RECEIPT",
+            voucher_number="RCP-MANUAL-02",
+            voucher_date=day2,
+            party_ledger=self.customer,
+            total_amount=Decimal("4040.00"),
+            reference_number="Chq# 0000000638",
+            status="POSTED",
+            created_by=self.user
+        )
+        LedgerEntry.objects.create(
+            company=self.company, voucher=v_manual, ledger=self.bank_ledger, debit_amount=Decimal("4040.00"), credit_amount=Decimal("0.00")
+        )
+        LedgerEntry.objects.create(
+            company=self.company, voucher=v_manual, ledger=self.customer, debit_amount=Decimal("0.00"), credit_amount=Decimal("4040.00")
+        )
+
+        # 3. Scan duplicates
+        findings = TransactionDeduplicationEngine.scan_duplicate_vouchers(self.company)
+        dup_finding = next((f for f in findings if f["evidence"].get("duplicate_voucher_id") == str(v_manual.id)), None)
+        self.assertIsNotNone(dup_finding)
+        self.assertEqual(dup_finding["fix_action"], "VOID_DUPLICATE_VOUCHER")
+        self.assertEqual(dup_finding["evidence"]["days_difference"], 1)
+        self.assertEqual(dup_finding["evidence"]["primary_voucher_number"], "RCP-BANK-01")
+        self.assertEqual(dup_finding["evidence"]["duplicate_voucher_number"], "RCP-MANUAL-02")
+
+    def test_purchase_sequence_gaps_not_flagged(self):
+        """
+        Statutory sequence gaps apply strictly to outward tax invoices (SALES, CREDIT/DEBIT NOTES).
+        Supplier purchase invoices (PURCHASE) must NEVER be flagged for sequence gaps.
+        """
+        # Create non-sequential purchase invoices (Supplier bills 101 and 105)
+        supplier, _ = Ledger.objects.get_or_create(
+            company=self.company, name="Supplier Acme", defaults={"ledger_type": "SUPPLIER", "group": self.sundry_debtors}
+        )
+        Voucher.objects.create(
+            company=self.company,
+            financial_year=self.fy,
+            voucher_type="PURCHASE",
+            voucher_number="BILL-0101",
+            voucher_date=datetime.date.today(),
+            party_ledger=supplier,
+            total_amount=Decimal("500.00"),
+            status="POSTED",
+            created_by=self.user
+        )
+        Voucher.objects.create(
+            company=self.company,
+            financial_year=self.fy,
+            voucher_type="PURCHASE",
+            voucher_number="BILL-0105",
+            voucher_date=datetime.date.today(),
+            party_ledger=supplier,
+            total_amount=Decimal("500.00"),
+            status="POSTED",
+            created_by=self.user
+        )
+
+        findings = AccountingIntegrityEngine.check_document_numbering(self.company)
+        purchase_gaps = [f for f in findings if "PURCHASE" in f.title]
+        self.assertEqual(len(purchase_gaps), 0)
+
+

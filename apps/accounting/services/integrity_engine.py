@@ -997,8 +997,9 @@ class AccountingIntegrityEngine:
             )
             findings.append(finding)
 
-        # 2. Sequence gap check for statutory document series (SALES, CREDIT_NOTE, DEBIT_NOTE, PURCHASE)
-        for v_type in ['SALES', 'PURCHASE', 'CREDIT_NOTE', 'DEBIT_NOTE']:
+        # 2. Sequence gap check for statutory outward document series (SALES, CREDIT_NOTE, DEBIT_NOTE).
+        # Note: PURCHASE invoices are supplier-issued and must NEVER be checked for internal sequential gaps.
+        for v_type in ['SALES', 'CREDIT_NOTE', 'DEBIT_NOTE']:
             v_nums = list(
                 Voucher.objects.filter(
                     company=company,
@@ -1043,6 +1044,14 @@ class AccountingIntegrityEngine:
                             )
                             findings.append(finding)
                             break # Limit to 1 gap finding per series to prevent spamming
+
+        # Auto-resolve any legacy/stale purchase sequence gap findings
+        AccountingFinding.objects.filter(
+            company=company,
+            category='NUMBERING',
+            title__startswith='Sequence gap in PURCHASE',
+            is_resolved=False
+        ).update(is_resolved=True, resolved_at=timezone.now())
 
         return findings
 
