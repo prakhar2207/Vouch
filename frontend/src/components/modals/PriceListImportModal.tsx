@@ -281,41 +281,20 @@ export default function PriceListImportModal({
           }
         }
 
-        // If file <= 15MB, use Base64 JSON for resilient cross-origin parsing (identical to Purchase OCR)
-        if (selectedFile.size <= 15 * 1024 * 1024) {
-          const base64Data = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = (e) => reject(e);
-            reader.readAsDataURL(selectedFile);
-          });
-
-          res = await api.post(
-            `/api/v1/inventory/parse-price-list-pdf/${companyId}/`,
-            {
-              file_base64: base64Data,
-              filename: selectedFile.name,
-              brand: targetBrand,
-              scan_mode: "printed",
-            },
-            { timeout: 120000 }
-          );
-        } else {
-          // For very large files > 15MB, use FormData without setting Content-Type so browser sets boundary
-          const formData = new FormData();
-          formData.append("file", selectedFile);
-          formData.append("filename", selectedFile.name);
-          formData.append("scan_mode", "printed");
-          if (targetBrand) {
-            formData.append("brand", targetBrand);
-          }
-
-          res = await api.post(
-            `/api/v1/inventory/parse-price-list-pdf/${companyId}/`,
-            formData,
-            { timeout: 120000 }
-          );
+        // Use FormData streaming directly for optimal transfer speed and minimal payload size
+        const formData = new FormData();
+        formData.append("file", selectedFile);
+        formData.append("filename", selectedFile.name);
+        formData.append("scan_mode", "printed");
+        if (targetBrand) {
+          formData.append("brand", targetBrand);
         }
+
+        res = await api.post(
+          `/api/v1/inventory/parse-price-list-pdf/${companyId}/`,
+          formData,
+          { timeout: 75000 }
+        );
 
         if (res.data?.detected_brand && !brand) {
           setBrand(res.data.detected_brand);

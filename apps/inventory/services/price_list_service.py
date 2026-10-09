@@ -237,7 +237,15 @@ class PriceListService:
             if wef_match:
                 effective_date = wef_match.group(1).strip()
 
-            pages_to_process = min(len(reader.pages), 30)
+            def extract_sec_code(sec_str: str) -> str:
+                s = (sec_str or "").upper()
+                for code in ['SPZX', 'SPAX', 'SPBX', 'SPCX', 'XPZ', 'XPA', 'XPB', '3VX', '5VX', 'SPA', 'SPB', 'SPC', 'SPZ', '3V', '5V', '8V', 'AX', 'BX', 'CX', 'A', 'B', 'C', 'D', 'E']:
+                    if re.search(r'\b' + code + r'\b', s):
+                        return code
+                return ""
+
+            current_sec_code = ""
+            pages_to_process = min(len(reader.pages), 40)
             for page_idx in range(pages_to_process):
                 page = reader.pages[page_idx]
                 raw_page_text = page.extract_text() or ""
@@ -250,106 +258,86 @@ class PriceListService:
                         continue
 
                     # Section headers
-                    if any(sec in line_clean.upper() for sec in ["SECTION", "BEARING", "SLEEVE", "GREASE", "TOOL", "SERIES", "INDEX"]):
-                        if not re.search(r'\d+\.\d{2}', line_clean) and len(line_clean) < 100:
+                    if any(sec in line_clean.upper() for sec in ["SECTION", "BEARING", "SLEEVE", "GREASE", "TOOL", "SERIES", "INDEX", "BELT"]):
+                        if not re.search(r'\d+\.\d{2}', line_clean) and len(line_clean) < 120:
                             current_section = line_clean
+                            code_cand = extract_sec_code(line_clean)
+                            if code_cand:
+                                current_sec_code = code_cand
                             continue
 
-                    # Strategy 1: Multi-column token extractor (handles Fenner, PIX, Gates, Optibelt multi-column catalogs)
-                    tokens = line_clean.split()
-                    if len(tokens) >= 2:
-                        last_tok = tokens[-1].replace(',', '')
-                        if re.match(r'^\d+(\.\d{1,2})?$', last_tok):
-                            price_val = float(last_tok)
-                            if price_val > 0:
-                                prefix_tokens = tokens[:-1]
-                                raw_name = ""
-                                if len(prefix_tokens) == 1:
-                                    raw_name = prefix_tokens[0]
-                                elif len(prefix_tokens) == 2:
-                                    p0 = prefix_tokens[0].upper()
-                                    p1 = prefix_tokens[1]
-                                    if p1.isdigit() and (p0 in ['SPA', 'SPB', 'SPC', 'SPZ', 'PL', 'PJ', 'PK', 'PM', '3V', '5V', '8V', 'AX', 'BX', 'CX', 'TX', 'MX', 'SPAX', 'SPBX', 'SPCX', 'SPZX', '3VX', '5VX', 'FHP']):
-                                        raw_name = f"{prefix_tokens[0]} {prefix_tokens[1]}"
-                                    elif prefix_tokens[0][0].isalpha() and p1.isdigit():
-                                        raw_name = prefix_tokens[0]
-                                    else:
-                                        raw_name = " ".join(prefix_tokens)
-                                else:
-                                    raw_name = prefix_tokens[0]
+                    cleaned = re.sub(r'Rs\.?|₹|\/\-', '', line_clean, flags=re.I).strip()
+                    if not cleaned or not re.search(r'\d', cleaned):
+                        continue
 
-                                if raw_name and raw_name.upper() not in ['SIZE', 'PRICE', 'RS.', 'EACH', 'PITCH', 'LENGTH', 'EFFECTIVE', 'PAGE']:
-                                    if raw_name.isdigit() and len(raw_name) == 4 and raw_name.startswith('2'):
+                    # Strategy 1: [Item] [Price] [CaseQty] multi-column
+                    three_col = re.findall(
+                        r'([A-Za-z0-9\-\/]+(?:\s+[A-Za-z0-9\-\/]+)?)\s+([0-9]{1,4}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]{2,5}(?:\.[0-9]{1,2})?)\s+([0-9]{1,3})(?=\s+[A-Za-z0-9]|\s*$)',
+                        cleaned
+                    )
+                    found_3col = False
+                    if three_col:
+                        temp_3col = []
+                        for m in three_col:
+                            raw_name = m[0].strip()
+                            try:
+                                pr_val = float(m[1].replace(',', ''))
+                                c_qty = int(m[2])
+                                if pr_val > 0 and 1 <= c_qty <= 100 and raw_name.upper() not in ['SIZE', 'PRICE', 'MRP', 'RATE', 'PAGE', 'TOTAL', 'DATE', 'W.E.F', 'DISCOUNT', 'SR.', 'NO.', 'QTY']:
+                                    if raw_name.isdigit() and current_sec_code and not raw_name.upper().startswith(current_sec_code):
+                                        raw_name = f"{current_sec_code} {raw_name}"
+                                    temp_3col.append((raw_name, pr_val, c_qty))
+                            except Exception:
+                                pass
+                        if temp_3col:
+                            found_3col = True
+                            for r_name, p_val, c_qty in temp_3col:
+                                inferred_sec = PriceListService.infer_belt_or_bearing_section(r_name, current_section)
+                                unique_key = (r_name.upper(), round(p_val, 2), inferred_sec)
+                                if unique_key not in seen_names:
+                                    seen_names.add(unique_key)
+                                    extracted_items.append({
+                                        "name": r_name,
+                                        "mrp": p_val,
+                                        "purchase_price": round(p_val * 0.70, 2),
+                                        "case_qty": c_qty,
+                                        "section": inferred_sec,
+                                        "unit": "PCS",
+                                        "opening_qty": 0
+                                    })
+                            continue
+
+                    # Strategy 2: Multi-pair [Item] [Price] scanning across all columns in row
+                    two_col = re.findall(
+                        r'([A-Za-z0-9\-\/]+(?:\s+[A-Za-z0-9\-\/]+)?)\s+([0-9]{1,4}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]{2,5}(?:\.[0-9]{1,2})?)(?=\s+[A-Za-z0-9]|\s*$)',
+                        cleaned
+                    )
+                    if two_col:
+                        for m in two_col:
+                            raw_name = m[0].strip()
+                            try:
+                                pr_val = float(m[1].replace(',', ''))
+                                if pr_val > 0 and len(raw_name) >= 1 and raw_name.upper() not in ['SIZE', 'PRICE', 'MRP', 'RATE', 'PAGE', 'TOTAL', 'DATE', 'W.E.F', 'DISCOUNT', 'SR.', 'NO.', 'QTY']:
+                                    if raw_name.isdigit() and current_sec_code and not raw_name.upper().startswith(current_sec_code):
+                                        raw_name = f"{current_sec_code} {raw_name}"
+                                    elif raw_name.isdigit() and len(raw_name) == 4 and raw_name.startswith('2'):
                                         raw_name = f"FHP {raw_name}"
 
                                     inferred_sec = PriceListService.infer_belt_or_bearing_section(raw_name, current_section)
-                                    unique_key = (raw_name.upper(), round(price_val, 2), inferred_sec)
+                                    unique_key = (raw_name.upper(), round(pr_val, 2), inferred_sec)
                                     if unique_key not in seen_names:
                                         seen_names.add(unique_key)
                                         extracted_items.append({
                                             "name": raw_name,
-                                            "mrp": price_val,
-                                            "purchase_price": round(price_val * 0.70, 2),
+                                            "mrp": pr_val,
+                                            "purchase_price": round(pr_val * 0.70, 2),
                                             "case_qty": 1,
                                             "section": inferred_sec,
                                             "unit": "PCS",
                                             "opening_qty": 0
                                         })
-                                        continue
-
-                    # Strategy 2: [Item] [Price] [CaseQty] multi-column (e.g. NBC Bearings)
-                    three_col = re.findall(
-                        r'([A-Za-z0-9<>\-\/\.\s]{2,30}?)\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)\s+([0-9]{1,4})(?=\s+[A-Za-z0-9<>]|\s*$)',
-                        line_clean
-                    )
-                    if three_col:
-                        for m in three_col:
-                            name = m[0].strip()
-                            try:
-                                price = float(m[1].replace(',', ''))
-                                case_qty = int(m[2])
-                            except:
-                                continue
-                            inferred_sec = PriceListService.infer_belt_or_bearing_section(name, current_section)
-                            unique_key = (name.upper(), round(price, 2), inferred_sec)
-                            if len(name) >= 2 and price > 0 and unique_key not in seen_names:
-                                seen_names.add(unique_key)
-                                extracted_items.append({
-                                    "name": name,
-                                    "mrp": price,
-                                    "purchase_price": round(price * 0.70, 2),
-                                    "case_qty": case_qty,
-                                    "section": inferred_sec,
-                                    "unit": "PCS",
-                                    "opening_qty": 0
-                                })
-                        continue
-
-                    # Strategy 3: [Item] [Price] multi-column
-                    two_col = re.findall(
-                        r'([A-Za-z0-9\-\/\.]{1,15}(?:\s+[A-Za-z0-9\-\/\.]{1,10})?)\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)(?=\s+[A-Za-z]|\s*$)',
-                        line_clean
-                    )
-                    if two_col:
-                        for m in two_col:
-                            name = m[0].strip()
-                            try:
-                                price = float(m[1].replace(',', ''))
-                            except:
-                                continue
-                            inferred_sec = PriceListService.infer_belt_or_bearing_section(name, current_section)
-                            unique_key = (name.upper(), round(price, 2), inferred_sec)
-                            if len(name) >= 2 and price > 0 and unique_key not in seen_names:
-                                seen_names.add(unique_key)
-                                extracted_items.append({
-                                    "name": name,
-                                    "mrp": price,
-                                    "purchase_price": round(price * 0.70, 2),
-                                    "case_qty": 1,
-                                    "section": inferred_sec,
-                                    "unit": "PCS",
-                                    "opening_qty": 0
-                                })
+                            except Exception:
+                                pass
 
             if len(extracted_items) > 0:
                 return {
@@ -362,16 +350,17 @@ class PriceListService:
                 }
 
         # -------------------------------------------------------------
-        # Tier 2: Gemini Vision AI Dual-Engine (for scanned/photo PDFs or unparsed catalogs)
+        # Tier 2: Gemini Vision AI (for scanned/photo PDFs or unparsed catalogs)
+        # Protected with strict 35s execution budget to never hit Render 100s proxy drop
         # -------------------------------------------------------------
         active_key = os.environ.get("GEMINI_API_KEY", "").strip() or getattr(settings, "GEMINI_API_KEY", "")
-        if active_key:
-            # Safe page slicing: if PDF has > 8 pages, slice first 8 pages to avoid Render 100s proxy timeout & OOM
+        if active_key and not extracted_items:
             gemini_bytes = raw_bytes
-            if reader and len(reader.pages) > 8:
+            # Safe page slicing: slice first 3 pages max for AI vision to keep response under 30s
+            if reader and len(reader.pages) > 3:
                 try:
                     writer = pypdf.PdfWriter()
-                    for p in reader.pages[:8]:
+                    for p in reader.pages[:3]:
                         writer.add_page(p)
                     buf = io.BytesIO()
                     writer.write(buf)
@@ -380,12 +369,9 @@ class PriceListService:
                     print(f"[PriceListService] PDF slicing fallback: {slice_err}")
                     gemini_bytes = raw_bytes
 
-            models_to_try = [
-                "gemini-2.0-flash",
-                "gemini-1.5-flash",
-                "gemini-2.0-flash-lite",
-            ]
-            try:
+            import concurrent.futures
+
+            def execute_gemini():
                 from google import genai
                 from google.genai import types
                 client = genai.Client(api_key=active_key)
@@ -393,20 +379,17 @@ class PriceListService:
                 brand_hint = f" The expected brand is '{user_brand}'." if user_brand else ""
                 prompt = (
                     f"You are an expert industrial catalog and manufacturer price list parsing AI.{brand_hint} "
-                    "Analyze this manufacturer price list / catalog PDF thoroughly across all pages, columns, and tables. "
-                    "Key rules: "
-                    "1. Resolve any ditto marks (\", '', do) or section headers by carrying forward belt sections or product classifications to all relevant rows. "
-                    "2. Extract the Brand Name, Effective Date (e.g. w.e.f. date or YYYY-MM-DD), and ALL product line items. "
-                    "3. For each item extract: "
-                    "- item_name: exact part number, belt size, or bearing number (e.g. 'A 18', 'B 42', 'SPZ 800', 'SPA 1250', '6204-2RS', 'NBC AP3 GREASE 100GM') "
+                    "Extract product line items from this price list PDF. "
+                    "For each item extract: "
+                    "- item_name: exact part number, belt size, or bearing number (e.g. 'A 18', 'B 42', 'SPZ 800', 'SPA 1250', '6204-2RS') "
                     "- mrp: list price / MRP as a float number in INR (remove commas and currency signs) "
                     "- case_qty: package / case quantity or MOQ (default 1) "
-                    "- section: belt section or bearing category (e.g. 'A SECTION (13 x 8 mm)', 'Deep Groove Ball Bearings', 'SPA WEDGE', 'POLY-F') "
+                    "- section: belt section or category (e.g. 'A SECTION (13 x 8 mm)', 'Deep Groove Ball Bearings', 'SPA WEDGE') "
                     "- unit: standard unit (default 'PCS') "
                     "Output strict JSON adhering to the schema."
                 )
                 
-                for model_name in models_to_try:
+                for model_name in ["gemini-2.0-flash", "gemini-2.0-flash-lite"]:
                     try:
                         response = client.models.generate_content(
                             model=model_name,
@@ -422,45 +405,55 @@ class PriceListService:
                         )
                         parsed_json = json.loads(response.text)
                         raw_items = parsed_json.get("items") if isinstance(parsed_json, dict) else []
+                        if raw_items and len(raw_items) > 0:
+                            return parsed_json, model_name
+                    except Exception as me:
+                        print(f"[PriceListService] Model {model_name} error: {me}")
+                return None, None
 
-                        # If model returned 0 items, auto-promote to next model
-                        if (not raw_items or len(raw_items) == 0):
-                            print(f"[PriceList Hybrid] {model_name} returned 0 items; trying fallback model...")
-                            continue
-
-                        if isinstance(parsed_json, dict) and "items" in parsed_json and len(parsed_json["items"]) > 0:
-                            formatted_items = []
-                            for it in parsed_json["items"]:
-                                raw_mrp = str(it.get("mrp") or 0).replace(",", "")
-                                mrp = float(raw_mrp) if raw_mrp else 0.0
-                                name = str(it.get("item_name") or "").strip()
-                                if not name:
-                                    continue
-                                formatted_items.append({
-                                    "name": name,
-                                    "mrp": mrp,
-                                    "purchase_price": round(mrp * 0.70, 2),
-                                    "case_qty": int(it.get("case_qty") or 1),
-                                    "section": str(it.get("section") or PriceListService.infer_belt_or_bearing_section(name)).strip(),
-                                    "unit": str(it.get("unit") or "PCS").strip().upper(),
-                                    "opening_qty": 0
-                                })
-                            if len(formatted_items) > 0:
-                                return {
-                                    "success": True,
-                                    "brand": parsed_json.get("brand") or user_brand or "",
-                                    "effective_date": parsed_json.get("effective_date") or "",
-                                    "source": f"AI_GEMINI_VISION ({model_name})",
-                                    "model_used": model_name,
-                                    "scan_mode": scan_mode,
-                                    "items": formatted_items,
-                                    "total_extracted": len(formatted_items)
-                                }
-                    except Exception as model_err:
-                        print(f"[PriceListService] Gemini model {model_name} failed: {model_err}")
-                        continue
-            except Exception as e:
-                print(f"[PriceListService] Gemini Vision initialization failed: {e}")
+            # Execute with a hard 35s timeout to guarantee response well within Render's 100s limit
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(execute_gemini)
+                try:
+                    parsed_json, model_used = future.result(timeout=35)
+                    if parsed_json and "items" in parsed_json and len(parsed_json["items"]) > 0:
+                        formatted_items = []
+                        for it in parsed_json["items"]:
+                            raw_mrp = str(it.get("mrp") or 0).replace(",", "")
+                            mrp = float(raw_mrp) if raw_mrp else 0.0
+                            name = str(it.get("item_name") or "").strip()
+                            if not name:
+                                continue
+                            formatted_items.append({
+                                "name": name,
+                                "mrp": mrp,
+                                "purchase_price": round(mrp * 0.70, 2),
+                                "case_qty": int(it.get("case_qty") or 1),
+                                "section": str(it.get("section") or PriceListService.infer_belt_or_bearing_section(name)).strip(),
+                                "unit": str(it.get("unit") or "PCS").strip().upper(),
+                                "opening_qty": 0
+                            })
+                        if len(formatted_items) > 0:
+                            return {
+                                "success": True,
+                                "brand": parsed_json.get("brand") or user_brand or detected_brand or "",
+                                "effective_date": parsed_json.get("effective_date") or effective_date or "",
+                                "source": f"AI_GEMINI_VISION ({model_used})",
+                                "model_used": model_used,
+                                "scan_mode": scan_mode,
+                                "items": formatted_items,
+                                "total_extracted": len(formatted_items)
+                            }
+                except concurrent.futures.TimeoutError:
+                    print("[PriceListService] Gemini Vision call timed out after 35s")
+                    return {
+                        "success": False,
+                        "error": "AI scanning timed out because this catalog is too dense. Please upload an Excel/CSV version or a PDF with fewer pages (1-3 pages).",
+                        "items": [],
+                        "total_extracted": 0
+                    }
+                except Exception as e:
+                    print(f"[PriceListService] Vision worker error: {e}")
 
         # If both tiers found 0 items, return a clean non-crashing response
         return {

@@ -249,9 +249,22 @@ class PublicShareDownloadPDFAPIView(APIView):
             except Exception as e:
                 logger.warning(f"Could not refresh stale public download snapshot {snapshot.id}: {e}")
 
-        pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(snapshot, watermark=watermark, bypass_cache=True)
+        copy_type = request.query_params.get('copy', 'ORIGINAL').upper()
+        pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(
+            snapshot, watermark=watermark, bypass_cache=True, copy_type=copy_type
+        )
 
-        filename = f"{snapshot.document_number.replace('/', '_') or 'document'}.pdf"
+        suffix = ''
+        if copy_type == 'TRANSPORTER':
+            suffix = '_Transporter_Copy'
+        elif copy_type in ['SUPPLIER', 'SUPPLIER_LOCAL']:
+            suffix = '_Supplier_Copy'
+        elif copy_type in ['BUNDLE_LOCAL', 'BUNDLE_2']:
+            suffix = '_Local_2Copies'
+        elif copy_type in ['BUNDLE_TRANSPORT', 'BUNDLE_3', 'ALL']:
+            suffix = '_Triplicate_3Copies'
+
+        filename = f"{(snapshot.document_number or 'document').replace('/', '_')}{suffix}.pdf"
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = f'inline; filename="{filename}"'
         response['Content-Length'] = len(pdf_bytes)
