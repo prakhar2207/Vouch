@@ -1,6 +1,6 @@
 "use client";
 import { API_BASE_URL } from '@/utils/api';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -174,7 +174,7 @@ export default function SalesPage() {
   const [partyRates, setPartyRates] = useState<Record<string, any>>({});
   const [loadingPartyRates, setLoadingPartyRates] = useState(false);
   const [groupedItems, setGroupedItems] = useState<any[]>([
-    { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: 0, purchase_cost: 0, last_party_rate: null, last_party_date: null, last_party_vnum: null } ] }
+    { category_id: '', hsn_code: '', gst_rate: undefined, items: [ { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: 0, purchase_cost: 0, last_party_rate: null, last_party_date: null, last_party_vnum: null } ] }
   ]);
   const [barcodeInput, setBarcodeInput] = useState('');
   const barcodeInputRef = React.useRef<HTMLInputElement>(null);
@@ -298,6 +298,9 @@ export default function SalesPage() {
       setSelectedBankLedgerId('');
       setGroupedItems([{
         group_title: 'Main Items',
+        category_id: '',
+        hsn_code: '',
+        gst_rate: undefined,
         items: [{
           product_id: null,
           product_name: '',
@@ -735,7 +738,10 @@ export default function SalesPage() {
       const cat = categories.find(c => c.id === value);
       if (cat) {
         newGroups[gIndex].hsn_code = cat.hsn_code || '';
-        newGroups[gIndex].gst_rate = Number(cat.gst_rate) || 18;
+        newGroups[gIndex].gst_rate = cat.gst_rate !== undefined && cat.gst_rate !== null && !isNaN(Number(cat.gst_rate)) ? Number(cat.gst_rate) : 18;
+      } else {
+        newGroups[gIndex].hsn_code = '';
+        newGroups[gIndex].gst_rate = undefined;
       }
       // Re-evaluate existing items in this group against the newly selected category
       newGroups[gIndex].items = newGroups[gIndex].items.map((item: any) => {
@@ -821,7 +827,7 @@ export default function SalesPage() {
       const cat = categories.find(c => c.id === prod.category_id);
       if (cat) {
         group.hsn_code = cat.hsn_code || '';
-        group.gst_rate = Number(cat.gst_rate) || 18;
+        group.gst_rate = cat.gst_rate !== undefined && cat.gst_rate !== null && !isNaN(Number(cat.gst_rate)) ? Number(cat.gst_rate) : 18;
       }
     }
     
@@ -995,7 +1001,7 @@ export default function SalesPage() {
             const cat = categories.find(c => c.id === match.category_id);
             if (cat) {
               group.hsn_code = cat.hsn_code || '';
-              group.gst_rate = Number(cat.gst_rate) || 18;
+              group.gst_rate = cat.gst_rate !== undefined && cat.gst_rate !== null && !isNaN(Number(cat.gst_rate)) ? Number(cat.gst_rate) : 18;
             }
           }
         }
@@ -1003,6 +1009,29 @@ export default function SalesPage() {
     }
     setGroupedItems(newGroups);
   };
+
+  const customerLedgers = useMemo(() => {
+    return ledgers.filter((l: any) => {
+      const grp = (l.group || '').toLowerCase();
+      const lt = (l.ledger_type || '').toUpperCase();
+
+      // Explicitly exclude any Bank accounts from Customer party selection
+      if (lt === 'BANK' || grp.includes('bank') || grp.includes('od a/c') || grp.includes('occ a/c')) {
+        return false;
+      }
+
+      // Explicitly exclude system & non-party accounts (Tax, Expenses, Sales, etc.)
+      if (['TAX', 'EXPENSE', 'PURCHASE', 'SALES', 'ROUND_OFF', 'EQUITY'].includes(lt)) {
+        return false;
+      }
+
+      // Include Sundry Debtors / Customers or Cash
+      const isDebtor = lt === 'CUSTOMER' || grp.includes('debtor') || grp.includes('customer');
+      const isCash = lt === 'CASH' || grp.includes('cash') || l.name?.toLowerCase() === 'cash';
+
+      return isDebtor || isCash;
+    });
+  }, [ledgers]);
 
   const selectedParty = ledgers.find(l => l.id === partyLedgerId);
   const currentPartyDiscount = Number(selectedParty?.discount_percent || 0);
@@ -1058,7 +1087,7 @@ export default function SalesPage() {
       { 
         category_id: '', 
         hsn_code: '', 
-        gst_rate: 18, 
+        gst_rate: undefined, 
         items: [ 
           { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: currentPartyDiscount } 
         ] 
@@ -1182,7 +1211,8 @@ export default function SalesPage() {
       const gross = Number(item.quantity) * Number(item.rate);
       const discount = gross * ((Number(item.discount_percent) || 0) / 100);
       const taxable = gross - discount;
-      return sum + (taxable * (Number(item.gst_rate) / 100));
+      const rate = Number(item.gst_rate);
+      return sum + (taxable * ((isNaN(rate) ? 0 : rate) / 100));
   }, 0);
   const cartageVal = Number(cartageAmount) || 0;
   const additionalDiscVal = Number(additionalDiscount) || 0;
@@ -1190,7 +1220,8 @@ export default function SalesPage() {
     const gross = Number(item.quantity) * Number(item.rate);
     const discount = gross * (Number(item.discount_percent)/100);
     const taxable = gross - discount;
-    return sum + taxable + (taxable * (Number(item.gst_rate)/100));
+    const rate = Number(item.gst_rate);
+    return sum + taxable + (taxable * ((isNaN(rate) ? 0 : rate) / 100));
   }, 0) + cartageVal - additionalDiscVal);
 
   let grandTotal = 0;
@@ -1916,16 +1947,8 @@ export default function SalesPage() {
                 onChange={e => handlePartyChange(e.target.value)}
                 className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
               >
-                <option value="">-- Select Customer / Cash / Bank --</option>
-                {ledgers.filter(l => 
-                  l.group?.includes('Debtor') || 
-                  l.group?.includes('Cash') || 
-                  l.group?.includes('Bank') || 
-                  l.ledger_type === 'CUSTOMER' || 
-                  l.ledger_type === 'CASH' || 
-                  l.ledger_type === 'BANK' ||
-                  l.name?.toLowerCase().includes('cash')
-                ).map(l => (
+                <option value="">-- Select Customer --</option>
+                {customerLedgers.map((l: any) => (
                   <option key={l.id} value={l.id}>
                     {l.name} {l.group ? `[${l.group}]` : ''} {Number(l.discount_percent || 0) > 0 ? `(${Number(l.discount_percent)}% Disc)` : ''}
                   </option>
@@ -2036,15 +2059,26 @@ export default function SalesPage() {
                                 </select>
                             </div>
                             <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-4 text-sm text-muted-foreground">
-                                <span className="text-xs sm:text-sm">Default HSN: <strong className="text-foreground/80">{group.hsn_code || 'N/A'}</strong></span>
-                                {isInterState ? (
-                                    <span className="bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-500/20 text-xs font-semibold">
-                                        IGST: {group.gst_rate}%
-                                    </span>
-                                ) : (
-                                    <div className="flex gap-2">
-                                        <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">CGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
-                                        <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">SGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
+                                <span className="text-xs sm:text-sm">Default HSN: <strong className="text-foreground/80">{group.hsn_code || (group.category_id ? 'N/A' : '—')}</strong></span>
+                                {Boolean(group.category_id && group.gst_rate !== undefined && group.gst_rate !== null && !isNaN(Number(group.gst_rate))) && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-500/20 text-xs font-semibold">
+                                            GST: {Number(group.gst_rate)}%
+                                        </span>
+                                        {isInterState ? (
+                                            <span className="bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-500/20 text-xs font-semibold">
+                                                IGST: {Number(group.gst_rate)}%
+                                            </span>
+                                        ) : (
+                                            <div className="flex gap-1.5">
+                                                <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">
+                                                    CGST: {(Number(group.gst_rate) / 2).toFixed(Number(group.gst_rate) % 2 === 0 ? 0 : 1)}%
+                                                </span>
+                                                <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">
+                                                    SGST: {(Number(group.gst_rate) / 2).toFixed(Number(group.gst_rate) % 2 === 0 ? 0 : 1)}%
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                                 <button onClick={() => removeCategoryGroup(gIndex)} className="text-red-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 cursor-pointer ml-auto sm:ml-4 transition-colors" title="Delete category group">

@@ -230,20 +230,27 @@ export default function EditPurchaseInvoiceModal({
   };
 
   // Master Lookups & Computed
-  const supplierLedgers = ledgers.filter(
-    (l: any) =>
-      l.group?.includes("Creditor") ||
-      l.group?.includes("Cash") ||
-      l.group?.includes("Bank") ||
-      l.ledger_type === "SUPPLIER" ||
-      l.ledger_type === "PARTY" ||
-      l.ledger_type === "BOTH" ||
-      l.ledger_type === "CASH" ||
-      l.ledger_type === "BANK" ||
-      l.name?.toLowerCase().includes("cash") ||
-      l.name?.toLowerCase().includes("supplier")
-  );
-  const displaySuppliers = supplierLedgers.length > 0 ? supplierLedgers : ledgers;
+  const supplierLedgers = ledgers.filter((l: any) => {
+    const grp = (l.group || "").toLowerCase();
+    const lt = (l.ledger_type || "").toUpperCase();
+
+    // Explicitly exclude any Bank accounts from Supplier party selection
+    if (lt === "BANK" || grp.includes("bank") || grp.includes("od a/c") || grp.includes("occ a/c")) {
+      return false;
+    }
+
+    // Explicitly exclude system & non-party accounts
+    if (["TAX", "EXPENSE", "SALES", "ROUND_OFF", "EQUITY"].includes(lt)) {
+      return false;
+    }
+
+    // Include Sundry Creditors / Suppliers or Cash
+    const isCreditor = lt === "SUPPLIER" || lt === "PARTY" || lt === "BOTH" || grp.includes("creditor") || grp.includes("supplier");
+    const isCash = lt === "CASH" || grp.includes("cash") || l.name?.toLowerCase().includes("cash");
+
+    return isCreditor || isCash;
+  });
+  const displaySuppliers = supplierLedgers;
 
   const handlePartyChange = (selectedId: string) => {
     setPartyLedgerId(selectedId);
@@ -491,7 +498,7 @@ export default function EditPurchaseInvoiceModal({
                     onChange={(e) => handlePartyChange(e.target.value)}
                     className="w-full bg-muted/40 border border-border/70 text-foreground text-xs px-3 py-1.5 rounded-lg outline-none focus:ring-1 focus:ring-blue-500 font-semibold cursor-pointer"
                   >
-                    <option value="" className="bg-background text-foreground">-- Select Supplier / Creditor --</option>
+                    <option value="" className="bg-background text-foreground">-- Select Supplier --</option>
                     {displaySuppliers.map((l: any) => (
                       <option key={l.id} value={l.id} className="bg-background text-foreground">
                         {l.name} {l.group ? `[${l.group}]` : ""}

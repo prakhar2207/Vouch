@@ -243,20 +243,27 @@ export default function EditSalesInvoiceModal({
   };
 
   // Master Lookups & Computed
-  const customerLedgers = ledgers.filter(
-    (l: any) =>
-      l.group?.includes("Debtor") ||
-      l.group?.includes("Cash") ||
-      l.group?.includes("Bank") ||
-      l.ledger_type === "CUSTOMER" ||
-      l.ledger_type === "PARTY" ||
-      l.ledger_type === "BOTH" ||
-      l.ledger_type === "CASH" ||
-      l.ledger_type === "BANK" ||
-      l.name?.toLowerCase().includes("cash") ||
-      l.name?.toLowerCase().includes("customer")
-  );
-  const displayLedgers = customerLedgers.length > 0 ? customerLedgers : ledgers;
+  const customerLedgers = ledgers.filter((l: any) => {
+    const grp = (l.group || "").toLowerCase();
+    const lt = (l.ledger_type || "").toUpperCase();
+
+    // Explicitly exclude any Bank accounts from Customer party selection
+    if (lt === "BANK" || grp.includes("bank") || grp.includes("od a/c") || grp.includes("occ a/c")) {
+      return false;
+    }
+
+    // Explicitly exclude system & non-party accounts
+    if (["TAX", "EXPENSE", "PURCHASE", "SALES", "ROUND_OFF", "EQUITY"].includes(lt)) {
+      return false;
+    }
+
+    // Include Sundry Debtors / Customers or Cash
+    const isDebtor = lt === "CUSTOMER" || lt === "PARTY" || lt === "BOTH" || grp.includes("debtor") || grp.includes("customer");
+    const isCash = lt === "CASH" || grp.includes("cash") || l.name?.toLowerCase().includes("cash");
+
+    return isDebtor || isCash;
+  });
+  const displayLedgers = customerLedgers;
   const selectedParty = ledgers.find((l: any) => l.id === partyLedgerId);
 
   const handlePartyChange = (selectedId: string) => {
@@ -552,7 +559,7 @@ export default function EditSalesInvoiceModal({
                     onChange={(e) => handlePartyChange(e.target.value)}
                     className="w-full bg-muted/40 border border-border/70 text-foreground text-xs px-3 py-1.5 rounded-lg outline-none focus:ring-1 focus:ring-blue-500 font-semibold cursor-pointer"
                   >
-                    <option value="" className="bg-background text-foreground">-- Select Customer / Cash / Bank --</option>
+                    <option value="" className="bg-background text-foreground">-- Select Customer --</option>
                     {displayLedgers.map((l: any) => (
                       <option key={l.id} value={l.id} className="bg-background text-foreground">
                         {l.name} {l.group ? `[${l.group}]` : ""} {Number(l.discount_percent || 0) > 0 ? `(${Number(l.discount_percent)}% Disc)` : ""}

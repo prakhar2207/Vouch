@@ -1,6 +1,6 @@
 "use client";
 import { API_BASE_URL } from '@/utils/api';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -39,8 +39,8 @@ export default function PurchasePage() {
   const [categories, setCategories] = useState<any[]>([]);
   const [partyRates, setPartyRates] = useState<Record<string, any>>({});
   const [loadingPartyRates, setLoadingPartyRates] = useState(false);
-  const [groupedItems, setGroupedItems] = useState([
-    { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 } ] }
+  const [groupedItems, setGroupedItems] = useState<any[]>([
+    { category_id: '', hsn_code: '', gst_rate: undefined, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 } ] }
   ]);
 
   const fetchPartyRates = async (pId: string, currentCompanyId?: string) => {
@@ -121,7 +121,7 @@ export default function PurchasePage() {
       setPartyLedgerId('');
       setPartyRates({});
       setGroupedItems([
-        { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 } ] }
+        { category_id: '', hsn_code: '', gst_rate: undefined, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 } ] }
       ]);
       if (activeCompany) {
         setCompanyId(activeCompany.id);
@@ -347,8 +347,11 @@ export default function PurchasePage() {
     if (field === 'category_id') {
       const cat = categories.find(c => c.id === value);
       if (cat) {
-        newGroups[gIndex].hsn_code = cat.hsn_code;
-        newGroups[gIndex].gst_rate = Number(cat.gst_rate);
+        newGroups[gIndex].hsn_code = cat.hsn_code || '';
+        newGroups[gIndex].gst_rate = cat.gst_rate !== undefined && cat.gst_rate !== null && !isNaN(Number(cat.gst_rate)) ? Number(cat.gst_rate) : 18;
+      } else {
+        newGroups[gIndex].hsn_code = '';
+        newGroups[gIndex].gst_rate = undefined;
       }
     }
     setGroupedItems(newGroups);
@@ -381,20 +384,20 @@ export default function PurchasePage() {
   const removeRow = (gIndex: number, iIndex: number) => {
     const newGroups = [...groupedItems];
     if (newGroups[gIndex].items.length === 1) return;
-    newGroups[gIndex].items = newGroups[gIndex].items.filter((_, i) => i !== iIndex);
+    newGroups[gIndex].items = newGroups[gIndex].items.filter((_: any, i: number) => i !== iIndex);
     setGroupedItems(newGroups);
   };
 
   const addCategoryGroup = () => {
-    setGroupedItems([...groupedItems, { category_id: '', hsn_code: '', gst_rate: 18, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 } ] }]);
+    setGroupedItems([...groupedItems, { category_id: '', hsn_code: '', gst_rate: undefined, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 } ] }]);
   };
   
   const removeCategoryGroup = (gIndex: number) => {
     if (groupedItems.length === 1) return;
-    setGroupedItems(groupedItems.filter((_, i) => i !== gIndex));
+    setGroupedItems(groupedItems.filter((_: any, i: number) => i !== gIndex));
   };
 
-  const allItems = groupedItems.flatMap(g => g.items.map(i => ({...i, gst_rate: g.gst_rate})));
+  const allItems = groupedItems.flatMap((g: any) => g.items.map((i: any) => ({...i, gst_rate: g.gst_rate})));
 
   // Calculate Subtotals
   const grossTotal = allItems.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.rate)), 0);
@@ -408,14 +411,16 @@ export default function PurchasePage() {
       const gross = Number(item.quantity) * Number(item.rate);
       const discount = gross * ((Number(item.discount_percent) || 0) / 100);
       const taxable = gross - discount;
-      return sum + (taxable * (Number(item.gst_rate) / 100));
+      const rate = Number(item.gst_rate);
+      return sum + (taxable * ((isNaN(rate) ? 0 : rate) / 100));
   }, 0);
   const cartageVal = Number(cartageAmount) || 0;
   const unroundedGrandTotal = allItems.reduce((sum, item) => {
     const gross = Number(item.quantity) * Number(item.rate);
     const discount = gross * (Number(item.discount_percent)/100);
     const taxable = gross - discount;
-    return sum + taxable + (taxable * (Number(item.gst_rate)/100));
+    const rate = Number(item.gst_rate);
+    return sum + taxable + (taxable * ((isNaN(rate) ? 0 : rate) / 100));
   }, 0) + cartageVal;
 
   let grandTotal = 0;
@@ -426,6 +431,29 @@ export default function PurchasePage() {
     grandTotal = decimalPart < 0.5 ? integerPart : integerPart + 1;
     roundOff = Math.round((grandTotal - unroundedGrandTotal) * 100) / 100;
   }
+
+  const supplierLedgers = useMemo(() => {
+    return ledgers.filter((l: any) => {
+      const grp = (l.group || '').toLowerCase();
+      const lt = (l.ledger_type || '').toUpperCase();
+
+      // Explicitly exclude any Bank accounts from Supplier party selection
+      if (lt === 'BANK' || grp.includes('bank') || grp.includes('od a/c') || grp.includes('occ a/c')) {
+        return false;
+      }
+
+      // Explicitly exclude non-party accounts
+      if (['TAX', 'EXPENSE', 'SALES', 'ROUND_OFF', 'EQUITY'].includes(lt)) {
+        return false;
+      }
+
+      // Include Sundry Creditors / Suppliers or Cash
+      const isCreditor = lt === 'SUPPLIER' || lt === 'PARTY' || lt === 'BOTH' || grp.includes('creditor') || grp.includes('supplier');
+      const isCash = lt === 'CASH' || grp.includes('cash') || l.name?.toLowerCase() === 'cash';
+
+      return isCreditor || isCash;
+    });
+  }, [ledgers]);
 
   const selectedParty = ledgers.find(l => l.id === partyLedgerId);
   const isInterState = Boolean(selectedParty?.state_code && companyStateCode && selectedParty.state_code !== companyStateCode);
@@ -531,8 +559,8 @@ export default function PurchasePage() {
               </div>
               <select value={partyLedgerId} onChange={e => setPartyLedgerId(e.target.value)} className="w-full bg-muted/50 border border-input text-foreground p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all">
                 <option value="">-- Select Supplier --</option>
-                {ledgers.filter(l => l.group.includes('Debtor') || l.group.includes('Creditor')).map(l => (
-                  <option key={l.id} value={l.id}>{l.name}</option>
+                {supplierLedgers.map((l: any) => (
+                  <option key={l.id} value={l.id}>{l.name} {l.group ? `[${l.group}]` : ''}</option>
                 ))}
               </select>
             </div>
@@ -575,15 +603,26 @@ export default function PurchasePage() {
                                 </select>
                             </div>
                             <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-4 text-sm text-muted-foreground">
-                                <span className="text-xs sm:text-sm">Default HSN: <strong className="text-foreground/80">{group.hsn_code || 'N/A'}</strong></span>
-                                {isInterState ? (
-                                    <span className="bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20 text-xs font-medium">
-                                        IGST: {group.gst_rate}%
-                                    </span>
-                                ) : (
-                                    <div className="flex gap-2">
-                                        <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">CGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
-                                        <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">SGST: {(Number(group.gst_rate)/2).toFixed(1)}%</span>
+                                <span className="text-xs sm:text-sm">Default HSN: <strong className="text-foreground/80">{group.hsn_code || (group.category_id ? 'N/A' : '—')}</strong></span>
+                                {Boolean(group.category_id && group.gst_rate !== undefined && group.gst_rate !== null && !isNaN(Number(group.gst_rate))) && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-500/20 text-xs font-semibold">
+                                            GST: {Number(group.gst_rate)}%
+                                        </span>
+                                        {isInterState ? (
+                                            <span className="bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-500/20 text-xs font-semibold">
+                                                IGST: {Number(group.gst_rate)}%
+                                            </span>
+                                        ) : (
+                                            <div className="flex gap-1.5">
+                                                <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">
+                                                    CGST: {(Number(group.gst_rate) / 2).toFixed(Number(group.gst_rate) % 2 === 0 ? 0 : 1)}%
+                                                </span>
+                                                <span className="bg-muted text-foreground/80 px-2 py-0.5 rounded border border-input text-xs font-medium">
+                                                    SGST: {(Number(group.gst_rate) / 2).toFixed(Number(group.gst_rate) % 2 === 0 ? 0 : 1)}%
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                                 <button onClick={() => removeCategoryGroup(gIndex)} className="text-red-500 hover:text-red-400 ml-auto sm:ml-4 p-1" title="Delete category group">
@@ -606,7 +645,7 @@ export default function PurchasePage() {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border/60">
-                                    {group.items.map((item, iIndex) => {
+                                    {group.items.map((item: any, iIndex: number) => {
                                         const gross = Number(item.quantity) * Number(item.rate);
                                         const discount = gross * (Number(item.discount_percent)/100);
                                         const taxable = gross - discount;

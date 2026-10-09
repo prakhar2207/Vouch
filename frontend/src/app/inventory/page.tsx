@@ -465,7 +465,7 @@ export default function InventoryPage() {
                           </div>
                           <div className="flex justify-between text-[11px] text-foreground/75 dark:text-muted-foreground font-mono font-medium">
                             <span></span>
-                            <span>CGST: {(Number(cat.gst_rate)/2).toFixed(1)}% | SGST: {(Number(cat.gst_rate)/2).toFixed(1)}%</span>
+                            <span>CGST: {(Number(cat.gst_rate || 0)/2).toFixed(1)}% | SGST: {(Number(cat.gst_rate || 0)/2).toFixed(1)}%</span>
                           </div>
                         </div>
                       </>
