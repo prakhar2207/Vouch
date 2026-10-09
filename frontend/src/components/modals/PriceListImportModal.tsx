@@ -368,7 +368,7 @@ export default function PriceListImportModal({
       const msg =
         err.response?.data?.error ||
         (err.message === "Network Error"
-          ? "Backend connection or timeout error. Please check your network or ensure your Gemini API Key is configured."
+          ? "The request timed out or connection was reset. The catalog PDF might be very large or dense. Try converting it to Excel/CSV or uploading fewer pages."
           : err.message || "Unknown error");
       toast.error("Failed to parse file", msg);
     } finally {
