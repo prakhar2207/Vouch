@@ -96,24 +96,25 @@ function chunkInvoiceItems(items: any[]): PageChunk[] {
   }
 
   // Multi-page splitting:
-  // Page 1 has full header, so it takes up to 8 items (or balanced for 2 pages).
-  // Last page has full statutory footer, so it takes up to 9-10 items.
-  // Intermediate pages have compact header and continuation banner, so up to 14 items.
+  // Page 1 has full header (company, meta, party grid) and continuation banner.
+  // It comfortably holds up to 8 items down to the bottom.
   const chunks: any[][] = [];
   let remaining = [...items];
 
-  // For 2-page split (items <= 18):
-  if (items.length <= 18) {
-    const p1Count = Math.min(8, Math.max(5, Math.ceil(items.length / 2)));
-    chunks.push(remaining.slice(0, p1Count));
-    chunks.push(remaining.slice(p1Count));
-  } else {
-    // 3 or more pages:
-    chunks.push(remaining.slice(0, 8));
-    remaining = remaining.slice(8);
+  // Page 1 takes up to 8 items to fill the available space down to the bottom
+  const p1Count = Math.min(8, remaining.length);
+  chunks.push(remaining.slice(0, p1Count));
+  remaining = remaining.slice(p1Count);
 
+  // If remaining items fit on the final page with full statutory footer (up to 10 items):
+  if (remaining.length <= 10) {
+    if (remaining.length > 0) {
+      chunks.push(remaining);
+    }
+  } else {
+    // 3 or more pages: intermediate pages have compact continuation header and continuation banner (up to 14 items)
     while (remaining.length > 10) {
-      const take = Math.min(14, remaining.length - 8);
+      const take = Math.min(14, remaining.length <= 20 ? Math.ceil(remaining.length / 2) : 14);
       chunks.push(remaining.slice(0, take));
       remaining = remaining.slice(take);
     }
@@ -812,9 +813,17 @@ export default function PrintInvoicePage() {
       clone.style.boxSizing = 'border-box';
 
       if (!isThermal) {
-        clone.style.minHeight = '270mm';
-        clone.style.padding = '18px 24px';
+        clone.style.width = `${targetWidthPx}px`;
+        clone.style.minWidth = `${targetWidthPx}px`;
+        clone.style.maxWidth = `${targetWidthPx}px`;
+        clone.style.height = '1123px';
+        clone.style.minHeight = '1123px';
+        clone.style.maxHeight = '1123px';
+        clone.style.padding = '20px 24px';
         clone.style.margin = '0 auto';
+        clone.style.display = 'flex';
+        clone.style.flexDirection = 'column';
+        clone.style.justifyContent = 'space-between';
       }
       sandbox.appendChild(clone);
       document.body.appendChild(sandbox);
@@ -860,22 +869,7 @@ export default function PrintInvoicePage() {
         const imgHeight = (canvas.height * pdfWidth) / canvas.width;
         pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, imgHeight);
       } else {
-        const imgHeight = (canvas.height * a4Width) / canvas.width;
-        if (imgHeight <= a4Height * 1.15) {
-          const renderHeight = Math.min(imgHeight, a4Height);
-          pdf.addImage(imgData, 'PNG', 0, 0, a4Width, renderHeight);
-        } else {
-          let heightLeft = imgHeight;
-          let position = 0;
-          pdf.addImage(imgData, 'PNG', 0, position, a4Width, imgHeight);
-          heightLeft -= a4Height;
-          while (heightLeft > 8) {
-            position -= a4Height;
-            pdf.addPage('a4', 'portrait');
-            pdf.addImage(imgData, 'PNG', 0, position, a4Width, imgHeight);
-            heightLeft -= a4Height;
-          }
-        }
+        pdf.addImage(imgData, 'PNG', 0, 0, a4Width, a4Height);
       }
     }
 
@@ -1064,19 +1058,24 @@ export default function PrintInvoicePage() {
         console.warn('Could not generate document share token, using fallback URL:', shareErr);
       }
 
-      // Fetch official high-definition deterministic PDF
+      // Fetch official high-definition deterministic PDF matching printed invoice exactly
       let pdfFile: File | null = null;
       let pdfBlobUrl: string | null = null;
 
       try {
-        const pdfResp = await api.get(`/api/v1/documents/vouchers/${invoiceId}/pdf/?fresh=1&copy=${copyMode}&t=${Date.now()}`, { responseType: 'blob' });
-        pdfFile = new File([pdfResp.data], filename, { type: 'application/pdf' });
-        pdfBlobUrl = window.URL.createObjectURL(pdfResp.data);
-      } catch (pdfErr) {
-        const fallbackResult = await generateInvoicePdf();
-        if (fallbackResult) {
-          pdfFile = fallbackResult.file;
-          pdfBlobUrl = fallbackResult.blobUrl;
+        const clientPdf = await generateInvoicePdf();
+        if (clientPdf) {
+          pdfFile = clientPdf.file;
+          pdfBlobUrl = clientPdf.blobUrl;
+        }
+      } catch (clientErr) {
+        console.warn('Client PDF generation error, trying backend fallback:', clientErr);
+        try {
+          const pdfResp = await api.get(`/api/v1/documents/vouchers/${invoiceId}/pdf/?fresh=1&copy=${copyMode}&t=${Date.now()}`, { responseType: 'blob' });
+          pdfFile = new File([pdfResp.data], filename, { type: 'application/pdf' });
+          pdfBlobUrl = window.URL.createObjectURL(pdfResp.data);
+        } catch (backendErr) {
+          console.warn('Backend fallback also failed:', backendErr);
         }
       }
 
@@ -1145,22 +1144,24 @@ export default function PrintInvoicePage() {
     setIsGeneratingPdf(true);
     try {
       const filename = getCleanInvoiceFilename(copyMode);
-      // 1. Download official high-definition deterministic vector PDF from backend
+      // 1. Generate client-side PDF directly from on-screen sheets to ensure 100% fidelity with printed invoice
+      const pdfResult = await generateInvoicePdf();
+      if (pdfResult) {
+        triggerPdfDownload(pdfResult.blobUrl, filename);
+        return;
+      }
+
+      // 2. Fallback to backend PDF stream if canvas rendering unavailable
       try {
         const response = await api.get(`/api/v1/documents/vouchers/${invoiceId}/pdf/?download=1&fresh=1&copy=${copyMode}&t=${Date.now()}`, {
           responseType: 'blob',
         });
         const blobUrl = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
         triggerPdfDownload(blobUrl, filename);
-        return;
       } catch (backendErr) {
-        console.warn('Backend PDF stream failed, falling back to client-side renderer:', backendErr);
+        console.error('Fallback backend PDF stream also failed:', backendErr);
+        alert('Could not generate invoice PDF. Please try printing via browser print dialog.');
       }
-
-      // 2. Offline fallback
-      const pdfResult = await generateInvoicePdf();
-      if (!pdfResult) return;
-      triggerPdfDownload(pdfResult.blobUrl, filename);
     } catch (err: any) {
       console.error('PDF download failed:', err);
     } finally {
@@ -1633,7 +1634,7 @@ export default function PrintInvoicePage() {
               : `
             @page {
               size: A4 portrait;
-              margin: 8mm 6mm;
+              margin: 6mm 6mm;
             }
             html, body {
               height: auto !important;
@@ -1666,22 +1667,22 @@ export default function PrintInvoicePage() {
               box-sizing: border-box !important;
               page-break-inside: avoid !important;
               break-inside: avoid !important;
-            }
-            .invoice-print-sheet:not(:last-child) {
-              page-break-after: always !important;
-              break-after: page !important;
-            }
-            .invoice-print-sheet:last-child {
               page-break-after: auto !important;
               break-after: auto !important;
             }
             .invoice-print-wrapper {
               display: block !important;
               width: 100% !important;
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
             }
             .invoice-print-wrapper:not(:last-child) {
               page-break-after: always !important;
               break-after: page !important;
+            }
+            .invoice-print-wrapper:last-child {
+              page-break-after: auto !important;
+              break-after: auto !important;
             }
             ${
               fitToPage
@@ -2396,7 +2397,7 @@ export default function PrintInvoicePage() {
                         }
                       : undefined
                   }
-                  className="print:w-full print:h-auto print:overflow-visible transition-all flex justify-center"
+                  className="print:block print:w-full print:h-auto print:overflow-visible transition-all flex justify-center"
                 >
                   {renderA4Sheet(sheet, sheetIdx, allSheets.length)}
                 </div>
