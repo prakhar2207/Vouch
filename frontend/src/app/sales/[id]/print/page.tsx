@@ -101,29 +101,47 @@ function chunkInvoiceItems(
     }];
   }
 
-  // Multi-page splitting (mode === '2_PAGES' or AUTO with > 13 items):
+  // Multi-page splitting (Tally-Exact Proportional Balancing & Orphan Prevention):
   const chunks: any[][] = [];
   let remaining = [...items];
 
-  // Page 1 takes up to 8 items to fill space cleanly before Carried Over banner
-  const p1Count = Math.min(8, remaining.length);
-  chunks.push(remaining.slice(0, p1Count));
-  remaining = remaining.slice(p1Count);
-
-  // If remaining items fit on the final page with full statutory footer (up to 12 items):
-  if (remaining.length <= 12) {
-    if (remaining.length > 0) {
-      chunks.push(remaining);
-    }
+  // 1. If remaining items can fit on exactly 2 pages (total <= 22 items):
+  if (remaining.length <= 22) {
+    // Tally Proportional Balancing:
+    // Page 1 has no footer, so it can hold between 7 and 13 items.
+    // Final page holds between 3 and 10 items + full statutory closing footer.
+    const finalPageCount = Math.max(3, Math.min(10, Math.floor(remaining.length * 0.45)));
+    const p1Count = remaining.length - finalPageCount;
+    
+    chunks.push(remaining.slice(0, p1Count));
+    chunks.push(remaining.slice(p1Count));
   } else {
-    // 3 or more pages: intermediate pages have compact continuation header (up to 14 items)
-    while (remaining.length > 12) {
-      const take = Math.min(14, remaining.length <= 20 ? Math.ceil(remaining.length / 2) : 14);
-      chunks.push(remaining.slice(0, take));
-      remaining = remaining.slice(take);
-    }
-    if (remaining.length > 0) {
-      chunks.push(remaining);
+    // 3 or more pages:
+    // Page 1 fills down with up to 12 items
+    const p1Count = 12;
+    chunks.push(remaining.slice(0, p1Count));
+    remaining = remaining.slice(p1Count);
+
+    // Intermediate and Final pages:
+    while (remaining.length > 0) {
+      if (remaining.length <= 10) {
+        // Orphan row prevention: If remaining is only 1 or 2 items, borrow from previous chunk
+        if (remaining.length <= 2 && chunks.length > 0) {
+          const prev = chunks[chunks.length - 1];
+          if (prev.length > 4) {
+            const borrowCount = 3 - remaining.length;
+            const borrowed = prev.splice(prev.length - borrowCount, borrowCount);
+            remaining.unshift(...borrowed);
+          }
+        }
+        chunks.push(remaining);
+        break;
+      } else {
+        // Intermediate page takes up to 16 items, leaving at least 3 items for final page
+        const take = Math.min(16, remaining.length - 3);
+        chunks.push(remaining.slice(0, take));
+        remaining = remaining.slice(take);
+      }
     }
   }
 

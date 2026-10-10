@@ -265,21 +265,25 @@ export default function ProformaDetailPage() {
           }
           .proforma-page-sheet {
             box-sizing: border-box !important;
-            width: 210mm !important;
-            min-width: 210mm !important;
-            max-width: 210mm !important;
-            height: 297mm !important;
-            min-height: 297mm !important;
-            max-height: 297mm !important;
-            margin: 0 auto !important;
-            padding: 10mm 12mm !important;
+            width: 100% !important;
+            min-width: 100% !important;
+            max-width: 100% !important;
+            height: 100vh !important;
+            max-height: 100vh !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 8mm 10mm !important;
             box-shadow: none !important;
             border: none !important;
             border-radius: 0 !important;
             background-color: #ffffff !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            overflow: hidden !important;
+          }
+          .proforma-page-sheet:not(:last-child) {
             page-break-after: always !important;
             break-after: page !important;
-            overflow: hidden !important;
           }
           .proforma-page-sheet:last-child {
             page-break-after: auto !important;

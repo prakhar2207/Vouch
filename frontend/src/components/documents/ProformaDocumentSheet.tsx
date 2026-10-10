@@ -290,8 +290,8 @@ export default function ProformaDocumentSheet({
       }
     ];
 
-    // Single-page limit: up to 8 normal items fit on 1 sheet with header, parties & bottom totals block.
-    if (items.length <= 8) {
+    // Single-page limit: up to 12 items fit on 1 sheet with compact spacing
+    if (items.length <= 12) {
       return [{
         pageNumber: 1,
         totalPages: 1,
@@ -299,87 +299,85 @@ export default function ProformaDocumentSheet({
         isFirstPage: true,
         isLastPage: true,
         startIndex: 0,
+        broughtForwardSubtotal: 0,
+        carriedOverSubtotal: 0,
       }];
     }
 
     // Multi-page document:
-    // Page 1: Header + Parties + ~13 items
-    // Middle pages: Compact Header + ~20 items
-    // Last page: Compact Header + Totals & Signatures block + up to 10 items
-    const PAGE1_CAPACITY = 13;
-    const MIDDLE_CAPACITY = 20;
-    const LAST_PAGE_CAPACITY = 10;
-
-    const resultPages: Array<{
-      pageNumber: number;
-      totalPages: number;
-      items: any[];
-      isFirstPage: boolean;
-      isLastPage: boolean;
-      startIndex: number;
-    }> = [];
-
+    // Tally-Exact Proportional Balancing & Orphan Prevention:
+    // - Page 1 Capacity: Header + Parties + ~12 items (no closing footer)
+    // - Middle pages: Compact Header + ~16 items
+    // - Last page: Compact Header + Totals & Signatures block + up to 10 items
+    const chunks: any[][] = [];
     let remaining = [...items];
-    let currentIndex = 0;
 
-    // Page 1
-    const p1Count = Math.min(PAGE1_CAPACITY, remaining.length);
-    const p1Items = remaining.splice(0, p1Count);
-    resultPages.push({
-      pageNumber: 1,
-      totalPages: 1, // updated below
-      items: p1Items,
-      isFirstPage: true,
-      isLastPage: false,
-      startIndex: 0,
-    });
-    currentIndex += p1Items.length;
+    if (remaining.length <= 22) {
+      // 2 Pages: Proportionately balance items so neither page looks empty
+      const finalPageCount = Math.max(3, Math.min(10, Math.floor(remaining.length * 0.45)));
+      const p1Count = remaining.length - finalPageCount;
+      chunks.push(remaining.slice(0, p1Count));
+      chunks.push(remaining.slice(p1Count));
+    } else {
+      // 3 or more pages:
+      const p1Count = 12;
+      chunks.push(remaining.slice(0, p1Count));
+      remaining = remaining.slice(p1Count);
 
-    // Remaining pages
-    while (remaining.length > 0) {
-      if (remaining.length <= LAST_PAGE_CAPACITY) {
-        // Orphan row prevention: If remaining items is only 1, borrow 1 from the previous page
-        // so the totals block is never sitting with only 1 item on the final page
-        if (remaining.length === 1 && resultPages.length > 0) {
-          const prev = resultPages[resultPages.length - 1];
-          if (prev.items.length > 3) {
-            const borrowed = prev.items.pop();
-            remaining.unshift(borrowed);
+      while (remaining.length > 0) {
+        if (remaining.length <= 10) {
+          if (remaining.length <= 2 && chunks.length > 0) {
+            const prev = chunks[chunks.length - 1];
+            if (prev.length > 4) {
+              const borrowCount = 3 - remaining.length;
+              const borrowed = prev.splice(prev.length - borrowCount, borrowCount);
+              remaining.unshift(...borrowed);
+            }
           }
+          chunks.push(remaining);
+          break;
+        } else {
+          const take = Math.min(16, remaining.length - 3);
+          chunks.push(remaining.slice(0, take));
+          remaining = remaining.slice(take);
         }
-
-        resultPages.push({
-          pageNumber: resultPages.length + 1,
-          totalPages: 1,
-          items: remaining,
-          isFirstPage: false,
-          isLastPage: true,
-          startIndex: currentIndex,
-        });
-        break;
-      } else {
-        // Middle page
-        const count = Math.min(MIDDLE_CAPACITY, remaining.length - 2); // ensure at least 2 items left for last page
-        const chunk = remaining.splice(0, count);
-        resultPages.push({
-          pageNumber: resultPages.length + 1,
-          totalPages: 1,
-          items: chunk,
-          isFirstPage: false,
-          isLastPage: false,
-          startIndex: currentIndex,
-        });
-        currentIndex += chunk.length;
       }
     }
 
-    const totalPagesCount = resultPages.length;
-    resultPages.forEach((p, idx) => {
-      p.totalPages = totalPagesCount;
-      p.isLastPage = idx === totalPagesCount - 1;
-    });
+    const totalPagesCount = chunks.length;
+    let runningSubtotal = 0;
+    let runningItemIndex = 0;
 
-    return resultPages;
+    return chunks.map((chunkItems, idx) => {
+      const pageNumber = idx + 1;
+      const isFirst = pageNumber === 1;
+      const isLast = pageNumber === totalPagesCount;
+      const broughtForward = runningSubtotal;
+
+      const chunkTaxableSum = chunkItems.reduce((acc, it) => {
+        const qty = Number(it.quantity || 1);
+        const rate = Number(it.rate || 0);
+        const disc = Number(it.discount_percent || 0);
+        const taxable = Number(it.taxable_amount || (qty * rate * (1 - disc / 100)));
+        return acc + taxable;
+      }, 0);
+
+      runningSubtotal += chunkTaxableSum;
+      const carriedOver = isLast ? 0 : runningSubtotal;
+      const startIndex = runningItemIndex;
+      runningItemIndex += chunkItems.length;
+
+      return {
+        pageNumber,
+        totalPages: totalPagesCount,
+        items: chunkItems,
+        isFirstPage: isFirst,
+        isLastPage: isLast,
+        startIndex,
+        broughtForwardSubtotal: broughtForward,
+        carriedOverSubtotal: carriedOver,
+      };
+    });
   }, [doc?.items]);
 
   const totalPagesCount = pages.length;
@@ -387,7 +385,16 @@ export default function ProformaDocumentSheet({
   return (
     <div className="w-full flex flex-col items-center gap-6 print:gap-0 print:m-0 print:p-0">
       {pages.map((page) => {
-        const { pageNumber, totalPages, items: pageItems, isFirstPage, isLastPage, startIndex } = page;
+        const { 
+          pageNumber, 
+          totalPages, 
+          items: pageItems, 
+          isFirstPage, 
+          isLastPage, 
+          startIndex, 
+          broughtForwardSubtotal, 
+          carriedOverSubtotal 
+        } = page;
 
         return (
           <div
@@ -654,6 +661,19 @@ export default function ProformaDocumentSheet({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
+                      {/* Tally Brought Forward row on Page 2+ */}
+                      {!isFirstPage && (
+                        <tr className="border-b-2 border-slate-300 font-semibold bg-slate-50/80 text-xs">
+                          <td colSpan={7} className="py-2 px-3 text-right italic text-slate-700">
+                            Total Brought Forward from Page {pageNumber - 1} &rarr;
+                          </td>
+                          <td className="py-2 px-2 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                            {broughtForwardSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td colSpan={2} className="py-2"></td>
+                        </tr>
+                      )}
+
                       {pageItems.map((item: any, idx: number) => {
                         const serial = startIndex + idx + 1;
                         const qty = Number(item.quantity || 1);
@@ -705,6 +725,19 @@ export default function ProformaDocumentSheet({
                           </tr>
                         );
                       })}
+
+                      {/* Tally Carried Over row on Intermediate Pages */}
+                      {!isLastPage && (
+                        <tr className="border-t-2 border-slate-300 font-semibold bg-slate-50/80 text-xs">
+                          <td colSpan={7} className="py-2 px-3 text-right italic text-slate-700">
+                            Total Carried Over to Page {pageNumber + 1} &rarr;
+                          </td>
+                          <td className="py-2 px-2 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                            {carriedOverSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td colSpan={2} className="py-2"></td>
+                        </tr>
+                      )}
 
                       {/* Filler empty rows if only 1 page with <= 4 items to keep elegant height */}
                       {isFirstPage && isLastPage && pageItems.length <= 4 && (
@@ -920,7 +953,7 @@ export default function ProformaDocumentSheet({
                             className="h-10 max-w-[120px] object-contain"
                           />
                         ) : (
-                          <div className="h-6" />
+                          <div className="h-12" />
                         )}
                       </div>
 
@@ -931,9 +964,14 @@ export default function ProformaDocumentSheet({
                   </div>
                 </div>
               ) : (
-                /* Middle pages note */
-                <div className="pt-2 text-right text-[10px] font-semibold text-slate-400 italic">
-                  Continued on Page {pageNumber + 1}...
+                /* Tally Intermediate Page Continuation Banner */
+                <div className="pt-3 pb-1 border-t-2 border-slate-300 flex items-center justify-between text-xs font-semibold text-slate-600 bg-slate-50/60 px-3 rounded-lg mt-auto">
+                  <span className="italic text-slate-700">
+                    Document continued on Page {pageNumber + 1} of {totalPages}...
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    (Commercial Summary, Bank Details &amp; Signatures on Page {totalPages})
+                  </span>
                 </div>
               )}
             </div>
