@@ -68,7 +68,7 @@ export default function TallyExportPage() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `Vouch_Tally_Export_${new Date().toISOString().slice(0, 10)}.xml`);
+      link.setAttribute("download", `ShriLekh_Tally_Export_${new Date().toISOString().slice(0, 10)}.xml`);
       document.body.appendChild(link);
       link.click();
       link.parentNode?.removeChild(link);
@@ -148,7 +148,7 @@ export default function TallyExportPage() {
     {
       step: "5",
       title: "Select Downloaded XML File",
-      desc: "Provide the file path to the downloaded XML file (e.g. C:\\Downloads\\Vouch_Tally_Export.xml).",
+      desc: "Provide the file path to the downloaded XML file (e.g. C:\\Downloads\\ShriLekh_Tally_Export.xml).",
       shortcut: "File Path (.xml)"
     },
     {

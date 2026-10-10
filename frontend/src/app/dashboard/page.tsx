@@ -435,13 +435,13 @@ export default function Dashboard() {
       if (isMounted) setIsOnline(false);
     };
 
-    window.addEventListener("vouch:sync-complete", handleSyncComplete);
+    window.addEventListener("shrilekh:sync-complete", handleSyncComplete);
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
 
     return () => {
       isMounted = false;
-      window.removeEventListener("vouch:sync-complete", handleSyncComplete);
+      window.removeEventListener("shrilekh:sync-complete", handleSyncComplete);
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
@@ -756,7 +756,7 @@ export default function Dashboard() {
                   <span>Universal Migration Hub</span>
                 </div>
                 <h2 className="text-lg sm:text-xl font-black text-foreground tracking-tight">
-                  Switching to Vouch? Import your existing books in 1 minute.
+                  Switching to ShriLekh? Import your existing books in 1 minute.
                 </h2>
                 <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
                   Seamlessly bring your existing customers, suppliers, inventory items, and opening balances. 

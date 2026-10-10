@@ -309,7 +309,7 @@ export default function BankingModalsContainer({
                 <div className="text-center p-8 space-y-2 text-muted-foreground">
                   <p className="text-xs">No learned rules yet.</p>
                   <p className="text-[11px]">
-                    When you match a party in bank reconciliation, Vouch remembers the UPI ID, IFSC, or narration pattern automatically.
+                    When you match a party in bank reconciliation, ShriLekh remembers the UPI ID, IFSC, or narration pattern automatically.
                   </p>
                 </div>
               ) : (

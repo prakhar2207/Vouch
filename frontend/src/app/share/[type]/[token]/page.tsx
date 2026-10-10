@@ -54,7 +54,7 @@ export default function PublicSharePage() {
   const [importSuccess, setImportSuccess] = useState<any | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
 
-  // Auth modal for unauthenticated users clicking "Add to my Vouch"
+  // Auth modal for unauthenticated users clicking "Add to my ShriLekh"
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("register");
   const [authEmail, setAuthEmail] = useState("");
@@ -276,9 +276,9 @@ export default function PublicSharePage() {
                 <Zap className="w-3.5 h-3.5 text-amber-300" />
                 <span>Instant B2B Handshake</span>
               </div>
-              <h2 className="text-lg sm:text-xl font-bold">Auto-Book This Bill Into Your Vouch</h2>
+              <h2 className="text-lg sm:text-xl font-bold">Auto-Book This Bill Into Your ShriLekh</h2>
               <p className="text-xs sm:text-sm text-blue-100/90 max-w-xl">
-                Avoid typing line items manually. 1-Click imports this invoice directly into your Vouch books as a verified Draft Purchase Bill.
+                Avoid typing line items manually. 1-Click imports this invoice directly into your ShriLekh books as a verified Draft Purchase Bill.
               </p>
             </div>
 
@@ -295,7 +295,7 @@ export default function PublicSharePage() {
               ) : (
                 <>
                   <Zap className="w-4 h-4 mr-2 text-slate-950" />
-                  Add to my Vouch
+                  Add to my ShriLekh
                 </>
               )}
             </button>
@@ -472,7 +472,7 @@ export default function PublicSharePage() {
 
           {/* Footer Note */}
           <div className="pt-4 border-t border-slate-100 text-center text-xs text-slate-400">
-            Official B2B Document generated and secured via Vouch ERP Infrastructure.
+            Official B2B Document generated and secured via ShriLekh ERP Infrastructure.
           </div>
         </div>
       </main>
@@ -483,7 +483,7 @@ export default function PublicSharePage() {
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-100 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-slate-900 text-lg">
-                {authMode === "register" ? "Auto-Book into Vouch" : "Log In to Import"}
+                {authMode === "register" ? "Auto-Book into ShriLekh" : "Log In to Import"}
               </h3>
               <button
                 onClick={() => setShowAuthModal(false)}
@@ -495,8 +495,8 @@ export default function PublicSharePage() {
 
             <p className="text-xs text-slate-500">
               {authMode === "register"
-                ? "Set a password to register your business. We will create your Vouch tenant and import this invoice as a draft purchase bill instantly."
-                : "Enter your Vouch account credentials to import this bill."}
+                ? "Set a password to register your business. We will create your ShriLekh tenant and import this invoice as a draft purchase bill instantly."
+                : "Enter your ShriLekh account credentials to import this bill."}
             </p>
 
             {authError && (
@@ -568,7 +568,7 @@ export default function PublicSharePage() {
                 className="text-xs text-blue-600 hover:underline font-medium"
               >
                 {authMode === "register"
-                  ? "Already have a Vouch account? Log in instead"
+                  ? "Already have a ShriLekh account? Log in instead"
                   : "Need an account? Quick register your company"}
               </button>
             </div>

@@ -10,9 +10,10 @@
   --card-foreground: #0f172a;
   --border: #e2e8f0;
   --input: #e2e8f0;
-  --ring: #3b82f6;
+  --ring: #183b7e;
 
-  --primary: #2563eb;
+  /* ShriLekh Royal Navy */
+  --primary: #183b7e;
   --primary-foreground: #ffffff;
 
   --secondary: #f1f5f9;
@@ -21,8 +22,9 @@
   --muted: #f1f5f9;
   --muted-foreground: #475569;
 
-  --accent: #eff6ff;
-  --accent-foreground: #1e40af;
+  /* ShriLekh Saffron / Amber Accent */
+  --accent: #fffbeb;
+  --accent-foreground: #b45309;
 
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
@@ -30,7 +32,7 @@
   --success: #10b981;
   --success-foreground: #ffffff;
 
-  --warning: #f59e0b;
+  --warning: #d97706;
   --warning-foreground: #ffffff;
 }
 

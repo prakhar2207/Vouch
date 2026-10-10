@@ -1,5 +1,5 @@
 /**
- * Centralized logging utility for Vouch Frontend.
+ * Centralized logging utility for ShriLekh Frontend.
  * Provides environment-aware log levels, formatted outputs, and safe serialization.
  */
 

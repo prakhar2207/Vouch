@@ -726,8 +726,8 @@ export default function PrintInvoicePage() {
       };
     }
 
-    // 3. Dynamic Smart Vouch Link (Default: Public View + Instant UPI + B2B Auto-Book)
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vouchapp.in';
+    // 3. Dynamic Smart ShriLekh Link (Default: Public View + Instant UPI + B2B Auto-Book)
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://srilekh.com';
     const smartUrl = shareToken ? `${origin}/claim?token=${encodeURIComponent(shareToken)}` : `${origin}/sales/${invoiceId}/print`;
     return {
       value: smartUrl,
@@ -953,7 +953,7 @@ export default function PrintInvoicePage() {
       maximumFractionDigits: 2,
     });
     
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vouch-pi-one.vercel.app';
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://srilekh.com';
     const copyQuery = copyMode !== 'ORIGINAL' ? `?copy=${copyMode}` : '';
     const publicInvoiceUrl = `${origin}/sales/${invoiceId}/print${copyQuery}`;
     const claimUrl = shareToken ? `${origin}/claim?token=${encodeURIComponent(shareToken)}` : publicInvoiceUrl;
@@ -981,7 +981,7 @@ export default function PrintInvoicePage() {
       `\n` +
       `📄 *View & Download Official PDF:*\n` +
       `${publicInvoiceUrl}\n\n` +
-      `⚡ *1-Click Import (Auto-Book Purchase in Vouch):*\n` +
+      `⚡ *1-Click Import (Auto-Book Purchase in ShriLekh):*\n` +
       `${claimUrl}\n\n` +
       `Thank you for doing business with us!\n` +
       `*${companyName}*`
@@ -1955,7 +1955,7 @@ export default function PrintInvoicePage() {
                   className={`px-2 py-1 rounded-md transition-all ${
                     qrMode === 'SMART' ? 'bg-emerald-600 text-white' : 'text-slate-400'
                   }`}
-                  title="Dynamic Vouch Link QR"
+                  title="Dynamic ShriLekh Link QR"
                 >
                   Smart QR
                 </button>
@@ -2514,7 +2514,7 @@ export default function PrintInvoicePage() {
             <div className="pt-2 text-center text-[10px] space-y-0.5">
               <p className="font-bold tracking-widest uppercase">*** THANK YOU ***</p>
               <p>Goods once sold will not be returned.</p>
-              <p className="text-[9px] text-slate-500 mt-1">Software by Vouch ERP</p>
+              <p className="text-[9px] text-slate-500 mt-1">Software by ShriLekh ERP</p>
             </div>
           </div>
         </div>

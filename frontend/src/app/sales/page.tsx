@@ -606,7 +606,7 @@ function SalesInvoiceListContent() {
       if (!waMessage) {
         const invoiceNo = inv.voucher_number || 'INVOICE';
         const total = Number(inv.total_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
-        const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vouch-pi-one.vercel.app';
+        const origin = typeof window !== 'undefined' ? window.location.origin : 'https://srilekh.com';
         const partyName = inv.party?.name || inv.buyer_name || 'Valued Customer';
         const companyName = inv.company?.name || 'Our Company';
         const invDate = inv.voucher_date || inv.date || 'Today';
@@ -620,7 +620,7 @@ function SalesInvoiceListContent() {
           `• *Invoice Amount:* ₹${total}\n\n` +
           `📄 *View & Download Official PDF:*\n` +
           `${origin}/sales/${inv.id}/print\n\n` +
-          `⚡ *1-Click Import (Auto-Book Purchase in Vouch):*\n` +
+          `⚡ *1-Click Import (Auto-Book Purchase in ShriLekh):*\n` +
           `${claimLink}\n\n` +
           `Thank you for doing business with us!\n` +
           `*${companyName}*`

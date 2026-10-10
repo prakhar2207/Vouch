@@ -230,7 +230,7 @@ function ClaimContent() {
             onClick={() => router.push("/login")}
             className="w-full py-2.5 px-4 text-xs font-semibold rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
           >
-            Go to Vouch Sign In
+            Go to ShriLekh Sign In
           </button>
         </div>
       </div>
@@ -366,7 +366,7 @@ function ClaimContent() {
             <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 space-y-2.5">
               <div className="flex items-center gap-2 text-xs font-bold text-primary">
                 <Zap className="w-4 h-4" />
-                <span>Why claim on Vouch?</span>
+                <span>Why claim on ShriLekh?</span>
               </div>
               <ul className="text-[11px] text-muted-foreground space-y-1.5 list-disc list-inside">
                 <li>Zero typing: line items and stock balances are auto-booked into your purchase register.</li>
@@ -665,7 +665,7 @@ function ClaimContent() {
                     </button>
 
                     <p className="text-[11px] text-center text-muted-foreground">
-                      Already have a Vouch account?{" "}
+                      Already have a ShriLekh account?{" "}
                       <button
                         type="button"
                         onClick={() => router.push(`/login?redirect=/claim?token=${encodeURIComponent(token)}`)}

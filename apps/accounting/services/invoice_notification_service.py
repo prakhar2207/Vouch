@@ -21,7 +21,7 @@ class InvoiceNotificationService:
     """
     Automates asynchronous dispatch of Tax Invoices via Email (with PDF attachment)
     and WhatsApp, embedding a secure viral onboarding token (/claim) that allows
-    counterparties to sign up on Vouch and import the bill directly into their books.
+    counterparties to sign up on ShriLekh and import the bill directly into their books.
     """
 
     @classmethod
@@ -83,7 +83,7 @@ class InvoiceNotificationService:
         """Constructs the full viral claim URL for this voucher."""
         token = cls.generate_claim_token(voucher)
         if not frontend_url:
-            frontend_url = getattr(settings, 'FRONTEND_URL', 'https://vouch-pi-one.vercel.app' if not getattr(settings, 'DEBUG', False) else 'http://localhost:3000')
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'https://srilekh.com' if not getattr(settings, 'DEBUG', False) else 'http://localhost:3000')
         frontend_url = str(frontend_url).rstrip('/')
         return f"{frontend_url}/claim?token={token}"
 
@@ -100,7 +100,7 @@ class InvoiceNotificationService:
             clean_phone = '91' + clean_phone
 
         if not frontend_url:
-            frontend_url = getattr(settings, 'FRONTEND_URL', 'https://vouch-pi-one.vercel.app' if not getattr(settings, 'DEBUG', False) else 'http://localhost:3000')
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'https://srilekh.com' if not getattr(settings, 'DEBUG', False) else 'http://localhost:3000')
         frontend_url = str(frontend_url).rstrip('/')
 
         public_url = f"{frontend_url}/sales/{voucher.id}/print"
@@ -122,7 +122,7 @@ class InvoiceNotificationService:
             f"• *Invoice Date:* {inv_date}\n"
             f"📄 *View & Download Official PDF:*\n"
             f"{public_url}\n\n"
-            f"⚡ *1-Click Import (Auto-Book Purchase in Vouch):*\n"
+            f"⚡ *1-Click Import (Auto-Book Purchase in ShriLekh):*\n"
             f"{claim_url}\n\n"
             f"Thank you for doing business with us!\n"
             f"*{company_name}*"
@@ -217,7 +217,7 @@ class InvoiceNotificationService:
                     </p>
                 </div>
                 <div class="footer">
-                    Sent securely via <strong>Vouch Connected Invoicing Network</strong><br/>
+                    Sent securely via <strong>ShriLekh Connected Invoicing Network</strong><br/>
                     {company.name} &bull; {company.email or ''}
                 </div>
             </div>

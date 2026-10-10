@@ -1185,7 +1185,7 @@ export default function BankingPage() {
                   : activeTab === "UNRESOLVED"
                   ? "There are no transactions requiring your attention. Upload a new statement to import more."
                   : activeTab === "NEEDS_REVIEW"
-                  ? "Vouch hasn't found any AI-suggested matches. Upload another statement or check the Attention tab."
+                  ? "ShriLekh hasn't found any AI-suggested matches. Upload another statement or check the Attention tab."
                   : activeTab === "MATCHED"
                   ? "No transactions have been matched yet. Start by reviewing items in the Attention or Review tabs."
                   : activeTab === "EXCLUDED"

@@ -295,7 +295,7 @@ export default function LandingPage() {
               transition={{ duration: 0.5, delay: 0.2 }}
               className="text-muted-foreground text-sm sm:text-base"
             >
-              Whether you run a shop, a factory, or a trading business — Vouch makes billing and bookkeeping simple.
+              Whether you run a shop, a factory, or a trading business — ShriLekh makes billing and bookkeeping simple.
             </motion.p>
           </div>
 
@@ -376,7 +376,7 @@ export default function LandingPage() {
               </div>
               <div className="px-6 py-1 bg-white dark:bg-zinc-900 rounded-lg text-[11px] font-mono text-muted-foreground border border-border/80 dark:border-border flex items-center gap-2">
                 <span className="text-green-600 dark:text-green-500">🔒</span>
-                <span>https://app.vouch.in/purchases/new</span>
+                <span>https://srilekh.com/purchases/new</span>
               </div>
               <div className="text-xs text-muted-foreground font-mono flex items-center gap-1.5">
                 <Terminal className="w-3 h-3" />
@@ -635,7 +635,7 @@ export default function LandingPage() {
 
         <div className="max-w-7xl mx-auto px-6 pt-6 border-t border-border/60 dark:border-border flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-muted-foreground">
           <div>
-            © {new Date().getFullYear()} Vouch Platform. Built for Modern Indian Businesses.
+            © {new Date().getFullYear()} ShriLekh Platform. Built for Modern Indian Businesses.
           </div>
           <div className="flex items-center gap-3 font-mono text-[10px]">
             <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded border border-emerald-500/15">PWA Enabled</span>

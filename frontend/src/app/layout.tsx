@@ -34,34 +34,34 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://vouchapp.in"),
+  metadataBase: new URL("https://srilekh.com"),
   title: {
-    default: "Vouch - Double-Entry Accounting & AI ERP",
-    template: "%s | Vouch",
+    default: "ShriLekh - Double-Entry Accounting & AI ERP",
+    template: "%s | ShriLekh",
   },
   description: "Keyboard-first cloud ERP and accounting platform with automated GST compliance and AI bill extraction.",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/favicon.ico?v=2",
-    shortcut: "/favicon.ico?v=2",
-    apple: "/icons/apple-touch-icon.png?v=2",
+    icon: "/favicon.ico?v=3",
+    shortcut: "/favicon.ico?v=3",
+    apple: "/icons/apple-touch-icon.png?v=3",
   },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Vouch",
+    title: "ShriLekh",
   },
   openGraph: {
     type: "website",
     locale: "en_IN",
-    url: "https://vouchapp.in",
-    siteName: "Vouch Accounting",
-    title: "Vouch - Double-Entry Accounting & AI ERP",
+    url: "https://srilekh.com",
+    siteName: "ShriLekh Accounting",
+    title: "ShriLekh - Double-Entry Accounting & AI ERP",
     description: "Keyboard-first cloud ERP and accounting platform with automated GST compliance and AI bill extraction.",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Vouch - Double-Entry Accounting & AI ERP",
+    title: "ShriLekh - Double-Entry Accounting & AI ERP",
     description: "Keyboard-first cloud ERP and accounting platform with automated GST compliance and AI bill extraction.",
   },
 };

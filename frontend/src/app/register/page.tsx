@@ -147,7 +147,7 @@ export default function Register() {
         {/* Header */}
         <div className="mb-8 text-center">
           <h1 className="text-2xl font-black mb-2 tracking-tight">
-            {step === 4 ? "Welcome to Vouch! 🚀" : "Create your Vouch Account"}
+            {step === 4 ? "Welcome to ShriLekh! 🚀" : "Create your ShriLekh Account"}
           </h1>
           <p className="text-muted-foreground text-xs">
             {step === 1

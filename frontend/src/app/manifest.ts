@@ -2,14 +2,14 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Vouch",
-    short_name: "Vouch",
-    description: "High-Speed Double-Entry Accounting & ERP with AI Accounts Payable and GST Compliance",
+    name: "ShriLekh",
+    short_name: "ShriLekh",
+    description: "ShriLekh - High-Speed Double-Entry Accounting & ERP with AI Accounts Payable and GST Compliance",
     start_url: "/dashboard",
     display: "standalone",
     display_override: ["window-controls-overlay", "standalone"],
     background_color: "#ffffff",
-    theme_color: "#0B1938",
+    theme_color: "#183B7E",
     icons: [
       {
         src: "/icons/icon-192x192.png?v=2",

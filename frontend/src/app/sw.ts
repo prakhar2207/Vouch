@@ -38,7 +38,7 @@ const accountingCustomCaching: RuntimeCaching[] = [
       return request.mode === "navigate" || request.destination === "document";
     },
     handler: new NetworkFirst({
-      cacheName: "vouch-pages-cache",
+      cacheName: "shrilekh-pages-cache",
       networkTimeoutSeconds: 5,
       plugins: [
         new ExpirationPlugin({
@@ -60,7 +60,7 @@ const accountingCustomCaching: RuntimeCaching[] = [
   {
     matcher: /\/_next\/static\/.+\.(?:js|css)$/i,
     handler: new CacheFirst({
-      cacheName: "vouch-static-assets",
+      cacheName: "shrilekh-static-assets",
       plugins: [
         new ExpirationPlugin({
           maxEntries: 120,
@@ -72,7 +72,7 @@ const accountingCustomCaching: RuntimeCaching[] = [
   {
     matcher: /\.(?:png|jpg|jpeg|svg|ico|webp)$/i,
     handler: new CacheFirst({
-      cacheName: "vouch-static-icons",
+      cacheName: "shrilekh-static-icons",
       plugins: [
         new ExpirationPlugin({
           maxEntries: 64,
@@ -104,7 +104,7 @@ installSerwist({
 // Precache offline page on install
 self.addEventListener("install", (event: any) => {
   event.waitUntil(
-    caches.open("vouch-pages-cache").then((cache) => cache.add("/~offline").catch(() => {}))
+    caches.open("shrilekh-pages-cache").then((cache) => cache.add("/~offline").catch(() => {}))
   );
 });
 
@@ -123,7 +123,7 @@ self.addEventListener("activate", (event: any) => {
 
 // Service Worker Background Sync Event Listener
 self.addEventListener("sync", (event: any) => {
-  if (event.tag === "vouch-outbox-sync") {
+  if (event.tag === "shrilekh-outbox-sync") {
     event.waitUntil(
       (async () => {
         const allClients = await self.clients.matchAll({
@@ -148,7 +148,7 @@ self.addEventListener('push', (event: any) => {
   }
   const title = data.title || 'New Notification';
   const options = {
-    body: data.body || 'You have a new alert in Vouch.',
+    body: data.body || 'You have a new alert in ShriLekh.',
     icon: '/icons/icon-192x192.png',
     badge: '/icons/icon-192x192.png',
     data: {

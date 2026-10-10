@@ -940,7 +940,7 @@ export default function ProformaDocumentSheet({
                     {/* Right: Seller Authorized Signatory */}
                     <div className="flex flex-col justify-between h-24 border border-slate-200/80 rounded-lg p-2.5 bg-slate-50/40 text-right">
                       <span className="text-[10.5px] font-bold text-slate-700">
-                        For {company?.legal_name || company?.name || 'Vouch Merchant'}
+                        For {company?.legal_name || company?.name || 'ShriLekh Merchant'}
                       </span>
                       
                       <div className="flex items-center justify-end gap-3 my-auto">

@@ -13,7 +13,7 @@ export default function OnboardingTour() {
       {
         element: "#tour-header-brand",
         popover: {
-          title: "⚡ Welcome to Vouch",
+          title: "⚡ Welcome to ShriLekh",
           description: "A fast, keyboard-driven double-entry accounting and ERP platform designed to make billing, inventory, and GST compliance effortless.",
           side: "bottom",
           align: "start",

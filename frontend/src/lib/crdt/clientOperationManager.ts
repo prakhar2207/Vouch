@@ -244,7 +244,7 @@ export class ClientOperationManager {
         partyName,
         status: "POSTED",
         totalAmount,
-        narration: p.narration || `Created offline via Vouch Protocol`,
+        narration: p.narration || `Created offline via ShriLekh Protocol`,
         serverUpdatedAt: Date.now()
       };
       await offlineDb.syncedVouchers.put(projectedVoucher);
@@ -315,7 +315,7 @@ export class ClientOperationManager {
   }
 
   /**
-   * Flushes queued outbox operations to the Vouch backend protocol endpoint.
+   * Flushes queued outbox operations to the ShriLekh backend protocol endpoint.
    */
   public static async syncOutboxWithServer(apiBaseUrl?: string): Promise<{
     syncedCount: number;

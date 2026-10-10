@@ -128,7 +128,7 @@ class DocumentShareService:
         )
 
     @classmethod
-    def build_share_url(cls, raw_token: str, share_type: str, base_url: str = "https://vouch-pi-one.vercel.app") -> str:
+    def build_share_url(cls, raw_token: str, share_type: str, base_url: str = "https://srilekh.com") -> str:
         prefix = SHARE_TYPE_PREFIXES.get(share_type, 'd')
         return f"{base_url}/share/{prefix}/{raw_token}"
 
@@ -137,7 +137,7 @@ class DocumentShareService:
         cls,
         snapshot: DocumentSnapshot,
         raw_token: str,
-        base_url: str = "https://vouch-pi-one.vercel.app",
+        base_url: str = "https://srilekh.com",
     ) -> str:
         """
         Builds a professional, clean WhatsApp message with document details and secure share URL.
@@ -166,16 +166,16 @@ class DocumentShareService:
             msg = (
                 f"🧾 *{doc_title} #{doc.get('document_number', '')}*\n\n"
                 f"Dear *{buyer.get('name', 'Valued Customer')}*,\n\n"
-                f"Here is your tax invoice from *{seller.get('name', 'Vouch')}*:\n"
+                f"Here is your tax invoice from *{seller.get('name', 'ShriLekh')}*:\n"
                 f"• *Invoice Number:* {doc.get('document_number', '')}\n"
                 f"• *Invoice Date:* {doc.get('document_date', '')}\n"
                 f"• *Invoice Amount:* ₹{grand_total:,.2f}\n\n"
                 f"📄 *View & Download Official PDF:*\n"
                 f"{pdf_url}\n\n"
-                f"⚡ *1-Click Import (Auto-Book Purchase in Vouch):*\n"
+                f"⚡ *1-Click Import (Auto-Book Purchase in ShriLekh):*\n"
                 f"{claim_url}\n\n"
                 f"Thank you for doing business with us!\n"
-                f"*{seller.get('name', 'Vouch')}*"
+                f"*{seller.get('name', 'ShriLekh')}*"
             )
         else:
             # Statement
@@ -185,13 +185,13 @@ class DocumentShareService:
             msg = (
                 f"📊 *STATEMENT OF ACCOUNT*\n\n"
                 f"Dear *{buyer.get('name', dto.get('party', {}).get('name', 'Valued Partner'))}*,\n\n"
-                f"Here is your account statement from *{seller.get('name', dto.get('company', {}).get('name', 'Vouch'))}*:\n"
+                f"Here is your account statement from *{seller.get('name', dto.get('company', {}).get('name', 'ShriLekh'))}*:\n"
                 f"• *Period:* {doc.get('from_date', 'Inception')} to {doc.get('to_date', 'Present')}\n"
                 f"• *Closing Balance:* ₹{cl_amt:,.2f} ({cl_type})\n\n"
                 f"📄 *View & Download Statement PDF:*\n"
                 f"{share_url}\n\n"
                 f"Thank you!\n"
-                f"*{seller.get('name', dto.get('company', {}).get('name', 'Vouch'))}*"
+                f"*{seller.get('name', dto.get('company', {}).get('name', 'ShriLekh'))}*"
             )
 
         return msg

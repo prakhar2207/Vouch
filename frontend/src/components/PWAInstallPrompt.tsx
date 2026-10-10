@@ -67,7 +67,7 @@ export default function PWAInstallPrompt() {
             <Download className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <div className="text-xs font-semibold text-foreground truncate">Install Vouch App</div>
+            <div className="text-xs font-semibold text-foreground truncate">Install ShriLekh App</div>
             <div className="text-[11px] text-muted-foreground truncate">
               Faster keyboard navigation & offline access
             </div>
