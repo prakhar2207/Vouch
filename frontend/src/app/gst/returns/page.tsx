@@ -79,7 +79,7 @@ export default function GSTReturnCenterPage() {
   // Direct GST Portal Upload states
   const [showPortalModal, setShowPortalModal] = useState(false);
   const [portalStep, setPortalStep] = useState<"auth" | "otp" | "confirm" | "success">("auth");
-  const [taxpayerUsername, setTaxpayerUsername] = useState("vouch_taxpayer");
+  const [taxpayerUsername, setTaxpayerUsername] = useState("srilekh_taxpayer");
   const [portalGstin, setPortalGstin] = useState(activeCompany?.gstin || "09CIFPS1329P2ZL");
   const [portalOtp, setPortalOtp] = useState("575757");
   const [maskedMobile, setMaskedMobile] = useState("******9821");
@@ -252,7 +252,7 @@ export default function GSTReturnCenterPage() {
   const handleOpenPortalModal = () => {
     setPortalError(null);
     setPortalGstin(activeCompany?.gstin || "09CIFPS1329P2ZL");
-    setTaxpayerUsername("vouch_taxpayer");
+    setTaxpayerUsername("srilekh_taxpayer");
     if (authToken) {
       setPortalStep("confirm");
     } else {

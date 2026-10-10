@@ -643,8 +643,8 @@ export default function BankingModalsContainer({
                     </div>
                     <p className="text-[11px] leading-relaxed text-muted-foreground">
                       {parseFloat(selectedTx.credit_amount) > 0
-                        ? "Deposit received into this bank account on behalf of the sister entity. Vouch will atomically create a Receipt voucher in this company (Dr Bank / Cr Sister Co Current A/c) and a corresponding Receipt in the sister entity (Dr Sister Co Current A/c / Cr Customer/Income) with zero ledger drift."
-                        : "Payment made from this bank account on behalf of the sister entity. Vouch will atomically create a Payment voucher in this company (Dr Sister Co Current A/c / Cr Bank) and a corresponding Payment in the sister entity (Dr Supplier/Expense / Cr Sister Co Current A/c) with zero ledger drift."}
+                        ? "Deposit received into this bank account on behalf of the sister entity. SriLekh will atomically create a Receipt voucher in this company (Dr Bank / Cr Sister Co Current A/c) and a corresponding Receipt in the sister entity (Dr Sister Co Current A/c / Cr Customer/Income) with zero ledger drift."
+                        : "Payment made from this bank account on behalf of the sister entity. SriLekh will atomically create a Payment voucher in this company (Dr Sister Co Current A/c / Cr Bank) and a corresponding Payment in the sister entity (Dr Supplier/Expense / Cr Sister Co Current A/c) with zero ledger drift."}
                     </p>
                   </div>
                 </div>
