@@ -69,7 +69,10 @@ interface PageChunk {
   carriedOverSubtotal: number;
 }
 
-function chunkInvoiceItems(items: any[]): PageChunk[] {
+function chunkInvoiceItems(
+  items: any[],
+  mode: 'AUTO' | '1_PAGE' | '2_PAGES' = 'AUTO'
+): PageChunk[] {
   if (!items || items.length === 0) {
     return [{
       pageNumber: 1,
@@ -82,8 +85,11 @@ function chunkInvoiceItems(items: any[]): PageChunk[] {
     }];
   }
 
-  // Single page threshold: up to 8 items fit comfortably on 1 page with full header & full footer
-  if (items.length <= 8) {
+  // Dynamic Single-Page Auto-Fit:
+  // If user selected 1_PAGE, or in AUTO mode with <= 13 items:
+  // Automatically optimizes space to fit everything on 1 page!
+  const canFitSinglePage = mode === '1_PAGE' || (mode === 'AUTO' && items.length <= 13);
+  if (canFitSinglePage) {
     return [{
       pageNumber: 1,
       items: items,
@@ -95,25 +101,23 @@ function chunkInvoiceItems(items: any[]): PageChunk[] {
     }];
   }
 
-  // Multi-page splitting:
-  // Page 1 has full header (company, meta, party grid) and continuation banner.
-  // It comfortably holds up to 8 items down to the bottom.
+  // Multi-page splitting (mode === '2_PAGES' or AUTO with > 13 items):
   const chunks: any[][] = [];
   let remaining = [...items];
 
-  // Page 1 takes up to 8 items to fill the available space down to the bottom
+  // Page 1 takes up to 8 items to fill space cleanly before Carried Over banner
   const p1Count = Math.min(8, remaining.length);
   chunks.push(remaining.slice(0, p1Count));
   remaining = remaining.slice(p1Count);
 
-  // If remaining items fit on the final page with full statutory footer (up to 10 items):
-  if (remaining.length <= 10) {
+  // If remaining items fit on the final page with full statutory footer (up to 12 items):
+  if (remaining.length <= 12) {
     if (remaining.length > 0) {
       chunks.push(remaining);
     }
   } else {
-    // 3 or more pages: intermediate pages have compact continuation header and continuation banner (up to 14 items)
-    while (remaining.length > 10) {
+    // 3 or more pages: intermediate pages have compact continuation header (up to 14 items)
+    while (remaining.length > 12) {
       const take = Math.min(14, remaining.length <= 20 ? Math.ceil(remaining.length / 2) : 14);
       chunks.push(remaining.slice(0, take));
       remaining = remaining.slice(take);
@@ -216,6 +220,8 @@ export default function PrintInvoicePage() {
   const [ewayBill, setEwayBill] = useState<EWayBillData | null>(null);
   const [layoutMode, setLayoutMode] = useState<'A4' | 'THERMAL'>('A4');
   const [copyMode, setCopyMode] = useState<InvoiceCopyMode>('ORIGINAL');
+  // Dynamic Page Mode: 'AUTO' (auto-fits <= 13 items on 1 page), '1_PAGE' (force single page), '2_PAGES' (force multi-page)
+  const [pageLayoutMode, setPageLayoutMode] = useState<'AUTO' | '1_PAGE' | '2_PAGES'>('AUTO');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState<boolean>(false);
   const [copiedToClipboard, setCopiedToClipboard] = useState<boolean>(false);
@@ -559,7 +565,7 @@ export default function PrintInvoicePage() {
 
   const getSheetsToRender = (): SheetConfig[] => {
     const rawItems = invoice?.items || [];
-    const itemChunks = chunkInvoiceItems(rawItems);
+    const itemChunks = chunkInvoiceItems(rawItems, pageLayoutMode);
     const pagesPerCopy = itemChunks.length;
 
     const buildSheetsForCopy = (
@@ -1177,6 +1183,9 @@ export default function PrintInvoicePage() {
   const activeScale = scaleMode === 'fit' && isMobile ? scale : 1;
 
   const renderA4Sheet = (sheet: SheetConfig, sheetIndex: number, totalSheets: number) => {
+    const isSinglePage = sheet.isFirstPage && sheet.isLastPage;
+    const isCompactDensity = isSinglePage && sheet.pageItems.length > 8;
+
     return (
       <div 
         key={`${sheet.copyType}-p${sheet.pageNumber}-${sheetIndex}`}
@@ -1196,7 +1205,7 @@ export default function PrintInvoicePage() {
               }
             : undefined
         }
-        className="invoice-print-sheet w-[210mm] max-w-[210mm] shrink-0 min-h-[270mm] print:min-h-[270mm] print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none flex flex-col mx-auto print:static print:transform-none"
+        className="invoice-print-sheet w-[210mm] max-w-[210mm] shrink-0 min-h-[270mm] print:min-h-0 print:h-full print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none flex flex-col mx-auto print:static print:transform-none"
       >
         {/* Main Border Box */}
         <div className="border-2 border-black flex-1 flex flex-col justify-between">
@@ -1205,39 +1214,39 @@ export default function PrintInvoicePage() {
               {sheet.isFirstPage ? (
                 <>
                   {/* Header */}
-                  <div className="text-center p-3 border-b-2 border-black">
-                  <div className="flex justify-between items-start text-xs font-bold mb-2">
+                  <div className={`text-center ${isCompactDensity ? 'p-1.5' : 'p-3'} border-b-2 border-black`}>
+                  <div className={`flex justify-between items-start text-xs font-bold ${isCompactDensity ? 'mb-1' : 'mb-2'}`}>
                       <div>GSTIN : {invoice.company.gstin || 'Unregistered'}</div>
                       <div className={`italic ${sheet.highlightTransport ? 'font-extrabold text-blue-900 underline' : 'font-bold'}`}>
                         {sheet.badgeTitle}
                       </div>
                   </div>
-                  <h2 className="text-lg font-bold underline mb-1 tracking-wider">TAX INVOICE</h2>
-                  <h1 className="text-3xl font-extrabold mb-1">{invoice.company.name}</h1>
-                  <p className="text-sm">{invoice.company.address}</p>
-                  <p className="text-sm">Ph: {invoice.company.phone || 'N/A'} | Email: {invoice.company.email || 'N/A'}</p>
+                  <h2 className={`${isCompactDensity ? 'text-base mb-0.5' : 'text-lg mb-1'} font-bold underline tracking-wider`}>TAX INVOICE</h2>
+                  <h1 className={`${isCompactDensity ? 'text-2xl mb-0.5' : 'text-3xl mb-1'} font-extrabold`}>{invoice.company.name}</h1>
+                  <p className={`${isCompactDensity ? 'text-[11px] leading-tight' : 'text-sm'}`}>{invoice.company.address}</p>
+                  <p className={`${isCompactDensity ? 'text-[11px] leading-tight' : 'text-sm'}`}>Ph: {invoice.company.phone || 'N/A'} | Email: {invoice.company.email || 'N/A'}</p>
                   {invoice.company.tagline && (
-                    <p className="text-sm font-bold mt-1 tracking-widest uppercase">{invoice.company.tagline}</p>
+                    <p className={`${isCompactDensity ? 'text-xs mt-0.5' : 'text-sm mt-1'} font-bold tracking-widest uppercase`}>{invoice.company.tagline}</p>
                   )}
               </div>
 
               {/* Meta Grid */}
-              <div className="grid grid-cols-2 border-b-2 border-black text-sm">
-                  <div className="p-2 border-r-2 border-black">
+              <div className={`grid grid-cols-2 border-b-2 border-black ${isCompactDensity ? 'text-xs' : 'text-sm'}`}>
+                  <div className={`${isCompactDensity ? 'p-1.5' : 'p-2'} border-r-2 border-black`}>
                       <table className="w-full">
                           <tbody>
-                              <tr><td className="w-32">Invoice No.</td><td className="font-bold">: {invoice.voucher_number}</td></tr>
+                              <tr><td className={isCompactDensity ? "w-28" : "w-32"}>Invoice No.</td><td className="font-bold">: {invoice.voucher_number}</td></tr>
                               <tr><td>Dated</td><td className="font-bold">: {invoice.date}</td></tr>
                               <tr><td>Place of Supply</td><td>: {placeOfSupply}</td></tr>
                               <tr><td>Reverse Charge</td><td>: N</td></tr>
                           </tbody>
                       </table>
                   </div>
-                  <div className={`p-2 ${sheet.highlightTransport ? 'bg-blue-50/60 ring-1 ring-blue-400/40 rounded-xs' : ''}`}>
+                  <div className={`${isCompactDensity ? 'p-1.5' : 'p-2'} ${sheet.highlightTransport ? 'bg-blue-50/60 ring-1 ring-blue-400/40 rounded-xs' : ''}`}>
                       <table className="w-full">
                           <tbody>
                               <tr>
-                                <td className="w-32">GR/RR No.</td>
+                                <td className={isCompactDensity ? "w-28" : "w-32"}>GR/RR No.</td>
                                 <td className={sheet.highlightTransport ? 'font-bold' : ''}>: {ewayBill?.trans_doc_no || invoice?.gr_rr_no || 'N/A'}</td>
                               </tr>
                               <tr>
@@ -1266,20 +1275,20 @@ export default function PrintInvoicePage() {
               </div>
 
               {/* Party Grid */}
-              <div className="grid grid-cols-2 border-b-2 border-black text-sm">
-                  <div className="p-2 border-r-2 border-black flex flex-col">
-                      <span className="italic mb-1">Billed to :</span>
-                      <strong className="text-base">{invoice.party.name}</strong>
+              <div className={`grid grid-cols-2 border-b-2 border-black ${isCompactDensity ? 'text-xs' : 'text-sm'}`}>
+                  <div className={`${isCompactDensity ? 'p-1.5' : 'p-2'} border-r-2 border-black flex flex-col`}>
+                      <span className="italic mb-0.5">Billed to :</span>
+                      <strong className={isCompactDensity ? "text-sm font-bold" : "text-base font-bold"}>{invoice.party.name}</strong>
                       {invoice.party.address && <span className="whitespace-pre-wrap">{invoice.party.address}</span>}
-                      <div className="mt-2 pt-1">
+                      <div className="mt-1.5 pt-0.5">
                           GSTIN / UIN <span className="ml-4 font-bold">: {invoice.party.gstin || 'Unregistered'}</span>
                       </div>
                   </div>
-                  <div className="p-2 flex flex-col">
-                      <span className="italic mb-1">Shipped to :</span>
-                      <strong className="text-base">{invoice.party.name}</strong>
+                  <div className={`${isCompactDensity ? 'p-1.5' : 'p-2'} flex flex-col`}>
+                      <span className="italic mb-0.5">Shipped to :</span>
+                      <strong className={isCompactDensity ? "text-sm font-bold" : "text-base font-bold"}>{invoice.party.name}</strong>
                       {invoice.party.address && <span className="whitespace-pre-wrap">{invoice.party.address}</span>}
-                      <div className="mt-2 pt-1">
+                      <div className="mt-1.5 pt-0.5">
                           GSTIN / UIN <span className="ml-4 font-bold">: {invoice.party.gstin || 'Unregistered'}</span>
                       </div>
                   </div>
@@ -1311,17 +1320,17 @@ export default function PrintInvoicePage() {
 
               {/* Items Table */}
               <div className="flex-1 flex flex-col invoice-items-table-container">
-                  <table className="w-full h-full text-sm border-collapse">
+                  <table className={`w-full h-full border-collapse invoice-items-table ${isCompactDensity ? 'text-xs' : 'text-sm'}`}>
                       <thead>
-                          <tr className="border-b-2 border-black text-center min-h-9">
-                              <th className="w-12 border-r border-black py-1.5 px-1">S.N.</th>
-                              <th className="border-r border-black text-left py-1.5 pl-2">Description of Goods</th>
-                              <th className="w-20 border-r border-black py-1.5 px-1 whitespace-nowrap">HSN</th>
-                              <th className="w-16 border-r border-black py-1.5 px-1 whitespace-nowrap">Qty.</th>
-                              <th className="w-12 border-r border-black py-1.5 px-1 whitespace-nowrap">Unit</th>
-                              <th className="w-20 border-r border-black py-1.5 px-1 whitespace-nowrap">Price</th>
-                              <th className="w-20 border-r border-black py-1.5 px-1 whitespace-nowrap">Disc%</th>
-                              <th className="w-28 text-right py-1.5 pr-2 whitespace-nowrap">Amount(Rs.)</th>
+                          <tr className={`border-b-2 border-black text-center ${isCompactDensity ? 'min-h-7' : 'min-h-9'}`}>
+                              <th className={`w-12 border-r border-black ${isCompactDensity ? 'py-1' : 'py-1.5'} px-1`}>S.N.</th>
+                              <th className={`border-r border-black text-left ${isCompactDensity ? 'py-1' : 'py-1.5'} pl-2`}>Description of Goods</th>
+                              <th className={`w-20 border-r border-black ${isCompactDensity ? 'py-1' : 'py-1.5'} px-1 whitespace-nowrap`}>HSN</th>
+                              <th className={`w-16 border-r border-black ${isCompactDensity ? 'py-1' : 'py-1.5'} px-1 whitespace-nowrap`}>Qty.</th>
+                              <th className={`w-12 border-r border-black ${isCompactDensity ? 'py-1' : 'py-1.5'} px-1 whitespace-nowrap`}>Unit</th>
+                              <th className={`w-20 border-r border-black ${isCompactDensity ? 'py-1' : 'py-1.5'} px-1 whitespace-nowrap`}>Price</th>
+                              <th className={`w-20 border-r border-black ${isCompactDensity ? 'py-1' : 'py-1.5'} px-1 whitespace-nowrap`}>Disc%</th>
+                              <th className={`w-28 text-right ${isCompactDensity ? 'py-1' : 'py-1.5'} pr-2 whitespace-nowrap`}>Amount(Rs.)</th>
                           </tr>
                       </thead>
                       <tbody>
@@ -1338,29 +1347,29 @@ export default function PrintInvoicePage() {
                           )}
 
                           {sheet.pageItems.map((item: any, idx: number) => (
-                              <tr key={idx} className="align-top border-b border-black">
-                                  <td className="border-r border-black text-center py-2 px-1">
+                              <tr key={idx} className={`align-top border-b border-black item-row ${isCompactDensity ? 'text-xs' : ''}`}>
+                                  <td className={`border-r border-black text-center ${isCompactDensity ? 'py-1' : 'py-2'} px-1`}>
                                     {sheet.itemStartIndex + idx + 1}
                                   </td>
-                                  <td className="border-r border-black text-left py-2 pl-2 font-medium">
+                                  <td className={`border-r border-black text-left ${isCompactDensity ? 'py-1' : 'py-2'} pl-2 font-medium`}>
                                       <div>{item.product_name}</div>
                                       {showBrand && item.brand && (
-                                          <div className="text-[10px] text-slate-600 font-normal mt-0.5">
+                                          <div className={`${isCompactDensity ? 'text-[9px]' : 'text-[10px]'} text-slate-600 font-normal mt-0.5`}>
                                               Brand: {item.brand}
                                           </div>
                                       )}
                                   </td>
-                                  <td className="border-r border-black text-center py-2 px-1 whitespace-nowrap">{item.hsn_code}</td>
-                                  <td className="border-r border-black text-right py-2 pr-1 whitespace-nowrap">{Number(item.quantity).toFixed(2)}</td>
-                                  <td className="border-r border-black text-center py-2 px-1 whitespace-nowrap">{item.unit}</td>
-                                  <td className="border-r border-black text-right py-2 pr-1 whitespace-nowrap">{Number(item.rate).toFixed(2)}</td>
-                                  <td className="border-r border-black text-center py-2 px-1 whitespace-nowrap">{Number(item.discount_percent).toFixed(2)}%</td>
-                                  <td className="text-right py-2 pr-2 font-medium whitespace-nowrap">{Number(item.taxable_amount).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                                  <td className={`border-r border-black text-center ${isCompactDensity ? 'py-1' : 'py-2'} px-1 whitespace-nowrap`}>{item.hsn_code}</td>
+                                  <td className={`border-r border-black text-right ${isCompactDensity ? 'py-1' : 'py-2'} pr-1 whitespace-nowrap`}>{Number(item.quantity).toFixed(2)}</td>
+                                  <td className={`border-r border-black text-center ${isCompactDensity ? 'py-1' : 'py-2'} px-1 whitespace-nowrap`}>{item.unit}</td>
+                                  <td className={`border-r border-black text-right ${isCompactDensity ? 'py-1' : 'py-2'} pr-1 whitespace-nowrap`}>{Number(item.rate).toFixed(2)}</td>
+                                  <td className={`border-r border-black text-center ${isCompactDensity ? 'py-1' : 'py-2'} px-1 whitespace-nowrap`}>{Number(item.discount_percent).toFixed(2)}%</td>
+                                  <td className={`text-right ${isCompactDensity ? 'py-1' : 'py-2'} pr-2 font-medium whitespace-nowrap`}>{Number(item.taxable_amount).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                               </tr>
                           ))}
-                          {/* Filler Row */}
-                          <tr className="border-b border-black h-full flex-1" style={{ height: '100%' }}>
-                              <td className="border-r border-black h-full min-h-[40px]"></td>
+                          {/* Continuous Filler Row */}
+                          <tr className="border-b border-black filler-row h-full">
+                              <td className="border-r border-black h-full min-h-[30px]"></td>
                               <td className="border-r border-black"></td>
                               <td className="border-r border-black"></td>
                               <td className="border-r border-black"></td>
@@ -1398,13 +1407,13 @@ export default function PrintInvoicePage() {
               ) : (
                 <>
                   {/* Subtotals & Taxes */}
-                  <div className="flex text-xs">
+                  <div className={`flex ${isCompactDensity ? 'text-[11px]' : 'text-xs'}`}>
                   {/* Left side: Taxes labels */}
-                  <div className="flex-1 flex flex-col justify-end py-1">
-                      <div className="h-5"></div>
+                  <div className={`flex-1 flex flex-col justify-end ${isCompactDensity ? 'py-0.5' : 'py-1'}`}>
+                      <div className={isCompactDensity ? "h-4" : "h-5"}></div>
                       
                       {isInterState ? (
-                          <div className="h-5 flex items-center justify-end pr-12 text-[11px] italic">
+                          <div className={`${isCompactDensity ? 'h-4' : 'h-5'} flex items-center justify-end pr-12 text-[11px] italic`}>
                               <div className="flex justify-between items-center w-48">
                                   <span>Add : IGST</span>
                                   <span>@ {invoice.items.length > 0 ? Number(invoice.items[0].gst_rate).toFixed(2) : '18.00'} %</span>
@@ -1412,13 +1421,13 @@ export default function PrintInvoicePage() {
                           </div>
                       ) : (
                           <>
-                              <div className="h-5 flex items-center justify-end pr-12 text-[11px] italic">
+                              <div className={`${isCompactDensity ? 'h-4' : 'h-5'} flex items-center justify-end pr-12 text-[11px] italic`}>
                                   <div className="flex justify-between items-center w-48">
                                       <span>Add : CGST</span>
                                       <span>@ {invoice.items.length > 0 ? (Number(invoice.items[0].gst_rate)/2).toFixed(2) : '9.00'} %</span>
                                   </div>
                               </div>
-                              <div className="h-5 flex items-center justify-end pr-12 text-[11px] italic">
+                              <div className={`${isCompactDensity ? 'h-4' : 'h-5'} flex items-center justify-end pr-12 text-[11px] italic`}>
                                   <div className="flex justify-between items-center w-48">
                                       <span>Add : SGST</span>
                                       <span>@ {invoice.items.length > 0 ? (Number(invoice.items[0].gst_rate)/2).toFixed(2) : '9.00'} %</span>
@@ -1428,7 +1437,7 @@ export default function PrintInvoicePage() {
                       )}
 
                       {cartageAmount > 0 && (
-                          <div className="h-5 flex items-center justify-end pr-12 text-[11px] italic">
+                          <div className={`${isCompactDensity ? 'h-4' : 'h-5'} flex items-center justify-end pr-12 text-[11px] italic`}>
                               <div className="flex justify-between items-center w-48">
                                   <span>Add : Cartage</span>
                                   <span></span>
@@ -1437,7 +1446,7 @@ export default function PrintInvoicePage() {
                       )}
 
                       {hasRoundOff && (
-                          <div className="h-5 flex items-center justify-end pr-12 text-[11px] italic">
+                          <div className={`${isCompactDensity ? 'h-4' : 'h-5'} flex items-center justify-end pr-12 text-[11px] italic`}>
                               <div className="flex justify-between items-center w-48">
                                   <span>{roundOff > 0 ? 'Add : Round Off' : 'Less : Round Off'}</span>
                                   <span></span>
@@ -1447,34 +1456,34 @@ export default function PrintInvoicePage() {
                   </div>
 
                   {/* Right side: Amount Column with Subtotal & Taxes */}
-                  <div className="w-28 border-l border-black flex flex-col justify-end py-1">
-                      <div className="h-5 flex items-center justify-end pr-2 text-xs font-medium">
+                  <div className={`w-28 border-l border-black flex flex-col justify-end ${isCompactDensity ? 'py-0.5' : 'py-1'}`}>
+                      <div className={`${isCompactDensity ? 'h-4' : 'h-5'} flex items-center justify-end pr-2 ${isCompactDensity ? 'text-[11px]' : 'text-xs'} font-medium`}>
                           {totalTaxable.toLocaleString('en-IN', {minimumFractionDigits: 2})}
                       </div>
                       
                       {isInterState ? (
-                          <div className="h-5 flex items-center justify-end pr-2 text-xs font-medium">
+                          <div className={`${isCompactDensity ? 'h-4' : 'h-5'} flex items-center justify-end pr-2 ${isCompactDensity ? 'text-[11px]' : 'text-xs'} font-medium`}>
                               {totalIgst.toLocaleString('en-IN', {minimumFractionDigits: 2})}
                           </div>
                       ) : (
                           <>
-                              <div className="h-5 flex items-center justify-end pr-2 text-xs font-medium">
+                              <div className={`${isCompactDensity ? 'h-4' : 'h-5'} flex items-center justify-end pr-2 ${isCompactDensity ? 'text-[11px]' : 'text-xs'} font-medium`}>
                                   {totalCgst.toLocaleString('en-IN', {minimumFractionDigits: 2})}
                               </div>
-                              <div className="h-5 flex items-center justify-end pr-2 text-xs font-medium">
+                              <div className={`${isCompactDensity ? 'h-4' : 'h-5'} flex items-center justify-end pr-2 ${isCompactDensity ? 'text-[11px]' : 'text-xs'} font-medium`}>
                                   {totalSgst.toLocaleString('en-IN', {minimumFractionDigits: 2})}
                               </div>
                           </>
                       )}
 
                       {cartageAmount > 0 && (
-                          <div className="h-5 flex items-center justify-end pr-2 text-xs font-medium">
+                          <div className={`${isCompactDensity ? 'h-4' : 'h-5'} flex items-center justify-end pr-2 ${isCompactDensity ? 'text-[11px]' : 'text-xs'} font-medium`}>
                               {cartageAmount.toLocaleString('en-IN', {minimumFractionDigits: 2})}
                           </div>
                       )}
 
                       {hasRoundOff && (
-                          <div className="h-5 flex items-center justify-end pr-2 text-xs font-medium">
+                          <div className={`${isCompactDensity ? 'h-4' : 'h-5'} flex items-center justify-end pr-2 ${isCompactDensity ? 'text-[11px]' : 'text-xs'} font-medium`}>
                               {roundOff > 0 ? `+${roundOff.toFixed(2)}` : roundOff.toFixed(2)}
                           </div>
                       )}
@@ -1482,7 +1491,7 @@ export default function PrintInvoicePage() {
               </div>
 
               {/* Grand Total Row */}
-              <div className="flex border-t border-black text-xs font-bold h-7 items-center">
+              <div className={`flex border-t border-black font-bold ${isCompactDensity ? 'h-6 text-xs' : 'h-7 text-xs'} items-center`}>
                   <div className="flex-1 flex items-center justify-end pr-12 gap-8">
                       <span>Grand Total</span>
                       <span className="border-b border-black px-4 pb-0.5">{totalQty.toFixed(2)} {invoice.items[0]?.unit || 'Pcs'}</span>
@@ -1493,7 +1502,7 @@ export default function PrintInvoicePage() {
               </div>
 
               {/* Tax Details Table */}
-              <div className="border-b border-black px-2 py-1 text-[10px]">
+              <div className={`border-b border-black px-2 ${isCompactDensity ? 'py-0.5 text-[9px]' : 'py-1 text-[10px]'}`}>
                   <table className="border-collapse">
                       <thead>
                           <tr>
@@ -1526,14 +1535,14 @@ export default function PrintInvoicePage() {
               </div>
 
               {/* Amount in Words */}
-              <div className="p-2 border-b border-black text-[12px]">
+              <div className={`border-b border-black ${isCompactDensity ? 'p-1 text-[11px]' : 'p-2 text-[12px]'}`}>
                   <span className="font-semibold">Total Amount in Words : </span>
                   <span className="font-bold">₹ {numberToWords(Math.round(finalGrandTotal))}</span>
               </div>
 
               {/* Bank Details */}
-              <div className="p-2 border-b-2 border-black text-center text-xs font-medium">
-                  <span className="font-bold underline text-[13px]">BANK & PAYMENT DETAILS</span><br/>
+              <div className={`border-b-2 border-black text-center font-medium ${isCompactDensity ? 'p-1 text-[11px]' : 'p-2 text-xs'}`}>
+                  <span className="font-bold underline text-[12px]">BANK & PAYMENT DETAILS</span><br/>
                   {invoice.company.bank_name || ''} {invoice.company.bank_branch || ''}
                   {invoice.company.bank_account_number ? `, ACCOUNT NO- ${invoice.company.bank_account_number}` : ''}
                   {invoice.company.bank_ifsc ? `, IFSCODE: ${invoice.company.bank_ifsc}` : ''}
@@ -1545,12 +1554,12 @@ export default function PrintInvoicePage() {
 
             {/* Bottom Footer Section */}
             {sheet.isLastPage && (
-            <div className="flex h-44 print:h-38 text-xs shrink-0">
+            <div className={`flex ${isCompactDensity ? 'h-32 print:h-28 text-[10px]' : 'h-44 print:h-38 text-xs'} shrink-0`}>
                 {/* Column 1: Terms */}
                 <div className="w-[45%] p-2 border-r-2 border-black flex flex-col justify-between">
                     <div>
-                      <span className="font-bold mb-1 text-[11px] block">Terms & Conditions</span>
-                      <span className="font-bold block mb-1">E.& O.E.</span>
+                      <span className="font-bold mb-0.5 text-[11px] block">Terms & Conditions</span>
+                      <span className="font-bold block mb-0.5">E.& O.E.</span>
                       <span className="block">1. Goods once sold will not be taken back.</span>
                       <span className="block">2. Interest @ 18% p.a. will be charged if the payment is not made within 45 days.</span>
                       <span className="block">3. Subject to '{invoice.company.city || 'Kanpur'}' Jurisdiction only.</span>
@@ -1558,23 +1567,23 @@ export default function PrintInvoicePage() {
                 </div>
                 
                 {/* Column 2: QR Code */}
-                <div className="w-[20%] p-2 border-r-2 border-black flex flex-col items-center justify-between text-center">
-                    <span className="font-bold text-[10px] mb-1">{getQrData().label}</span>
+                <div className="w-[20%] p-1.5 border-r-2 border-black flex flex-col items-center justify-between text-center">
+                    <span className="font-bold text-[10px] mb-0.5">{getQrData().label}</span>
                     {typeof window !== 'undefined' && (
-                        <QRCode value={getQrData().value} size={92} className="mx-auto my-auto" />
+                        <QRCode value={getQrData().value} size={isCompactDensity ? 66 : 92} className="mx-auto my-auto" />
                     )}
                     <span className="text-[8px] text-slate-600 font-mono tracking-tighter text-center">{getQrData().sublabel}</span>
                 </div>
                 
                 {/* Column 3: Signatures */}
                 <div className="w-[35%] flex flex-col">
-                    <div className="h-12 p-2 border-b-2 border-black flex items-start">
+                    <div className={`${isCompactDensity ? 'h-9' : 'h-12'} p-2 border-b-2 border-black flex items-start`}>
                         <span className={`text-[11px] font-bold ${sheet.highlightTransport ? 'text-blue-900 font-extrabold' : ''}`}>
                           {sheet.signatoryTitle}
                         </span>
                     </div>
                     <div className="flex-1 p-2 relative flex flex-col justify-between items-end">
-                        <div className="font-bold text-sm text-right mt-1">for {invoice.company.name}</div>
+                        <div className="font-bold text-sm text-right mt-0.5">for {invoice.company.name}</div>
                         
                         <div className="flex justify-end w-full my-auto">
                             {invoice.company?.proprietor_signature && (
@@ -1582,7 +1591,7 @@ export default function PrintInvoicePage() {
                                     crossOrigin="anonymous"
                                     src={getSignatureUrl(invoice.company.proprietor_signature)} 
                                     alt="Signature" 
-                                    className="h-14 object-contain" 
+                                    className={`${isCompactDensity ? 'h-10' : 'h-14'} object-contain`} 
                                     onError={(e) => {
                                         (e.target as HTMLElement).style.display = 'none';
                                     }}
@@ -1590,7 +1599,7 @@ export default function PrintInvoicePage() {
                             )}
                         </div>
                         
-                        <div className="font-bold text-sm text-right">Authorised Signatory</div>
+                        <div className="font-bold text-xs sm:text-sm text-right">Authorised Signatory</div>
                     </div>
                 </div>
             </div>
@@ -1634,30 +1643,48 @@ export default function PrintInvoicePage() {
               : `
             @page {
               size: A4 portrait;
-              margin: 6mm 6mm;
+              margin: 0;
             }
             html, body {
-              height: auto !important;
+              height: 100% !important;
               margin: 0 !important;
               padding: 0 !important;
+              background-color: #ffffff !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            .invoice-print-wrapper {
+              box-sizing: border-box !important;
+              display: block !important;
+              width: 100% !important;
+              height: 100vh !important;
+              max-height: 100vh !important;
+              padding: 6mm 6mm !important;
+              margin: 0 !important;
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+              overflow: hidden !important;
+            }
+            .invoice-print-wrapper:not(:last-child) {
+              page-break-after: always !important;
+              break-after: page !important;
+            }
+            .invoice-print-wrapper:last-child {
+              page-break-after: auto !important;
+              break-after: auto !important;
+            }
+            .invoice-print-wrapper > div {
+              height: 100% !important;
+              max-height: 100% !important;
             }
             #invoice-sheet, .invoice-print-sheet {
               position: static !important;
               transform: none !important;
               width: 100% !important;
-              min-width: 100% !important;
               max-width: 100% !important;
-              ${
-                fitToPage
-                  ? `
-              height: 280mm !important;
-              min-height: 280mm !important;
-              max-height: 280mm !important;
-              `
-                  : `
-              min-height: 279mm !important;
-              `
-              }
+              height: 100% !important;
+              max-height: 100% !important;
+              min-height: 0 !important;
               padding: 0 !important;
               margin: 0 !important;
               box-shadow: none !important;
@@ -1670,45 +1697,36 @@ export default function PrintInvoicePage() {
               page-break-after: auto !important;
               break-after: auto !important;
             }
-            .invoice-print-wrapper {
-              display: block !important;
-              width: 100% !important;
-              page-break-inside: avoid !important;
-              break-inside: avoid !important;
-            }
-            .invoice-print-wrapper:not(:last-child) {
-              page-break-after: always !important;
-              break-after: page !important;
-            }
-            .invoice-print-wrapper:last-child {
-              page-break-after: auto !important;
-              break-after: auto !important;
-            }
-            ${
-              fitToPage
-                ? `
             #invoice-sheet > .border-2, .invoice-print-sheet > .border-2 {
-              height: calc(100% - 16px) !important;
-              min-height: calc(100% - 16px) !important;
+              height: 100% !important;
+              min-height: 0 !important;
+              max-height: 100% !important;
               display: flex !important;
               flex-direction: column !important;
               justify-content: space-between !important;
+              box-sizing: border-box !important;
             }
             #invoice-sheet .invoice-items-table-container, .invoice-print-sheet .invoice-items-table-container {
               flex: 1 1 auto !important;
               display: flex !important;
               flex-direction: column !important;
               min-height: 0 !important;
+              height: 100% !important;
             }
             #invoice-sheet .invoice-items-table-container table, .invoice-print-sheet .invoice-items-table-container table {
               height: 100% !important;
+              width: 100% !important;
               display: table !important;
+              border-collapse: collapse !important;
             }
             #invoice-sheet .invoice-items-table-container tbody, .invoice-print-sheet .invoice-items-table-container tbody {
               height: 100% !important;
             }
-            `
-                : ''
+            #invoice-sheet .invoice-items-table-container tr.item-row, .invoice-print-sheet .invoice-items-table-container tr.item-row {
+              height: 1px !important;
+            }
+            #invoice-sheet .invoice-items-table-container tr.filler-row, .invoice-print-sheet .invoice-items-table-container tr.filler-row {
+              height: auto !important;
             }
             `
           }
@@ -1813,7 +1831,7 @@ export default function PrintInvoicePage() {
 
           {/* Row 2 on Mobile: Segmented Controls */}
           <div className="flex items-center justify-between gap-1.5 pt-1 text-[11px]">
-            <div className="flex items-center p-0.5 bg-slate-800 rounded-lg border border-slate-700 font-semibold">
+            <div className="flex items-center p-0.5 bg-slate-800 rounded-lg border border-slate-700 font-semibold shrink-0">
               <button
                 onClick={() => setLayoutMode('A4')}
                 className={`px-2 py-1 rounded-md transition-all ${
@@ -1831,6 +1849,41 @@ export default function PrintInvoicePage() {
                 POS
               </button>
             </div>
+
+            {layoutMode === 'A4' && (
+              <div className="flex items-center p-0.5 bg-slate-800 rounded-lg border border-slate-700 font-semibold shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setPageLayoutMode('AUTO')}
+                  className={`px-1.5 py-1 rounded-md transition-all cursor-pointer ${
+                    pageLayoutMode === 'AUTO' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400'
+                  }`}
+                  title="Auto-Fit Page"
+                >
+                  ⚡Auto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPageLayoutMode('1_PAGE')}
+                  className={`px-1.5 py-1 rounded-md transition-all cursor-pointer ${
+                    pageLayoutMode === '1_PAGE' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400'
+                  }`}
+                  title="Force 1 Page"
+                >
+                  1-Pg
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPageLayoutMode('2_PAGES')}
+                  className={`px-1.5 py-1 rounded-md transition-all cursor-pointer ${
+                    pageLayoutMode === '2_PAGES' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400'
+                  }`}
+                  title="2 Pages"
+                >
+                  2-Pg
+                </button>
+              </div>
+            )}
 
             <button
               type="button"
@@ -1946,6 +1999,51 @@ export default function PrintInvoicePage() {
                 <span>80mm POS Thermal</span>
               </button>
             </div>
+
+            {/* Dynamic Page Auto-Fit / Layout Selector (A4) */}
+            {layoutMode === 'A4' && (
+              <div className="flex items-center p-1 bg-slate-800 rounded-xl border border-slate-700 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setPageLayoutMode('AUTO')}
+                  className={`px-3 py-1 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                    pageLayoutMode === 'AUTO'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Auto-Fit: Dynamically fits items to 1 single page if 13 items or fewer, or cleanly balances across pages"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Auto-Fit ({invoice?.items?.length <= 13 ? '1 Page' : 'Dynamic'})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPageLayoutMode('1_PAGE')}
+                  className={`px-2.5 py-1 rounded-lg flex items-center gap-1 transition-all cursor-pointer ${
+                    pageLayoutMode === '1_PAGE'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Force Single Page: Compresses bill space to fit everything strictly on 1 page"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>1 Page</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPageLayoutMode('2_PAGES')}
+                  className={`px-2.5 py-1 rounded-lg flex items-center gap-1 transition-all cursor-pointer ${
+                    pageLayoutMode === '2_PAGES'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Multi-Page: Distributes items across 2 pages with carry-over subtotals"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>2 Pages</span>
+                </button>
+              </div>
+            )}
 
             {/* Copy Mode Selector (A4) */}
             {layoutMode === 'A4' && (
@@ -2397,7 +2495,7 @@ export default function PrintInvoicePage() {
                         }
                       : undefined
                   }
-                  className="print:block print:w-full print:h-auto print:overflow-visible transition-all flex justify-center"
+                  className="print:block print:w-full print:h-full print:max-h-full print:overflow-hidden transition-all flex justify-center"
                 >
                   {renderA4Sheet(sheet, sheetIdx, allSheets.length)}
                 </div>
