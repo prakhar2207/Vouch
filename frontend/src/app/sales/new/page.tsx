@@ -35,6 +35,7 @@ import {
   Check,
   Layers,
   Trash2,
+  Percent,
 } from 'lucide-react';
 import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
@@ -177,6 +178,7 @@ export default function SalesPage() {
     { category_id: '', hsn_code: '', gst_rate: undefined, items: [ { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: 0, purchase_cost: 0, last_party_rate: null, last_party_date: null, last_party_vnum: null } ] }
   ]);
   const [barcodeInput, setBarcodeInput] = useState('');
+  const [globalDiscount, setGlobalDiscount] = useState<string>('');
   const barcodeInputRef = React.useRef<HTMLInputElement>(null);
 
   // Close brand modal on Escape key
@@ -246,8 +248,8 @@ export default function SalesPage() {
       try {
         const token = getAccessToken();
         const res = await axios.get(
-          `${API_BASE_URL}/api/v1/financial-years/sequence-preview/?voucher_type=SALES&date=${invoiceDate}`,
-          { headers: { Authorization: `Bearer ${token}` } }
+          `${API_BASE_URL}/api/v1/financial-years/sequence-preview/?voucher_type=SALES&date=${invoiceDate}&company_id=${companyId}`,
+          { headers: { Authorization: `Bearer ${token}`, 'X-Company-ID': companyId } }
         );
         if (res.data?.success && res.data.data?.preview_number) {
           setSeqPreview(res.data.data.preview_number);
@@ -542,6 +544,23 @@ export default function SalesPage() {
     if (disc > 0) {
       toast.info(`Default ${disc}% discount applied for ${party?.name}`, "You can edit discount per item in the table below if needed.");
     }
+  };
+
+  const applyDiscountToAll = (val?: number) => {
+    const rawTarget = val !== undefined ? val : parseFloat(globalDiscount);
+    if (isNaN(rawTarget) || rawTarget < 0) {
+      toast.error("Invalid discount", "Please enter a valid discount percentage between 0 and 100.");
+      return;
+    }
+    const safeDisc = Math.min(100, Math.max(0, rawTarget));
+    setGroupedItems(prev => prev.map((group: any) => ({
+      ...group,
+      items: group.items.map((item: any) => ({
+        ...item,
+        discount_percent: safeDisc
+      }))
+    })));
+    toast.success(`Applied ${safeDisc}% discount to all items`, "You can still edit individual item discounts below.");
   };
 
   const handleToggleManualInvoice = (manual: boolean) => {
@@ -1955,12 +1974,22 @@ export default function SalesPage() {
                 ))}
               </select>
               {selectedParty && Number(selectedParty.discount_percent || 0) > 0 && (
-                <div className="mt-2 text-xs flex items-center justify-between text-blue-300 bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 rounded-lg">
+                <div className="mt-2 text-xs flex flex-wrap items-center justify-between gap-2 text-blue-300 bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 rounded-lg">
                   <div className="flex items-center gap-1.5 font-medium">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
                     <span>Customer Discount: <strong className="text-foreground font-mono">{Number(selectedParty.discount_percent)}%</strong></span>
                   </div>
-                  <span className="text-[11px] text-muted-foreground">Applied automatically • Editable below</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applyDiscountToAll(Number(selectedParty.discount_percent))}
+                      className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-[11px] font-semibold transition-all cursor-pointer shadow-xs"
+                      title="Apply this customer's default discount to all line items"
+                    >
+                      Apply {Number(selectedParty.discount_percent)}% to All Items
+                    </button>
+                    <span className="text-[11px] text-muted-foreground hidden sm:inline">Applied automatically • Editable below</span>
+                  </div>
                 </div>
               )}
               {selectedParty && Number(selectedParty.credit_limit || 0) > 0 && (Number(selectedParty.current_balance || 0) + grandTotal) > Number(selectedParty.credit_limit) && (
@@ -2022,6 +2051,36 @@ export default function SalesPage() {
                     <Tag className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                     <span>Brand on Bill: <strong className={showBrandInInvoice ? 'text-blue-900 dark:text-blue-300 font-bold' : 'text-muted-foreground'}>{showBrandInInvoice ? 'YES' : 'NO'}</strong></span>
                   </button>
+
+                  {/* Global Discount Quick-Apply */}
+                  <div className="flex items-center bg-muted/50 border border-border rounded-lg px-2 py-1 gap-1.5 shadow-2xs">
+                    <Percent className="w-3.5 h-3.5 text-primary shrink-0" />
+                    <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">Disc to All:</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      placeholder="%"
+                      value={globalDiscount}
+                      onChange={e => setGlobalDiscount(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          applyDiscountToAll();
+                        }
+                      }}
+                      className="w-14 bg-background border border-input rounded px-1.5 py-0.5 text-xs text-center font-mono font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => applyDiscountToAll()}
+                      className="px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold rounded transition-all cursor-pointer whitespace-nowrap"
+                      title="Apply this discount percentage to all items (individual items remain fully editable)"
+                    >
+                      Apply
+                    </button>
+                  </div>
 
                   {/* Barcode Quick-Scan Input (P1-5) */}
                   <div className="flex items-center gap-2 w-full sm:w-72">
@@ -2286,7 +2345,14 @@ export default function SalesPage() {
                                         <th className="p-3 font-semibold w-28 text-center">
                                             <span>Disc %</span>
                                             {currentPartyDiscount > 0 && (
-                                                <span className="block text-xs text-primary lowercase font-normal">({currentPartyDiscount}% party)</span>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => applyDiscountToAll(currentPartyDiscount)}
+                                                  className="block mx-auto text-xs text-primary hover:underline lowercase font-normal cursor-pointer"
+                                                  title={`Click to re-apply customer discount (${currentPartyDiscount}%) to all items`}
+                                                >
+                                                  ({currentPartyDiscount}% party)
+                                                </button>
                                             )}
                                         </th>
                                         <th className="p-3 font-semibold w-32 text-right">Amount</th>

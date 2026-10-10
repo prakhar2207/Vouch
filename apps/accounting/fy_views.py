@@ -164,11 +164,17 @@ class SequencePreviewAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        company_id = request.query_params.get('company_id')
-        if not company_id:
-            company = Company.objects.filter(users__user=request.user).first()
-        else:
-            company = Company.objects.filter(id=company_id, users__user=request.user).first()
+        from apps.accounts.permissions import get_authorized_company
+        company_id = request.query_params.get('company_id') or request.headers.get('X-Company-Id')
+        try:
+            company = get_authorized_company(request, company_id)
+        except Exception:
+            company = None
+
+        if not company:
+            from apps.companies.models import UserCompany
+            uc = UserCompany.objects.filter(user=request.user).select_related('company').first()
+            company = uc.company if uc else None
 
         if not company:
             return Response({"success": False, "error": "Company not found"}, status=404)
@@ -190,11 +196,17 @@ class SequencePreviewAPIView(APIView):
 
     def post(self, request):
         """Allow explicit resync of sequence counter to match actual existing vouchers."""
-        company_id = request.data.get('company_id') or request.query_params.get('company_id')
-        if not company_id:
-            company = Company.objects.filter(users__user=request.user).first()
-        else:
-            company = Company.objects.filter(id=company_id, users__user=request.user).first()
+        from apps.accounts.permissions import get_authorized_company
+        company_id = request.data.get('company_id') or request.query_params.get('company_id') or request.headers.get('X-Company-Id')
+        try:
+            company = get_authorized_company(request, company_id)
+        except Exception:
+            company = None
+
+        if not company:
+            from apps.companies.models import UserCompany
+            uc = UserCompany.objects.filter(user=request.user).select_related('company').first()
+            company = uc.company if uc else None
 
         if not company:
             return Response({"success": False, "error": "Company not found"}, status=404)

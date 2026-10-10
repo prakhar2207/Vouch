@@ -249,7 +249,40 @@ class InvoiceSequenceService:
             voucher_type=voucher_type
         ).first()
 
-        next_num = (seq.last_number + 1) if seq else 1
+        # Resync check: inspect existing vouchers so preview is strictly monotonic and accounts for any manual/imported vouchers
+        from apps.accounting.models import Voucher
+        import re
+
+        prefix_fy = f"{prefix}/{fy.code}/".upper()
+        existing_vouchers = Voucher.objects.filter(
+            company=company,
+            financial_year=fy,
+            voucher_type=voucher_type
+        ).values_list('voucher_number', flat=True)
+
+        max_existing = 0
+        for vn in existing_vouchers:
+            if not vn:
+                continue
+            v_str = str(vn).strip().upper()
+            if v_str.startswith(prefix_fy):
+                tail = v_str[len(prefix_fy):].strip()
+                if tail.isdigit():
+                    max_existing = max(max_existing, int(tail))
+            else:
+                m = re.search(r'(\d+)$', v_str)
+                if m:
+                    try:
+                        max_existing = max(max_existing, int(m.group(1)))
+                    except ValueError:
+                        pass
+
+        last_known = max(seq.last_number if seq else 0, max_existing)
+        if seq and max_existing > seq.last_number:
+            seq.last_number = max_existing
+            seq.save(update_fields=['last_number', 'updated_at'])
+
+        next_num = last_known + 1
         preview_str = f"{prefix}/{fy.code}/{next_num:04d}"
         return {
             "preview_number": preview_str,

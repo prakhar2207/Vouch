@@ -51,6 +51,103 @@ interface SheetConfig {
   pageNumber: number;
   totalPages: number;
   highlightTransport?: boolean;
+  pageItems: any[];
+  itemStartIndex: number;
+  isFirstPage: boolean;
+  isLastPage: boolean;
+  broughtForwardSubtotal: number;
+  carriedOverSubtotal: number;
+}
+
+interface PageChunk {
+  pageNumber: number;
+  items: any[];
+  itemStartIndex: number;
+  isFirstPage: boolean;
+  isLastPage: boolean;
+  broughtForwardSubtotal: number;
+  carriedOverSubtotal: number;
+}
+
+function chunkInvoiceItems(items: any[]): PageChunk[] {
+  if (!items || items.length === 0) {
+    return [{
+      pageNumber: 1,
+      items: [],
+      itemStartIndex: 0,
+      isFirstPage: true,
+      isLastPage: true,
+      broughtForwardSubtotal: 0,
+      carriedOverSubtotal: 0,
+    }];
+  }
+
+  // Single page threshold: up to 8 items fit comfortably on 1 page with full header & full footer
+  if (items.length <= 8) {
+    return [{
+      pageNumber: 1,
+      items: items,
+      itemStartIndex: 0,
+      isFirstPage: true,
+      isLastPage: true,
+      broughtForwardSubtotal: 0,
+      carriedOverSubtotal: 0,
+    }];
+  }
+
+  // Multi-page splitting:
+  // Page 1 has full header, so it takes up to 8 items (or balanced for 2 pages).
+  // Last page has full statutory footer, so it takes up to 9-10 items.
+  // Intermediate pages have compact header and continuation banner, so up to 14 items.
+  const chunks: any[][] = [];
+  let remaining = [...items];
+
+  // For 2-page split (items <= 18):
+  if (items.length <= 18) {
+    const p1Count = Math.min(8, Math.max(5, Math.ceil(items.length / 2)));
+    chunks.push(remaining.slice(0, p1Count));
+    chunks.push(remaining.slice(p1Count));
+  } else {
+    // 3 or more pages:
+    chunks.push(remaining.slice(0, 8));
+    remaining = remaining.slice(8);
+
+    while (remaining.length > 10) {
+      const take = Math.min(14, remaining.length - 8);
+      chunks.push(remaining.slice(0, take));
+      remaining = remaining.slice(take);
+    }
+    if (remaining.length > 0) {
+      chunks.push(remaining);
+    }
+  }
+
+  const totalPages = chunks.length;
+  let runningSubtotal = 0;
+  let runningItemIndex = 0;
+
+  return chunks.map((chunkItems, idx) => {
+    const pageNumber = idx + 1;
+    const isFirst = pageNumber === 1;
+    const isLast = pageNumber === totalPages;
+    const broughtForward = runningSubtotal;
+
+    const chunkTaxableSum = chunkItems.reduce((acc, it) => acc + Number(it.taxable_amount || 0), 0);
+    runningSubtotal += chunkTaxableSum;
+    const carriedOver = isLast ? 0 : runningSubtotal;
+    const startIndex = runningItemIndex;
+    runningItemIndex += chunkItems.length;
+
+    return {
+      pageNumber,
+      items: chunkItems,
+      itemStartIndex: startIndex,
+      isFirstPage: isFirst,
+      isLastPage: isLast,
+      broughtForwardSubtotal: broughtForward,
+      carriedOverSubtotal: carriedOver,
+    };
+  });
 }
 
 function numberToWords(numAmount: number): string {
@@ -460,85 +557,59 @@ export default function PrintInvoicePage() {
   );
 
   const getSheetsToRender = (): SheetConfig[] => {
+    const rawItems = invoice?.items || [];
+    const itemChunks = chunkInvoiceItems(rawItems);
+    const pagesPerCopy = itemChunks.length;
+
+    const buildSheetsForCopy = (
+      copyType: 'ORIGINAL' | 'TRANSPORTER' | 'SUPPLIER',
+      badgeTitle: string,
+      signatoryTitle: string,
+      highlightTransport?: boolean
+    ): SheetConfig[] => {
+      return itemChunks.map((chunk) => ({
+        copyType,
+        badgeTitle,
+        signatoryTitle,
+        pageNumber: chunk.pageNumber,
+        totalPages: pagesPerCopy,
+        highlightTransport,
+        pageItems: chunk.items,
+        itemStartIndex: chunk.itemStartIndex,
+        isFirstPage: chunk.isFirstPage,
+        isLastPage: chunk.isLastPage,
+        broughtForwardSubtotal: chunk.broughtForwardSubtotal,
+        carriedOverSubtotal: chunk.carriedOverSubtotal,
+      }));
+    };
+
     if (copyMode === 'ORIGINAL') {
-      return [{
-        copyType: 'ORIGINAL',
-        badgeTitle: 'Original For Recipient',
-        signatoryTitle: "Receiver's Signature :",
-        pageNumber: 1,
-        totalPages: 1,
-      }];
+      return buildSheetsForCopy('ORIGINAL', 'Original For Recipient', "Receiver's Signature :");
     }
     if (copyMode === 'TRANSPORTER') {
-      return [{
-        copyType: 'TRANSPORTER',
-        badgeTitle: 'Duplicate For Transporter',
-        signatoryTitle: "Transporter / Driver Signature :",
-        pageNumber: 1,
-        totalPages: 1,
-        highlightTransport: true,
-      }];
+      return buildSheetsForCopy('TRANSPORTER', 'Duplicate For Transporter', "Transporter / Driver Signature :", true);
     }
     if (copyMode === 'SUPPLIER') {
-      return [{
-        copyType: 'SUPPLIER',
-        badgeTitle: hasTransportDetails ? 'Triplicate For Supplier' : 'Duplicate For Supplier',
-        signatoryTitle: "Customer's Acknowledgment :",
-        pageNumber: 1,
-        totalPages: 1,
-      }];
+      return buildSheetsForCopy(
+        'SUPPLIER',
+        hasTransportDetails ? 'Triplicate For Supplier' : 'Duplicate For Supplier',
+        "Customer's Acknowledgment :"
+      );
     }
     if (copyMode === 'BUNDLE_LOCAL') {
       return [
-        {
-          copyType: 'ORIGINAL',
-          badgeTitle: 'Original For Recipient',
-          signatoryTitle: "Receiver's Signature :",
-          pageNumber: 1,
-          totalPages: 2,
-        },
-        {
-          copyType: 'SUPPLIER',
-          badgeTitle: 'Duplicate For Supplier',
-          signatoryTitle: "Customer's Acknowledgment :",
-          pageNumber: 2,
-          totalPages: 2,
-        },
+        ...buildSheetsForCopy('ORIGINAL', 'Original For Recipient', "Receiver's Signature :"),
+        ...buildSheetsForCopy('SUPPLIER', 'Duplicate For Supplier', "Customer's Acknowledgment :"),
       ];
     }
     if (copyMode === 'BUNDLE_TRANSPORT') {
       return [
-        {
-          copyType: 'ORIGINAL',
-          badgeTitle: 'Original For Recipient',
-          signatoryTitle: "Receiver's Signature :",
-          pageNumber: 1,
-          totalPages: 3,
-        },
-        {
-          copyType: 'TRANSPORTER',
-          badgeTitle: 'Duplicate For Transporter',
-          signatoryTitle: "Transporter / Driver Signature :",
-          pageNumber: 2,
-          totalPages: 3,
-          highlightTransport: true,
-        },
-        {
-          copyType: 'SUPPLIER',
-          badgeTitle: 'Triplicate For Supplier',
-          signatoryTitle: "Customer's Acknowledgment :",
-          pageNumber: 3,
-          totalPages: 3,
-        },
+        ...buildSheetsForCopy('ORIGINAL', 'Original For Recipient', "Receiver's Signature :"),
+        ...buildSheetsForCopy('TRANSPORTER', 'Duplicate For Transporter', "Transporter / Driver Signature :", true),
+        ...buildSheetsForCopy('SUPPLIER', 'Triplicate For Supplier', "Customer's Acknowledgment :"),
       ];
     }
-    return [{
-      copyType: 'ORIGINAL',
-      badgeTitle: 'Original For Recipient',
-      signatoryTitle: "Receiver's Signature :",
-      pageNumber: 1,
-      totalPages: 1,
-    }];
+    return buildSheetsForCopy('ORIGINAL', 'Original For Recipient', "Receiver's Signature :");
   };
   
   let totalQty = 0;
@@ -1107,7 +1178,7 @@ export default function PrintInvoicePage() {
   const renderA4Sheet = (sheet: SheetConfig, sheetIndex: number, totalSheets: number) => {
     return (
       <div 
-        key={sheet.copyType + '-' + sheet.pageNumber}
+        key={`${sheet.copyType}-p${sheet.pageNumber}-${sheetIndex}`}
         id={sheetIndex === 0 ? "invoice-sheet" : undefined}
         ref={sheetIndex === 0 ? sheetRef : undefined}
         style={
@@ -1130,8 +1201,10 @@ export default function PrintInvoicePage() {
         <div className="border-2 border-black flex-1 flex flex-col justify-between">
             {/* Top Section */}
             <div className="flex-1 flex flex-col">
-              {/* Header */}
-              <div className="text-center p-3 border-b-2 border-black">
+              {sheet.isFirstPage ? (
+                <>
+                  {/* Header */}
+                  <div className="text-center p-3 border-b-2 border-black">
                   <div className="flex justify-between items-start text-xs font-bold mb-2">
                       <div>GSTIN : {invoice.company.gstin || 'Unregistered'}</div>
                       <div className={`italic ${sheet.highlightTransport ? 'font-extrabold text-blue-900 underline' : 'font-bold'}`}>
@@ -1210,6 +1283,30 @@ export default function PrintInvoicePage() {
                       </div>
                   </div>
               </div>
+            </>
+          ) : (
+            /* Compact Continuation Header for Page 2+ */
+            <div className="p-2.5 border-b-2 border-black bg-slate-50/30">
+              <div className="flex justify-between items-center text-xs font-bold mb-1">
+                <div className="text-left">
+                  <span className="font-extrabold text-sm tracking-wide">{invoice.company.name}</span>
+                  <span className="ml-3 font-normal text-slate-700 text-xs">GSTIN: {invoice.company.gstin || 'Unregistered'}</span>
+                </div>
+                <div className={`italic ${sheet.highlightTransport ? 'font-extrabold text-blue-900 underline' : 'font-bold'}`}>
+                  {sheet.badgeTitle} • Page {sheet.pageNumber} of {sheet.totalPages}
+                </div>
+              </div>
+              <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-300">
+                <div className="flex gap-4">
+                  <span>Invoice No: <strong className="font-bold">{invoice.voucher_number}</strong></span>
+                  <span>Dated: <strong className="font-bold">{invoice.date}</strong></span>
+                </div>
+                <div className="text-right">
+                  <span>Billed to: <strong className="font-bold">{invoice.party.name}</strong></span>
+                </div>
+              </div>
+            </div>
+          )}
 
               {/* Items Table */}
               <div className="flex-1 flex flex-col invoice-items-table-container">
@@ -1227,9 +1324,23 @@ export default function PrintInvoicePage() {
                           </tr>
                       </thead>
                       <tbody>
-                          {invoice.items.map((item: any, idx: number) => (
+                          {/* If continuation page (Page > 1), show Brought Forward row */}
+                          {!sheet.isFirstPage && (
+                            <tr className="border-b border-black font-semibold bg-slate-50/60">
+                              <td colSpan={7} className="border-r border-black py-1.5 px-3 text-right italic text-xs">
+                                Total Brought Forward from Page {sheet.pageNumber - 1} &rarr;
+                              </td>
+                              <td className="text-right py-1.5 pr-2 font-bold font-mono text-xs whitespace-nowrap">
+                                {sheet.broughtForwardSubtotal.toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                              </td>
+                            </tr>
+                          )}
+
+                          {sheet.pageItems.map((item: any, idx: number) => (
                               <tr key={idx} className="align-top border-b border-black">
-                                  <td className="border-r border-black text-center py-2 px-1">{idx + 1}</td>
+                                  <td className="border-r border-black text-center py-2 px-1">
+                                    {sheet.itemStartIndex + idx + 1}
+                                  </td>
                                   <td className="border-r border-black text-left py-2 pl-2 font-medium">
                                       <div>{item.product_name}</div>
                                       {showBrand && item.brand && (
@@ -1257,12 +1368,36 @@ export default function PrintInvoicePage() {
                               <td className="border-r border-black"></td>
                               <td></td>
                           </tr>
+
+                          {/* If not last page, show Carried Over row at bottom of table */}
+                          {!sheet.isLastPage && (
+                            <tr className="border-t-2 border-black font-semibold bg-slate-50/60">
+                              <td colSpan={7} className="border-r border-black py-1.5 px-3 text-right italic text-xs">
+                                Total Carried Over to Page {sheet.pageNumber + 1} &rarr;
+                              </td>
+                              <td className="text-right py-1.5 pr-2 font-bold font-mono text-xs whitespace-nowrap">
+                                {sheet.carriedOverSubtotal.toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                              </td>
+                            </tr>
+                          )}
                       </tbody>
                   </table>
               </div>
 
-              {/* Subtotals & Taxes */}
-              <div className="flex text-xs">
+              {/* Subtotals & Taxes OR Continuation Banner */}
+              {!sheet.isLastPage ? (
+                <div className="border-t-2 border-black p-3 bg-slate-50 flex items-center justify-between text-xs font-semibold">
+                  <div className="italic text-slate-700">
+                    Invoice continued on Page {sheet.pageNumber + 1} of {sheet.totalPages}...
+                  </div>
+                  <div className="text-right text-[11px] text-slate-500">
+                    (Statutory Tax breakup, Bank Details &amp; Signatures on Page {sheet.totalPages})
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Subtotals & Taxes */}
+                  <div className="flex text-xs">
                   {/* Left side: Taxes labels */}
                   <div className="flex-1 flex flex-col justify-end py-1">
                       <div className="h-5"></div>
@@ -1403,9 +1538,12 @@ export default function PrintInvoicePage() {
                   {invoice.company.bank_ifsc ? `, IFSCODE: ${invoice.company.bank_ifsc}` : ''}
                   {invoice.company.upi_id ? ` • UPI ID: ${invoice.company.upi_id}` : ''}
               </div>
+                </>
+              )}
             </div>
 
             {/* Bottom Footer Section */}
+            {sheet.isLastPage && (
             <div className="flex h-44 print:h-38 text-xs shrink-0">
                 {/* Column 1: Terms */}
                 <div className="w-[45%] p-2 border-r-2 border-black flex flex-col justify-between">
@@ -1455,6 +1593,7 @@ export default function PrintInvoicePage() {
                     </div>
                 </div>
             </div>
+            )}
 
         </div>
         {/* Bottom Page Decorations bar matching exact PDF NumberedCanvas */}
@@ -1529,6 +1668,18 @@ export default function PrintInvoicePage() {
               break-inside: avoid !important;
             }
             .invoice-print-sheet:not(:last-child) {
+              page-break-after: always !important;
+              break-after: page !important;
+            }
+            .invoice-print-sheet:last-child {
+              page-break-after: auto !important;
+              break-after: auto !important;
+            }
+            .invoice-print-wrapper {
+              display: block !important;
+              width: 100% !important;
+            }
+            .invoice-print-wrapper:not(:last-child) {
               page-break-after: always !important;
               break-after: page !important;
             }
@@ -2216,10 +2367,10 @@ export default function PrintInvoicePage() {
             </div>
           )}
 
-          {/* Render 1, 2, or 3 Sheets depending on Copy Mode */}
-          <div className="w-full flex flex-col items-center gap-6 print:gap-0">
+          {/* Render Sheets depending on Copy Mode & Page Chunks */}
+          <div className="w-full flex flex-col items-center gap-6 print:gap-0 print:block">
             {getSheetsToRender().map((sheet, sheetIdx, allSheets) => (
-              <div key={sheet.copyType + '-' + sheet.pageNumber} className="w-full flex flex-col items-center">
+              <div key={`${sheet.copyType}-p${sheet.pageNumber}-${sheetIdx}`} className="w-full flex flex-col items-center invoice-print-wrapper print:block print:w-full">
                 {/* On-screen visual page break divider if multi-sheet bundle */}
                 {sheetIdx > 0 && (
                   <div className="print:hidden my-4 sm:my-6 flex items-center justify-center gap-3 w-full max-w-[210mm]">
