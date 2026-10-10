@@ -21,6 +21,7 @@ export interface DocumentBrandingConfig {
   accent_color?: string; // e.g. '#0f172a', '#2563eb', '#4f46e5'
   logo_position?: 'left' | 'center';
   logo_height?: number; // e.g. 36 to 80, default 52
+  firm_name_size?: 'normal' | 'large' | 'extra_large'; // default 'large'
   show_logo?: boolean; // default true
   watermark_enabled?: boolean; // default true
   show_bank_details?: boolean; // default true
@@ -468,7 +469,13 @@ export default function ProformaDocumentSheet({
 
                           <div className="min-w-0">
                             <h2 
-                              className="text-base font-bold tracking-tight uppercase leading-tight"
+                              className={`${
+                                branding?.firm_name_size === 'extra_large'
+                                  ? 'text-2xl sm:text-3xl'
+                                  : branding?.firm_name_size === 'normal'
+                                  ? 'text-base sm:text-lg'
+                                  : 'text-xl sm:text-2xl'
+                              } font-black tracking-tight uppercase leading-tight`}
                               style={{ color: accentColor }}
                             >
                               {company?.legal_name || company?.name || 'Company Name'}

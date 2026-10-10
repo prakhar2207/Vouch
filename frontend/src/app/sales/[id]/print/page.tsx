@@ -33,7 +33,8 @@ import {
   History,
   Tag,
   Maximize2,
-  Truck
+  Truck,
+  Building2
 } from 'lucide-react';
 import AuditHistoryModal from '@/components/modals/AuditHistoryModal';
 
@@ -282,6 +283,34 @@ export default function PrintInvoicePage() {
       localStorage.setItem('vouch_print_fit_to_page', String(next));
     }
   };
+
+  // Firm Name Header Size: DEFAULT (prominent 2xl-3xl), XL (extra large 3xl-4xl), COMPACT (xl-2xl)
+  const [firmHeaderSize, setFirmHeaderSize] = useState<'DEFAULT' | 'XL' | 'COMPACT'>(() => {
+    if (typeof window !== 'undefined') {
+      const val = localStorage.getItem('vouch_print_firm_header_size');
+      if (val === 'XL' || val === 'COMPACT' || val === 'DEFAULT') return val;
+    }
+    return 'DEFAULT';
+  });
+
+  const toggleFirmHeaderSize = () => {
+    const next = firmHeaderSize === 'DEFAULT' ? 'XL' : firmHeaderSize === 'XL' ? 'COMPACT' : 'DEFAULT';
+    setFirmHeaderSize(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('vouch_print_firm_header_size', next);
+    }
+  };
+
+  const firmNameClass = React.useMemo(() => {
+    if (firmHeaderSize === 'XL') {
+      return 'text-3xl sm:text-4xl font-black tracking-wide uppercase leading-tight';
+    }
+    if (firmHeaderSize === 'COMPACT') {
+      return 'text-xl sm:text-2xl font-bold tracking-normal uppercase leading-tight';
+    }
+    // DEFAULT: Bold, commanding, prominent firm name that is NEVER reduced during auto-fit!
+    return 'text-2xl sm:text-3xl font-black tracking-wide uppercase leading-tight';
+  }, [firmHeaderSize]);
 
   // Mobile responsiveness and dynamic scaling
   const [scaleMode, setScaleMode] = useState<'fit' | '100'>('fit');
@@ -1232,19 +1261,19 @@ export default function PrintInvoicePage() {
               {sheet.isFirstPage ? (
                 <>
                   {/* Header */}
-                  <div className={`text-center ${isCompactDensity ? 'p-1' : 'p-3'} border-b-2 border-black`}>
+                  <div className={`text-center ${isCompactDensity ? 'p-1.5' : 'p-3'} border-b-2 border-black`}>
                   <div className={`flex justify-between items-start text-xs font-bold ${isCompactDensity ? 'mb-0.5' : 'mb-2'}`}>
                       <div>GSTIN : {invoice.company.gstin || 'Unregistered'}</div>
                       <div className={`italic ${sheet.highlightTransport ? 'font-extrabold text-blue-900 underline' : 'font-bold'}`}>
                         {sheet.badgeTitle}
                       </div>
                   </div>
-                  <h2 className={`${isCompactDensity ? 'text-sm mb-0.5' : 'text-lg mb-1'} font-bold underline tracking-wider`}>TAX INVOICE</h2>
-                  <h1 className={`${isCompactDensity ? 'text-xl mb-0.5' : 'text-3xl mb-1'} font-extrabold`}>{invoice.company.name}</h1>
-                  <p className={`${isCompactDensity ? 'text-[10.5px] leading-tight' : 'text-sm'}`}>{invoice.company.address}</p>
-                  <p className={`${isCompactDensity ? 'text-[10.5px] leading-tight' : 'text-sm'}`}>Ph: {invoice.company.phone || 'N/A'} | Email: {invoice.company.email || 'N/A'}</p>
+                  <h2 className={`${isCompactDensity ? 'text-xs mb-0.5' : 'text-sm mb-1'} font-bold underline tracking-wider text-slate-800`}>TAX INVOICE</h2>
+                  <h1 className={`${firmNameClass} mb-1 text-slate-900`}>{invoice.company.name}</h1>
+                  <p className={`${isCompactDensity ? 'text-[11px] leading-tight' : 'text-xs sm:text-sm leading-normal'} text-slate-800`}>{invoice.company.address}</p>
+                  <p className={`${isCompactDensity ? 'text-[11px] leading-tight' : 'text-xs sm:text-sm leading-normal'} text-slate-800`}>Ph: {invoice.company.phone || 'N/A'} | Email: {invoice.company.email || 'N/A'}</p>
                   {invoice.company.tagline && (
-                    <p className={`${isCompactDensity ? 'text-[11px] mt-0.5' : 'text-sm mt-1'} font-bold tracking-widest uppercase`}>{invoice.company.tagline}</p>
+                    <p className={`${isCompactDensity ? 'text-[11px] mt-0.5' : 'text-xs mt-1'} font-bold tracking-widest uppercase text-slate-600`}>{invoice.company.tagline}</p>
                   )}
               </div>
 
@@ -1953,10 +1982,10 @@ export default function PrintInvoicePage() {
             )}
           </div>
 
-          {/* Row 3 on Mobile: Copy Selection when in A4 mode */}
+          {/* Row 3 on Mobile: Copy Selection & Firm Header Size when in A4 mode */}
           {layoutMode === 'A4' && (
             <div className="flex items-center gap-1.5 pt-1 text-[11px]">
-              <div className="flex items-center gap-1.5 w-full bg-slate-800 rounded-lg border border-slate-700 px-2 py-1">
+              <div className="flex items-center gap-1.5 flex-1 bg-slate-800 rounded-lg border border-slate-700 px-2 py-1">
                 <Copy className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                 <span className="text-slate-400 text-[10px] uppercase font-bold shrink-0">Copy:</span>
                 <select
@@ -1971,6 +2000,16 @@ export default function PrintInvoicePage() {
                   <option value="BUNDLE_TRANSPORT" className="bg-slate-900">3 Copies: Triplicate (With Transporter)</option>
                 </select>
               </div>
+
+              <button
+                type="button"
+                onClick={toggleFirmHeaderSize}
+                className="bg-slate-800 rounded-lg border border-slate-700 px-2.5 py-1 text-slate-300 font-medium text-[11px] shrink-0 flex items-center gap-1 cursor-pointer"
+                title="Firm Name Size on Invoice"
+              >
+                <Building2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>Firm: {firmHeaderSize === 'XL' ? 'XL' : firmHeaderSize === 'COMPACT' ? 'Sm' : 'Lg'}</span>
+              </button>
             </div>
           )}
         </div>
@@ -2105,6 +2144,19 @@ export default function PrintInvoicePage() {
               <Tag className="w-3.5 h-3.5" />
               <span>Brand: {showBrand ? 'Visible' : 'Hidden'}</span>
             </button>
+
+            {/* Firm Name Size Selector (A4) */}
+            {layoutMode === 'A4' && (
+              <button
+                type="button"
+                onClick={toggleFirmHeaderSize}
+                className="px-3 py-1.5 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                title="Adjust firm name header size on invoice"
+              >
+                <Building2 className="w-3.5 h-3.5 text-amber-400" />
+                <span>Firm: {firmHeaderSize === 'XL' ? 'Extra Large' : firmHeaderSize === 'COMPACT' ? 'Compact' : 'Large (Default)'}</span>
+              </button>
+            )}
 
             {/* Dynamic QR Mode Toggle on Desktop */}
             {invoice?.company?.upi_id && (

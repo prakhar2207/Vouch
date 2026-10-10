@@ -22,6 +22,7 @@ import {
   Check,
   ShieldCheck,
   Image as ImageIcon,
+  Building2,
 } from 'lucide-react';
 
 export default function ProformaDetailPage() {
@@ -40,6 +41,7 @@ export default function ProformaDetailPage() {
   const [isGeneratingShareLink, setIsGeneratingShareLink] = useState(false);
   const [includeWatermark, setIncludeWatermark] = useState<boolean>(true);
   const [includeLogo, setIncludeLogo] = useState<boolean>(true);
+  const [firmNameSize, setFirmNameSize] = useState<'large' | 'extra_large' | 'normal'>('large');
 
   const fetchDoc = useCallback(async () => {
     if (!docId) return;
@@ -439,6 +441,20 @@ export default function ProformaDetailPage() {
               <span>Logo: {includeLogo ? 'ON' : 'OFF'}</span>
             </button>
 
+            {/* Firm Name Size Toggle Button */}
+            <button
+              type="button"
+              onClick={() => {
+                const next = firmNameSize === 'large' ? 'extra_large' : firmNameSize === 'extra_large' ? 'normal' : 'large';
+                setFirmNameSize(next);
+              }}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer border bg-card text-muted-foreground hover:text-foreground border-border"
+              title="Adjust firm name header size on proforma"
+            >
+              <Building2 className="w-3.5 h-3.5 text-amber-500" />
+              <span>Firm: {firmNameSize === 'extra_large' ? 'Extra Large' : firmNameSize === 'normal' ? 'Normal' : 'Large (Default)'}</span>
+            </button>
+
             {/* Download Vector PDF Button */}
             <button
               type="button"
@@ -477,6 +493,9 @@ export default function ProformaDetailPage() {
             company={company}
             watermarkOverride={includeWatermark}
             logoOverride={includeLogo}
+            branding={{
+              firm_name_size: firmNameSize,
+            }}
           />
         </div>
       </div>
