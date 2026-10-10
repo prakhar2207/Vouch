@@ -368,7 +368,7 @@ export default function SuperadminPortalPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="inline-flex items-center gap-2">
-              <span className="text-xl font-black tracking-tight bg-gradient-to-r from-purple-600 via-indigo-600 to-violet-600 bg-clip-text text-transparent">ShriLekh</span>
+              <span className="text-xl font-black tracking-tight bg-gradient-to-r from-purple-600 via-indigo-600 to-violet-600 bg-clip-text text-transparent">SriLekh</span>
               <span className="px-2 py-0.5 text-[10px] font-mono font-bold text-purple-400 bg-purple-500/10 border border-purple-500/30 rounded-md">
                 SUPERADMIN
               </span>

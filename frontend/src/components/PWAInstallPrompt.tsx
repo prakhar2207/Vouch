@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { Download, X } from "lucide-react";
+import Image from "next/image";
+import { X } from "lucide-react";
 
 export default function PWAInstallPrompt() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -63,11 +64,17 @@ export default function PWAInstallPrompt() {
     <div className="fixed bottom-4 right-4 z-50 w-full max-w-sm animate-in fade-in slide-in-from-bottom-4 duration-300">
       <div className="bg-card/95 border border-border/80 backdrop-blur-md text-card-foreground p-3.5 rounded-xl shadow-xl flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0 border border-primary/20">
-            <Download className="w-4 h-4" />
+          <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0 border border-border/80 shadow-2xs">
+            <Image
+              src="/logo-mark.png"
+              alt="SriLekh"
+              width={32}
+              height={32}
+              className="w-full h-full object-contain"
+            />
           </div>
           <div className="min-w-0">
-            <div className="text-xs font-semibold text-foreground truncate">Install ShriLekh App</div>
+            <div className="text-xs font-semibold text-foreground truncate">Install SriLekh App</div>
             <div className="text-[11px] text-muted-foreground truncate">
               Faster keyboard navigation & offline access
             </div>

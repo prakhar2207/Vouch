@@ -108,14 +108,14 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col selection:bg-blue-600/20 selection:text-foreground">
+    <div className="min-h-screen bg-background text-foreground flex flex-col selection:bg-[#162C5B]/15 selection:text-[#162C5B]">
       {/* ─────────── Navigation ─────────── */}
       <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/70 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <Link href="/" className="flex items-center gap-2.5">
               <VouchLogo size={28} showWordmark={true} />
-              <span className="px-2 py-0.5 text-[10px] font-mono bg-blue-600/10 text-blue-600 dark:text-blue-400 rounded border border-blue-500/20 font-bold">
+              <span className="px-2 py-0.5 text-[10px] font-mono bg-[#162C5B]/10 text-[#162C5B] dark:bg-[#E28123]/15 dark:text-[#FBA94C] rounded border border-[#162C5B]/20 dark:border-[#E28123]/30 font-bold">
                 Cloud Core
               </span>
             </Link>
@@ -140,7 +140,7 @@ export default function LandingPage() {
             {isAuth ? (
               <Link
                 href="/dashboard"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-md shadow-blue-600/20 transition-all flex items-center gap-1.5"
+                className="px-4 py-2 bg-[#162C5B] hover:bg-[#0F1E3D] text-white rounded-lg text-xs font-bold shadow-md shadow-[#162C5B]/20 transition-all flex items-center gap-1.5"
               >
                 <span>Go to Dashboard →</span>
               </Link>
@@ -154,7 +154,7 @@ export default function LandingPage() {
                 </Link>
                 <Link
                   href="/register"
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-md shadow-blue-600/20 transition-all"
+                  className="px-4 py-2 bg-[#162C5B] hover:bg-[#0F1E3D] text-white rounded-lg text-xs font-bold shadow-md shadow-[#162C5B]/20 transition-all"
                 >
                   Get Started
                 </Link>
@@ -172,12 +172,12 @@ export default function LandingPage() {
           backgroundSize: "24px 24px",
         }} />
 
-        {/* Ambient Glow — Light */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[500px] bg-gradient-to-b from-blue-500/8 via-purple-500/5 to-transparent blur-3xl pointer-events-none rounded-full dark:from-blue-600/15 dark:via-purple-600/10" />
+        {/* Ambient Glow */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[500px] bg-gradient-to-b from-[#162C5B]/10 via-[#E28123]/5 to-transparent blur-3xl pointer-events-none rounded-full dark:from-blue-600/15 dark:via-amber-600/10" />
 
         {/* Secondary glow accents */}
-        <div className="absolute -top-20 -left-40 w-[400px] h-[400px] bg-blue-400/5 dark:bg-blue-500/10 blur-3xl rounded-full pointer-events-none" />
-        <div className="absolute -top-20 -right-40 w-[400px] h-[400px] bg-purple-400/5 dark:bg-purple-500/10 blur-3xl rounded-full pointer-events-none" />
+        <div className="absolute -top-20 -left-40 w-[400px] h-[400px] bg-[#162C5B]/5 dark:bg-blue-500/10 blur-3xl rounded-full pointer-events-none" />
+        <div className="absolute -top-20 -right-40 w-[400px] h-[400px] bg-[#E28123]/5 dark:bg-amber-500/10 blur-3xl rounded-full pointer-events-none" />
 
         <div className="max-w-5xl mx-auto px-6 text-center space-y-8 relative z-10">
           {/* Badge */}
@@ -185,9 +185,9 @@ export default function LandingPage() {
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/8 dark:bg-blue-500/10 border border-blue-500/15 dark:border-blue-500/20 text-blue-600 dark:text-blue-400 text-xs font-semibold"
+            className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#E28123]/10 dark:bg-[#E28123]/15 border border-[#E28123]/25 dark:border-[#E28123]/30 text-[#C86815] dark:text-[#FBA94C] text-xs font-semibold"
           >
-            <Zap className="w-3.5 h-3.5" />
+            <Zap className="w-3.5 h-3.5 text-[#E28123]" />
             <span>Next-Gen Cloud Accounting & ERP for Modern Businesses</span>
           </motion.div>
 
@@ -202,7 +202,7 @@ export default function LandingPage() {
             <br className="hidden sm:block" />
             Cloud Power.{" "}
             <br className="hidden sm:block" />
-            <span className="bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-600 dark:from-blue-400 dark:via-indigo-400 dark:to-purple-400 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-[#162C5B] via-[#1E3A8A] to-[#E28123] dark:from-sky-400 dark:via-blue-300 dark:to-[#FBA94C] bg-clip-text text-transparent">
               AI Intelligence.
             </span>
           </motion.h1>
@@ -228,7 +228,7 @@ export default function LandingPage() {
           >
             <Link
               href={isAuth ? "/dashboard" : "/register"}
-              className="group px-7 py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-600/25 dark:shadow-blue-600/15 transition-all flex items-center gap-2.5 cursor-pointer"
+              className="group px-7 py-3.5 bg-[#162C5B] hover:bg-[#0F1E3D] text-white rounded-xl text-sm font-bold shadow-lg shadow-[#162C5B]/25 dark:shadow-black/30 transition-all flex items-center gap-2.5 cursor-pointer"
             >
               <span>{isAuth ? "Launch Dashboard" : "Get Started Free"}</span>
               <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
@@ -295,7 +295,7 @@ export default function LandingPage() {
               transition={{ duration: 0.5, delay: 0.2 }}
               className="text-muted-foreground text-sm sm:text-base"
             >
-              Whether you run a shop, a factory, or a trading business — ShriLekh makes billing and bookkeeping simple.
+              Whether you run a shop, a factory, or a trading business — SriLekh makes billing and bookkeeping simple.
             </motion.p>
           </div>
 
@@ -635,7 +635,7 @@ export default function LandingPage() {
 
         <div className="max-w-7xl mx-auto px-6 pt-6 border-t border-border/60 dark:border-border flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-muted-foreground">
           <div>
-            © {new Date().getFullYear()} ShriLekh Platform. Built for Modern Indian Businesses.
+            © {new Date().getFullYear()} SriLekh Platform. Built for Modern Indian Businesses.
           </div>
           <div className="flex items-center gap-3 font-mono text-[10px]">
             <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded border border-emerald-500/15">PWA Enabled</span>

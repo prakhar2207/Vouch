@@ -36,7 +36,7 @@ export default function AgingReportPage() {
   const companyId = activeCompanyId || (typeof window !== "undefined" ? localStorage.getItem("vouch_active_company_id") || "" : "");
 
   useEffect(() => {
-    document.title = "Outstanding Aging Analysis | ShriLekh";
+    document.title = "Outstanding Aging Analysis | SriLekh";
     if (!isAuthenticated()) {
       router.push("/login");
     }

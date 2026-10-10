@@ -45,8 +45,8 @@ export default function Login() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background text-foreground p-4 relative overflow-hidden">
       {/* Ambient gradient glow */}
-      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-gradient-to-tr from-primary/20 via-purple-500/10 to-transparent blur-3xl pointer-events-none rounded-full" />
-      <div className="absolute bottom-0 right-0 w-[400px] h-[200px] bg-gradient-to-tl from-primary/10 via-transparent to-transparent blur-3xl pointer-events-none rounded-full" />
+      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-gradient-to-tr from-primary/20 via-amber-500/10 to-transparent blur-3xl pointer-events-none rounded-full" />
+      <div className="absolute bottom-0 right-0 w-[400px] h-[200px] bg-gradient-to-tl from-primary/10 via-amber-500/5 to-transparent blur-3xl pointer-events-none rounded-full" />
 
       <div className="relative z-10 bg-card/80 backdrop-blur-xl text-card-foreground p-6 sm:p-8 rounded-2xl shadow-xl shadow-black/5 border border-border/50 w-full max-w-sm">
         {/* Branding */}

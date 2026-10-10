@@ -82,7 +82,7 @@ class ReportPDFRenderer:
         s_bold_r = ParagraphStyle('BoldR', fontName=fnt_b, fontSize=8.5, leading=11, alignment=TA_RIGHT)
 
         elements = []
-        elements.append(Paragraph(f"<b>{company.get('name', 'ShriLekh ERP')}</b>", s_comp))
+        elements.append(Paragraph(f"<b>{company.get('name', 'SriLekh ERP')}</b>", s_comp))
         elements.append(Paragraph(f"GSTIN: {company.get('gstin', 'N/A')} | {company.get('city', '')}", s_sub))
         elements.append(Spacer(1, 6))
         elements.append(Paragraph("<b><u>TRIAL BALANCE</u></b>", s_title))
@@ -172,7 +172,7 @@ class ReportPDFRenderer:
         s_sec_hdr = ParagraphStyle('SecHdr', fontName=fnt_b, fontSize=8.5, leading=10, textColor=colors.HexColor('#1E3A8A'))
 
         elements = []
-        elements.append(Paragraph(f"<b>{company.get('name', 'ShriLekh ERP')}</b>", s_comp))
+        elements.append(Paragraph(f"<b>{company.get('name', 'SriLekh ERP')}</b>", s_comp))
         elements.append(Paragraph(f"GSTIN: {company.get('gstin', 'N/A')} | {company.get('city', '')}", s_sub))
         elements.append(Spacer(1, 6))
         elements.append(Paragraph("<b><u>PROFIT &amp; LOSS STATEMENT</u></b>", s_title))
@@ -277,7 +277,7 @@ class ReportPDFRenderer:
         s_sec = ParagraphStyle('Sec', fontName=fnt_b, fontSize=8.5, leading=10, textColor=colors.HexColor('#1E3A8A'))
 
         elements = []
-        elements.append(Paragraph(f"<b>{company.get('name', 'ShriLekh ERP')}</b>", s_comp))
+        elements.append(Paragraph(f"<b>{company.get('name', 'SriLekh ERP')}</b>", s_comp))
         elements.append(Paragraph(f"GSTIN: {company.get('gstin', 'N/A')} | {company.get('city', '')}", s_sub))
         elements.append(Spacer(1, 6))
         elements.append(Paragraph("<b><u>BALANCE SHEET</u></b>", s_title))

@@ -262,7 +262,7 @@ export default function ReconciliationCockpit({
                 ₹{bookBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <span className="text-[10px] text-muted-foreground/80 font-medium">
-                Recorded in ShriLekh
+                Recorded in SriLekh
               </span>
             </div>
 

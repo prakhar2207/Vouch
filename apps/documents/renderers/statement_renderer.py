@@ -74,7 +74,7 @@ class StatementPDFRenderer:
         elements = []
 
         # 1. Company Header
-        elements.append(Paragraph(f"<b>{company.get('name', 'ShriLekh ERP')}</b>", s_comp_name))
+        elements.append(Paragraph(f"<b>{company.get('name', 'SriLekh ERP')}</b>", s_comp_name))
         c_addr = company.get('address', '')
         c_city = company.get('city', '')
         c_gstin = company.get('gstin', '')

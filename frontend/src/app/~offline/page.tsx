@@ -10,7 +10,7 @@ export default function OfflineFallback() {
       </div>
       <h1 className="text-2xl font-extrabold tracking-tight mb-2">You are currently offline</h1>
       <p className="text-sm text-muted-foreground max-w-md mb-6 leading-relaxed">
-        It looks like your internet connection is down. Don&apos;t worry — your cached ShriLekh records and offline data remain safe and accessible on your device.
+        It looks like your internet connection is down. Don&apos;t worry — your cached SriLekh records and offline data remain safe and accessible on your device.
       </p>
       <div className="flex flex-wrap gap-3 justify-center items-center">
         <button

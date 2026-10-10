@@ -738,7 +738,7 @@ class InvoicePDFRenderer:
                     except Exception:
                         sig_img = None
 
-        comp_name_str = seller.get('name', 'ShriLekh')
+        comp_name_str = seller.get('name', 'SriLekh')
         sig_inner = [Paragraph(f"for {comp_name_str}", s_auth_top)]
         if sig_img:
             sig_inner.append(Spacer(1, 4))

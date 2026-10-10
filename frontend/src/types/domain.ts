@@ -1,5 +1,5 @@
 /**
- * Domain Type Definitions for ShriLekh Accounting System
+ * Domain Type Definitions for SriLekh Accounting System
  * 
  * Centralizes the canonical domain representations for:
  * - Vouchers and Double-Entry Ledger Transactions

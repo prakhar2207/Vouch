@@ -4,16 +4,16 @@
 
 /* ─── Design System: Light Theme ─── */
 :root {
-  --background: #f8fafc;
+  --background: #fbfbfd;
   --foreground: #0f172a;
   --card: #ffffff;
   --card-foreground: #0f172a;
   --border: #e2e8f0;
   --input: #e2e8f0;
-  --ring: #183b7e;
+  --ring: #162c5b;
 
-  /* ShriLekh Royal Navy */
-  --primary: #183b7e;
+  /* SriLekh Deep Royal Navy */
+  --primary: #162c5b;
   --primary-foreground: #ffffff;
 
   --secondary: #f1f5f9;
@@ -22,9 +22,9 @@
   --muted: #f1f5f9;
   --muted-foreground: #475569;
 
-  /* ShriLekh Saffron / Amber Accent */
-  --accent: #fffbeb;
-  --accent-foreground: #b45309;
+  /* SriLekh Golden Saffron / Amber Accent */
+  --accent: #fef7ee;
+  --accent-foreground: #c86815;
 
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
@@ -32,31 +32,32 @@
   --success: #10b981;
   --success-foreground: #ffffff;
 
-  --warning: #d97706;
+  --warning: #e28123;
   --warning-foreground: #ffffff;
 }
 
 /* ─── Design System: Dark Theme ─── */
 .dark {
-  --background: #0a0a0f;
-  --foreground: #e8edf5;
-  --card: #13131d;
-  --card-foreground: #e8edf5;
-  --border: #1e1e2a;
-  --input: #1e1e2a;
-  --ring: #3b82f6;
+  --background: #0c1427;
+  --foreground: #eef2ff;
+  --card: #111c38;
+  --card-foreground: #eef2ff;
+  --border: #1c2a4f;
+  --input: #1c2a4f;
+  --ring: #e28123;
 
-  --primary: #3b82f6;
+  /* SriLekh Golden Saffron Glow for Dark Mode */
+  --primary: #e28123;
   --primary-foreground: #ffffff;
 
-  --secondary: #1a1a24;
+  --secondary: #172447;
   --secondary-foreground: #e2e8f0;
 
-  --muted: #151520;
+  --muted: #141f3d;
   --muted-foreground: #94a3b8;
 
-  --accent: #172554;
-  --accent-foreground: #93c5fd;
+  --accent: #1c2e5a;
+  --accent-foreground: #fdba74;
 
   --destructive: #dc2626;
   --destructive-foreground: #fef2f2;
@@ -64,7 +65,7 @@
   --success: #10b981;
   --success-foreground: #ffffff;
 
-  --warning: #f59e0b;
+  --warning: #e28123;
   --warning-foreground: #ffffff;
 }
 

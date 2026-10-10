@@ -336,7 +336,7 @@ function B2BInboxContent() {
               <Network className="w-8 h-8 mx-auto text-zinc-600 stroke-[1.5]" />
               <div className="text-sm font-semibold text-foreground/80">No B2B Inward Invoices Found</div>
               <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                When registered suppliers on ShriLekh generate a Sales Invoice for your company GSTIN, the invoice automatically appears here for 1-click inspection and digital signing.
+                When registered suppliers on SriLekh generate a Sales Invoice for your company GSTIN, the invoice automatically appears here for 1-click inspection and digital signing.
               </p>
             </div>
           ) : (

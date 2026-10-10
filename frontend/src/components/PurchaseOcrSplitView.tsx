@@ -819,7 +819,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                 <span className="text-base">⚠️</span>
                 <div>
                   <div className="font-bold">
-                    {invoice.validation.discrepancy_message || `ShriLekh found a ₹${invoice.validation.difference.toFixed(2)} difference in extracted totals.`}
+                    {invoice.validation.discrepancy_message || `SriLekh found a ₹${invoice.validation.difference.toFixed(2)} difference in extracted totals.`}
                   </div>
                   <div className="text-[11px] text-amber-400/90 mt-0.5">
                     Calculated line items total ₹{invoice.validation.expected_total.toFixed(2)}, but document states ₹{invoice.total_amount.toFixed(2)}. Please verify rates and quantities in the form before posting.

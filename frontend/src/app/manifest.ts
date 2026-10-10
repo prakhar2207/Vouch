@@ -2,27 +2,27 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "ShriLekh",
-    short_name: "ShriLekh",
-    description: "ShriLekh - High-Speed Double-Entry Accounting & ERP with AI Accounts Payable and GST Compliance",
+    name: "SriLekh",
+    short_name: "SriLekh",
+    description: "SriLekh - High-Speed Double-Entry Accounting & ERP with AI Accounts Payable and GST Compliance",
     start_url: "/dashboard",
     display: "standalone",
     display_override: ["window-controls-overlay", "standalone"],
     background_color: "#ffffff",
-    theme_color: "#183B7E",
+    theme_color: "#162C5B",
     icons: [
       {
-        src: "/icons/icon-192x192.png?v=2",
+        src: "/icons/srilekh-192.png?v=srilekh-v3",
         sizes: "192x192",
         type: "image/png",
       },
       {
-        src: "/icons/icon-512x512.png?v=2",
+        src: "/icons/srilekh-512.png?v=srilekh-v3",
         sizes: "512x512",
         type: "image/png",
       },
       {
-        src: "/icons/icon-512x512.png?v=2",
+        src: "/icons/srilekh-maskable-512.png?v=srilekh-v3",
         sizes: "512x512",
         type: "image/png",
         purpose: "maskable",

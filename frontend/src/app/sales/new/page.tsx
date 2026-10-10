@@ -1312,7 +1312,7 @@ export default function SalesPage() {
         key: 'state_code',
         label: 'State & State Code',
         requirement: 'GST Place of Supply (Tax Determination)',
-        instruction: 'Select your state or union territory so ShriLekh can automatically calculate Intra-State (CGST+SGST) vs Inter-State (IGST) tax.',
+        instruction: 'Select your state or union territory so SriLekh can automatically calculate Intra-State (CGST+SGST) vs Inter-State (IGST) tax.',
         example: 'e.g. 07 - Delhi or 09 - Uttar Pradesh'
       });
     }

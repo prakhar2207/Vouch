@@ -11,8 +11,8 @@ interface VouchLogoProps {
 }
 
 /**
- * ShriLekh Brand Logo Component
- * Displays the official squircle Rupee emblem and ShriLekh (श्रीलेख Accounting) wordmark.
+ * SriLekh Brand Logo Component
+ * Displays the official squircle Rupee emblem and SriLekh (श्रीलेख Accounting) wordmark.
  */
 export const VouchLogo: React.FC<VouchLogoProps> = ({
   className = "",
@@ -30,7 +30,7 @@ export const VouchLogo: React.FC<VouchLogoProps> = ({
       >
         <Image
           src="/logo-mark.png"
-          alt="ShriLekh"
+          alt="SriLekh"
           width={size * 2}
           height={size * 2}
           priority
@@ -40,29 +40,24 @@ export const VouchLogo: React.FC<VouchLogoProps> = ({
 
       {/* Wordmark */}
       {showWordmark && (
-        <div className="flex flex-col justify-center leading-none">
+        <div className="flex items-center leading-none">
           <span
             className={`font-black tracking-tight text-xl leading-none ${
               variant === "light"
-                ? "text-[#183B7E]"
+                ? "text-[#162C5B]"
                 : variant === "dark"
                 ? "text-white"
-                : "text-[#183B7E] dark:text-white"
+                : "text-[#162C5B] dark:text-white"
             }`}
             style={{ fontFamily: "Georgia, Cambria, 'Times New Roman', serif" }}
           >
-            ShriLekh
+            SriLekh
           </span>
-          {subtext && (
-            <span className="text-[10px] tracking-wider font-semibold text-[#D97706] dark:text-[#FBBF24] leading-tight mt-0.5">
-              श्रीलेख <span className="text-[9px] text-muted-foreground font-normal tracking-widest uppercase ml-0.5">Accounting</span>
-            </span>
-          )}
         </div>
       )}
     </div>
   );
 };
 
-export const ShriLekhLogo = VouchLogo;
+export const SriLekhLogo = VouchLogo;
 export default VouchLogo;

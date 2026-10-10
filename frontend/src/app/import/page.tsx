@@ -210,7 +210,7 @@ function UniversalImportContent() {
                 <span>Quick Onboarding Setup</span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
-                Welcome to ShriLekh, {activeCompany?.name || "Partner"}!
+                Welcome to SriLekh, {activeCompany?.name || "Partner"}!
               </h1>
               <p className="text-sm text-muted-foreground leading-relaxed">
                 Migrating from another software? You don&apos;t have to type your customers or stock again. 
@@ -471,7 +471,7 @@ function UniversalImportContent() {
               <div>
                 <span className="font-semibold text-foreground">Duplicate Conflict Handling:</span>
                 <p className="text-muted-foreground text-[11px] mt-0.5">
-                  Detected {preview.duplicate_records} records that already exist in your ShriLekh company.
+                  Detected {preview.duplicate_records} records that already exist in your SriLekh company.
                 </p>
               </div>
               <div className="inline-flex bg-muted/60 p-1 rounded-lg border border-border/40">

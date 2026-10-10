@@ -36,32 +36,32 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL("https://srilekh.com"),
   title: {
-    default: "ShriLekh - Double-Entry Accounting & AI ERP",
-    template: "%s | ShriLekh",
+    default: "SriLekh - Double-Entry Accounting & AI ERP",
+    template: "%s | SriLekh",
   },
   description: "Keyboard-first cloud ERP and accounting platform with automated GST compliance and AI bill extraction.",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/favicon.ico?v=3",
-    shortcut: "/favicon.ico?v=3",
-    apple: "/icons/apple-touch-icon.png?v=3",
+    icon: "/favicon.ico?v=srilekh-v3",
+    shortcut: "/favicon.ico?v=srilekh-v3",
+    apple: "/icons/srilekh-apple-touch.png?v=srilekh-v3",
   },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "ShriLekh",
+    title: "SriLekh",
   },
   openGraph: {
     type: "website",
     locale: "en_IN",
     url: "https://srilekh.com",
-    siteName: "ShriLekh Accounting",
-    title: "ShriLekh - Double-Entry Accounting & AI ERP",
+    siteName: "SriLekh Accounting",
+    title: "SriLekh - Double-Entry Accounting & AI ERP",
     description: "Keyboard-first cloud ERP and accounting platform with automated GST compliance and AI bill extraction.",
   },
   twitter: {
     card: "summary_large_image",
-    title: "ShriLekh - Double-Entry Accounting & AI ERP",
+    title: "SriLekh - Double-Entry Accounting & AI ERP",
     description: "Keyboard-first cloud ERP and accounting platform with automated GST compliance and AI bill extraction.",
   },
 };

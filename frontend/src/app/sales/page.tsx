@@ -620,7 +620,7 @@ function SalesInvoiceListContent() {
           `• *Invoice Amount:* ₹${total}\n\n` +
           `📄 *View & Download Official PDF:*\n` +
           `${origin}/sales/${inv.id}/print\n\n` +
-          `⚡ *1-Click Import (Auto-Book Purchase in ShriLekh):*\n` +
+          `⚡ *1-Click Import (Auto-Book Purchase in SriLekh):*\n` +
           `${claimLink}\n\n` +
           `Thank you for doing business with us!\n` +
           `*${companyName}*`

@@ -251,7 +251,7 @@ export default function HelpModal() {
         {/* Footer */}
         <div className="px-6 py-3 bg-muted/30 border-t border-border/60 text-xs text-muted-foreground flex items-center justify-between">
           <span>Press <kbd className="px-1.5 py-0.5 bg-muted border border-border/60 rounded font-mono text-foreground font-semibold">Esc</kbd> anytime to close</span>
-          <span className="font-mono text-[11px] text-muted-foreground/80">ShriLekh Keyboard Platform</span>
+          <span className="font-mono text-[11px] text-muted-foreground/80">SriLekh Keyboard Platform</span>
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 /**
- * Centralized logging utility for ShriLekh Frontend.
+ * Centralized logging utility for SriLekh Frontend.
  * Provides environment-aware log levels, formatted outputs, and safe serialization.
  */
 

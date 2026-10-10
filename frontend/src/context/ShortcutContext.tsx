@@ -78,7 +78,7 @@ export function ShortcutProvider({ children }: { children: React.ReactNode }) {
     if (deleteLineHandlerRef.current) {
       deleteLineHandlerRef.current();
     } else if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("shrilekh:delete-line"));
+      window.dispatchEvent(new CustomEvent("srilekh:delete-line"));
     }
   }, []);
 
@@ -112,7 +112,7 @@ export function ShortcutProvider({ children }: { children: React.ReactNode }) {
     if (editMasterHandlerRef.current) {
       editMasterHandlerRef.current();
     } else if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("shrilekh:edit-master"));
+      window.dispatchEvent(new CustomEvent("srilekh:edit-master"));
     }
   }, []);
 

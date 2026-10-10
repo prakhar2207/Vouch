@@ -31,7 +31,7 @@ export default function SyncStatusBadge() {
     const handleOffline = () => loadStatus();
 
     if (typeof window !== "undefined") {
-      window.addEventListener("shrilekh:sync-complete", handleSyncComplete);
+      window.addEventListener("srilekh:sync-complete", handleSyncComplete);
       window.addEventListener("online", handleOnline);
       window.addEventListener("offline", handleOffline);
     }
@@ -39,7 +39,7 @@ export default function SyncStatusBadge() {
     return () => {
       clearInterval(interval);
       if (typeof window !== "undefined") {
-        window.removeEventListener("shrilekh:sync-complete", handleSyncComplete);
+        window.removeEventListener("srilekh:sync-complete", handleSyncComplete);
         window.removeEventListener("online", handleOnline);
         window.removeEventListener("offline", handleOffline);
       }

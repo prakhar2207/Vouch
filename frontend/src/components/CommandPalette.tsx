@@ -188,7 +188,7 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
             <span>↵ Select</span>
             <span>ESC Close</span>
           </div>
-          <div className="font-mono text-muted-foreground/70">ShriLekh Keyboard Engine</div>
+          <div className="font-mono text-muted-foreground/70">SriLekh Keyboard Engine</div>
         </div>
       </div>
     </div>
