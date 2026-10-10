@@ -1214,25 +1214,25 @@ export default function PrintInvoicePage() {
               {sheet.isFirstPage ? (
                 <>
                   {/* Header */}
-                  <div className={`text-center ${isCompactDensity ? 'p-1.5' : 'p-3'} border-b-2 border-black`}>
-                  <div className={`flex justify-between items-start text-xs font-bold ${isCompactDensity ? 'mb-1' : 'mb-2'}`}>
+                  <div className={`text-center ${isCompactDensity ? 'p-1' : 'p-3'} border-b-2 border-black`}>
+                  <div className={`flex justify-between items-start text-xs font-bold ${isCompactDensity ? 'mb-0.5' : 'mb-2'}`}>
                       <div>GSTIN : {invoice.company.gstin || 'Unregistered'}</div>
                       <div className={`italic ${sheet.highlightTransport ? 'font-extrabold text-blue-900 underline' : 'font-bold'}`}>
                         {sheet.badgeTitle}
                       </div>
                   </div>
-                  <h2 className={`${isCompactDensity ? 'text-base mb-0.5' : 'text-lg mb-1'} font-bold underline tracking-wider`}>TAX INVOICE</h2>
-                  <h1 className={`${isCompactDensity ? 'text-2xl mb-0.5' : 'text-3xl mb-1'} font-extrabold`}>{invoice.company.name}</h1>
-                  <p className={`${isCompactDensity ? 'text-[11px] leading-tight' : 'text-sm'}`}>{invoice.company.address}</p>
-                  <p className={`${isCompactDensity ? 'text-[11px] leading-tight' : 'text-sm'}`}>Ph: {invoice.company.phone || 'N/A'} | Email: {invoice.company.email || 'N/A'}</p>
+                  <h2 className={`${isCompactDensity ? 'text-sm mb-0.5' : 'text-lg mb-1'} font-bold underline tracking-wider`}>TAX INVOICE</h2>
+                  <h1 className={`${isCompactDensity ? 'text-xl mb-0.5' : 'text-3xl mb-1'} font-extrabold`}>{invoice.company.name}</h1>
+                  <p className={`${isCompactDensity ? 'text-[10.5px] leading-tight' : 'text-sm'}`}>{invoice.company.address}</p>
+                  <p className={`${isCompactDensity ? 'text-[10.5px] leading-tight' : 'text-sm'}`}>Ph: {invoice.company.phone || 'N/A'} | Email: {invoice.company.email || 'N/A'}</p>
                   {invoice.company.tagline && (
-                    <p className={`${isCompactDensity ? 'text-xs mt-0.5' : 'text-sm mt-1'} font-bold tracking-widest uppercase`}>{invoice.company.tagline}</p>
+                    <p className={`${isCompactDensity ? 'text-[11px] mt-0.5' : 'text-sm mt-1'} font-bold tracking-widest uppercase`}>{invoice.company.tagline}</p>
                   )}
               </div>
 
               {/* Meta Grid */}
               <div className={`grid grid-cols-2 border-b-2 border-black ${isCompactDensity ? 'text-xs' : 'text-sm'}`}>
-                  <div className={`${isCompactDensity ? 'p-1.5' : 'p-2'} border-r-2 border-black`}>
+                  <div className={`${isCompactDensity ? 'p-1' : 'p-2'} border-r-2 border-black`}>
                       <table className="w-full">
                           <tbody>
                               <tr><td className={isCompactDensity ? "w-28" : "w-32"}>Invoice No.</td><td className="font-bold">: {invoice.voucher_number}</td></tr>
@@ -1242,7 +1242,7 @@ export default function PrintInvoicePage() {
                           </tbody>
                       </table>
                   </div>
-                  <div className={`${isCompactDensity ? 'p-1.5' : 'p-2'} ${sheet.highlightTransport ? 'bg-blue-50/60 ring-1 ring-blue-400/40 rounded-xs' : ''}`}>
+                  <div className={`${isCompactDensity ? 'p-1' : 'p-2'} ${sheet.highlightTransport ? 'bg-blue-50/60 ring-1 ring-blue-400/40 rounded-xs' : ''}`}>
                       <table className="w-full">
                           <tbody>
                               <tr>
@@ -1276,17 +1276,17 @@ export default function PrintInvoicePage() {
 
               {/* Party Grid */}
               <div className={`grid grid-cols-2 border-b-2 border-black ${isCompactDensity ? 'text-xs' : 'text-sm'}`}>
-                  <div className={`${isCompactDensity ? 'p-1.5' : 'p-2'} border-r-2 border-black flex flex-col`}>
+                  <div className={`${isCompactDensity ? 'p-1' : 'p-2'} border-r-2 border-black flex flex-col`}>
                       <span className="italic mb-0.5">Billed to :</span>
-                      <strong className={isCompactDensity ? "text-sm font-bold" : "text-base font-bold"}>{invoice.party.name}</strong>
+                      <strong className={isCompactDensity ? "text-xs font-bold" : "text-base font-bold"}>{invoice.party.name}</strong>
                       {invoice.party.address && <span className="whitespace-pre-wrap">{invoice.party.address}</span>}
-                      <div className="mt-1.5 pt-0.5">
+                      <div className="mt-1 pt-0.5">
                           GSTIN / UIN <span className="ml-4 font-bold">: {invoice.party.gstin || 'Unregistered'}</span>
                       </div>
                   </div>
-                  <div className={`${isCompactDensity ? 'p-1.5' : 'p-2'} flex flex-col`}>
+                  <div className={`${isCompactDensity ? 'p-1' : 'p-2'} flex flex-col`}>
                       <span className="italic mb-0.5">Shipped to :</span>
-                      <strong className={isCompactDensity ? "text-sm font-bold" : "text-base font-bold"}>{invoice.party.name}</strong>
+                      <strong className={isCompactDensity ? "text-xs font-bold" : "text-base font-bold"}>{invoice.party.name}</strong>
                       {invoice.party.address && <span className="whitespace-pre-wrap">{invoice.party.address}</span>}
                       <div className="mt-1.5 pt-0.5">
                           GSTIN / UIN <span className="ml-4 font-bold">: {invoice.party.gstin || 'Unregistered'}</span>
@@ -1348,10 +1348,10 @@ export default function PrintInvoicePage() {
 
                           {sheet.pageItems.map((item: any, idx: number) => (
                               <tr key={idx} className={`align-top border-b border-black item-row ${isCompactDensity ? 'text-xs' : ''}`}>
-                                  <td className={`border-r border-black text-center ${isCompactDensity ? 'py-1' : 'py-2'} px-1`}>
+                                  <td className={`border-r border-black text-center ${isCompactDensity ? 'py-0.5' : 'py-2'} px-1`}>
                                     {sheet.itemStartIndex + idx + 1}
                                   </td>
-                                  <td className={`border-r border-black text-left ${isCompactDensity ? 'py-1' : 'py-2'} pl-2 font-medium`}>
+                                  <td className={`border-r border-black text-left ${isCompactDensity ? 'py-0.5' : 'py-2'} pl-2 font-medium`}>
                                       <div>{item.product_name}</div>
                                       {showBrand && item.brand && (
                                           <div className={`${isCompactDensity ? 'text-[9px]' : 'text-[10px]'} text-slate-600 font-normal mt-0.5`}>
@@ -1359,12 +1359,12 @@ export default function PrintInvoicePage() {
                                           </div>
                                       )}
                                   </td>
-                                  <td className={`border-r border-black text-center ${isCompactDensity ? 'py-1' : 'py-2'} px-1 whitespace-nowrap`}>{item.hsn_code}</td>
-                                  <td className={`border-r border-black text-right ${isCompactDensity ? 'py-1' : 'py-2'} pr-1 whitespace-nowrap`}>{Number(item.quantity).toFixed(2)}</td>
-                                  <td className={`border-r border-black text-center ${isCompactDensity ? 'py-1' : 'py-2'} px-1 whitespace-nowrap`}>{item.unit}</td>
-                                  <td className={`border-r border-black text-right ${isCompactDensity ? 'py-1' : 'py-2'} pr-1 whitespace-nowrap`}>{Number(item.rate).toFixed(2)}</td>
-                                  <td className={`border-r border-black text-center ${isCompactDensity ? 'py-1' : 'py-2'} px-1 whitespace-nowrap`}>{Number(item.discount_percent).toFixed(2)}%</td>
-                                  <td className={`text-right ${isCompactDensity ? 'py-1' : 'py-2'} pr-2 font-medium whitespace-nowrap`}>{Number(item.taxable_amount).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                                  <td className={`border-r border-black text-center ${isCompactDensity ? 'py-0.5' : 'py-2'} px-1 whitespace-nowrap`}>{item.hsn_code}</td>
+                                  <td className={`border-r border-black text-right ${isCompactDensity ? 'py-0.5' : 'py-2'} pr-1 whitespace-nowrap`}>{Number(item.quantity).toFixed(2)}</td>
+                                  <td className={`border-r border-black text-center ${isCompactDensity ? 'py-0.5' : 'py-2'} px-1 whitespace-nowrap`}>{item.unit}</td>
+                                  <td className={`border-r border-black text-right ${isCompactDensity ? 'py-0.5' : 'py-2'} pr-1 whitespace-nowrap`}>{Number(item.rate).toFixed(2)}</td>
+                                  <td className={`border-r border-black text-center ${isCompactDensity ? 'py-0.5' : 'py-2'} px-1 whitespace-nowrap`}>{Number(item.discount_percent).toFixed(2)}%</td>
+                                  <td className={`text-right ${isCompactDensity ? 'py-0.5' : 'py-2'} pr-2 font-medium whitespace-nowrap`}>{Number(item.taxable_amount).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                               </tr>
                           ))}
                           {/* Continuous Filler Row */}
@@ -1541,8 +1541,9 @@ export default function PrintInvoicePage() {
               </div>
 
               {/* Bank Details */}
-              <div className={`border-b-2 border-black text-center font-medium ${isCompactDensity ? 'p-1 text-[11px]' : 'p-2 text-xs'}`}>
-                  <span className="font-bold underline text-[12px]">BANK & PAYMENT DETAILS</span><br/>
+              <div className={`border-b-2 border-black text-center font-medium ${isCompactDensity ? 'py-1 px-2 text-[10px] leading-tight' : 'p-2 text-xs'}`}>
+                  <span className="font-bold underline text-[11px]">BANK & PAYMENT DETAILS</span>
+                  {isCompactDensity ? ' : ' : <br/>}
                   {invoice.company.bank_name || ''} {invoice.company.bank_branch || ''}
                   {invoice.company.bank_account_number ? `, ACCOUNT NO- ${invoice.company.bank_account_number}` : ''}
                   {invoice.company.bank_ifsc ? `, IFSCODE: ${invoice.company.bank_ifsc}` : ''}
@@ -1554,7 +1555,7 @@ export default function PrintInvoicePage() {
 
             {/* Bottom Footer Section */}
             {sheet.isLastPage && (
-            <div className={`flex ${isCompactDensity ? 'h-32 print:h-28 text-[10px]' : 'h-44 print:h-38 text-xs'} shrink-0`}>
+            <div className={`flex ${isCompactDensity ? 'h-40 print:h-38 text-[10px]' : 'h-48 print:h-44 text-xs'} shrink-0`}>
                 {/* Column 1: Terms */}
                 <div className="w-[45%] p-2 border-r-2 border-black flex flex-col justify-between">
                     <div>
@@ -1568,30 +1569,31 @@ export default function PrintInvoicePage() {
                 
                 {/* Column 2: QR Code */}
                 <div className="w-[20%] p-1.5 border-r-2 border-black flex flex-col items-center justify-between text-center">
-                    <span className="font-bold text-[10px] mb-0.5">{getQrData().label}</span>
+                    <span className="font-bold text-[9px] mb-0.5">{getQrData().label}</span>
                     {typeof window !== 'undefined' && (
-                        <QRCode value={getQrData().value} size={isCompactDensity ? 66 : 92} className="mx-auto my-auto" />
+                        <QRCode value={getQrData().value} size={isCompactDensity ? 72 : 92} className="mx-auto my-auto" />
                     )}
                     <span className="text-[8px] text-slate-600 font-mono tracking-tighter text-center">{getQrData().sublabel}</span>
                 </div>
                 
                 {/* Column 3: Signatures */}
-                <div className="w-[35%] flex flex-col">
-                    <div className={`${isCompactDensity ? 'h-9' : 'h-12'} p-2 border-b-2 border-black flex items-start`}>
-                        <span className={`text-[11px] font-bold ${sheet.highlightTransport ? 'text-blue-900 font-extrabold' : ''}`}>
+                <div className="w-[35%] flex flex-col justify-between">
+                    <div className={`${isCompactDensity ? 'h-7' : 'h-10'} px-2 py-0.5 border-b-2 border-black flex items-center`}>
+                        <span className={`text-[10px] font-bold ${sheet.highlightTransport ? 'text-blue-900 font-extrabold' : ''}`}>
                           {sheet.signatoryTitle}
                         </span>
                     </div>
                     <div className="flex-1 p-2 relative flex flex-col justify-between items-end">
-                        <div className="font-bold text-sm text-right mt-0.5">for {invoice.company.name}</div>
+                        <div className="font-bold text-xs sm:text-sm text-right mt-0.5">for {invoice.company.name}</div>
                         
-                        <div className="flex justify-end w-full my-auto">
+                        {/* Generous physical / digital signing space */}
+                        <div className="flex-1 min-h-[55px] flex items-center justify-end w-full my-auto">
                             {invoice.company?.proprietor_signature && (
                                 <img 
                                     crossOrigin="anonymous"
                                     src={getSignatureUrl(invoice.company.proprietor_signature)} 
                                     alt="Signature" 
-                                    className={`${isCompactDensity ? 'h-10' : 'h-14'} object-contain`} 
+                                    className={`${isCompactDensity ? 'h-11' : 'h-14'} object-contain`} 
                                     onError={(e) => {
                                         (e.target as HTMLElement).style.display = 'none';
                                     }}
