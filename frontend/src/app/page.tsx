@@ -20,6 +20,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { isAuthenticated } from "@/utils/auth";
+import { API_BASE_URL } from "@/utils/api";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { VouchLogo } from "@/components/VouchLogo";
@@ -105,6 +106,15 @@ export default function LandingPage() {
 
   useEffect(() => {
     setIsAuth(isAuthenticated());
+    // Pre-warm the backend API gently so subsequent sign-in is instant
+    const timer = setTimeout(() => {
+      try {
+        fetch(`${API_BASE_URL}/api/health/`, { method: "GET", keepalive: true }).catch(() => {});
+      } catch {
+        // Ignore network drops
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
   }, []);
 
   return (

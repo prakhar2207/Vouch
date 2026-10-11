@@ -49,7 +49,7 @@ def root_health_view(request):
 
     return JsonResponse({
         "status": "healthy",
-        "service": "Vouch ERP Backend API",
+        "service": "SriLekh ERP Backend API",
         "version": "1.0.2",
         "commit": commit_sha,
         "environment": "production" if not settings.DEBUG else "development",

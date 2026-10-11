@@ -1,7 +1,7 @@
 "use client";
 
 import { API_BASE_URL } from "@/utils/api";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { setTokens } from "@/utils/auth";
 import { useRouter } from "next/navigation";
@@ -15,6 +15,15 @@ export default function Register() {
   const [error, setError] = useState("");
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Pre-warm the backend container as soon as register screen opens
+  useEffect(() => {
+    try {
+      fetch(`${API_BASE_URL}/api/health/`, { method: "GET", keepalive: true }).catch(() => {});
+    } catch {
+      // Passive warm-up attempt
+    }
+  }, []);
 
   // Step 1: Auth
   const [email, setEmail] = useState("");

@@ -1,7 +1,7 @@
 "use client";
 
 import { API_BASE_URL } from '@/utils/api';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { setTokens, setUser } from '@/utils/auth';
 import { useRouter } from 'next/navigation';
@@ -14,15 +14,33 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [warmingUp, setWarmingUp] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const router = useRouter();
+
+  // Pre-warm the Render backend container as soon as the login page opens
+  useEffect(() => {
+    try {
+      fetch(`${API_BASE_URL}/api/health/`, { method: 'GET', keepalive: true }).catch(() => {});
+    } catch {
+      // Passive warm-up attempt, ignore network drops
+    }
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setWarmingUp(false);
+
+    // If request takes longer than 2.5s (due to container sleep / cold start), inform the user
+    const slowTimer = setTimeout(() => {
+      setWarmingUp(true);
+    }, 2500);
+
     try {
       const res = await axios.post(`${API_BASE_URL}/api/v1/auth/login/`, { email: username, password });
+      clearTimeout(slowTimer);
       setTokens(res.data.access, res.data.refresh);
       if (res.data.user) {
         setUser(res.data.user);
@@ -37,6 +55,8 @@ export default function Login() {
         router.push('/dashboard');
       }
     } catch (err) {
+      clearTimeout(slowTimer);
+      setWarmingUp(false);
       setError('Invalid credentials. Please check your email and password.');
       setLoading(false);
     }
@@ -124,12 +144,12 @@ export default function Login() {
           <button 
             type="submit" 
             disabled={loading}
-            className="w-full min-h-[44px] bg-primary text-primary-foreground p-3 rounded-xl font-bold text-sm hover:bg-primary/90 transition-all shadow-md shadow-primary/20 disabled:opacity-60 cursor-pointer flex items-center justify-center gap-2"
+            className="w-full min-h-[44px] bg-primary text-primary-foreground p-3 rounded-xl font-bold text-sm hover:bg-primary/90 transition-all shadow-md shadow-primary/20 disabled:opacity-75 cursor-pointer flex items-center justify-center gap-2"
           >
             {loading ? (
               <>
-                <span className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
-                <span>Signing in...</span>
+                <span className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin shrink-0" />
+                <span>{warmingUp ? "Connecting to secure server..." : "Signing in..."}</span>
               </>
             ) : (
               <>
@@ -138,6 +158,14 @@ export default function Login() {
               </>
             )}
           </button>
+
+          {/* Cold-start reassuring notice */}
+          {loading && warmingUp && (
+            <div className="flex items-center justify-center gap-2 text-[11px] text-amber-500/90 font-medium animate-pulse text-center pt-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping shrink-0" />
+              <span>Initial connection in progress — warming up secure cloud instance...</span>
+            </div>
+          )}
         </form>
 
         {/* Footer */}
