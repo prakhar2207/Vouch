@@ -116,27 +116,87 @@ async function renderPdfPagesClient(fileOrBuffer: File | ArrayBuffer): Promise<s
   }
 }
 
-const reconcileInvoiceTotals = (data: ExtractedInvoice): ExtractedInvoice => {
+const reconcileInvoiceTotals = (data: ExtractedInvoice, buyerStateCode: string = ""): ExtractedInvoice => {
   const sub = Number(data.subtotal || 0);
-  const taxes = Number(data.cgst_amount || 0) + Number(data.sgst_amount || 0) + Number(data.igst_amount || 0);
-  const unrounded = Number((sub + taxes).toFixed(2));
-  let roundOff = data.round_off;
-  let totalAmount = data.total_amount;
+  let cgst = Number(data.cgst_amount || 0);
+  let sgst = Number(data.sgst_amount || 0);
+  let igst = Number(data.igst_amount || 0);
+  let taxes = cgst + sgst + igst;
+  let roundOff = data.round_off !== undefined && data.round_off !== null ? Number(data.round_off) : 0;
+  let totalAmount = Number(data.total_amount || 0);
 
-  if (roundOff !== undefined && roundOff !== null && roundOff !== 0) {
-    totalAmount = Number((unrounded + roundOff).toFixed(2));
-  } else if (totalAmount !== undefined && totalAmount !== null && Math.abs(totalAmount - Math.round(totalAmount)) < 0.001 && totalAmount > 0) {
-    roundOff = Number((totalAmount - unrounded).toFixed(2));
+  const suppGstin = (data.supplier_gstin || "").trim().toUpperCase();
+  const suppState = (data.state_code || "").trim() || (suppGstin.length >= 2 && /^\d{2}$/.test(suppGstin.substring(0, 2)) ? suppGstin.substring(0, 2) : "");
+  const isInterstate = Boolean(suppState && buyerStateCode && suppState !== buyerStateCode);
+
+  // If taxes were 0 but items have taxable amounts or totalAmount > sub:
+  if (taxes === 0 && sub > 0) {
+    let itemTax = 0;
+    if (data.line_items && data.line_items.length > 0) {
+      itemTax = data.line_items.reduce((s, it) => {
+        const amt = Number(it.amount || 0);
+        const r = Number(it.gst_rate ?? 18);
+        return s + Number((amt * (r / 100)).toFixed(2));
+      }, 0);
+    }
+    if (itemTax === 0) {
+      itemTax = Number((sub * 0.18).toFixed(2));
+    }
+    itemTax = Number(itemTax.toFixed(2));
+
+    if (totalAmount > sub) {
+      const taxDiff = Number((totalAmount - sub).toFixed(2));
+      const recoveredTax = Math.abs(taxDiff - itemTax) <= 3.0 ? itemTax : taxDiff;
+      if (isInterstate) {
+        igst = recoveredTax;
+        cgst = 0;
+        sgst = 0;
+      } else {
+        const half = Number((recoveredTax / 2).toFixed(2));
+        cgst = half;
+        sgst = Number((recoveredTax - half).toFixed(2));
+        igst = 0;
+      }
+      taxes = recoveredTax;
+      const unrounded = Number((sub + taxes).toFixed(2));
+      roundOff = Number((totalAmount - unrounded).toFixed(2));
+    } else {
+      if (isInterstate) {
+        igst = itemTax;
+        cgst = 0;
+        sgst = 0;
+      } else {
+        const half = Number((itemTax / 2).toFixed(2));
+        cgst = half;
+        sgst = Number((itemTax - half).toFixed(2));
+        igst = 0;
+      }
+      taxes = itemTax;
+      const unrounded = Number((sub + taxes).toFixed(2));
+      const roundedTot = Math.round(unrounded);
+      roundOff = Number((roundedTot - unrounded).toFixed(2));
+      totalAmount = roundedTot;
+    }
   } else {
-    const integerPart = Math.floor(unrounded);
-    const decimalPart = Math.round((unrounded - integerPart) * 100) / 100;
-    const roundedTot = decimalPart < 0.5 ? integerPart : integerPart + 1;
-    roundOff = Number((roundedTot - unrounded).toFixed(2));
-    totalAmount = roundedTot;
+    const unrounded = Number((sub + taxes).toFixed(2));
+    if (totalAmount > 0 && Math.abs(totalAmount - unrounded) <= 2.5) {
+      roundOff = Number((totalAmount - unrounded).toFixed(2));
+    } else if (roundOff !== 0) {
+      totalAmount = Number((unrounded + roundOff).toFixed(2));
+    } else {
+      const roundedTot = Math.round(unrounded);
+      roundOff = Number((roundedTot - unrounded).toFixed(2));
+      totalAmount = roundedTot;
+    }
   }
 
   return {
     ...data,
+    state_code: suppState || data.state_code,
+    subtotal: sub,
+    cgst_amount: cgst,
+    sgst_amount: sgst,
+    igst_amount: igst,
     round_off: roundOff,
     total_amount: totalAmount,
   };
@@ -173,6 +233,24 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
   const [isCreatingNewCategory, setIsCreatingNewCategory] = useState<boolean>(false);
   const [newCategoryName, setNewCategoryName] = useState<string>("");
   const [categoryDetectedMsg, setCategoryDetectedMsg] = useState<string | null>(null);
+
+  // GST Tax Treatment State
+  const [taxType, setTaxType] = useState<'IGST' | 'CGST_SGST' | 'EXEMPT'>('IGST');
+  const [companyStateCode, setCompanyStateCode] = useState<string>('');
+
+  // Fetch company details to resolve state code for inter-state vs intra-state supply
+  useEffect(() => {
+    if (companyId) {
+      api.get(`/api/v1/companies/`).then((res) => {
+        const comps = res.data.data || res.data || [];
+        const match = comps.find((c: any) => String(c.id) === String(companyId));
+        if (match) {
+          const code = match.state_code || (match.gstin ? match.gstin.substring(0, 2) : '');
+          setCompanyStateCode(code);
+        }
+      }).catch(() => {});
+    }
+  }, [companyId]);
 
   // Automatic cleanup: Purge any failed/mock results from offlineDb.ocrCache so fresh scans always run
   useEffect(() => {
@@ -367,7 +445,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       return;
     }
 
-    const maxRetries = 3;
+    const maxRetries = 2;
     let attempt = 0;
     let success = false;
 
@@ -376,7 +454,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         attempt++;
         if (attempt > 1) {
           setScanStatusToast(`Analyzing bill... (Attempt ${attempt}/${maxRetries})`);
-          await new Promise((res) => setTimeout(res, 2000));
+          await new Promise((res) => setTimeout(res, 1500));
         }
 
         const res = await api.post(
@@ -385,8 +463,12 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
             file_base64: base64,
             mime_type: mime,
             scan_mode: activeMode,
+            company_id: companyId,
           },
-          { timeout: 120000 }
+          { 
+            headers: { 'X-Company-ID': companyId },
+            timeout: 120000 
+          }
         );
 
         if (res.data.success) {
@@ -407,8 +489,24 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
             });
           }
 
-          const reconciled = reconcileInvoiceTotals(data);
+          const reconciled = reconcileInvoiceTotals(data, companyStateCode);
           setInvoice(reconciled);
+
+          // Update active taxType
+          if (reconciled.igst_amount > 0) {
+            setTaxType('IGST');
+          } else if (reconciled.cgst_amount > 0 || reconciled.sgst_amount > 0) {
+            setTaxType('CGST_SGST');
+          } else {
+            const suppGstin = (reconciled.supplier_gstin || '').trim();
+            const suppState = reconciled.state_code || (suppGstin.length >= 2 ? suppGstin.substring(0, 2) : '');
+            if (suppState && companyStateCode && suppState !== companyStateCode) {
+              setTaxType('IGST');
+            } else {
+              setTaxType('CGST_SGST');
+            }
+          }
+
           if (data.preview_images && data.preview_images.length > 0) {
             setPdfPageImages(data.preview_images);
           }
@@ -469,6 +567,56 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
     setLoading(false);
   };
 
+  const handleTaxTypeChange = (newType: 'IGST' | 'CGST_SGST' | 'EXEMPT') => {
+    if (!invoice) return;
+    setTaxType(newType);
+    const sub = Number(invoice.subtotal || 0);
+    let itemTax = invoice.line_items.reduce((s, it) => {
+      const amt = Number(it.amount || 0);
+      const r = Number(it.gst_rate ?? 18);
+      return s + Number((amt * (r / 100)).toFixed(2));
+    }, 0);
+    if (itemTax === 0) itemTax = Number((sub * 0.18).toFixed(2));
+    itemTax = Number(itemTax.toFixed(2));
+
+    let cgst = 0;
+    let sgst = 0;
+    let igst = 0;
+
+    if (newType === 'IGST') {
+      igst = itemTax;
+    } else if (newType === 'CGST_SGST') {
+      const half = Number((itemTax / 2).toFixed(2));
+      cgst = half;
+      sgst = Number((itemTax - half).toFixed(2));
+    }
+
+    const unrounded = Number((sub + cgst + sgst + igst).toFixed(2));
+    const roundedTot = Math.round(unrounded);
+    const newRo = Number((roundedTot - unrounded).toFixed(2));
+
+    setInvoice({
+      ...invoice,
+      cgst_amount: cgst,
+      sgst_amount: sgst,
+      igst_amount: igst,
+      round_off: newRo,
+      total_amount: roundedTot,
+    });
+  };
+
+  const handleTaxAmountChange = (taxField: 'cgst_amount' | 'sgst_amount' | 'igst_amount', val: number) => {
+    if (!invoice) return;
+    const sub = Number(invoice.subtotal || 0);
+    const numVal = isNaN(val) ? 0 : Number(val.toFixed(2));
+    const newInvoice = { ...invoice, [taxField]: numVal };
+    const taxes = Number(newInvoice.cgst_amount || 0) + Number(newInvoice.sgst_amount || 0) + Number(newInvoice.igst_amount || 0);
+    const unrounded = Number((sub + taxes).toFixed(2));
+    const currentRo = Number(newInvoice.round_off || 0);
+    newInvoice.total_amount = Number((unrounded + currentRo).toFixed(2));
+    setInvoice(newInvoice);
+  };
+
   const updateItem = (index: number, field: keyof LineItem, value: any) => {
     if (!invoice) return;
     const updatedItems = [...invoice.line_items];
@@ -483,14 +631,28 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       updatedItems[index].amount = Number(finalAmount.toFixed(2));
     }
 
-    const sub = updatedItems.reduce((s, i) => s + (Number(i.amount) || 0), 0);
-    const cgst = invoice.cgst_amount > 0 ? Number((sub * 0.09).toFixed(2)) : 0;
-    const sgst = invoice.sgst_amount > 0 ? Number((sub * 0.09).toFixed(2)) : 0;
-    const igst = invoice.igst_amount > 0 ? Number((sub * 0.18).toFixed(2)) : 0;
+    const sub = Number(updatedItems.reduce((s, i) => s + (Number(i.amount) || 0), 0).toFixed(2));
+    let totalTax = updatedItems.reduce((s, it) => {
+      const amt = Number(it.amount || 0);
+      const r = Number(it.gst_rate ?? 18);
+      return s + Number((amt * (r / 100)).toFixed(2));
+    }, 0);
+    totalTax = Number(totalTax.toFixed(2));
+
+    let cgst = 0;
+    let sgst = 0;
+    let igst = 0;
+
+    if (taxType === 'IGST') {
+      igst = totalTax;
+    } else if (taxType === 'CGST_SGST') {
+      const half = Number((totalTax / 2).toFixed(2));
+      cgst = half;
+      sgst = Number((totalTax - half).toFixed(2));
+    }
+
     const unrounded = Number((sub + cgst + sgst + igst).toFixed(2));
-    const integerPart = Math.floor(unrounded);
-    const decimalPart = Math.round((unrounded - integerPart) * 100) / 100;
-    const roundedTot = decimalPart < 0.5 ? integerPart : integerPart + 1;
+    const roundedTot = Math.round(unrounded);
     const autoRoundOff = Number((roundedTot - unrounded).toFixed(2));
 
     setInvoice({
@@ -519,14 +681,28 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
   const removeLineItem = (index: number) => {
     if (!invoice || invoice.line_items.length <= 1) return;
     const updated = invoice.line_items.filter((_, i) => i !== index);
-    const sub = updated.reduce((s, i) => s + (Number(i.amount) || 0), 0);
-    const cgst = invoice.cgst_amount > 0 ? Number((sub * 0.09).toFixed(2)) : 0;
-    const sgst = invoice.sgst_amount > 0 ? Number((sub * 0.09).toFixed(2)) : 0;
-    const igst = invoice.igst_amount > 0 ? Number((sub * 0.18).toFixed(2)) : 0;
+    const sub = Number(updated.reduce((s, i) => s + (Number(i.amount) || 0), 0).toFixed(2));
+    let totalTax = updated.reduce((s, it) => {
+      const amt = Number(it.amount || 0);
+      const r = Number(it.gst_rate ?? 18);
+      return s + Number((amt * (r / 100)).toFixed(2));
+    }, 0);
+    totalTax = Number(totalTax.toFixed(2));
+
+    let cgst = 0;
+    let sgst = 0;
+    let igst = 0;
+
+    if (taxType === 'IGST') {
+      igst = totalTax;
+    } else if (taxType === 'CGST_SGST') {
+      const half = Number((totalTax / 2).toFixed(2));
+      cgst = half;
+      sgst = Number((totalTax - half).toFixed(2));
+    }
+
     const unrounded = Number((sub + cgst + sgst + igst).toFixed(2));
-    const integerPart = Math.floor(unrounded);
-    const decimalPart = Math.round((unrounded - integerPart) * 100) / 100;
-    const roundedTot = decimalPart < 0.5 ? integerPart : integerPart + 1;
+    const roundedTot = Math.round(unrounded);
     const autoRoundOff = Number((roundedTot - unrounded).toFixed(2));
 
     setInvoice({
@@ -1399,29 +1575,117 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
               </div>
 
               {/* Totals Summary */}
-              <div className="p-4 bg-muted/30 dark:bg-muted/20 border border-border rounded-xl space-y-2 font-mono text-xs shadow-xs">
-                <div className="flex justify-between text-muted-foreground">
+              <div className="p-4 bg-muted/30 dark:bg-muted/20 border border-border rounded-xl space-y-3 font-mono text-xs shadow-xs">
+                <div className="flex justify-between text-muted-foreground font-mono">
                   <span>Subtotal:</span>
                   <span className="text-foreground font-medium">₹{invoice.subtotal.toFixed(2)}</span>
                 </div>
-                {invoice.cgst_amount > 0 && (
-                  <div className="flex justify-between text-muted-foreground">
-                    <span>CGST (9%):</span>
-                    <span className="text-foreground font-medium">₹{invoice.cgst_amount.toFixed(2)}</span>
+
+                {/* GST Tax Treatment Toggle */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 py-1.5 border-y border-border/60 font-sans">
+                  <span className="text-[11px] font-semibold text-foreground/80 flex items-center gap-1">
+                    <span>🏷️</span> Tax Type:
+                  </span>
+                  <div className="inline-flex rounded-lg bg-background p-0.5 border border-border text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => handleTaxTypeChange('IGST')}
+                      className={`px-2 py-0.5 rounded font-semibold transition-all cursor-pointer ${
+                        taxType === 'IGST'
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      IGST (18%)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleTaxTypeChange('CGST_SGST')}
+                      className={`px-2 py-0.5 rounded font-semibold transition-all cursor-pointer ${
+                        taxType === 'CGST_SGST'
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      CGST+SGST (9%+9%)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleTaxTypeChange('EXEMPT')}
+                      className={`px-2 py-0.5 rounded font-semibold transition-all cursor-pointer ${
+                        taxType === 'EXEMPT'
+                          ? 'bg-muted text-foreground font-bold'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Exempt (0%)
+                    </button>
+                  </div>
+                </div>
+
+                {taxType === 'IGST' && (
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <span>IGST (18%):</span>
+                      <span className="text-[10px] text-muted-foreground font-sans">(Inter-state)</span>
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[11px] text-muted-foreground">₹</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={invoice.igst_amount !== undefined && invoice.igst_amount !== null ? invoice.igst_amount : 0}
+                        onChange={(e) => handleTaxAmountChange('igst_amount', parseFloat(e.target.value) || 0)}
+                        className="w-24 text-right bg-background border border-input px-2 py-0.5 rounded text-xs font-mono font-medium outline-none focus:ring-1 focus:ring-blue-500 text-foreground"
+                      />
+                    </div>
                   </div>
                 )}
-                {invoice.sgst_amount > 0 && (
+
+                {taxType === 'CGST_SGST' && (
+                  <>
+                    <div className="flex items-center justify-between text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <span>CGST (9%):</span>
+                        <span className="text-[10px] text-muted-foreground font-sans">(Central)</span>
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] text-muted-foreground">₹</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={invoice.cgst_amount !== undefined && invoice.cgst_amount !== null ? invoice.cgst_amount : 0}
+                          onChange={(e) => handleTaxAmountChange('cgst_amount', parseFloat(e.target.value) || 0)}
+                          className="w-24 text-right bg-background border border-input px-2 py-0.5 rounded text-xs font-mono font-medium outline-none focus:ring-1 focus:ring-blue-500 text-foreground"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <span>SGST (9%):</span>
+                        <span className="text-[10px] text-muted-foreground font-sans">(State)</span>
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] text-muted-foreground">₹</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={invoice.sgst_amount !== undefined && invoice.sgst_amount !== null ? invoice.sgst_amount : 0}
+                          onChange={(e) => handleTaxAmountChange('sgst_amount', parseFloat(e.target.value) || 0)}
+                          className="w-24 text-right bg-background border border-input px-2 py-0.5 rounded text-xs font-mono font-medium outline-none focus:ring-1 focus:ring-blue-500 text-foreground"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {taxType === 'EXEMPT' && (
                   <div className="flex justify-between text-muted-foreground">
-                    <span>SGST (9%):</span>
-                    <span className="text-foreground font-medium">₹{invoice.sgst_amount.toFixed(2)}</span>
+                    <span>GST (0%):</span>
+                    <span className="text-muted-foreground">₹0.00 (Exempt)</span>
                   </div>
                 )}
-                {invoice.igst_amount > 0 && (
-                  <div className="flex justify-between text-muted-foreground">
-                    <span>IGST (18%):</span>
-                    <span className="text-foreground font-medium">₹{invoice.igst_amount.toFixed(2)}</span>
-                  </div>
-                )}
+
                 {/* Round Off Row directly above Grand Total */}
                 <div className="flex items-center justify-between text-muted-foreground">
                   <div className="flex items-center gap-1.5">
@@ -1445,6 +1709,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                     />
                   </div>
                 </div>
+
                 <div className="flex justify-between text-base font-bold text-foreground border-t border-border pt-2">
                   <span>Grand Total:</span>
                   <span className="text-emerald-600 dark:text-emerald-400 font-bold">₹{invoice.total_amount.toFixed(2)}</span>

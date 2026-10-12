@@ -41,11 +41,23 @@ class OCRExtractAPIView(APIView):
                 "message": "OCR scanning task dispatched to background worker."
             }, status=status.HTTP_202_ACCEPTED)
 
+        company_id = request.headers.get('X-Company-ID') or request.data.get('company_id')
+        buyer_state_code = ""
+        if company_id:
+            try:
+                from apps.companies.models import Company
+                comp = Company.objects.filter(id=company_id).first()
+                if comp:
+                    buyer_state_code = comp.state_code or (comp.gstin[:2] if comp.gstin else "")
+            except Exception:
+                pass
+
         try:
             extracted_data = InvoiceOCRService.extract_from_base64(
                 file_base64, 
                 mime_type, 
-                scan_mode=scan_mode
+                scan_mode=scan_mode,
+                buyer_state_code=buyer_state_code
             )
             return Response({
                 "success": True,

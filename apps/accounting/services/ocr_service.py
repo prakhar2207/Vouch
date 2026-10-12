@@ -72,13 +72,12 @@ def parse_words_to_number(text: str) -> float:
 
 class InvoiceOCRService:
     @staticmethod
-    def extract_from_base64(base64_data: str, mime_type: str = "image/png", scan_mode: str = "auto") -> dict:
+    def extract_from_base64(base64_data: str, mime_type: str = "image/png", scan_mode: str = "auto", buyer_state_code: str = "") -> dict:
         """
         Extracts invoice header & line-item details using a Smart Hybrid Multi-Tier architecture:
         Tier 1: Google Gemini Dual-Engine:
-                - gemini-3.1-flash-lite (high RPD, 2x speed for printed invoices, clean receipts)
-                - gemini-3.6-flash (deep vision reasoning for handwritten, faint, or irregular tables)
-                - Seamless auto-promotion: if Flash-Lite returns 0 items, auto-promotes to 3.6-flash
+                - gemini-2.5-flash (deep vision reasoning for handwritten, faint, or irregular tables & printed invoices)
+                - gemini-2.0-flash / gemini-2.0-flash-lite (high speed GA fallbacks)
         Tier 2: PDF text stream tokenizer using PyPDF (for digital vector PDFs)
         Tier 3: Graceful fallback error reporting
         """
@@ -143,8 +142,10 @@ class InvoiceOCRService:
             import time
             import random
 
+            buyer_context = f" The Buyer / Consignee state code is '{buyer_state_code}'." if buyer_state_code else ""
             prompt = (
-                "You are an expert accounts payable AI specialized in Indian GST tax invoices, bills of supply, and handwritten or printed purchase receipts. "
+                "You are an expert accounts payable AI specialized in Indian GST tax invoices, bills of supply, and handwritten or printed purchase receipts."
+                f"{buyer_context} "
                 "Carefully analyze this entire document image or PDF in-memory. "
                 "Key parsing rules: "
                 "1. SMART CATEGORY DIFFERENTIATION: Many handwritten or printed bills write a category header at the top or repeat it on lines (e.g. 'V BELT', 'V Belts', 'Bearings', 'Pulleys'). "
@@ -154,22 +155,17 @@ class InvoiceOCRService:
                 "   - If the category cannot be determined with certainty, or if items are mixed/unknown, set requires_category_confirmation = True. "
                 "2. Resolve ditto marks (\", '', do, as above) by carrying forward values, rates, or descriptions from the preceding line. "
                 "3. Interpret handwriting shorthand, abbreviations (e.g., 'pkg', 'bx', 'mtr', 'nos'), and handwritten digits accurately. "
-                "4. Extract the exact Supplier Name, Supplier GSTIN, Invoice/Bill Number, Invoice Date (in YYYY-MM-DD format), Place of Supply / State Code. "
+                "4. Extract the exact Supplier Name, Supplier GSTIN, Invoice/Bill Number, Invoice Date (in YYYY-MM-DD format), Place of Supply / State Code (first 2 digits of supplier GSTIN). "
                 "5. Accurately extract all itemized line items: clean Description, Category, Brand (e.g. Fenner, SKF, PIX, NBC if mentioned), HSN code, Quantity, Unit, Rate (MRP or price before discount), Discount Percentage, and Taxable Amount. "
-                "6. Extract Subtotal, CGST, SGST, IGST, Round Off, and Grand Total Amount. Verify and reconcile mathematics where visible. If the bill specifies a round-off or if grand total differs from subtotal + taxes by a small amount (e.g. within 2 rupees), set round_off = total_amount - (subtotal + taxes). "
+                "6. TAX BREAKDOWN & GST DETECTION: Carefully inspect the bottom tax summary box, handwritten tax rows, or stamps. "
+                "   - If Supplier State != Buyer State (or different states), this is an INTER-STATE supply -> ALL tax is IGST. Set igst_amount to the full tax amount, and set cgst_amount = 0, sgst_amount = 0. "
+                "   - If Supplier State == Buyer State, this is an INTRA-STATE supply -> Split tax equally into CGST and SGST (and set igst_amount = 0). "
+                "   - Extract Subtotal, CGST, SGST, IGST, Round Off, and Grand Total Amount. Verify mathematics: Subtotal + CGST + SGST + IGST + Round Off = Grand Total. "
                 "Output strict JSON following the schema."
             )
 
-            # Smart Hybrid Engine selection:
-            # - 'handwritten' / 'complex': prioritizes 3.6-flash for deep handwritten reasoning
-            # - 'printed' / 'auto': prioritizes 3.1-flash-lite for maximum RPD quota & ultra-fast speed
-            # Prioritized list of modern vision models (Gemini 3 and 2.x series)
+            # Prioritized list of official, supported GA vision models
             candidate_models = [
-                "gemini-3.1-flash-lite",
-                "gemini-3.6-flash",
-                "gemini-3.8-flash",
-                "gemini-3.5-flash",
-                "gemini-3.0-flash",
                 "gemini-2.5-flash",
                 "gemini-2.0-flash",
                 "gemini-2.0-flash-lite",
@@ -182,35 +178,7 @@ class InvoiceOCRService:
                 from google import genai
                 from google.genai import types
                 client = genai.Client(api_key=active_key)
-
-                # Dynamically discover models supported for this API key to avoid 404s
                 models_to_try = list(candidate_models)
-                try:
-                    available = []
-                    for m in client.models.list():
-                        name = getattr(m, 'name', '') or ''
-                        clean_name = name.replace("models/", "")
-                        actions = getattr(m, 'supported_actions', []) or getattr(m, 'supported_generation_methods', []) or []
-                        if actions and not any('generatecontent' in str(a).lower() for a in actions):
-                            continue
-                        lower = clean_name.lower()
-                        # Strictly filter out retired, restricted, embedding, audio, or pro models
-                        if any(banned in lower for banned in ["pro", "1.5", "1.0", "embed", "imagen", "veo", "tts", "aqa", "learnlm"]):
-                            continue
-                        available.append(clean_name)
-
-                    if available:
-                        verified = [m for m in candidate_models if m in available]
-                        other_flash = [m for m in available if m not in verified and "flash" in m.lower()]
-                        if verified:
-                            models_to_try = verified + other_flash
-                        elif other_flash:
-                            models_to_try = other_flash
-                        else:
-                            models_to_try = [m for m in available if "gemini" in m.lower()]
-                except Exception as list_err:
-                    print(f"[Gemini ListModels Notice]: {list_err}. Defaulting to verified candidate list.")
-
                 attempted_errors = []
 
                 for attempt in range(max_retries):
@@ -255,7 +223,7 @@ class InvoiceOCRService:
                             result = json.loads(resp_text)
                             items = result.get("line_items", []) if isinstance(result, dict) else []
 
-                            # Smart Auto-Promotion: If Flash-Lite parsed 0 items, auto-promote to gemini-2.0-flash
+                            # Smart Auto-Promotion: If Flash-Lite parsed 0 items, auto-promote to gemini-2.5-flash
                             if "lite" in model_name.lower() and (not items or len(items) == 0) and any("flash" in m and "lite" not in m for m in models_to_try):
                                 print(f"[Hybrid OCR Engine] {model_name} parsed 0 items. Auto-promoting for deeper vision...")
                                 continue
@@ -276,7 +244,7 @@ class InvoiceOCRService:
                                     cleaned_desc = strip_category_prefix(desc, item_cat)
                                     if cleaned_desc:
                                         it["description"] = cleaned_desc
-                            result["validation"] = InvoiceOCRService.validate_invoice_math(result)
+                            result["validation"] = InvoiceOCRService.validate_invoice_math(result, buyer_state_code=buyer_state_code)
                             return _attach_pdf_previews(result)
                         except Exception as gemini_err:
                             err_str = str(gemini_err).lower()
@@ -303,7 +271,7 @@ class InvoiceOCRService:
             if pdf_parsed_data and (pdf_parsed_data.get("invoice_number") or pdf_parsed_data.get("supplier_name")):
                 pdf_parsed_data["source"] = "PDF_TEXT_STREAM"
                 pdf_parsed_data["is_mock"] = False
-                pdf_parsed_data["validation"] = InvoiceOCRService.validate_invoice_math(pdf_parsed_data)
+                pdf_parsed_data["validation"] = InvoiceOCRService.validate_invoice_math(pdf_parsed_data, buyer_state_code=buyer_state_code)
                 return _attach_pdf_previews(pdf_parsed_data)
 
         if last_gemini_error:
@@ -623,43 +591,120 @@ class InvoiceOCRService:
         return True
 
     @staticmethod
-    def validate_invoice_math(data: dict) -> dict:
+    def validate_invoice_math(data: dict, buyer_state_code: str = "") -> dict:
         """
         Deterministic mathematical reconciliation & GST validation for invoices (Phases 10 & 11).
         1. Reconciles: sum(items.amount) == subtotal
         2. Reconciles: subtotal + cgst + sgst + igst == grand_total
-        3. Validates 15-char GSTIN format and state code.
-        4. Calculates field confidence scores and overall risk tier.
+        3. Recovers missing taxes if grand_total > subtotal or line items specify GST rates.
+        4. Validates 15-char GSTIN format and state code.
+        5. Calculates field confidence scores and overall risk tier.
         """
         items = data.get("line_items", [])
         calc_sub = round(sum(float(i.get("amount", 0.0) or 0.0) for i in items), 2)
         ext_sub = round(float(data.get("subtotal", 0.0) or 0.0), 2)
+        subtotal_base = calc_sub if calc_sub > 0 else ext_sub
+        if subtotal_base > 0 and ext_sub == 0.0:
+            data["subtotal"] = subtotal_base
+
         cgst = round(float(data.get("cgst_amount", 0.0) or 0.0), 2)
         sgst = round(float(data.get("sgst_amount", 0.0) or 0.0), 2)
         igst = round(float(data.get("igst_amount", 0.0) or 0.0), 2)
         ext_total = round(float(data.get("total_amount", 0.0) or 0.0), 2)
-
-        subtotal_base = calc_sub if calc_sub > 0 else ext_sub
-        unrounded_expected = round(subtotal_base + cgst + sgst + igst, 2)
         ro_val = round(float(data.get("round_off", 0.0) or 0.0), 2)
 
-        if ro_val != 0.0:
-            expected_total = round(unrounded_expected + ro_val, 2)
-            data["total_amount"] = expected_total
-        elif ext_total > 0 and abs(ext_total - round(ext_total)) < 0.001 and abs(ext_total - unrounded_expected) <= 2.0:
-            ro_val = round(ext_total - unrounded_expected, 2)
-            data["round_off"] = ro_val
-            expected_total = ext_total
-        else:
-            int_part = int(unrounded_expected)
-            dec_part = unrounded_expected - int_part
-            rounded_tot = int_part if dec_part < 0.50 else int_part + 1
-            ro_val = round(rounded_tot - unrounded_expected, 2)
-            data["round_off"] = ro_val
-            expected_total = round(unrounded_expected + ro_val, 2)
-            data["total_amount"] = float(expected_total)
+        gstin = (data.get("supplier_gstin") or "").strip().upper()
+        supp_state = (data.get("state_code") or "").strip()
+        if not supp_state and len(gstin) >= 2 and gstin[:2].isdigit():
+            supp_state = gstin[:2]
+            data["state_code"] = supp_state
 
-        diff = round(abs(expected_total - ext_total), 2)
+        buyer_state = str(buyer_state_code or "").strip()
+        is_interstate = (supp_state and buyer_state and supp_state != buyer_state)
+
+        # -------------------------------------------------------------
+        # Deterministic GST Reconciliation:
+        # If AI returned 0 taxes but the bill has line-item taxes or ext_total > subtotal_base
+        # -------------------------------------------------------------
+        if cgst == 0.0 and sgst == 0.0 and igst == 0.0 and subtotal_base > 0:
+            # Calculate itemized tax expectation
+            total_item_tax = 0.0
+            for item in items:
+                amt = float(item.get("amount", 0.0) or 0.0)
+                gst_r = float(item.get("gst_rate", 18.0) or 18.0)
+                total_item_tax += round(amt * (gst_r / 100.0), 2)
+            total_item_tax = round(total_item_tax, 2)
+            if total_item_tax == 0.0:
+                total_item_tax = round(subtotal_base * 0.18, 2)
+
+            if ext_total > subtotal_base:
+                tax_diff = round(ext_total - subtotal_base, 2)
+                # If difference matches line item tax within round-off tolerance (<= 3.00)
+                if abs(tax_diff - total_item_tax) <= 3.0:
+                    recovered_tax = total_item_tax
+                else:
+                    recovered_tax = tax_diff
+
+                if is_interstate:
+                    igst = recovered_tax
+                    cgst = 0.0
+                    sgst = 0.0
+                else:
+                    half_tax = round(recovered_tax / 2.0, 2)
+                    cgst = half_tax
+                    sgst = round(recovered_tax - half_tax, 2)
+                    igst = 0.0
+
+                data["cgst_amount"] = cgst
+                data["sgst_amount"] = sgst
+                data["igst_amount"] = igst
+
+                unrounded = round(subtotal_base + cgst + sgst + igst, 2)
+                ro_val = round(ext_total - unrounded, 2)
+                data["round_off"] = ro_val
+                expected_total = ext_total
+                data["total_amount"] = ext_total
+            else:
+                # ext_total is 0 or equal to subtotal: infer tax from items
+                if is_interstate:
+                    igst = total_item_tax
+                    cgst = 0.0
+                    sgst = 0.0
+                else:
+                    half_tax = round(total_item_tax / 2.0, 2)
+                    cgst = half_tax
+                    sgst = round(total_item_tax - half_tax, 2)
+                    igst = 0.0
+
+                data["cgst_amount"] = cgst
+                data["sgst_amount"] = sgst
+                data["igst_amount"] = igst
+
+                unrounded = round(subtotal_base + cgst + sgst + igst, 2)
+                rounded_tot = round(unrounded)
+                ro_val = round(rounded_tot - unrounded, 2)
+                data["round_off"] = ro_val
+                expected_total = float(rounded_tot)
+                data["total_amount"] = expected_total
+        else:
+            # Taxes were present in extraction
+            unrounded_expected = round(subtotal_base + cgst + sgst + igst, 2)
+            if ext_total > 0 and abs(ext_total - unrounded_expected) <= 2.50:
+                ro_val = round(ext_total - unrounded_expected, 2)
+                data["round_off"] = ro_val
+                expected_total = ext_total
+                data["total_amount"] = ext_total
+            elif ro_val != 0.0:
+                expected_total = round(unrounded_expected + ro_val, 2)
+                data["total_amount"] = expected_total
+            else:
+                rounded_tot = round(unrounded_expected)
+                ro_val = round(rounded_tot - unrounded_expected, 2)
+                data["round_off"] = ro_val
+                expected_total = float(rounded_tot)
+                data["total_amount"] = expected_total
+
+        diff = round(abs(expected_total - ext_total), 2) if ext_total > 0 else 0.0
         math_valid = (diff <= 1.0) and (ext_total > 0 or expected_total > 0)
 
         gstin = (data.get("supplier_gstin") or "").strip().upper()
