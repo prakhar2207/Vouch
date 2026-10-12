@@ -163,16 +163,16 @@ class InvoiceOCRService:
             # Smart Hybrid Engine selection:
             # - 'handwritten' / 'complex': prioritizes 3.6-flash for deep handwritten reasoning
             # - 'printed' / 'auto': prioritizes 3.1-flash-lite for maximum RPD quota & ultra-fast speed
-            # Prioritized list of modern vision models
+            # Prioritized list of modern vision models (Gemini 3 and 2.x series)
             candidate_models = [
+                "gemini-3.1-flash-lite",
+                "gemini-3.6-flash",
+                "gemini-3.8-flash",
+                "gemini-3.5-flash",
+                "gemini-3.0-flash",
                 "gemini-2.5-flash",
                 "gemini-2.0-flash",
                 "gemini-2.0-flash-lite",
-                "gemini-1.5-flash-latest",
-                "gemini-1.5-flash-002",
-                "gemini-1.5-flash-001",
-                "gemini-2.5-pro",
-                "gemini-2.0-pro-exp-02-05",
             ]
 
             max_retries = 2
@@ -184,23 +184,34 @@ class InvoiceOCRService:
                 client = genai.Client(api_key=active_key)
 
                 # Dynamically discover models supported for this API key to avoid 404s
-                models_to_try = candidate_models
+                models_to_try = list(candidate_models)
                 try:
-                    available = [
-                        m.name.replace("models/", "")
-                        for m in client.models.list()
-                        if getattr(m, 'name', None)
-                    ]
+                    available = []
+                    for m in client.models.list():
+                        name = getattr(m, 'name', '') or ''
+                        clean_name = name.replace("models/", "")
+                        actions = getattr(m, 'supported_actions', []) or getattr(m, 'supported_generation_methods', []) or []
+                        if actions and not any('generatecontent' in str(a).lower() for a in actions):
+                            continue
+                        lower = clean_name.lower()
+                        # Strictly filter out retired, restricted, embedding, audio, or pro models
+                        if any(banned in lower for banned in ["pro", "1.5", "1.0", "embed", "imagen", "veo", "tts", "aqa", "learnlm"]):
+                            continue
+                        available.append(clean_name)
+
                     if available:
                         verified = [m for m in candidate_models if m in available]
+                        other_flash = [m for m in available if m not in verified and "flash" in m.lower()]
                         if verified:
-                            models_to_try = verified
+                            models_to_try = verified + other_flash
+                        elif other_flash:
+                            models_to_try = other_flash
                         else:
-                            gemini_available = [m for m in available if "flash" in m or "gemini" in m]
-                            if gemini_available:
-                                models_to_try = gemini_available
+                            models_to_try = [m for m in available if "gemini" in m.lower()]
                 except Exception as list_err:
                     print(f"[Gemini ListModels Notice]: {list_err}. Defaulting to verified candidate list.")
+
+                attempted_errors = []
 
                 for attempt in range(max_retries):
                     for model_name in models_to_try:
@@ -268,8 +279,10 @@ class InvoiceOCRService:
                             result["validation"] = InvoiceOCRService.validate_invoice_math(result)
                             return _attach_pdf_previews(result)
                         except Exception as gemini_err:
-                            last_gemini_error = f"{model_name}: {str(gemini_err)}"
                             err_str = str(gemini_err).lower()
+                            clean_err_msg = str(gemini_err)[:180].replace("\n", " ")
+                            attempted_errors.append(f"{model_name}: {clean_err_msg}")
+                            last_gemini_error = f"{model_name}: {clean_err_msg}"
                             if "429" in err_str or "quota" in err_str or "exhausted" in err_str or "rate" in err_str:
                                 sleep_seconds = (2.0 * (attempt + 1)) + random.uniform(0.5, 1.5)
                                 print(f"[Gemini Rate Limit] Hit on {model_name}. Retrying in {sleep_seconds:.1f}s...")
