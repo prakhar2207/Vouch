@@ -174,6 +174,18 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
   const [newCategoryName, setNewCategoryName] = useState<string>("");
   const [categoryDetectedMsg, setCategoryDetectedMsg] = useState<string | null>(null);
 
+  // Automatic cleanup: Purge any failed/mock results from offlineDb.ocrCache so fresh scans always run
+  useEffect(() => {
+    try {
+      offlineDb.ocrCache.toArray().then((entries) => {
+        const mockKeys = entries.filter((e) => e.result?.is_mock || e.result?.mock_reason).map((e) => e.fileHash);
+        if (mockKeys.length > 0) {
+          offlineDb.ocrCache.bulkDelete(mockKeys).catch(() => {});
+        }
+      }).catch(() => {});
+    } catch {}
+  }, []);
+
   useEffect(() => {
     if (companyId) {
       const fetchCategories = async () => {
@@ -309,7 +321,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
     }
   };
 
-  const processOcr = async (base64: string, mime: string, overrideMode?: 'printed' | 'handwritten') => {
+  const processOcr = async (base64: string, mime: string, overrideMode?: 'printed' | 'handwritten', bypassCache?: boolean) => {
     const activeMode = overrideMode || scanMode;
     setLoading(true);
     setError(null);
@@ -326,7 +338,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       cacheKey = `ocr_${activeMode}_` + Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
       
       const cached = await offlineDb.ocrCache.get(cacheKey);
-      if (cached && cached.result) {
+      if (!bypassCache && cached && cached.result && !cached.result.is_mock && !cached.result.mock_reason) {
         console.log("[PWA Cache] Loaded purchase OCR result from local IndexedDB cache!");
         const data: ExtractedInvoice = reconcileInvoiceTotals(cached.result);
         setInvoice(data);
@@ -338,6 +350,9 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         setTimeout(() => setScanStatusToast(null), 3000);
         setLoading(false);
         return;
+      } else if (cached && (cached.result?.is_mock || cached.result?.mock_reason)) {
+        // Automatically purge any stale mock/failed results from IndexedDB
+        await offlineDb.ocrCache.delete(cacheKey).catch(() => {});
       }
     } catch (cacheErr) {
       console.warn("[PWA Cache] OCR cache error:", cacheErr);
@@ -401,8 +416,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           success = true;
           setScanStatusToast(null);
 
-          // Save to local IndexedDB cache
-          if (cacheKey) {
+          // Save to local IndexedDB cache ONLY if a valid, non-mock extraction succeeded
+          if (cacheKey && !data.is_mock && !data.mock_reason) {
             offlineDb.ocrCache.put({
               fileHash: cacheKey,
               fileName: fileName || "bill",
@@ -410,6 +425,8 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
               result: data,
               cachedAt: Date.now(),
             }).catch((e) => console.warn("[PWA Cache] Failed to persist OCR cache:", e));
+          } else if (cacheKey) {
+            offlineDb.ocrCache.delete(cacheKey).catch(() => {});
           }
 
           // Smart Category Differentiation & Pre-Selection
@@ -790,14 +807,31 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
       {/* Unreadable / Mock Banner */}
       {invoice?.is_mock && !loading && (
-        <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-start gap-3">
-          <span className="text-lg">⚠️</span>
-          <div className="space-y-1">
-            <div className="font-bold">Text extraction was partial or unclear from this photo</div>
-            <p className="text-amber-400/90 text-[11px]">
-              {invoice.mock_reason || "Could not recognize all invoice details automatically. Please verify or fill in the supplier and item details on the right."}
-            </p>
+        <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <span className="text-lg">⚠️</span>
+            <div className="space-y-1">
+              <div className="font-bold">Text extraction was partial or unclear from this photo</div>
+              <p className="text-amber-400/90 text-[11px]">
+                {invoice.mock_reason || "Could not recognize all invoice details automatically. Please verify or fill in the supplier and item details on the right."}
+              </p>
+            </div>
           </div>
+          {fileBase64 && (
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const allKeys = (await offlineDb.ocrCache.toArray()).map((e) => e.fileHash);
+                  if (allKeys.length) await offlineDb.ocrCache.bulkDelete(allKeys);
+                } catch {}
+                processOcr(fileBase64, fileMimeType, scanMode, true);
+              }}
+              className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs shadow-md transition-all shrink-0 flex items-center gap-1.5 cursor-pointer"
+            >
+              <span>🔄 Force Live Re-scan</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -870,7 +904,7 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                     onClick={() => {
                       const nextMode = (invoice.model_used?.includes("flash-lite") || invoice.source?.includes("flash-lite")) ? "handwritten" : "printed";
                       setScanMode(nextMode);
-                      processOcr(fileBase64, fileMimeType, nextMode);
+                      processOcr(fileBase64, fileMimeType, nextMode, true);
                     }}
                     disabled={loading}
                     className="px-2 py-0.5 bg-card hover:bg-accent text-foreground/80 rounded text-[10px] font-medium border border-input transition-colors flex items-center gap-1 cursor-pointer ml-1"

@@ -101,7 +101,17 @@ class InvoiceOCRService:
         except Exception:
             raw_bytes = b''
 
-        is_pdf = raw_bytes and ("pdf" in mime_type or raw_bytes[:4] == b'%PDF')
+        if raw_bytes:
+            if raw_bytes[:4] == b'%PDF':
+                mime_type = "application/pdf"
+            elif raw_bytes[:4].startswith(b'\x89PNG'):
+                mime_type = "image/png"
+            elif raw_bytes[:2] == b'\xff\xd8':
+                mime_type = "image/jpeg"
+            elif raw_bytes[:4] == b'RIFF' and len(raw_bytes) > 12 and raw_bytes[8:12] == b'WEBP':
+                mime_type = "image/webp"
+
+        is_pdf = bool(raw_bytes and ("pdf" in mime_type or raw_bytes[:4] == b'%PDF'))
         last_gemini_error = ""
 
         # Pre-render PDF pages to high-resolution images for split-view preview
@@ -195,19 +205,43 @@ class InvoiceOCRService:
                 for attempt in range(max_retries):
                     for model_name in models_to_try:
                         try:
-                            response = client.models.generate_content(
-                                model=model_name,
-                                contents=[
-                                    types.Part.from_bytes(data=raw_bytes, mime_type=mime_type),
-                                    prompt
-                                ],
-                                config=types.GenerateContentConfig(
-                                    response_mime_type="application/json",
-                                    response_schema=InvoiceExtractionSchema,
-                                    temperature=0.1,
+                            try:
+                                response = client.models.generate_content(
+                                    model=model_name,
+                                    contents=[
+                                        types.Part.from_bytes(data=raw_bytes, mime_type=mime_type),
+                                        prompt
+                                    ],
+                                    config=types.GenerateContentConfig(
+                                        response_mime_type="application/json",
+                                        response_schema=InvoiceExtractionSchema,
+                                        temperature=0.1,
+                                    )
                                 )
-                            )
-                            result = json.loads(response.text)
+                            except Exception as schema_err:
+                                s_err = str(schema_err).lower()
+                                if "schema" in s_err or "not supported" in s_err or "response_schema" in s_err:
+                                    response = client.models.generate_content(
+                                        model=model_name,
+                                        contents=[
+                                            types.Part.from_bytes(data=raw_bytes, mime_type=mime_type),
+                                            prompt
+                                        ],
+                                        config=types.GenerateContentConfig(
+                                            response_mime_type="application/json",
+                                            temperature=0.1,
+                                        )
+                                    )
+                                else:
+                                    raise schema_err
+
+                            resp_text = response.text or ""
+                            # Extract JSON if wrapped in markdown code blocks
+                            if "```json" in resp_text:
+                                resp_text = resp_text.split("```json", 1)[1].split("```", 1)[0].strip()
+                            elif "```" in resp_text:
+                                resp_text = resp_text.split("```", 1)[1].split("```", 1)[0].strip()
+                            result = json.loads(resp_text)
                             items = result.get("line_items", []) if isinstance(result, dict) else []
 
                             # Smart Auto-Promotion: If Flash-Lite parsed 0 items, auto-promote to gemini-2.0-flash
