@@ -4,15 +4,30 @@ import { jwtDecode } from 'jwt-decode';
 export const setTokens = (access: string, refresh?: string) => {
   const isSecure = typeof window !== 'undefined' && window.location.protocol === 'https:';
   if (access && access !== 'undefined' && access !== 'null') {
-    Cookies.set('access_token', access, { expires: 1, sameSite: 'strict', secure: isSecure });
+    Cookies.set('access_token', access, { expires: 1, sameSite: 'lax', path: '/', secure: isSecure });
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('vouch_access_token', access);
+      } catch {}
+    }
   }
   if (refresh && refresh !== 'undefined' && refresh !== 'null') {
-    Cookies.set('refresh_token', refresh, { expires: 30, sameSite: 'strict', secure: isSecure });
+    Cookies.set('refresh_token', refresh, { expires: 30, sameSite: 'lax', path: '/', secure: isSecure });
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('vouch_refresh_token', refresh);
+      } catch {}
+    }
   }
 };
 
 export const getAccessToken = (): string | undefined => {
-  const token = Cookies.get('access_token');
+  let token = Cookies.get('access_token');
+  if (!token && typeof window !== 'undefined') {
+    try {
+      token = localStorage.getItem('vouch_access_token') || undefined;
+    } catch {}
+  }
   if (!token || token === 'undefined' || token === 'null' || token.trim() === '') {
     return undefined;
   }
@@ -20,7 +35,12 @@ export const getAccessToken = (): string | undefined => {
 };
 
 export const getRefreshToken = (): string | undefined => {
-  const token = Cookies.get('refresh_token');
+  let token = Cookies.get('refresh_token');
+  if (!token && typeof window !== 'undefined') {
+    try {
+      token = localStorage.getItem('vouch_refresh_token') || undefined;
+    } catch {}
+  }
   if (!token || token === 'undefined' || token === 'null' || token.trim() === '') {
     return undefined;
   }
@@ -28,11 +48,15 @@ export const getRefreshToken = (): string | undefined => {
 };
 
 export const removeTokens = () => {
+  Cookies.remove('access_token', { path: '/' });
+  Cookies.remove('refresh_token', { path: '/' });
   Cookies.remove('access_token');
   Cookies.remove('refresh_token');
   removeUser();
   if (typeof window !== 'undefined') {
     try {
+      localStorage.removeItem('vouch_access_token');
+      localStorage.removeItem('vouch_refresh_token');
       localStorage.removeItem('vouch_active_company_id');
       localStorage.removeItem('vouch_user');
     } catch {}

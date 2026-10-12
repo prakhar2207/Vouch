@@ -7,7 +7,7 @@ const getDefaultApiUrl = () => {
     return process.env.NEXT_PUBLIC_API_URL;
   }
   if (typeof window !== 'undefined' && window.location?.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-    return 'https://vouch-api-752s.onrender.com';
+    return 'https://api.srilekh.com';
   }
   return 'http://localhost:8000';
 };
@@ -15,6 +15,11 @@ const getDefaultApiUrl = () => {
 export const API_BASE_URL = getDefaultApiUrl().replace(/\/+$/, '');
 
 export const api = axios.create({
+  baseURL: API_BASE_URL,
+});
+
+// Dedicated isolated client for auth refresh to prevent interceptor recursion
+const refreshClient = axios.create({
   baseURL: API_BASE_URL,
 });
 
@@ -38,7 +43,7 @@ function getCleanEndpoint(url?: string): string {
   }
 }
 
-function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
+async function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
   // Skip telemetry tracking during SSR to prevent server-side memory leaks
   if (typeof window === 'undefined') {
     const token = getAccessToken();
@@ -76,7 +81,29 @@ function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
     );
   }
 
-  const token = getAccessToken();
+  let token = getAccessToken();
+  const refreshToken = getRefreshToken();
+
+  // Preemptive token refresh: If access token is expired or missing, and refresh token is still valid
+  const isAuthEndpoint = endpoint.includes('/api/v1/auth/refresh/') || endpoint.includes('/api/v1/auth/login/') || endpoint.includes('/api/v1/auth/token/');
+  if (!isAuthEndpoint && (!token || isTokenExpired(token)) && refreshToken && !isTokenExpired(refreshToken)) {
+    try {
+      const refreshResponse = await refreshClient.post(
+        `/api/v1/auth/refresh/`,
+        { refresh: refreshToken },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+      const newAccess = refreshResponse.data?.access;
+      const newRefresh = refreshResponse.data?.refresh || refreshToken;
+      if (newAccess) {
+        setTokens(newAccess, newRefresh);
+        token = newAccess;
+      }
+    } catch (refreshErr) {
+      console.warn('[API] Preemptive token refresh failed:', refreshErr);
+    }
+  }
+
   const currentAuth = config.headers?.Authorization;
   const isInvalidAuth = !currentAuth || currentAuth === 'Bearer undefined' || currentAuth === 'Bearer null' || currentAuth === 'Bearer ';
 
@@ -98,18 +125,6 @@ function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
 }
 
 api.interceptors.request.use(recordAndGuardRequest, (error) => Promise.reject(error));
-
-// Also configure global axios interceptor for any direct axios calls
-if (typeof window !== 'undefined') {
-  axios.interceptors.request.use((config) => {
-    const activeCompanyId = localStorage.getItem('vouch_active_company_id');
-    if (activeCompanyId && !config.headers?.['X-Company-ID']) {
-      if (!config.headers) config.headers = {} as any;
-      config.headers['X-Company-ID'] = activeCompanyId;
-    }
-    return config;
-  }, (error) => Promise.reject(error));
-}
 
 // ---------------------------------------------------------------------------
 // Automatic 401 Unauthorized Session Refresh & Retry Interceptor
@@ -193,9 +208,9 @@ async function handleResponseError(error: AxiosError) {
   }
 
   try {
-    // Call refresh endpoint directly with raw axios to bypass interceptor recursion
-    const refreshResponse = await axios.post(
-      `${API_BASE_URL}/api/v1/auth/refresh/`,
+    // Call refresh endpoint via dedicated un-intercepted client to avoid recursion
+    const refreshResponse = await refreshClient.post(
+      `/api/v1/auth/refresh/`,
       { refresh: refreshToken },
       { headers: { 'Content-Type': 'application/json' } }
     );
@@ -207,7 +222,7 @@ async function handleResponseError(error: AxiosError) {
       throw new Error('No access token returned by refresh endpoint');
     }
 
-    // Persist fresh tokens in cookies
+    // Persist fresh tokens in cookies and localStorage
     setTokens(newAccessToken, newRefreshToken);
 
     // Resolve any concurrent requests waiting in queue
@@ -232,7 +247,6 @@ async function handleResponseError(error: AxiosError) {
 }
 
 api.interceptors.response.use((response) => response, handleResponseError);
-axios.interceptors.response.use((response) => response, handleResponseError);
 
 export default api;
 

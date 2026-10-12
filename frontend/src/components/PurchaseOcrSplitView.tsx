@@ -453,10 +453,13 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           }
         }
       } catch (err: any) {
+        if (err.response?.status === 401) {
+          setError("Your session has expired. Please log in again to scan bills.");
+          toast.error("Session Expired", "Please log in again.");
+          break;
+        }
         if (attempt >= maxRetries) {
-          const errMsg = err.response?.status === 401 
-            ? "Authentication session expired. Please log in again." 
-            : (err.response?.data?.error || err.message || "OCR Extraction Error.");
+          const errMsg = err.response?.data?.error || err.message || "OCR Extraction Error.";
           setError(errMsg);
         }
       }
@@ -800,7 +803,17 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
       {/* Error Banner */}
       {error && (
         <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-xs text-red-400 flex items-center justify-between">
-          <span>{error}</span>
+          <div className="flex items-center gap-3">
+            <span>{error}</span>
+            {(error.toLowerCase().includes("session") || error.toLowerCase().includes("log in")) && (
+              <a
+                href="/login"
+                className="px-2.5 py-1 bg-red-500 hover:bg-red-400 text-slate-950 font-bold rounded text-xs transition-colors shrink-0"
+              >
+                Log In
+              </a>
+            )}
+          </div>
           <button onClick={() => setError(null)} className="font-bold ml-4">✕</button>
         </div>
       )}
