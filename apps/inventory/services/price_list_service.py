@@ -389,7 +389,7 @@ class PriceListService:
                     "Output strict JSON adhering to the schema."
                 )
                 
-                for model_name in ["gemini-2.0-flash", "gemini-2.0-flash-lite"]:
+                for model_name in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-latest"]:
                     try:
                         response = client.models.generate_content(
                             model=model_name,

@@ -1,10 +1,9 @@
 "use client";
-import { API_BASE_URL } from '@/utils/api';
+import api from '@/utils/api';
 import React, { useState, useEffect, useMemo } from 'react';
-import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { getAccessToken, isAuthenticated } from '@/utils/auth';
+import { isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import PurchaseOcrSplitView from '@/components/PurchaseOcrSplitView';
 import { useShortcuts } from '@/context/ShortcutContext';
@@ -48,11 +47,8 @@ export default function PurchasePage() {
     if (!pId || !targetCompanyId) return;
     try {
       setLoadingPartyRates(true);
-      const token = getAccessToken();
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.get(
-        `${API_BASE_URL}/api/v1/accounting/party-rates/?party_id=${pId}&company_id=${targetCompanyId}&type=PURCHASE`,
-        { headers }
+      const res = await api.get(
+        `/api/v1/accounting/party-rates/?party_id=${pId}&company_id=${targetCompanyId}&type=PURCHASE`
       );
       if (res.data?.success) {
         const rates = res.data.data || {};
@@ -164,12 +160,7 @@ export default function PurchasePage() {
       }
 
       // 2. Fetch fresh masters from server
-      const token = getAccessToken();
-      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
-      if (resolvedCompanyId) {
-        headers['X-Company-ID'] = resolvedCompanyId;
-      }
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+      const compRes = await api.get('/api/v1/companies/');
       const compList = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
       const comp = (resolvedCompanyId ? compList.find((c: any) => c.id === resolvedCompanyId) : null) || compList[0];
       const cId = comp?.id;
@@ -185,8 +176,8 @@ export default function PurchasePage() {
       offlineDb.masters.put({ key: `company_${cId}`, data: comp, updatedAt: Date.now() }).catch(() => {});
 
       const [ledgersRes, catsRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/api/v1/ledgers/${cId}/`, { headers }),
-        axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cId}/`, { headers }),
+        api.get(`/api/v1/ledgers/${cId}/`),
+        api.get(`/api/v1/inventory/categories/${cId}/`),
       ]);
       const ledgerList = ledgersRes.data?.data || (Array.isArray(ledgersRes.data) ? ledgersRes.data : []);
       const catList = catsRes.data?.data || (Array.isArray(catsRes.data) ? catsRes.data : []);
@@ -266,9 +257,6 @@ export default function PurchasePage() {
     
     setSaving(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      
       const payload: any = {
         company_id: companyId,
         party_ledger_id: partyLedgerId,
@@ -291,7 +279,7 @@ export default function PurchasePage() {
       }
       
       try {
-        const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/purchase-invoice/`, payload, { headers, timeout: 8000 });
+        const res = await api.post('/api/v1/accounting/purchase-invoice/', payload, { timeout: 8000 });
         if (res.data?.voucher) {
           await ingestVoucherLocally(companyId, {
             ...res.data.voucher,

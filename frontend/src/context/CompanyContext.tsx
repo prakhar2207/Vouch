@@ -1,8 +1,7 @@
 "use client";
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import axios from "axios";
-import { API_BASE_URL } from "@/utils/api";
-import { getAccessToken, isAuthenticated } from "@/utils/auth";
+import api from "@/utils/api";
+import { isAuthenticated } from "@/utils/auth";
 import { offlineDb } from "@/lib/db/offlineDb";
 
 export interface Company {
@@ -36,40 +35,28 @@ const STORAGE_KEY = "vouch_active_company_id";
 const CACHED_COMPANIES_KEY = "vouch_cached_companies_list";
 
 export function CompanyProvider({ children }: { children: React.ReactNode }) {
-  const [availableCompanies, setAvailableCompanies] = useState<Company[]>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cached = localStorage.getItem(CACHED_COMPANIES_KEY);
-        if (cached) return JSON.parse(cached);
-      } catch {}
-    }
-    return [];
-  });
+  const [availableCompanies, setAvailableCompanies] = useState<Company[]>([]);
+  const [activeCompany, setActiveCompanyState] = useState<Company | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
 
-  const [activeCompany, setActiveCompanyState] = useState<Company | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const savedId = localStorage.getItem(STORAGE_KEY);
-        const cached = localStorage.getItem(CACHED_COMPANIES_KEY);
-        if (cached) {
-          const list: Company[] = JSON.parse(cached);
+  // Safe client-side rehydration preventing React #418 SSR mismatch
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem(CACHED_COMPANIES_KEY);
+      if (cached) {
+        const list: Company[] = JSON.parse(cached);
+        if (Array.isArray(list) && list.length > 0) {
+          setAvailableCompanies(list);
+          const savedId = localStorage.getItem(STORAGE_KEY);
           const found = list.find((c) => c.id === savedId) || list[0] || null;
-          if (found) return found;
+          if (found) {
+            setActiveCompanyState(found);
+            setLoading(false);
+          }
         }
-      } catch {}
-    }
-    return null;
-  });
-
-  const [loading, setLoading] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cached = localStorage.getItem(CACHED_COMPANIES_KEY);
-        if (cached && JSON.parse(cached).length > 0) return false;
-      } catch {}
-    }
-    return true;
-  });
+      }
+    } catch {}
+  }, []);
 
   const refreshCompanies = useCallback(async (): Promise<Company | null> => {
     if (!isAuthenticated()) {
@@ -78,10 +65,7 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const token = getAccessToken();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.get('/api/v1/companies/');
 
       const list: Company[] = Array.isArray(res.data)
         ? res.data

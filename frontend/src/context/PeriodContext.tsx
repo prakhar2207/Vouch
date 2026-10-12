@@ -37,24 +37,21 @@ export function PeriodProvider({ children }: { children: React.ReactNode }) {
   const defaults = getDefaultFYDates();
   const { activeFY, availableFYs, setActiveFY } = useFinancialYear();
 
-  const [fromDate, setFromDateState] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      const savedFrom = localStorage.getItem("vouch_period_from");
-      if (savedFrom) return savedFrom;
-    }
-    return activeFY?.start_date || defaults.from;
-  });
-
-  const [toDate, setToDateState] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      const savedTo = localStorage.getItem("vouch_period_to");
-      if (savedTo) return savedTo;
-    }
-    return activeFY?.end_date || defaults.to;
-  });
+  const [fromDate, setFromDateState] = useState<string>(activeFY?.start_date || defaults.from);
+  const [toDate, setToDateState] = useState<string>(activeFY?.end_date || defaults.to);
 
   const [isPeriodModalOpen, setIsPeriodModalOpen] = useState(false);
   const [isSplitModalOpen, setIsSplitModalOpen] = useState(false);
+
+  // Client-side rehydration preventing React #418 SSR mismatch
+  useEffect(() => {
+    try {
+      const savedFrom = localStorage.getItem("vouch_period_from");
+      const savedTo = localStorage.getItem("vouch_period_to");
+      if (savedFrom) setFromDateState(savedFrom);
+      if (savedTo) setToDateState(savedTo);
+    } catch {}
+  }, []);
 
   // Sync with activeFY when activeFY changes
   useEffect(() => {

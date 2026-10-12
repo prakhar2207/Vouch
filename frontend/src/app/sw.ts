@@ -39,7 +39,7 @@ const accountingCustomCaching: RuntimeCaching[] = [
     },
     handler: new NetworkFirst({
       cacheName: "srilekh-pages-cache",
-      networkTimeoutSeconds: 5,
+      networkTimeoutSeconds: 10,
       plugins: [
         new ExpirationPlugin({
           maxEntries: 50,

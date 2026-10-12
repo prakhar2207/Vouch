@@ -153,10 +153,16 @@ class InvoiceOCRService:
             # Smart Hybrid Engine selection:
             # - 'handwritten' / 'complex': prioritizes 3.6-flash for deep handwritten reasoning
             # - 'printed' / 'auto': prioritizes 3.1-flash-lite for maximum RPD quota & ultra-fast speed
-            models_to_try = [
+            # Prioritized list of modern vision models
+            candidate_models = [
+                "gemini-2.5-flash",
                 "gemini-2.0-flash",
-                "gemini-1.5-flash",
                 "gemini-2.0-flash-lite",
+                "gemini-1.5-flash-latest",
+                "gemini-1.5-flash-002",
+                "gemini-1.5-flash-001",
+                "gemini-2.5-pro",
+                "gemini-2.0-pro-exp-02-05",
             ]
 
             max_retries = 2
@@ -166,6 +172,25 @@ class InvoiceOCRService:
                 from google import genai
                 from google.genai import types
                 client = genai.Client(api_key=active_key)
+
+                # Dynamically discover models supported for this API key to avoid 404s
+                models_to_try = candidate_models
+                try:
+                    available = [
+                        m.name.replace("models/", "")
+                        for m in client.models.list()
+                        if getattr(m, 'name', None)
+                    ]
+                    if available:
+                        verified = [m for m in candidate_models if m in available]
+                        if verified:
+                            models_to_try = verified
+                        else:
+                            gemini_available = [m for m in available if "flash" in m or "gemini" in m]
+                            if gemini_available:
+                                models_to_try = gemini_available
+                except Exception as list_err:
+                    print(f"[Gemini ListModels Notice]: {list_err}. Defaulting to verified candidate list.")
 
                 for attempt in range(max_retries):
                     for model_name in models_to_try:
@@ -186,8 +211,8 @@ class InvoiceOCRService:
                             items = result.get("line_items", []) if isinstance(result, dict) else []
 
                             # Smart Auto-Promotion: If Flash-Lite parsed 0 items, auto-promote to gemini-2.0-flash
-                            if "lite" in model_name.lower() and (not items or len(items) == 0) and "gemini-2.0-flash" in models_to_try:
-                                print(f"[Hybrid OCR Engine] {model_name} parsed 0 items. Auto-promoting to gemini-2.0-flash for deeper vision...")
+                            if "lite" in model_name.lower() and (not items or len(items) == 0) and any("flash" in m and "lite" not in m for m in models_to_try):
+                                print(f"[Hybrid OCR Engine] {model_name} parsed 0 items. Auto-promoting for deeper vision...")
                                 continue
 
                             if result and (result.get("invoice_number") or result.get("supplier_name") or items):
@@ -209,7 +234,7 @@ class InvoiceOCRService:
                             result["validation"] = InvoiceOCRService.validate_invoice_math(result)
                             return _attach_pdf_previews(result)
                         except Exception as gemini_err:
-                            last_gemini_error = str(gemini_err)
+                            last_gemini_error = f"{model_name}: {str(gemini_err)}"
                             err_str = str(gemini_err).lower()
                             if "429" in err_str or "quota" in err_str or "exhausted" in err_str or "rate" in err_str:
                                 sleep_seconds = (2.0 * (attempt + 1)) + random.uniform(0.5, 1.5)

@@ -1,7 +1,6 @@
 "use client";
 import api, { API_BASE_URL } from '@/utils/api';
 import React, { useState, useRef, useEffect } from "react";
-import axios from "axios";
 import { useRouter } from "next/navigation";
 import { getAccessToken } from "@/utils/auth";
 import StateSelect from "./StateSelect";

@@ -1,8 +1,7 @@
 "use client";
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import axios from "axios";
-import { API_BASE_URL } from "@/utils/api";
-import { getAccessToken, isAuthenticated } from "@/utils/auth";
+import api from "@/utils/api";
+import { isAuthenticated } from "@/utils/auth";
 
 export interface FinancialYear {
   id: string;
@@ -32,42 +31,29 @@ const STORAGE_FY_KEY = "vouch_active_fy_id";
 const CACHED_FYS_KEY = "vouch_cached_fys_list";
 
 export function FinancialYearProvider({ children }: { children: React.ReactNode }) {
-  const [availableFYs, setAvailableFYs] = useState<FinancialYear[]>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cached = localStorage.getItem(CACHED_FYS_KEY);
-        if (cached) return JSON.parse(cached);
-      } catch {}
-    }
-    return [];
-  });
-
-  const [activeFY, setActiveFYState] = useState<FinancialYear | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const savedId = localStorage.getItem(STORAGE_FY_KEY);
-        const cached = localStorage.getItem(CACHED_FYS_KEY);
-        if (cached) {
-          const list: FinancialYear[] = JSON.parse(cached);
-          const found = list.find((fy) => fy.id === savedId) || list.find((fy) => !fy.is_closed) || list[0] || null;
-          if (found) return found;
-        }
-      } catch {}
-    }
-    return null;
-  });
-
-  const [loading, setLoading] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cached = localStorage.getItem(CACHED_FYS_KEY);
-        if (cached && JSON.parse(cached).length > 0) return false;
-      } catch {}
-    }
-    return true;
-  });
-
+  const [availableFYs, setAvailableFYs] = useState<FinancialYear[]>([]);
+  const [activeFY, setActiveFYState] = useState<FinancialYear | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
   const [isClosingModalOpen, setIsClosingModalOpen] = useState<boolean>(false);
+
+  // Safe client-side rehydration preventing React #418 SSR mismatch
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem(CACHED_FYS_KEY);
+      if (cached) {
+        const list: FinancialYear[] = JSON.parse(cached);
+        if (Array.isArray(list) && list.length > 0) {
+          setAvailableFYs(list);
+          const savedId = localStorage.getItem(STORAGE_FY_KEY);
+          const found = list.find((fy) => fy.id === savedId) || list.find((fy) => !fy.is_closed) || list[0] || null;
+          if (found) {
+            setActiveFYState(found);
+            setLoading(false);
+          }
+        }
+      }
+    } catch {}
+  }, []);
 
   const refreshFYs = useCallback(async () => {
     if (!isAuthenticated()) {
@@ -76,18 +62,11 @@ export function FinancialYearProvider({ children }: { children: React.ReactNode 
     }
 
     try {
-      const token = getAccessToken();
       const activeCo = typeof window !== "undefined"
         ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("active_company_id"))
         : null;
 
-      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
-      if (activeCo) {
-        headers["X-Company-ID"] = activeCo;
-      }
-
-      const res = await axios.get(`${API_BASE_URL}/api/v1/financial-years/`, {
-        headers,
+      const res = await api.get('/api/v1/financial-years/', {
         params: activeCo ? { company_id: activeCo } : undefined
       });
 

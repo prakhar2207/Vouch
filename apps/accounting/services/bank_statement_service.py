@@ -1188,19 +1188,29 @@ class BankStatementService:
                     proc_bytes = img_bytes
                     proc_mime = img_mime
 
-                response = client.models.generate_content(
-                    model="gemini-2.0-flash",
-                    contents=[
-                        types.Part.from_bytes(data=proc_bytes, mime_type=proc_mime),
-                        prompt
-                    ],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=BankStatementExtractionSchema,
-                        temperature=0.1
-                    )
-                )
-                res_dict = json.loads(response.text)
+                res_dict = None
+                for b_model in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-latest"]:
+                    try:
+                        response = client.models.generate_content(
+                            model=b_model,
+                            contents=[
+                                types.Part.from_bytes(data=proc_bytes, mime_type=proc_mime),
+                                prompt
+                            ],
+                            config=types.GenerateContentConfig(
+                                response_mime_type="application/json",
+                                response_schema=BankStatementExtractionSchema,
+                                temperature=0.1
+                            )
+                        )
+                        res_dict = json.loads(response.text)
+                        if res_dict:
+                            break
+                    except Exception as b_err:
+                        print(f"[Bank OCR] Model {b_model} attempt failed: {b_err}")
+                        continue
+                if not res_dict:
+                    continue
                 txs = res_dict.get("transactions", [])
                 for t in txs:
                     raw_desc = (t.get("description") or "").strip()

@@ -1,6 +1,5 @@
 import { offlineDb, SyncedLedger } from "../db/offlineDb";
-import axios from "axios";
-import { API_BASE_URL } from "@/utils/api";
+import api from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
 
 export interface LedgerQueryOptions {
@@ -56,14 +55,13 @@ export class LedgersRepository {
       try {
         const token = getAccessToken();
         if (token) {
-          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
           const params: Record<string, string> = {};
           if (options.financialYearId) params.financial_year_id = options.financialYearId;
           if (options.startDate) params.start_date = options.startDate;
           if (options.endDate) params.end_date = options.endDate;
           if (options.asOfDate) params.as_of_date = options.asOfDate;
           if (options.scopeTaxes) params.scope_taxes = "true";
-          const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${companyId}/`, { headers, params, timeout: 6000 });
+          const res = await api.get(`/api/v1/ledgers/${companyId}/`, { params, timeout: 15000 });
           const raw = res.data?.data || (Array.isArray(res.data) ? res.data : []);
           if (raw.length > 0) {
             const mapped: SyncedLedger[] = raw.map((l: any) => ({
@@ -104,8 +102,7 @@ export class LedgersRepository {
       try {
         const token = getAccessToken();
         if (token) {
-          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
-          const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${companyId}/`, { headers, timeout: 5000 });
+          const res = await api.get(`/api/v1/ledgers/${companyId}/`, { timeout: 15000 });
           const raw = res.data?.data || (Array.isArray(res.data) ? res.data : []);
           if (raw.length > 0) {
             const toPut: SyncedLedger[] = raw.map((l: any) => ({
@@ -212,9 +209,7 @@ export class LedgersRepository {
     if (!companyId) return [];
     try {
       const token = getAccessToken();
-      if (!token) return [];
-      const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
-      const res = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${companyId}/`, { headers, timeout: 5000 });
+      const res = await api.get(`/api/v1/ledgers/${companyId}/`, { timeout: 15000 });
       const raw = res.data?.data || (Array.isArray(res.data) ? res.data : []);
       if (raw.length > 0) {
         const toPut: SyncedLedger[] = raw.map((l: any) => ({
