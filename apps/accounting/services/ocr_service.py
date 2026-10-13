@@ -71,13 +71,41 @@ def parse_words_to_number(text: str) -> float:
 
 
 class InvoiceOCRService:
+    _DEPRECATED_MODELS = {"gemini-2.0-flash", "gemini-2.0-flash-lite"}
+
+    @classmethod
+    def get_candidate_models(cls, scan_mode: str = "auto") -> List[str]:
+        """
+        Dynamically yields available vision models with highest quota and vision capabilities,
+        filtering out any sunset / 404 models permanently.
+        """
+        if scan_mode == "handwritten":
+            preferred = [
+                "gemini-3.6-flash",
+                "gemini-3.8-flash",
+                "gemini-3.7-flash",
+                "gemini-2.5-flash",
+                "gemini-3.1-flash-lite",
+                "gemini-3.5-flash-lite",
+            ]
+        else:
+            # "printed" or "auto": Prioritize 500 RPD / 15 RPM high-quota models
+            preferred = [
+                "gemini-3.1-flash-lite",
+                "gemini-3.5-flash-lite",
+                "gemini-3.6-flash",
+                "gemini-3.8-flash",
+                "gemini-2.5-flash",
+            ]
+        return [m for m in preferred if m not in cls._DEPRECATED_MODELS]
+
     @staticmethod
     def extract_from_base64(base64_data: str, mime_type: str = "image/png", scan_mode: str = "auto", buyer_state_code: str = "") -> dict:
         """
         Extracts invoice header & line-item details using a Smart Hybrid Multi-Tier architecture:
         Tier 1: Google Gemini Dual-Engine:
-                - gemini-2.5-flash (deep vision reasoning for handwritten, faint, or irregular tables & printed invoices)
-                - gemini-2.0-flash / gemini-2.0-flash-lite (high speed GA fallbacks)
+                - gemini-3.1-flash-lite / gemini-3.5-flash-lite (high quota 500 RPD, high speed GA)
+                - gemini-3.6-flash / gemini-3.8-flash (deep vision reasoning for handwritten, faint, or irregular tables)
         Tier 2: PDF text stream tokenizer using PyPDF (for digital vector PDFs)
         Tier 3: Graceful fallback error reporting
         """
@@ -164,12 +192,8 @@ class InvoiceOCRService:
                 "Output strict JSON following the schema."
             )
 
-            # Prioritized list of official, supported GA vision models
-            candidate_models = [
-                "gemini-2.5-flash",
-                "gemini-2.0-flash",
-                "gemini-2.0-flash-lite",
-            ]
+            # Dynamically fetch available models with deprecated/sunset models filtered out
+            candidate_models = InvoiceOCRService.get_candidate_models(scan_mode)
 
             max_retries = 2
             last_gemini_error = ""
@@ -178,10 +202,14 @@ class InvoiceOCRService:
                 from google import genai
                 from google.genai import types
                 client = genai.Client(api_key=active_key)
-                models_to_try = list(candidate_models)
                 attempted_errors = []
 
                 for attempt in range(max_retries):
+                    # Filter out models that failed with 404 / NOT_FOUND during runtime
+                    models_to_try = [m for m in candidate_models if m not in InvoiceOCRService._DEPRECATED_MODELS]
+                    if not models_to_try:
+                        break
+
                     for model_name in models_to_try:
                         try:
                             try:
@@ -223,7 +251,7 @@ class InvoiceOCRService:
                             result = json.loads(resp_text)
                             items = result.get("line_items", []) if isinstance(result, dict) else []
 
-                            # Smart Auto-Promotion: If Flash-Lite parsed 0 items, auto-promote to gemini-2.5-flash
+                            # Smart Auto-Promotion: If Flash-Lite parsed 0 items, auto-promote to deep vision
                             if "lite" in model_name.lower() and (not items or len(items) == 0) and any("flash" in m and "lite" not in m for m in models_to_try):
                                 print(f"[Hybrid OCR Engine] {model_name} parsed 0 items. Auto-promoting for deeper vision...")
                                 continue
@@ -250,15 +278,25 @@ class InvoiceOCRService:
                             err_str = str(gemini_err).lower()
                             clean_err_msg = str(gemini_err)[:180].replace("\n", " ")
                             attempted_errors.append(f"{model_name}: {clean_err_msg}")
+
+                            # 404 / Decommissioned / Model Not Found guard: permanently blacklist & immediately try next model
+                            if "404" in err_str or "not found" in err_str or "no longer available" in err_str or "not_found" in err_str:
+                                print(f"[Gemini Deprecation Guard] Model {model_name} is no longer available. Blacklisting from rotation.")
+                                InvoiceOCRService._DEPRECATED_MODELS.add(model_name)
+                                continue
+
                             last_gemini_error = f"{model_name}: {clean_err_msg}"
                             if "429" in err_str or "quota" in err_str or "exhausted" in err_str or "rate" in err_str:
-                                sleep_seconds = (2.0 * (attempt + 1)) + random.uniform(0.5, 1.5)
-                                print(f"[Gemini Rate Limit] Hit on {model_name}. Retrying in {sleep_seconds:.1f}s...")
-                                time.sleep(sleep_seconds)
-                                break
+                                print(f"[Gemini Rate Limit] Hit on {model_name}. Failing over immediately to next model...")
+                                # Do NOT break; seamlessly fall through to next available model with quota
+                                continue
                             else:
                                 print(f"[Gemini Error] Model {model_name} attempt error: {gemini_err}")
                                 continue
+
+                    if attempt < max_retries - 1:
+                        sleep_seconds = 1.0 * (attempt + 1)
+                        time.sleep(sleep_seconds)
             except Exception as e:
                 last_gemini_error = str(e)
                 print(f"Gemini SDK invocation failed: {e}")
