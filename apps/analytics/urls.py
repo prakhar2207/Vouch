@@ -1,5 +1,12 @@
 from django.urls import path
-from .views import RFMAnalysisView, SalesForecastView, DashboardSummaryView, InsightsAPIView, MonthlyComparisonView
+from .views import (
+    RFMAnalysisView,
+    SalesForecastView,
+    DashboardSummaryView,
+    InsightsAPIView,
+    MonthlyComparisonView,
+    CashCycleSnapshotView,
+)
 
 urlpatterns = [
     path('insights/', InsightsAPIView.as_view(), name='insights_default'),
@@ -10,4 +17,6 @@ urlpatterns = [
     path('monthly-comparison/', MonthlyComparisonView.as_view(), name='monthly_comparison_default'),
     path('monthly-comparison/<uuid:company_id>/', MonthlyComparisonView.as_view(), name='monthly_comparison'),
     path('dashboard/<uuid:company_id>/', DashboardSummaryView.as_view(), name='dashboard_summary'),
+    path('cash-cycle-snapshots/<uuid:company_id>/', CashCycleSnapshotView.as_view(), name='cash_cycle_snapshots'),
 ]
+

@@ -77,6 +77,8 @@ import {
   DollarSign,
   Phone,
   MessageCircle,
+  History,
+  BookmarkCheck,
 } from "lucide-react";
 
 function formatCurrencyShort(val: number): string {
@@ -176,6 +178,47 @@ function AnalyticsHubContent() {
   const [pieChartStyle, setPieChartStyle] = useState<"donut" | "pie">("donut");
   const [paretoTableScope, setParetoTableScope] = useState<"all" | "top_10">("all");
   const [paretoSearch, setParetoSearch] = useState<string>("");
+
+  // Cash Cycle Snapshot & Historical Records State
+  const [isRecordSnapshotModalOpen, setIsRecordSnapshotModalOpen] = useState<boolean>(false);
+  const [snapshotPeriodLabel, setSnapshotPeriodLabel] = useState<string>("");
+  const [snapshotNotes, setSnapshotNotes] = useState<string>("");
+  const [isSavingSnapshot, setIsSavingSnapshot] = useState<boolean>(false);
+  const [cashCycleViewMode, setCashCycleViewMode] = useState<"timeline" | "table">("timeline");
+
+  const handleSaveCashCycleSnapshot = async () => {
+    const validCid = effectiveCompanyId || activeCompanyId;
+    if (!validCid) return;
+    setIsSavingSnapshot(true);
+    try {
+      const token = getAccessToken();
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/analytics/cash-cycle-snapshots/${validCid}/`,
+        {
+          period_label: snapshotPeriodLabel.trim() || undefined,
+          notes: snapshotNotes.trim() || undefined,
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.data?.success) {
+        toast.success(res.data.message || "Cash cycle milestone snapshot recorded!");
+        const fRes = await axios.get(
+          `${API_BASE_URL}/api/v1/analytics/forecast/${validCid}/?days=${forecastDays}&company_id=${validCid}`,
+          { headers: { Authorization: `Bearer ${token}`, "X-Company-ID": validCid } }
+        );
+        if (fRes.data?.success) {
+          setForecast(fRes.data.data);
+        }
+        setIsRecordSnapshotModalOpen(false);
+        setSnapshotPeriodLabel("");
+        setSnapshotNotes("");
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || "Failed to record cash cycle snapshot.");
+    } finally {
+      setIsSavingSnapshot(false);
+    }
+  };
 
   const fetchInventoryAnalytics = async (cid?: string, catId?: string) => {
     const targetCid = cid || effectiveCompanyId || activeCompanyId;
@@ -5180,27 +5223,70 @@ function AnalyticsHubContent() {
                       Measures the speed (in days) at which capital invested in operations turns back into collected liquid cash.
                     </p>
                   </div>
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-mono font-bold border ${
-                      forecast.working_capital_cycle.working_capital_health === "HEALTHY"
-                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Health Status Pill */}
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-mono font-bold border ${
+                        forecast.working_capital_cycle.working_capital_health === "HEALTHY"
+                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                          : forecast.working_capital_cycle.working_capital_health === "MODERATE"
+                          ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                          : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                      }`}
+                    >
+                      {forecast.working_capital_cycle.working_capital_health === "HEALTHY"
+                        ? "Healthy Working Capital"
                         : forecast.working_capital_cycle.working_capital_health === "MODERATE"
-                        ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
-                        : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                    }`}
-                  >
-                    {forecast.working_capital_cycle.working_capital_health === "HEALTHY"
-                      ? "Healthy Working Capital"
-                      : forecast.working_capital_cycle.working_capital_health === "MODERATE"
-                      ? "Moderate Capital Turnover"
-                      : "Elevated Cash Cycle (Action Needed)"}
-                  </span>
+                        ? "Moderate Capital Turnover"
+                        : "Elevated Cash Cycle (Action Needed)"}
+                    </span>
+
+                    {/* Improvement / Decrement Trend Pill */}
+                    {forecast.working_capital_cycle.comparison && (
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-mono font-bold border flex items-center gap-1.5 ${
+                          forecast.working_capital_cycle.comparison.trend === "IMPROVED"
+                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                            : forecast.working_capital_cycle.comparison.trend === "DETERIORATED"
+                            ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                            : "bg-muted/40 text-muted-foreground border-border/40"
+                        }`}
+                        title={forecast.working_capital_cycle.comparison.summary}
+                      >
+                        {forecast.working_capital_cycle.comparison.trend === "IMPROVED" ? (
+                          <>
+                            <TrendingDown className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                            <span>{Math.abs(forecast.working_capital_cycle.comparison.delta_ccc)}d Faster vs {forecast.working_capital_cycle.comparison.previous_period_label} (Improved)</span>
+                          </>
+                        ) : forecast.working_capital_cycle.comparison.trend === "DETERIORATED" ? (
+                          <>
+                            <TrendingUp className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                            <span>+{forecast.working_capital_cycle.comparison.delta_ccc}d Slower vs {forecast.working_capital_cycle.comparison.previous_period_label} (Elongated)</span>
+                          </>
+                        ) : (
+                          <span>Steady vs {forecast.working_capital_cycle.comparison.previous_period_label}</span>
+                        )}
+                      </span>
+                    )}
+
+                    {/* Record Snapshot Button */}
+                    <button
+                      type="button"
+                      onClick={() => setIsRecordSnapshotModalOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 transition-all cursor-pointer shrink-0 active:scale-95 shadow-2xs"
+                      title="Record a checkpoint of current cash cycle to track progression over time"
+                    >
+                      <BookmarkCheck className="w-3.5 h-3.5" />
+                      <span>Record Snapshot</span>
+                    </button>
+                  </div>
                 </div>
 
-                {/* 4 Pillars Grid */}
+                {/* 4 Pillars Grid with Improvement / Decrement Indicators */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   {/* Net CCC */}
-                  <div className="p-4 rounded-xl border border-primary/30 bg-primary/5 space-y-1">
+                  <div className="p-4 rounded-xl border border-primary/30 bg-primary/5 space-y-1.5">
                     <span className="text-[10px] font-semibold text-primary uppercase tracking-wider">
                       Net Cash Cycle (CCC)
                     </span>
@@ -5208,13 +5294,39 @@ function AnalyticsHubContent() {
                       {forecast.working_capital_cycle.cash_conversion_cycle_days}
                       <span className="text-xs font-normal text-muted-foreground ml-1">Days</span>
                     </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      Total days capital is trapped in operations
-                    </div>
+
+                    {forecast.working_capital_cycle.comparison ? (
+                      <div className="space-y-1 pt-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {forecast.working_capital_cycle.comparison.delta_ccc < 0 ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
+                              <TrendingDown className="w-3 h-3 shrink-0" />
+                              {Math.abs(forecast.working_capital_cycle.comparison.delta_ccc)}d Faster (Improved)
+                            </span>
+                          ) : forecast.working_capital_cycle.comparison.delta_ccc > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-md">
+                              <TrendingUp className="w-3 h-3 shrink-0" />
+                              +{forecast.working_capital_cycle.comparison.delta_ccc}d Slower (Elongated)
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground bg-muted/40 border border-border/40 px-2 py-0.5 rounded-md">
+                              Steady (0d change)
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          Prior: {forecast.working_capital_cycle.comparison.previous_period_label} ({forecast.working_capital_cycle.comparison.previous_ccc_days}d)
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-muted-foreground">
+                        Total days capital is trapped in operations
+                      </div>
+                    )}
                   </div>
 
                   {/* DIO */}
-                  <div className="p-4 rounded-xl border border-border/40 bg-muted/20 space-y-1">
+                  <div className="p-4 rounded-xl border border-border/40 bg-muted/20 space-y-1.5">
                     <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
                       Days Inventory Outstanding (DIO)
                     </span>
@@ -5222,13 +5334,39 @@ function AnalyticsHubContent() {
                       {forecast.working_capital_cycle.dio_days}
                       <span className="text-xs font-normal text-muted-foreground ml-1">Days</span>
                     </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      Average stock holding duration before sale
-                    </div>
+
+                    {forecast.working_capital_cycle.comparison ? (
+                      <div className="space-y-1 pt-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {forecast.working_capital_cycle.comparison.delta_dio < 0 ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
+                              <TrendingDown className="w-3 h-3 shrink-0" />
+                              {Math.abs(forecast.working_capital_cycle.comparison.delta_dio)}d Faster Turn (Improved)
+                            </span>
+                          ) : forecast.working_capital_cycle.comparison.delta_dio > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
+                              <TrendingUp className="w-3 h-3 shrink-0" />
+                              +{forecast.working_capital_cycle.comparison.delta_dio}d Slower Turnover
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground bg-muted/40 border border-border/40 px-2 py-0.5 rounded-md">
+                              Steady
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          Prior: {forecast.working_capital_cycle.comparison.previous_dio_days !== undefined ? `${forecast.working_capital_cycle.comparison.previous_dio_days}d` : "N/A"}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-muted-foreground">
+                        Average stock holding duration before sale
+                      </div>
+                    )}
                   </div>
 
                   {/* DSO */}
-                  <div className="p-4 rounded-xl border border-border/40 bg-muted/20 space-y-1">
+                  <div className="p-4 rounded-xl border border-border/40 bg-muted/20 space-y-1.5">
                     <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
                       Days Sales Outstanding (DSO)
                     </span>
@@ -5236,13 +5374,39 @@ function AnalyticsHubContent() {
                       {forecast.working_capital_cycle.dso_days}
                       <span className="text-xs font-normal text-muted-foreground ml-1">Days</span>
                     </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      Average days to collect customer payments
-                    </div>
+
+                    {forecast.working_capital_cycle.comparison ? (
+                      <div className="space-y-1 pt-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {forecast.working_capital_cycle.comparison.delta_dso < 0 ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
+                              <TrendingDown className="w-3 h-3 shrink-0" />
+                              {Math.abs(forecast.working_capital_cycle.comparison.delta_dso)}d Faster Collection (Improved)
+                            </span>
+                          ) : forecast.working_capital_cycle.comparison.delta_dso > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
+                              <TrendingUp className="w-3 h-3 shrink-0" />
+                              +{forecast.working_capital_cycle.comparison.delta_dso}d Delayed Collection
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground bg-muted/40 border border-border/40 px-2 py-0.5 rounded-md">
+                              Steady
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          Prior: {forecast.working_capital_cycle.comparison.previous_dso_days !== undefined ? `${forecast.working_capital_cycle.comparison.previous_dso_days}d` : "N/A"}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-muted-foreground">
+                        Average days to collect customer payments
+                      </div>
+                    )}
                   </div>
 
                   {/* DPO */}
-                  <div className="p-4 rounded-xl border border-border/40 bg-muted/20 space-y-1">
+                  <div className="p-4 rounded-xl border border-border/40 bg-muted/20 space-y-1.5">
                     <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
                       Days Payable Outstanding (DPO)
                     </span>
@@ -5250,9 +5414,35 @@ function AnalyticsHubContent() {
                       {forecast.working_capital_cycle.dpo_days}
                       <span className="text-xs font-normal text-muted-foreground ml-1">Days</span>
                     </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      Average credit period taken to pay vendors
-                    </div>
+
+                    {forecast.working_capital_cycle.comparison ? (
+                      <div className="space-y-1 pt-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {forecast.working_capital_cycle.comparison.delta_dpo > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 dark:text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-md">
+                              <TrendingUp className="w-3 h-3 shrink-0" />
+                              +{forecast.working_capital_cycle.comparison.delta_dpo}d Credit Extended (Liquidity Kept)
+                            </span>
+                          ) : forecast.working_capital_cycle.comparison.delta_dpo < 0 ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground bg-muted/40 border border-border/40 px-2 py-0.5 rounded-md">
+                              <TrendingDown className="w-3 h-3 shrink-0" />
+                              {Math.abs(forecast.working_capital_cycle.comparison.delta_dpo)}d Shorter Terms
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground bg-muted/40 border border-border/40 px-2 py-0.5 rounded-md">
+                              Steady
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          Prior: {forecast.working_capital_cycle.comparison.previous_dpo_days !== undefined ? `${forecast.working_capital_cycle.comparison.previous_dpo_days}d` : "N/A"}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-muted-foreground">
+                        Average credit period taken to pay vendors
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -5271,15 +5461,298 @@ function AnalyticsHubContent() {
                       DPO: {forecast.working_capital_cycle.dpo_days}d
                     </span>
                     <span className="text-muted-foreground font-bold">=</span>
-                    <span className="px-2 py-1 rounded bg-primary text-primary-foreground font-bold">
+                    <span className="px-2 py-1 rounded bg-primary text-primary-foreground font-bold shadow-2xs">
                       Net CCC: {forecast.working_capital_cycle.cash_conversion_cycle_days} Days
                     </span>
                   </div>
 
-                  <div className="text-xs text-muted-foreground">
-                    Target benchmark for wholesale distribution: &lt; 90 Days
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap font-mono">
+                    {forecast.working_capital_cycle.comparison && (
+                      <span>
+                        Prior ({forecast.working_capital_cycle.comparison.previous_period_label}): <strong className="text-foreground">{forecast.working_capital_cycle.comparison.previous_ccc_days}d</strong> → Current: <strong className="text-foreground">{forecast.working_capital_cycle.cash_conversion_cycle_days}d</strong>
+                      </span>
+                    )}
+                    <span className="text-muted-foreground font-sans">Target benchmark: &lt; 90 Days</span>
                   </div>
                 </div>
+
+                {/* Historical Cash Cycle Recording & Trajectory View */}
+                {forecast.working_capital_cycle.historical_records && forecast.working_capital_cycle.historical_records.length > 0 && (
+                  <div className="pt-2 border-t border-border/40 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="flex items-center gap-2">
+                        <History className="w-4 h-4 text-primary shrink-0" />
+                        <div>
+                          <h4 className="text-xs sm:text-sm font-semibold text-foreground">
+                            Recorded Cash Cycle History & Trajectory
+                          </h4>
+                          <p className="text-[11px] text-muted-foreground">
+                            Chronological milestones tracking improvement vs elongation of working capital speed.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 self-start sm:self-center">
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-muted/60 text-muted-foreground border border-border/40">
+                          {forecast.working_capital_cycle.historical_records.length} Checkpoints
+                        </span>
+
+                        <div className="inline-flex rounded-lg border border-border/50 p-0.5 bg-muted/30 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setCashCycleViewMode("timeline")}
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
+                              cashCycleViewMode === "timeline"
+                                ? "bg-card text-foreground shadow-2xs"
+                                : "text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            Trajectory Chart
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCashCycleViewMode("table")}
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
+                              cashCycleViewMode === "table"
+                                ? "bg-card text-foreground shadow-2xs"
+                                : "text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            Records Log
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Mode 1: Trajectory Chart */}
+                    {cashCycleViewMode === "timeline" ? (
+                      <div className="space-y-2">
+                        <div className="h-64 w-full bg-muted/10 border border-border/40 rounded-xl p-3">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <ComposedChart
+                              data={forecast.working_capital_cycle.historical_records.map((r: any) => ({
+                                period: r.period_label,
+                                ccc: Number(r.net_ccc_days || 0),
+                                dio: Number(r.dio_days || 0),
+                                dso: Number(r.dso_days || 0),
+                                dpo: Number(r.dpo_days || 0),
+                                health: r.working_capital_health,
+                                date: r.date,
+                              }))}
+                              margin={{ top: 12, right: 12, left: -10, bottom: 0 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+                              <XAxis
+                                dataKey="period"
+                                tick={{ fontSize: 11, fill: "currentColor" }}
+                                opacity={0.7}
+                              />
+                              <YAxis
+                                tick={{ fontSize: 11, fill: "currentColor" }}
+                                opacity={0.7}
+                                unit="d"
+                              />
+                              <Tooltip
+                                content={({ active, payload }) => {
+                                  if (!active || !payload || !payload.length) return null;
+                                  const data = payload[0].payload;
+                                  return (
+                                    <div className="bg-popover/95 border border-border/80 rounded-xl p-3 shadow-xl backdrop-blur-md text-xs space-y-1.5 min-w-[200px]">
+                                      <div className="font-bold text-foreground border-b border-border/40 pb-1 flex items-center justify-between">
+                                        <span>{data.period}</span>
+                                        <span className="text-[10px] font-mono text-muted-foreground">{data.date}</span>
+                                      </div>
+                                      <div className="space-y-1 font-mono text-[11px]">
+                                        <div className="flex items-center justify-between text-primary font-bold">
+                                          <span>Net CCC:</span>
+                                          <span>{data.ccc} Days</span>
+                                        </div>
+                                        <div className="flex items-center justify-between text-amber-500">
+                                          <span>DIO (Inventory):</span>
+                                          <span>{data.dio} Days</span>
+                                        </div>
+                                        <div className="flex items-center justify-between text-cyan-500">
+                                          <span>DSO (Debtors):</span>
+                                          <span>{data.dso} Days</span>
+                                        </div>
+                                        <div className="flex items-center justify-between text-purple-400">
+                                          <span>DPO (Creditors):</span>
+                                          <span>{data.dpo} Days</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                }}
+                              />
+                              <ReferenceLine
+                                y={90}
+                                stroke="#10b981"
+                                strokeDasharray="4 4"
+                                strokeWidth={1.5}
+                                label={{
+                                  value: "Target (<90d)",
+                                  fill: "#10b981",
+                                  position: "insideTopRight",
+                                  fontSize: 10,
+                                }}
+                              />
+                              <Bar
+                                dataKey="ccc"
+                                name="Net Cash Cycle (Days)"
+                                radius={[6, 6, 0, 0]}
+                                maxBarSize={48}
+                              >
+                                {forecast.working_capital_cycle.historical_records.map((entry: any, index: number) => {
+                                  const cccVal = Number(entry.net_ccc_days || 0);
+                                  const barFill =
+                                    cccVal <= 90
+                                      ? "#10b981"
+                                      : cccVal <= 140
+                                      ? "#3b82f6"
+                                      : "#f59e0b";
+                                  return <Cell key={`cell-${index}`} fill={barFill} fillOpacity={0.85} />;
+                                })}
+                              </Bar>
+                              <Line
+                                type="monotone"
+                                dataKey="dio"
+                                name="DIO (Stock)"
+                                stroke="#f59e0b"
+                                strokeWidth={2}
+                                dot={{ r: 3 }}
+                              />
+                              <Line
+                                type="monotone"
+                                dataKey="dso"
+                                name="DSO (Collections)"
+                                stroke="#06b6d4"
+                                strokeWidth={2}
+                                dot={{ r: 3 }}
+                              />
+                              <Line
+                                type="monotone"
+                                dataKey="dpo"
+                                name="DPO (Payables)"
+                                stroke="#a855f7"
+                                strokeWidth={2}
+                                dot={{ r: 3 }}
+                              />
+                            </ComposedChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1 flex-wrap gap-2">
+                          <div className="flex items-center gap-3">
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block" />
+                              <span>Net CCC (Bars)</span>
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2.5 h-0.5 bg-amber-500 inline-block" />
+                              <span>DIO (Stock)</span>
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2.5 h-0.5 bg-cyan-500 inline-block" />
+                              <span>DSO (Debtors)</span>
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2.5 h-0.5 bg-purple-500 inline-block" />
+                              <span>DPO (Vendors)</span>
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold font-mono">
+                            Dotted line: 90-Day Best Practice Threshold
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Mode 2: Records Log Table */
+                      <div className="border border-border/40 rounded-xl overflow-hidden bg-card shadow-2xs">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs text-left">
+                            <thead className="bg-muted/40 border-b border-border/40 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                              <tr>
+                                <th className="px-3.5 py-2.5">Period / Milestone</th>
+                                <th className="px-3 py-2.5">Date</th>
+                                <th className="px-3 py-2.5">Net CCC</th>
+                                <th className="px-3 py-2.5">DIO (Stock)</th>
+                                <th className="px-3 py-2.5">DSO (Debtors)</th>
+                                <th className="px-3 py-2.5">DPO (Vendors)</th>
+                                <th className="px-3 py-2.5">Status</th>
+                                <th className="px-3.5 py-2.5">Source & Notes</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border/30 font-mono text-[11px]">
+                              {forecast.working_capital_cycle.historical_records.map((r: any, idx: number) => {
+                                const prevRow = idx > 0 ? forecast.working_capital_cycle.historical_records[idx - 1] : null;
+                                const rowDelta = prevRow ? r.net_ccc_days - prevRow.net_ccc_days : null;
+                                return (
+                                  <tr key={r.id || idx} className="hover:bg-muted/20 transition-colors">
+                                    <td className="px-3.5 py-2.5 font-sans font-semibold text-foreground whitespace-nowrap">
+                                      {r.period_label}
+                                    </td>
+                                    <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap font-mono text-[10px]">
+                                      {r.date}
+                                    </td>
+                                    <td className="px-3 py-2.5 font-bold text-foreground whitespace-nowrap">
+                                      <div className="flex items-center gap-1.5">
+                                        <span>{r.net_ccc_days}d</span>
+                                        {rowDelta !== null && (
+                                          <span
+                                            className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                                              rowDelta < 0
+                                                ? "text-emerald-500 bg-emerald-500/10"
+                                                : rowDelta > 0
+                                                ? "text-rose-500 bg-rose-500/10"
+                                                : "text-muted-foreground bg-muted/30"
+                                            }`}
+                                          >
+                                            {rowDelta < 0 ? `↓ ${Math.abs(rowDelta)}d` : rowDelta > 0 ? `↑ +${rowDelta}d` : "0d"}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">
+                                      {r.dio_days}d
+                                    </td>
+                                    <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">
+                                      {r.dso_days}d
+                                    </td>
+                                    <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">
+                                      {r.dpo_days}d
+                                    </td>
+                                    <td className="px-3 py-2.5 whitespace-nowrap">
+                                      <span
+                                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                          r.working_capital_health === "HEALTHY"
+                                            ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                                            : r.working_capital_health === "MODERATE"
+                                            ? "bg-blue-500/10 text-blue-500 border-blue-500/20"
+                                            : "bg-amber-500/10 text-amber-500 border-amber-500/20"
+                                        }`}
+                                      >
+                                        {r.working_capital_health}
+                                      </span>
+                                    </td>
+                                    <td className="px-3.5 py-2.5 font-sans text-xs text-muted-foreground">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted/40 text-muted-foreground">
+                                          {r.is_system_generated ? "Auto" : "Manual"}
+                                        </span>
+                                        <span className="truncate max-w-[160px] text-[11px]" title={r.notes}>
+                                          {r.notes || "Periodic snapshot"}
+                                        </span>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* AI Executive Recommendation */}
                 <div className="p-4 rounded-xl bg-purple-500/5 border border-purple-500/20 space-y-1.5 text-xs">
@@ -5335,6 +5808,107 @@ function AnalyticsHubContent() {
           productName={selectedHistoryItem?.name || ""}
           companyId={effectiveCompanyId || activeCompanyId || ""}
         />
+
+        {/* Record Cash Cycle Snapshot Modal */}
+        {isRecordSnapshotModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="bg-card border border-border/60 rounded-2xl p-6 shadow-2xl max-w-lg w-full space-y-5">
+              <div className="flex items-center justify-between border-b border-border/40 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-primary/10 text-primary">
+                    <BookmarkCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-foreground">Record Cash Cycle Snapshot</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Save a milestone record to track working capital improvement or deterioration over time.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsRecordSnapshotModalOpen(false)}
+                  className="text-muted-foreground hover:text-foreground text-sm font-bold p-1 rounded-lg"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Current Metrics Summary */}
+              {forecast?.working_capital_cycle && (
+                <div className="grid grid-cols-4 gap-2 p-3 rounded-xl bg-muted/30 border border-border/40 text-center font-mono">
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase font-semibold">Net CCC</div>
+                    <div className="text-base font-bold text-primary">{forecast.working_capital_cycle.cash_conversion_cycle_days}d</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase font-semibold">DIO</div>
+                    <div className="text-base font-bold text-foreground">{forecast.working_capital_cycle.dio_days}d</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase font-semibold">DSO</div>
+                    <div className="text-base font-bold text-foreground">{forecast.working_capital_cycle.dso_days}d</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase font-semibold">DPO</div>
+                    <div className="text-base font-bold text-foreground">{forecast.working_capital_cycle.dpo_days}d</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Form Inputs */}
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="block font-semibold text-foreground mb-1">
+                    Period or Milestone Label
+                  </label>
+                  <input
+                    type="text"
+                    value={snapshotPeriodLabel}
+                    onChange={(e) => setSnapshotPeriodLabel(e.target.value)}
+                    placeholder={`e.g. ${new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })} Review, Pre-Diwali Baseline, Q3 Checkpoint`}
+                    className="w-full px-3 py-2 rounded-xl bg-muted/40 border border-border/50 text-foreground text-xs focus:outline-hidden focus:ring-2 focus:ring-primary/40"
+                  />
+                  <span className="text-[10px] text-muted-foreground mt-0.5 block">
+                    Leave blank to use default date-stamped label.
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-foreground mb-1">
+                    Optional Notes or Context
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={snapshotNotes}
+                    onChange={(e) => setSnapshotNotes(e.target.value)}
+                    placeholder="e.g. Recorded after supplier credit renegotiation & payment clearance drive."
+                    className="w-full px-3 py-2 rounded-xl bg-muted/40 border border-border/50 text-foreground text-xs focus:outline-hidden focus:ring-2 focus:ring-primary/40 resize-none"
+                  />
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-border/40">
+                <button
+                  type="button"
+                  onClick={() => setIsRecordSnapshotModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isSavingSnapshot}
+                  onClick={handleSaveCashCycleSnapshot}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 transition-all cursor-pointer shadow-sm active:scale-95 disabled:opacity-50"
+                >
+                  {isSavingSnapshot ? "Saving Snapshot..." : "Save Milestone Snapshot"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

@@ -909,8 +909,11 @@ class AnalyticsEngine:
         # 11. Working Capital & Operating Cash Conversion Cycle (DSO, DIO, DPO)
         from apps.accounting.models import Ledger
         from apps.inventory.models import Product
+        from apps.analytics.models import CashCycleSnapshot
         from django.db.models import Q, F, Sum, Count, Max
         from decimal import Decimal
+        import datetime
+        from datetime import timedelta
 
         ar_balance = float(
             Ledger.objects.filter(company=company, is_archived=False)
@@ -941,13 +944,161 @@ class AnalyticsEngine:
 
         if ccc_days <= 90:
             wcc_health = "HEALTHY"
-            wcc_rec = f"Working capital conversion cycle is healthy at {ccc_days} days. Collections (DSO {dso_days}d) are well-aligned with supplier terms."
         elif ccc_days <= 140:
             wcc_health = "MODERATE"
-            wcc_rec = f"Moderate working capital cycle of {ccc_days} days. Inventory turnover (DIO {dio_days}d) represents the largest portion of locked cash."
         else:
             wcc_health = "ELEVATED_CYCLE"
-            wcc_rec = f"Elevated cash conversion cycle of {ccc_days} days. Inventory ({dio_days} days) is locking capital. Prioritize clearing slow-moving stock on benches to free up liquidity."
+
+        # Record or update current month snapshot
+        today_date = datetime.date.today()
+        current_period_label = today_date.strftime('%b %Y')
+        cur_snapshot = None
+        try:
+            cur_snapshot, _ = CashCycleSnapshot.objects.update_or_create(
+                company=company,
+                period_label=current_period_label,
+                defaults={
+                    "recorded_date": today_date,
+                    "net_ccc_days": ccc_days,
+                    "dio_days": max(0, dio_days),
+                    "dso_days": max(0, dso_days),
+                    "dpo_days": max(0, dpo_days),
+                    "accounts_receivable": Decimal(str(round(ar_balance, 2))),
+                    "accounts_payable": Decimal(str(round(ap_balance, 2))),
+                    "inventory_valuation": Decimal(str(round(inv_value, 2))),
+                    "total_sales": Decimal(str(round(total_sales_val, 2))),
+                    "total_purchases": Decimal(str(round(total_purch_val, 2))),
+                    "working_capital_health": wcc_health,
+                    "is_system_generated": True,
+                }
+            )
+        except Exception:
+            pass
+
+        # Check existing snapshots; if fewer than 2, seed up to 4 past monthly checkpoints from vouchers
+        existing_count = CashCycleSnapshot.objects.filter(company=company).count()
+        if existing_count < 2:
+            import calendar
+            for step in range(4, 0, -1):
+                total_m = (today_date.year * 12 + (today_date.month - 1)) - step
+                p_y = total_m // 12
+                p_m = (total_m % 12) + 1
+                _, p_days = calendar.monthrange(p_y, p_m)
+                p_end = datetime.date(p_y, p_m, p_days)
+                p_label = p_end.strftime('%b %Y')
+
+                if not CashCycleSnapshot.objects.filter(company=company, period_label=p_label).exists():
+                    window_start = p_end - timedelta(days=180)
+                    h_sales = float(Voucher.objects.filter(
+                        company=company, voucher_type='SALES', status='POSTED',
+                        voucher_date__lte=p_end, voucher_date__gte=window_start
+                    ).aggregate(s=Sum('total_amount'))['s'] or 0.0)
+                    h_purch = float(Voucher.objects.filter(
+                        company=company, voucher_type='PURCHASE', status='POSTED',
+                        voucher_date__lte=p_end, voucher_date__gte=window_start
+                    ).aggregate(s=Sum('total_amount'))['s'] or 0.0)
+
+                    if h_sales > 0 and h_purch > 0:
+                        h_dso = int(round((ar_balance / h_sales) * 180, 0))
+                        h_dio = int(round((inv_value / h_purch) * 180, 0))
+                        h_dpo = int(round((ap_balance / h_purch) * 180, 0))
+                        h_ccc = int(h_dio + h_dso - h_dpo)
+                        h_health = "HEALTHY" if h_ccc <= 90 else ("MODERATE" if h_ccc <= 140 else "ELEVATED_CYCLE")
+                        try:
+                            CashCycleSnapshot.objects.create(
+                                company=company,
+                                recorded_date=p_end,
+                                period_label=p_label,
+                                net_ccc_days=h_ccc,
+                                dio_days=max(0, h_dio),
+                                dso_days=max(0, h_dso),
+                                dpo_days=max(0, h_dpo),
+                                accounts_receivable=Decimal(str(round(ar_balance, 2))),
+                                accounts_payable=Decimal(str(round(ap_balance, 2))),
+                                inventory_valuation=Decimal(str(round(inv_value, 2))),
+                                total_sales=Decimal(str(round(h_sales, 2))),
+                                total_purchases=Decimal(str(round(h_purch, 2))),
+                                working_capital_health=h_health,
+                                is_system_generated=True,
+                            )
+                        except Exception:
+                            pass
+
+        # Retrieve all historical snapshots for trajectory progression
+        all_snapshots = list(CashCycleSnapshot.objects.filter(company=company).order_by('recorded_date'))
+
+        # Find prior snapshot for Month-over-Month comparison
+        prev_snapshot = None
+        for s in reversed(all_snapshots):
+            if s.period_label != current_period_label and s.recorded_date < today_date:
+                prev_snapshot = s
+                break
+
+        comparison = None
+        if prev_snapshot:
+            delta_ccc = ccc_days - prev_snapshot.net_ccc_days
+            delta_dio = max(0, dio_days) - prev_snapshot.dio_days
+            delta_dso = max(0, dso_days) - prev_snapshot.dso_days
+            delta_dpo = max(0, dpo_days) - prev_snapshot.dpo_days
+
+            if delta_ccc < 0:
+                trend_status = "IMPROVED"
+                trend_summary = f"Cash conversion cycle improved by {abs(delta_ccc)} days vs {prev_snapshot.period_label} (from {prev_snapshot.net_ccc_days}d to {ccc_days}d), accelerating liquid cash generation."
+            elif delta_ccc > 0:
+                trend_status = "DETERIORATED"
+                trend_summary = f"Cash conversion cycle elongated by {delta_ccc} days vs {prev_snapshot.period_label} (from {prev_snapshot.net_ccc_days}d to {ccc_days}d), locking working capital for longer."
+            else:
+                trend_status = "STABLE"
+                trend_summary = f"Cash conversion cycle remained stable at {ccc_days} days compared to {prev_snapshot.period_label}."
+
+            comparison = {
+                "previous_period_label": prev_snapshot.period_label,
+                "previous_ccc_days": prev_snapshot.net_ccc_days,
+                "previous_dio_days": prev_snapshot.dio_days,
+                "previous_dso_days": prev_snapshot.dso_days,
+                "previous_dpo_days": prev_snapshot.dpo_days,
+                "delta_ccc": delta_ccc,
+                "delta_dio": delta_dio,
+                "delta_dso": delta_dso,
+                "delta_dpo": delta_dpo,
+                "trend": trend_status,
+                "summary": trend_summary
+            }
+
+        # Formulate tailored recommendation incorporating historical change
+        if comparison and comparison.get("trend") == "IMPROVED":
+            driver_text = f"DIO reduced by {abs(comparison['delta_dio'])}d (faster stock clearance)" if comparison['delta_dio'] < 0 else f"DSO shortened by {abs(comparison['delta_dso'])}d (faster collections)"
+            wcc_rec = f"{comparison['summary']} Primary driver: {driver_text}. Maintain current payment terms and inventory velocity to sustain sub-90 day benchmark."
+        elif comparison and comparison.get("trend") == "DETERIORATED":
+            bottleneck_text = f"inventory turnover slowed by {comparison['delta_dio']}d (excess stock)" if comparison['delta_dio'] > 0 else f"debtors delayed settlement by {comparison['delta_dso']}d"
+            wcc_rec = f"{comparison['summary']} Primary bottleneck: {bottleneck_text}. Prioritize liquidating slow-moving items and enforcing credit limits."
+        else:
+            if ccc_days <= 90:
+                wcc_rec = f"Working capital conversion cycle is healthy at {ccc_days} days. Collections (DSO {dso_days}d) are well-aligned with supplier terms."
+            elif ccc_days <= 140:
+                wcc_rec = f"Moderate working capital cycle of {ccc_days} days. Inventory turnover (DIO {dio_days}d) represents the largest portion of locked cash."
+            else:
+                wcc_rec = f"Elevated cash conversion cycle of {ccc_days} days. Inventory ({dio_days} days) is locking capital. Prioritize clearing slow-moving stock on benches to free up liquidity."
+
+        historical_records = [
+            {
+                "id": str(s.id),
+                "period_label": s.period_label,
+                "date": s.recorded_date.strftime('%Y-%m-%d'),
+                "net_ccc_days": s.net_ccc_days,
+                "dio_days": s.dio_days,
+                "dso_days": s.dso_days,
+                "dpo_days": s.dpo_days,
+                "accounts_receivable": float(s.accounts_receivable),
+                "accounts_payable": float(s.accounts_payable),
+                "inventory_valuation": float(s.inventory_valuation),
+                "working_capital_health": s.working_capital_health,
+                "notes": s.notes or "",
+                "is_system_generated": s.is_system_generated,
+                "created_at": s.created_at.strftime('%Y-%m-%d %H:%M')
+            }
+            for s in all_snapshots
+        ]
 
         working_capital_cycle = {
             "dso_days": max(0, dso_days),
@@ -958,7 +1109,9 @@ class AnalyticsEngine:
             "ap_balance": round(ap_balance, 2),
             "inventory_value": round(inv_value, 2),
             "working_capital_health": wcc_health,
-            "recommendation": wcc_rec
+            "recommendation": wcc_rec,
+            "comparison": comparison,
+            "historical_records": historical_records
         }
 
         return {
@@ -1401,3 +1554,71 @@ class AnalyticsEngine:
                 "total_catalog_items": total_catalog_items,
             }
         }
+
+    @classmethod
+    def record_cash_cycle_snapshot(cls, company, period_label=None, notes=None):
+        """
+        Manually record an on-demand milestone snapshot of the Cash Conversion Cycle.
+        """
+        from apps.analytics.models import CashCycleSnapshot
+        from apps.accounting.models import Ledger, Voucher
+        from apps.inventory.models import Product
+        from django.db.models import Q, F, Sum
+        from decimal import Decimal
+        import datetime
+
+        today = datetime.date.today()
+        label = (period_label or f"Snapshot {today.strftime('%d-%b-%Y')}").strip()
+
+        ar_balance = float(
+            Ledger.objects.filter(company=company, is_archived=False)
+            .filter(Q(ledger_type='CUSTOMER') | Q(group__nature='ASSET', group__name__icontains='Debtor'))
+            .filter(current_balance__gt=0)
+            .aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
+        )
+        ap_balance = float(
+            Ledger.objects.filter(company=company, is_archived=False)
+            .filter(Q(ledger_type='SUPPLIER') | Q(group__nature='LIABILITY', group__name__icontains='Creditor'))
+            .filter(current_balance__gt=0)
+            .aggregate(Sum('current_balance'))['current_balance__sum'] or Decimal('0.00')
+        )
+        inv_value = float(
+            Product.objects.filter(company=company, is_active=True, stock_quantity__gt=0)
+            .annotate(val=F('stock_quantity') * F('purchase_price'))
+            .aggregate(s=Sum('val'))['s'] or Decimal('0.00')
+        )
+        total_sales_val = float(
+            Voucher.objects.filter(company=company, voucher_type='SALES', status='POSTED')
+            .aggregate(s=Sum('total_amount'))['s'] or Decimal('0.00')
+        ) or 1.0
+        total_purch_val = float(
+            Voucher.objects.filter(company=company, voucher_type='PURCHASE', status='POSTED')
+            .aggregate(s=Sum('total_amount'))['s'] or Decimal('0.00')
+        ) or 1.0
+
+        dso = int(round((ar_balance / total_sales_val) * 180, 0))
+        dio = int(round((inv_value / total_purch_val) * 180, 0))
+        dpo = int(round((ap_balance / total_purch_val) * 180, 0))
+        ccc = int(dio + dso - dpo)
+        health = "HEALTHY" if ccc <= 90 else ("MODERATE" if ccc <= 140 else "ELEVATED_CYCLE")
+
+        snapshot, _ = CashCycleSnapshot.objects.update_or_create(
+            company=company,
+            period_label=label,
+            defaults={
+                "recorded_date": today,
+                "net_ccc_days": ccc,
+                "dio_days": max(0, dio),
+                "dso_days": max(0, dso),
+                "dpo_days": max(0, dpo),
+                "accounts_receivable": Decimal(str(round(ar_balance, 2))),
+                "accounts_payable": Decimal(str(round(ap_balance, 2))),
+                "inventory_valuation": Decimal(str(round(inv_value, 2))),
+                "total_sales": Decimal(str(round(total_sales_val, 2))),
+                "total_purchases": Decimal(str(round(total_purch_val, 2))),
+                "working_capital_health": health,
+                "notes": notes or "",
+                "is_system_generated": False,
+            }
+        )
+        return snapshot

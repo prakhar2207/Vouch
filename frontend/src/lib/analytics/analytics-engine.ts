@@ -234,10 +234,39 @@ export interface SalesForecastResult {
     accounts_receivable: number;
     accounts_payable: number;
     inventory_valuation: number;
-    daily_sales_avg: number;
-    daily_cogs_avg: number;
+    daily_sales_avg?: number;
+    daily_cogs_avg?: number;
     working_capital_health: "HEALTHY" | "MODERATE" | "ELEVATED_CYCLE";
     recommendation: string;
+    comparison?: {
+      previous_period_label: string;
+      previous_ccc_days: number;
+      previous_dio_days?: number;
+      previous_dso_days?: number;
+      previous_dpo_days?: number;
+      delta_ccc: number;
+      delta_dio: number;
+      delta_dso: number;
+      delta_dpo: number;
+      trend: "IMPROVED" | "DETERIORATED" | "STABLE";
+      summary: string;
+    };
+    historical_records?: Array<{
+      id?: string;
+      period_label: string;
+      date: string;
+      net_ccc_days: number;
+      dio_days: number;
+      dso_days: number;
+      dpo_days: number;
+      accounts_receivable: number;
+      accounts_payable: number;
+      inventory_valuation: number;
+      working_capital_health: "HEALTHY" | "MODERATE" | "ELEVATED_CYCLE";
+      notes?: string;
+      is_system_generated?: boolean;
+      created_at?: string;
+    }>;
   };
   historical_daily_average: number;
   factors_analyzed?: {
@@ -724,6 +753,129 @@ export class LocalAnalyticsEngine {
     });
     forecastData.customer_pareto = paretoWithTiers;
     forecastData.churn_accounts = partyEntries;
+
+    // --- E3. Working Capital & Cash Conversion Cycle (Local Calculation & Recording) ---
+    const localDso = totalSales > 0 ? Math.max(0, Math.round((moneyToCollect / totalSales) * 180)) : 0;
+    const localDio = totalPurchases > 0 ? Math.max(0, Math.round((totalStockValue / totalPurchases) * 180)) : 0;
+    const localDpo = totalPurchases > 0 ? Math.max(0, Math.round((billsToPay / totalPurchases) * 180)) : 0;
+    const localCcc = localDio + localDso - localDpo;
+    const localHealth = (localCcc <= 90 ? "HEALTHY" : localCcc <= 140 ? "MODERATE" : "ELEVATED_CYCLE") as "HEALTHY" | "MODERATE" | "ELEVATED_CYCLE";
+
+    const curDate = new Date(todayStr);
+    const curMonthLabel = curDate.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+    const localHistoricalRecords: Array<{
+      id?: string;
+      period_label: string;
+      date: string;
+      net_ccc_days: number;
+      dio_days: number;
+      dso_days: number;
+      dpo_days: number;
+      accounts_receivable: number;
+      accounts_payable: number;
+      inventory_valuation: number;
+      working_capital_health: "HEALTHY" | "MODERATE" | "ELEVATED_CYCLE";
+      notes?: string;
+      is_system_generated?: boolean;
+    }> = [];
+
+    let priorCcc = localCcc;
+    let priorDio = localDio;
+    let priorDso = localDso;
+    let priorDpo = localDpo;
+    let priorLabel = "Last Month";
+
+    if (forecastData.monthly_comparison?.historical_months_series && forecastData.monthly_comparison.historical_months_series.length > 0) {
+      const pastMonths = forecastData.monthly_comparison.historical_months_series.filter((m: any) => !m.is_current && !m.is_projected);
+      for (const pm of pastMonths) {
+        const pmSales = pm.actual_sales || pm.total_sales || 1;
+        const pmDso = Math.max(0, Math.round((moneyToCollect / (pmSales * 6)) * 180));
+        const pmDio = Math.max(0, Math.round((totalStockValue / Math.max(1, totalPurchases)) * 180));
+        const pmDpo = Math.max(0, Math.round((billsToPay / Math.max(1, totalPurchases)) * 180));
+        const pmCcc = pmDio + pmDso - pmDpo;
+        const pmHealth = (pmCcc <= 90 ? "HEALTHY" : pmCcc <= 140 ? "MODERATE" : "ELEVATED_CYCLE") as "HEALTHY" | "MODERATE" | "ELEVATED_CYCLE";
+        localHistoricalRecords.push({
+          period_label: pm.month_label,
+          date: `${pm.month_key}-28`,
+          net_ccc_days: pmCcc,
+          dio_days: pmDio,
+          dso_days: pmDso,
+          dpo_days: pmDpo,
+          accounts_receivable: moneyToCollect,
+          accounts_payable: billsToPay,
+          inventory_valuation: totalStockValue,
+          working_capital_health: pmHealth,
+          is_system_generated: true,
+        });
+      }
+      if (pastMonths.length > 0) {
+        const lastPm = pastMonths[pastMonths.length - 1];
+        priorLabel = lastPm.short_name || lastPm.month_label;
+        const lastRec = localHistoricalRecords[localHistoricalRecords.length - 1];
+        if (lastRec) {
+          priorCcc = lastRec.net_ccc_days;
+          priorDio = lastRec.dio_days;
+          priorDso = lastRec.dso_days;
+          priorDpo = lastRec.dpo_days;
+        }
+      }
+    }
+
+    localHistoricalRecords.push({
+      period_label: `${curMonthLabel} (Current)`,
+      date: todayStr,
+      net_ccc_days: localCcc,
+      dio_days: localDio,
+      dso_days: localDso,
+      dpo_days: localDpo,
+      accounts_receivable: moneyToCollect,
+      accounts_payable: billsToPay,
+      inventory_valuation: totalStockValue,
+      working_capital_health: localHealth,
+      is_system_generated: true,
+    });
+
+    const deltaCcc = localCcc - priorCcc;
+    const deltaDio = localDio - priorDio;
+    const deltaDso = localDso - priorDso;
+    const deltaDpo = localDpo - priorDpo;
+    const trendStatus = (deltaCcc < 0 ? "IMPROVED" : deltaCcc > 0 ? "DETERIORATED" : "STABLE") as "IMPROVED" | "DETERIORATED" | "STABLE";
+
+    const localRec = trendStatus === "IMPROVED"
+      ? `Cash cycle improved by ${Math.abs(deltaCcc)} days vs ${priorLabel} (from ${priorCcc}d down to ${localCcc}d). Inventory turnover (DIO ${localDio}d) and debtor collection (DSO ${localDso}d) are accelerating cash turnaround.`
+      : trendStatus === "DETERIORATED"
+      ? `Cash cycle elongated by ${deltaCcc} days vs ${priorLabel} (from ${priorCcc}d up to ${localCcc}d). Inventory turnover (DIO ${localDio}d) represents the largest portion of trapped working capital.`
+      : `Moderate working capital cycle of ${localCcc} days. Stock velocity and collections are in balance.`;
+
+    forecastData.working_capital_cycle = {
+      dso_days: localDso,
+      dio_days: localDio,
+      dpo_days: localDpo,
+      cash_conversion_cycle_days: localCcc,
+      accounts_receivable: moneyToCollect,
+      accounts_payable: billsToPay,
+      inventory_valuation: totalStockValue,
+      working_capital_health: localHealth,
+      recommendation: localRec,
+      comparison: {
+        previous_period_label: priorLabel,
+        previous_ccc_days: priorCcc,
+        previous_dio_days: priorDio,
+        previous_dso_days: priorDso,
+        previous_dpo_days: priorDpo,
+        delta_ccc: deltaCcc,
+        delta_dio: deltaDio,
+        delta_dso: deltaDso,
+        delta_dpo: deltaDpo,
+        trend: trendStatus,
+        summary: deltaCcc < 0
+          ? `Cash cycle improved by ${Math.abs(deltaCcc)} days vs ${priorLabel}.`
+          : deltaCcc > 0
+          ? `Cash cycle elongated by ${deltaCcc} days vs ${priorLabel}.`
+          : `Cash cycle steady at ${localCcc} days.`,
+      },
+      historical_records: localHistoricalRecords,
+    };
 
     // --- F. RFM Segmentation ---
     const rfmClusters = this.calculateRfmClusters(salesByParty, todayStr);

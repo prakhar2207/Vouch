@@ -78,3 +78,60 @@ class DashboardSummaryView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 
+
+class CashCycleSnapshotView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get(self, request, company_id):
+        try:
+            from .models import CashCycleSnapshot
+            company = get_authorized_company(request, company_id=company_id)
+            snapshots = CashCycleSnapshot.objects.filter(company=company).order_by('recorded_date')
+            data = [
+                {
+                    "id": str(s.id),
+                    "period_label": s.period_label,
+                    "date": s.recorded_date.strftime('%Y-%m-%d'),
+                    "net_ccc_days": s.net_ccc_days,
+                    "dio_days": s.dio_days,
+                    "dso_days": s.dso_days,
+                    "dpo_days": s.dpo_days,
+                    "accounts_receivable": float(s.accounts_receivable),
+                    "accounts_payable": float(s.accounts_payable),
+                    "inventory_valuation": float(s.inventory_valuation),
+                    "working_capital_health": s.working_capital_health,
+                    "notes": s.notes or "",
+                    "is_system_generated": s.is_system_generated,
+                    "created_at": s.created_at.strftime('%Y-%m-%d %H:%M')
+                }
+                for s in snapshots
+            ]
+            return Response({"success": True, "data": data})
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
+    def post(self, request, company_id):
+        try:
+            company = get_authorized_company(request, company_id=company_id)
+            period_label = request.data.get('period_label')
+            notes = request.data.get('notes')
+            snapshot = AnalyticsEngine.record_cash_cycle_snapshot(company, period_label=period_label, notes=notes)
+            return Response({
+                "success": True,
+                "message": f"Cash conversion cycle snapshot recorded for '{snapshot.period_label}'.",
+                "data": {
+                    "id": str(snapshot.id),
+                    "period_label": snapshot.period_label,
+                    "net_ccc_days": snapshot.net_ccc_days,
+                    "dio_days": snapshot.dio_days,
+                    "dso_days": snapshot.dso_days,
+                    "dpo_days": snapshot.dpo_days,
+                    "working_capital_health": snapshot.working_capital_health,
+                    "notes": snapshot.notes,
+                    "date": snapshot.recorded_date.strftime('%Y-%m-%d')
+                }
+            })
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
+
