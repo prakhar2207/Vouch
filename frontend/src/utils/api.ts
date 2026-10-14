@@ -91,20 +91,23 @@ async function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
   // Preemptive token refresh: If access token is expired or missing, and refresh token is still valid
   const isAuthEndpoint = endpoint.includes('/api/v1/auth/refresh/') || endpoint.includes('/api/v1/auth/login/') || endpoint.includes('/api/v1/auth/token/');
   if (!isAuthEndpoint && (!token || isTokenExpired(token)) && refreshToken && !isTokenExpired(refreshToken)) {
-    try {
-      const refreshResponse = await refreshClient.post(
-        `/api/v1/auth/refresh/`,
-        { refresh: refreshToken },
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-      const newAccess = refreshResponse.data?.access;
-      const newRefresh = refreshResponse.data?.refresh || refreshToken;
-      if (newAccess) {
-        setTokens(newAccess, newRefresh);
-        token = newAccess;
+    // Only attempt refresh when online
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      try {
+        const refreshResponse = await refreshClient.post(
+          `/api/v1/auth/refresh/`,
+          { refresh: refreshToken },
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+        const newAccess = refreshResponse.data?.access;
+        const newRefresh = refreshResponse.data?.refresh || refreshToken;
+        if (newAccess) {
+          setTokens(newAccess, newRefresh);
+          token = newAccess;
+        }
+      } catch (refreshErr) {
+        console.warn('[API] Preemptive token refresh failed:', refreshErr);
       }
-    } catch (refreshErr) {
-      console.warn('[API] Preemptive token refresh failed:', refreshErr);
     }
   }
 
@@ -151,9 +154,7 @@ const processQueue = (error: unknown, token: string | null = null) => {
 };
 
 async function handleResponseError(error: AxiosError) {
-  // CRITICAL: Never queue or refresh tokens during SSR — module-level state
-  // (isRefreshing, failedQueue) is shared across all concurrent user requests
-  // on the Node.js server, which would cause cross-tenant data leakage.
+  // CRITICAL: Never queue or refresh tokens during SSR
   if (typeof window === 'undefined') {
     return Promise.reject(error);
   }
@@ -179,6 +180,12 @@ async function handleResponseError(error: AxiosError) {
 
   originalRequest._retry = true;
 
+  // If user is currently OFFLINE, never drop the session or attempt network refresh
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    console.warn('[AUTH] Offline: Skipping remote token refresh. Preserving local session.');
+    return Promise.reject(error);
+  }
+
   if (isRefreshing) {
     // Another request is already refreshing the session, queue this request
     return new Promise<string>((resolve, reject) => {
@@ -203,10 +210,14 @@ async function handleResponseError(error: AxiosError) {
   if (!refreshToken || isTokenExpired(refreshToken)) {
     isRefreshing = false;
     processQueue(error, null);
-    removeTokens();
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login' && !isPublicRoute) {
-      console.warn('[AUTH] Session expired and refresh token unavailable, redirecting to /login');
-      window.location.replace('/login?expired=1');
+    
+    // Only remove tokens if online and truly expired
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      removeTokens();
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login' && !isPublicRoute) {
+        console.warn('[AUTH] Session expired and refresh token unavailable, redirecting to /login');
+        window.location.replace('/login?expired=1');
+      }
     }
     return Promise.reject(error);
   }
@@ -237,12 +248,25 @@ async function handleResponseError(error: AxiosError) {
     originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
 
     return api(originalRequest);
-  } catch (refreshErr) {
+  } catch (refreshErr: any) {
     processQueue(refreshErr, null);
-    removeTokens();
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login' && !isPublicRoute) {
-      console.warn('[AUTH] Refresh token rejected, redirecting to /login');
-      window.location.replace('/login?expired=1');
+    
+    // Only drop session if the server EXPLICITLY REJECTED the refresh token (HTTP 401/400).
+    // Never drop session due to network drops, offline mode, or timeouts!
+    const isNetworkError = (typeof navigator !== 'undefined' && !navigator.onLine) || 
+      !refreshErr.response || 
+      refreshErr.code === 'ERR_NETWORK' || 
+      refreshErr.code === 'ECONNABORTED' ||
+      refreshErr.message?.toLowerCase().includes('network');
+
+    if (!isNetworkError && refreshErr.response && (refreshErr.response.status === 401 || refreshErr.response.status === 400)) {
+      removeTokens();
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login' && !isPublicRoute) {
+        console.warn('[AUTH] Refresh token explicitly rejected by server, redirecting to /login');
+        window.location.replace('/login?expired=1');
+      }
+    } else {
+      console.warn('[AUTH] Network error during token refresh. Session remains valid locally.');
     }
     return Promise.reject(refreshErr);
   } finally {

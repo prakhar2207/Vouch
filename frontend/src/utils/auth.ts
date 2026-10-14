@@ -90,6 +90,12 @@ export const isAuthenticated = (): boolean => {
   const refreshToken = getRefreshToken();
   if (!token && !refreshToken) return false;
 
+  // If offline or in Airplane mode: maintain local authentication as long as credentials exist.
+  // Never log the user out while working offline.
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return true;
+  }
+
   // If access token is still fresh, user is fully authenticated
   if (token && !isTokenExpired(token)) {
     return true;
@@ -97,6 +103,12 @@ export const isAuthenticated = (): boolean => {
 
   // If access token expired but refresh token is still valid, session is restorable via refresh
   if (refreshToken && !isTokenExpired(refreshToken)) {
+    return true;
+  }
+
+  // If in browser / mobile and have valid stored credentials, keep local session alive
+  // until the server explicitly responds with 401 on refresh.
+  if (refreshToken || token) {
     return true;
   }
 
