@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SriLekh</string>
+    <string name="title_activity_main">SriLekh</string>
+    <string name="package_name">com.srilekh.app</string>
+    <string name="custom_url_scheme">com.srilekh.app</string>
+</resources>

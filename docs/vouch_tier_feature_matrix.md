@@ -7,7 +7,7 @@
 
 ## Master Feature & Pricing Matrix
 
-| Feature / Module | Tier 1: Starter<br>**₹599 / yr** *(~₹50/mo)* | Tier 2: Growth<br>**₹1,499 / yr** *(~₹125/mo)* | Tier 3: Pro AI<br>**₹2,499 / yr** *(~₹208/mo)* | Tier 4: Enterprise<br>**₹3,499 / yr** *(~₹291/mo)* |
+| Feature / Module | Tier 1: Starter<br>**₹599 / yr** *(~₹50/mo)* | Tier 2: Growth<br>**₹1,499 / yr** *(~₹125/mo)* | Tier 3: Pro AI<br>**₹2,599 / yr** *(~₹217/mo)* | Tier 4: Enterprise<br>**₹3,999 / yr** *(~₹333/mo)* |
 | :--- | :---: | :---: | :---: | :---: |
 | **Target Persona** | Micro-Retail / Dukaan | Small Retail & Traders | Wholesalers & Stockists | Large Distributors |
 | **🌐 B2B EDI NETWORK (100% UNLOCKED)** | | | | |

@@ -6,6 +6,10 @@ const getDefaultApiUrl = () => {
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;
   }
+  // When running inside native Android or iOS Capacitor WebView container, route to cloud API
+  if (typeof window !== 'undefined' && (Boolean((window as any).Capacitor?.isNativePlatform?.()) || (window as any).Capacitor !== undefined)) {
+    return 'https://api.srilekh.com';
+  }
   if (typeof window !== 'undefined' && window.location?.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
     return 'https://api.srilekh.com';
   }

@@ -806,5 +806,31 @@ if (typeof window !== "undefined") {
       }
     }
   });
+
+  // Native mobile Capacitor Network & App State change integration (Google Play & Apple App Store)
+  try {
+    import('@capacitor/network').then(({ Network }) => {
+      Network.addListener('networkStatusChange', (status) => {
+        if (status.connected) {
+          console.log('[Capacitor Network] Native network reconnected, triggering full local-first sync...');
+          triggerFullSync();
+        }
+      });
+    }).catch(() => {});
+
+    import('@capacitor/app').then(({ App }) => {
+      App.addListener('appStateChange', (state) => {
+        if (state.isActive) {
+          const now = Date.now();
+          if (now - lastVisibilitySyncTime > 30000) {
+            lastVisibilitySyncTime = now;
+            triggerFullSync();
+          }
+        }
+      });
+    }).catch(() => {});
+  } catch {
+    // Non-Capacitor web fallback
+  }
 }
 

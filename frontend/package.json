@@ -8,7 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --test \"src/**/*.test.ts\"",
-    "postinstall": "node scripts/patch-html2canvas.js"
+    "postinstall": "node scripts/patch-html2canvas.js",
+    "cap:sync": "npx cap sync",
+    "cap:build:android": "npm run build && npx cap sync android",
+    "cap:build:ios": "npm run build && npx cap sync ios",
+    "cap:open:android": "npx cap open android",
+    "cap:open:ios": "npx cap open ios"
   },
   "dependencies": {
     "@serwist/next": "^9.5.12",
