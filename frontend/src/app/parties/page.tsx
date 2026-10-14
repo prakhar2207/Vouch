@@ -23,7 +23,10 @@ import {
   ArrowUpRight,
   Plus,
   RefreshCw,
-  UploadCloud
+  UploadCloud,
+  Phone,
+  Copy,
+  Check
 } from 'lucide-react';
 
 export default function PartiesPage() {
@@ -117,6 +120,19 @@ export default function PartiesPage() {
     }
   };
 
+  const [copiedGstin, setCopiedGstin] = useState<string | null>(null);
+
+  const handleCopyGstin = (e: React.MouseEvent, gstin: string) => {
+    e.stopPropagation();
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        navigator.clipboard.writeText(gstin);
+        setCopiedGstin(gstin);
+        setTimeout(() => setCopiedGstin(null), 2000);
+        toast.success("GSTIN Copied", gstin);
+      }
+    } catch {}
+  };
 
   // Counts for tabs
   const counts = useMemo(() => {
@@ -246,9 +262,9 @@ export default function PartiesPage() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 max-w-7xl mx-auto pb-16">
+      <div className="space-y-4 sm:space-y-6 max-w-7xl mx-auto pb-28 sm:pb-16">
         {/* Header */}
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-border/40 pb-6">
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 sm:gap-4 border-b border-border/40 pb-4 sm:pb-6">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">Parties</h1>
@@ -257,16 +273,16 @@ export default function PartiesPage() {
                   <span>{displayPeriod}</span>
                 </span>
               ) : activeFY ? (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
                   <span>FY {activeFY.code}</span>
-                  <span className="text-muted-foreground font-normal text-[11px]">({activeFY.start_date} to {activeFY.end_date})</span>
+                  <span className="text-muted-foreground font-normal text-[11px] hidden sm:inline">({activeFY.start_date} to {activeFY.end_date})</span>
                 </span>
               ) : null}
             </div>
-            <p className="text-muted-foreground mt-1 text-xs sm:text-sm">Manage your customers and suppliers</p>
+            <p className="text-muted-foreground mt-0.5 text-xs sm:text-sm">Manage your customers and suppliers</p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full lg:w-auto">
             {/* Search Input */}
             <div className="relative flex-1 sm:w-72">
               <Search className="w-4 h-4 text-muted-foreground absolute left-3.5 top-3" />
@@ -278,61 +294,63 @@ export default function PartiesPage() {
                   setSearchTerm(e.target.value);
                   setFocusedIndex(-1);
                 }}
-                className="bg-card border border-border/40 text-foreground pl-10 pr-4 py-2.5 rounded-xl focus:ring-2 focus:ring-primary/40 outline-none w-full text-sm min-h-[40px]"
+                className="bg-card border border-border/40 text-foreground pl-10 pr-9 py-2 rounded-xl focus:ring-2 focus:ring-primary/40 outline-none w-full text-sm min-h-[42px]"
               />
               {searchTerm && (
                 <button 
+                  type="button"
                   onClick={() => setSearchTerm('')} 
-                  className="absolute right-3 top-3 text-xs text-muted-foreground hover:text-foreground"
+                  className="absolute right-3 top-3 text-xs text-muted-foreground hover:text-foreground p-0.5"
                 >
                   ✕
                 </button>
               )}
             </div>
 
-            {/* Create Buttons */}
-            <div className="flex items-center gap-2">
+            {/* Create Buttons: Grid on mobile, flex on desktop */}
+            <div className="grid grid-cols-3 gap-2 w-full sm:flex sm:items-center sm:gap-2 sm:w-auto">
               <Link 
                 href="/import?type=parties" 
-                className="bg-card hover:bg-muted text-foreground border border-border/70 px-3.5 py-2.5 rounded-xl shadow-xs transition-colors text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 min-h-[40px]"
+                className="bg-card hover:bg-muted text-foreground border border-border/70 px-2 sm:px-3.5 py-2 rounded-xl shadow-xs transition-colors text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 min-h-[42px]"
                 title="Bulk import customers & suppliers from Tally, Vyapar, Zoho, myBillBook, Excel"
               >
-                <UploadCloud className="w-4 h-4 text-blue-500" />
+                <UploadCloud className="w-4 h-4 text-blue-500 shrink-0" />
                 <span>Import</span>
               </Link>
               <Link 
                 href="/purchases/suppliers/new" 
-                className="bg-red-600/90 hover:bg-red-600 text-white px-4 py-2.5 rounded-xl shadow transition-colors text-sm font-semibold whitespace-nowrap flex items-center gap-2 min-h-[40px]"
+                className="bg-red-600/90 hover:bg-red-600 text-white px-2 sm:px-4 py-2 rounded-xl shadow transition-colors text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 min-h-[42px]"
               >
-                <Plus className="w-4 h-4" />
+                <Plus className="w-4 h-4 shrink-0" />
                 <span>Supplier</span>
               </Link>
               <Link 
                 href="/sales/customers/new" 
-                className="bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2.5 rounded-xl shadow-md shadow-primary/20 transition-colors text-sm font-semibold whitespace-nowrap flex items-center gap-2 min-h-[40px]"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground px-2 sm:px-4 py-2 rounded-xl shadow-md shadow-primary/20 transition-colors text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 min-h-[42px]"
               >
-                <Plus className="w-4 h-4" />
+                <Plus className="w-4 h-4 shrink-0" />
                 <span>Customer</span>
               </Link>
             </div>
           </div>
         </div>
 
-        {/* Filter Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-card/60 border border-border/40 p-2.5 rounded-2xl backdrop-blur shadow-sm">
-          <div className="flex items-center gap-2">
+        {/* Filter Toolbar: Segmented control on mobile */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-card/60 border border-border/40 p-2 sm:p-2.5 rounded-2xl backdrop-blur shadow-sm">
+          {/* Tabs: Full-width 3-way segmented control on mobile */}
+          <div className="grid grid-cols-3 gap-1 bg-muted/60 p-1 rounded-xl w-full sm:w-auto sm:flex sm:bg-transparent sm:p-0 sm:gap-2">
             <button
               type="button"
               onClick={() => { setActiveFilter('ALL'); setFocusedIndex(-1); }}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer min-h-[36px] ${
+              className={`py-2 px-2 sm:px-3.5 rounded-lg sm:rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[36px] ${
                 activeFilter === 'ALL'
-                  ? 'bg-muted text-foreground border border-border/60 shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                  ? 'bg-card text-foreground shadow-xs sm:bg-muted sm:border sm:border-border/60'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <Users className="w-4 h-4" />
-              <span>All Parties</span>
-              <span className="px-2 py-0.5 rounded-md bg-muted/80 text-xs font-mono font-bold">
+              <Users className="w-3.5 h-3.5 shrink-0" />
+              <span>All</span>
+              <span className="px-1.5 py-0.5 rounded-md bg-muted text-[11px] font-mono font-bold">
                 {counts.all}
               </span>
             </button>
@@ -340,15 +358,15 @@ export default function PartiesPage() {
             <button
               type="button"
               onClick={() => { setActiveFilter('SUPPLIER'); setFocusedIndex(-1); }}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer min-h-[36px] ${
+              className={`py-2 px-2 sm:px-3.5 rounded-lg sm:rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[36px] ${
                 activeFilter === 'SUPPLIER'
                   ? 'bg-red-500/20 text-red-400 border border-red-500/40 shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <Building2 className="w-4 h-4 text-red-400" />
+              <Building2 className="w-3.5 h-3.5 text-red-400 shrink-0" />
               <span>Suppliers</span>
-              <span className="px-2 py-0.5 rounded-md bg-red-500/20 text-red-300 text-xs font-mono font-bold">
+              <span className="px-1.5 py-0.5 rounded-md bg-red-500/20 text-red-300 text-[11px] font-mono font-bold">
                 {counts.suppliers}
               </span>
             </button>
@@ -356,33 +374,34 @@ export default function PartiesPage() {
             <button
               type="button"
               onClick={() => { setActiveFilter('CUSTOMER'); setFocusedIndex(-1); }}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer min-h-[36px] ${
+              className={`py-2 px-2 sm:px-3.5 rounded-lg sm:rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[36px] ${
                 activeFilter === 'CUSTOMER'
                   ? 'bg-blue-500/20 text-blue-400 border border-blue-500/40 shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <UserCheck className="w-4 h-4 text-blue-400" />
+              <UserCheck className="w-3.5 h-3.5 text-blue-400 shrink-0" />
               <span>Customers</span>
-              <span className="px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-300 text-xs font-mono font-bold">
+              <span className="px-1.5 py-0.5 rounded-md bg-blue-500/20 text-blue-300 text-[11px] font-mono font-bold">
                 {counts.customers}
               </span>
             </button>
           </div>
 
-          <div className="flex items-center gap-3">
+          {/* Secondary Actions & Counter */}
+          <div className="flex items-center justify-between sm:justify-end gap-2.5 pt-1.5 sm:pt-0 border-t border-border/30 sm:border-t-0 text-xs">
             <button
               type="button"
               onClick={handleCleanDuplicates}
               disabled={isCleaning}
               title="Consolidate duplicate parties and merge purchases"
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-muted/80 hover:bg-muted text-foreground border border-border/60 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-muted/80 hover:bg-muted text-foreground border border-border/60 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={`w-3 h-3 ${isCleaning ? 'animate-spin text-primary' : 'text-muted-foreground'}`} />
-              <span>{isCleaning ? 'Consolidating...' : 'Consolidate Duplicates'}</span>
+              <span>{isCleaning ? 'Consolidating...' : 'Duplicates'}</span>
             </button>
-            <div className="text-xs text-muted-foreground px-1">
-              Showing <span className="text-foreground font-bold">{filteredParties.length}</span> of {parties.length} accounts
+            <div className="text-muted-foreground text-xs whitespace-nowrap">
+              Showing <span className="text-foreground font-bold">{filteredParties.length}</span> of {parties.length}
             </div>
           </div>
         </div>
@@ -393,27 +412,27 @@ export default function PartiesPage() {
             <span className="text-sm font-medium">Loading parties...</span>
           </div>
         ) : filteredParties.length === 0 ? (
-          <div className="flex flex-col items-center justify-center text-center p-16 bg-card rounded-2xl border border-border/40 shadow-sm mt-4">
-            <svg className="w-16 h-16 text-muted-foreground mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="flex flex-col items-center justify-center text-center p-8 sm:p-16 bg-card rounded-2xl border border-border/40 shadow-sm mt-4">
+            <svg className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
             </svg>
-            <h3 className="text-xl font-bold mb-1">No Parties Found</h3>
-            <p className="text-muted-foreground text-sm max-w-md mx-auto mb-6">
+            <h3 className="text-lg sm:text-xl font-bold mb-1">No Parties Found</h3>
+            <p className="text-muted-foreground text-xs sm:text-sm max-w-md mx-auto mb-6">
               {searchTerm 
                 ? `No ${activeFilter !== 'ALL' ? activeFilter.toLowerCase() + 's' : 'parties'} match "${searchTerm}".`
                 : `No ${activeFilter !== 'ALL' ? activeFilter.toLowerCase() + 's' : 'parties'} recorded yet.`}
             </p>
-            <div className="flex gap-3">
-              <Link href="/purchases/suppliers/new" className="bg-red-600 text-white px-5 py-2 rounded-xl shadow hover:bg-red-700 transition-colors text-xs font-bold">
+            <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 w-full sm:w-auto">
+              <Link href="/purchases/suppliers/new" className="bg-red-600 text-white px-5 py-2.5 rounded-xl shadow hover:bg-red-700 transition-colors text-xs font-bold text-center">
                 + Add Supplier
               </Link>
-              <Link href="/sales/customers/new" className="bg-primary hover:bg-primary/90 text-primary-foreground px-5 py-2 rounded-xl shadow-md shadow-primary/20 transition-colors text-xs font-bold">
+              <Link href="/sales/customers/new" className="bg-primary hover:bg-primary/90 text-primary-foreground px-5 py-2.5 rounded-xl shadow-md shadow-primary/20 transition-colors text-xs font-bold text-center">
                 + Add Customer
               </Link>
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 sm:gap-5">
             {filteredParties.map((party: any, idx: number) => {
               const isFocused = focusedIndex === idx;
               const isCustomer = party.type === 'Customer';
@@ -425,61 +444,74 @@ export default function PartiesPage() {
                   id={`party-card-${party.id}`}
                   key={party.id}
                   onClick={() => setFocusedIndex(idx)}
-                  className={`bg-card border transition-all rounded-2xl p-5 flex flex-col group relative overflow-hidden cursor-pointer shadow-sm ${
+                  className={`bg-card border transition-all rounded-2xl p-4 sm:p-5 flex flex-col group relative overflow-hidden cursor-pointer shadow-sm ${
                     isFocused 
-                      ? 'border-primary ring-2 ring-primary/60 shadow-lg shadow-primary/10 scale-[1.01]' 
+                      ? 'border-primary ring-2 ring-primary/60 shadow-lg shadow-primary/10' 
                       : 'border-border/40 hover:border-border'
                   }`}
                 >
                   {/* Decorative Top Bar based on Type */}
                   <div className={`absolute top-0 left-0 right-0 h-1 ${isCustomer ? 'bg-primary' : 'bg-red-500'}`}></div>
 
-                  {/* Selected Tag */}
+                  {/* Selected Tag (Desktop keyboard navigation) */}
                   {isFocused && (
-                    <div className="absolute top-2.5 left-2.5 z-10 px-2 py-0.5 rounded text-[10px] font-mono bg-primary/20 text-primary border border-primary/30">
+                    <div className="hidden sm:block absolute top-2.5 left-2.5 z-10 px-2 py-0.5 rounded text-[10px] font-mono bg-primary/20 text-primary border border-primary/30">
                       Selected
                     </div>
                   )}
 
                   {/* Card Header */}
-                  <div className="flex justify-between items-start mb-3 mt-1">
-                    <div className="min-w-0 flex-1 pr-2">
-                      <h3 className="text-lg font-bold text-foreground truncate group-hover:text-primary transition-colors" title={party.name}>
+                  <div className="flex justify-between items-start mb-3 mt-1 gap-2">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-base sm:text-lg font-bold text-foreground line-clamp-2 leading-snug group-hover:text-primary transition-colors" title={party.name}>
                         {party.name}
                       </h3>
-                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                        <span className={`text-xs px-2.5 py-0.5 rounded-full border font-semibold ${
+                      
+                      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                        <span className={`text-[11px] sm:text-xs px-2 py-0.5 rounded-full border font-semibold ${
                           isCustomer 
                             ? 'text-primary bg-primary/10 border-primary/20' 
                             : 'text-red-400 bg-red-500/10 border-red-500/20'
                         }`}>
                           {party.type}
                         </span>
+                        
                         {party.gstin && (
-                          <span className="text-xs font-mono text-muted-foreground bg-muted/40 px-2 py-0.5 rounded border border-border/40 font-medium">
-                            {party.gstin}
-                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleCopyGstin(e, party.gstin)}
+                            title="Click to copy GSTIN"
+                            className="text-[11px] sm:text-xs font-mono text-muted-foreground bg-muted/50 hover:bg-muted px-2 py-0.5 rounded border border-border/40 font-medium flex items-center gap-1 transition-colors cursor-pointer"
+                          >
+                            <span>{party.gstin}</span>
+                            {copiedGstin === party.gstin ? (
+                              <Check className="w-3 h-3 text-emerald-400" />
+                            ) : (
+                              <Copy className="w-3 h-3 text-muted-foreground opacity-60" />
+                            )}
+                          </button>
                         )}
+
                         {party.credit_period_days > 0 && (
-                          <span className="text-xs font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded font-medium">
+                          <span className="text-[11px] sm:text-xs font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded font-medium">
                             {party.credit_period_days}d terms
                           </span>
                         )}
                         {party.credit_limit && (
-                          <span className="text-xs font-mono text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded font-medium">
+                          <span className="text-[11px] sm:text-xs font-mono text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded font-medium">
                             Limit ₹{Number(party.credit_limit).toLocaleString('en-IN')}
                           </span>
                         )}
                         {Number(party.discount_percent || 0) > 0 && (
-                          <span className="text-xs font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded font-semibold">
+                          <span className="text-[11px] sm:text-xs font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded font-semibold">
                             {Number(party.discount_percent)}% Disc
                           </span>
                         )}
                       </div>
                     </div>
 
-                    {/* Top Action Buttons */}
-                    <div className="flex items-center gap-1.5 opacity-100 sm:opacity-75 sm:group-hover:opacity-100 transition-opacity">
+                    {/* Desktop top action buttons (hidden on mobile to give maximum room to party name) */}
+                    <div className="hidden sm:flex items-center gap-1.5 opacity-75 group-hover:opacity-100 transition-opacity shrink-0">
                       <Link 
                         href={`/parties/${party.id}/edit`} 
                         onClick={e => e.stopPropagation()}
@@ -503,7 +535,7 @@ export default function PartiesPage() {
                   </div>
 
                   {/* Card Details */}
-                  <div className="space-y-2.5 flex-1 text-xs">
+                  <div className="space-y-2 flex-1 text-xs mt-1">
                     <div className="flex justify-between items-center text-muted-foreground">
                       <span>Business Role</span>
                       <span className="text-foreground font-semibold">
@@ -514,7 +546,14 @@ export default function PartiesPage() {
                     {party.phone && (
                       <div className="flex justify-between items-center text-muted-foreground">
                         <span>Phone</span>
-                        <span className="text-foreground font-medium">{party.phone}</span>
+                        <a 
+                          href={`tel:${party.phone}`}
+                          onClick={e => e.stopPropagation()}
+                          className="text-primary hover:underline font-medium flex items-center gap-1"
+                        >
+                          <Phone className="w-3 h-3" />
+                          <span>{party.phone}</span>
+                        </a>
                       </div>
                     )}
                     
@@ -533,25 +572,24 @@ export default function PartiesPage() {
                     </div>
                   </div>
 
-                  {/* Card Footer */}
-                  <div className="mt-4 pt-3 border-t border-border/40 flex justify-between items-center text-xs">
-                    <div className="flex items-center gap-2">
+                  {/* Card Footer: Touch-friendly actions */}
+                  <div className="mt-3 pt-3 border-t border-border/40 flex justify-between items-center text-xs">
+                    <div className="flex items-center gap-2 sm:gap-3">
                       <Link 
                         href={`/parties/${party.id}/edit`} 
                         onClick={e => e.stopPropagation()}
-                        className="text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors font-medium p-1"
+                        className="text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors font-medium py-1 px-1.5 rounded-md hover:bg-muted"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                         <span>Edit</span>
                       </Link>
-                      <span className="text-border">•</span>
                       <button 
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           setDeletingParty(party);
                         }}
-                        className="text-muted-foreground hover:text-rose-400 flex items-center gap-1 transition-colors font-medium p-1 cursor-pointer"
+                        className="text-muted-foreground hover:text-rose-400 flex items-center gap-1 transition-colors font-medium py-1 px-1.5 rounded-md hover:bg-rose-500/10 cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                         <span>Delete</span>
@@ -561,7 +599,7 @@ export default function PartiesPage() {
                     <Link 
                       href={`/parties/${party.id}/statement`} 
                       onClick={e => e.stopPropagation()}
-                      className="text-primary hover:text-primary/80 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform p-1"
+                      className="text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-2.5 py-1.5 rounded-lg font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-all"
                     >
                       <span>Statement</span>
                       <ArrowUpRight className="w-4 h-4" />
@@ -573,8 +611,8 @@ export default function PartiesPage() {
           </div>
         )}
 
-        {/* Keyboard Shortcuts Hint Bar */}
-        <div className="p-3 border border-border/40 shadow-sm bg-card/60 backdrop-blur rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-muted-foreground mt-6">
+        {/* Keyboard Shortcuts Hint Bar (Desktop only) */}
+        <div className="hidden sm:flex p-3 border border-border/40 shadow-sm bg-card/60 backdrop-blur rounded-xl items-center justify-between gap-2 text-xs text-muted-foreground mt-6">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="flex items-center gap-1 font-semibold text-foreground">
               <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
