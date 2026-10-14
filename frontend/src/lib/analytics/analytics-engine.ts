@@ -423,38 +423,17 @@ export class LocalAnalyticsEngine {
       .equals(companyId)
       .toArray();
 
-    // 2. Fetch ledgers for active company (scoped to FY if dates or FY ID provided)
-    let ledgers: any[] = [];
-    if (options?.financialYearId || options?.startDate || options?.endDate) {
-      const { data: scopedLedgers } = await ledgersRepository.getLedgers(companyId, {
-        financialYearId: options.financialYearId,
-        startDate: options.startDate,
-        endDate: options.endDate,
-      });
-      ledgers = scopedLedgers;
-    } else {
-      ledgers = await offlineDb.syncedLedgers
-        .where("companyId")
-        .equals(companyId)
-        .toArray();
-    }
-
-    // 3. Fetch products for active company
-    let products = await offlineDb.syncedProducts
+    // 2. Fetch ledgers directly from local IndexedDB (zero network latency, strictly local-first)
+    const ledgers = await offlineDb.syncedLedgers
       .where("companyId")
       .equals(companyId)
       .toArray();
 
-    if (products.length === 0) {
-      try {
-        const { data: fetched } = await productsRepository.getProducts(companyId);
-        if (fetched && fetched.length > 0) {
-          products = fetched;
-        }
-      } catch (err) {
-        console.warn("[AnalyticsEngine] Fallback product fetch failed:", err);
-      }
-    }
+    // 3. Fetch products directly from local IndexedDB (zero network latency, strictly local-first)
+    const products = await offlineDb.syncedProducts
+      .where("companyId")
+      .equals(companyId)
+      .toArray();
 
     // 4. Fetch sync metadata
     const syncMeta = await offlineDb.syncMeta.get(companyId);

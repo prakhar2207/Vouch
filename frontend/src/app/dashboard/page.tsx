@@ -245,6 +245,19 @@ export default function Dashboard() {
         if (!cid && typeof window !== "undefined") {
           cid = localStorage.getItem("vouch_active_company_id");
         }
+        if (!cid && typeof window !== "undefined") {
+          try {
+            const cachedListStr = localStorage.getItem("vouch_cached_companies_list");
+            if (cachedListStr) {
+              const cachedList = JSON.parse(cachedListStr);
+              if (Array.isArray(cachedList) && cachedList.length > 0 && cachedList[0]?.id) {
+                const firstId = String(cachedList[0].id);
+                cid = firstId;
+                localStorage.setItem("vouch_active_company_id", firstId);
+              }
+            }
+          } catch {}
+        }
         if (!cid) {
           const token = getAccessToken();
           const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
@@ -270,7 +283,7 @@ export default function Dashboard() {
         }
         const validCid = cid;
 
-        // 1. Instant local read from IndexedDB (strictly scoped to active period)
+        // 1. Instant local read from IndexedDB (<15ms)
         const local = await LocalAnalyticsEngine.getDashboardAnalytics(validCid, fyOptions);
         if (isMounted) {
           setInsights(local);
@@ -287,10 +300,9 @@ export default function Dashboard() {
             .catch(() => 0);
           setPendingMutations(pendingCount);
 
-          // If local data exists or initial sync is already complete, render immediately!
-          if (local.coverage.totalVouchersCount > 0 || local.coverage.isComplete) {
-            setLoading(false);
-          }
+          // P0: Render immediately from local IndexedDB cache (<20ms).
+          // Never block user on a 30-60s loading screen waiting for remote backend sync.
+          setLoading(false);
         }
 
         // 2. Read cached health check from sessionStorage
@@ -312,7 +324,7 @@ export default function Dashboard() {
         const isInitialCompanyLoad = loadedCompanyRef.current !== loadKey;
         loadedCompanyRef.current = loadKey;
 
-        // 3. Trigger background incremental delta sync if online
+        // 3. Trigger background incremental delta sync if online (non-blocking)
         if (typeof navigator !== "undefined" && navigator.onLine) {
           if (isInitialCompanyLoad) {
             if (isMounted) {
@@ -320,7 +332,7 @@ export default function Dashboard() {
               setSyncMessage("Updating local books...");
             }
             
-            // Also refresh canonical forecast from server if online
+            // Also refresh canonical forecast from server if online in the background
             const token = getAccessToken();
             if (token) {
               axios.get(`${API_BASE_URL}/api/v1/analytics/forecast/${validCid}/?days=30&company_id=${validCid}`, {
@@ -350,11 +362,9 @@ export default function Dashboard() {
                 setSyncStatus("ERROR");
                 setSyncMessage(res.error || "Sync update paused");
               }
-              setLoading(false);
             }).catch(() => {
               if (isMounted) {
                 setSyncStatus("ERROR");
-                setLoading(false);
               }
             });
 

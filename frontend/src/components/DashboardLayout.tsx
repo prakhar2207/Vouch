@@ -47,6 +47,7 @@ import {
   Sliders,
   X,
   RotateCcw,
+  Menu,
 } from "lucide-react";
 import SyncStatusBadge from "./SyncStatusBadge";
 import UniversalNewModal from "./UniversalNewModal";
@@ -232,7 +233,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="w-full max-w-[100vw] px-2.5 sm:px-3.5 xl:px-4 2xl:px-5 h-14 flex items-center justify-between gap-1 sm:gap-1.5 min-w-0">
           
           {/* Left Section: Brand & Primary Nav */}
-          <div className="flex items-center gap-1 xl:gap-1.5 2xl:gap-2 min-w-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 shrink-0">
+            {/* Mobile & Tablet Navigation Drawer Trigger */}
+            <button
+              type="button"
+              onClick={() => setIsMobileNavOpen(true)}
+              className="lg:hidden p-1.5 -ml-1 text-muted-foreground hover:text-foreground hover:bg-muted/70 rounded-xl transition-colors cursor-pointer shrink-0"
+              aria-label="Open Navigation Menu"
+              title="Open Navigation Menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+
             {/* Brand Logo */}
             <div id="tour-header-brand" className="flex items-center gap-1.5 shrink-0">
               <Link
@@ -364,11 +376,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <span>Purchases</span>
               </Link>
 
-              {/* 3. CASH & BANK */}
+              {/* 3. CASH & BANK (Visible on XL+, accessible in More dropdown on smaller screens) */}
               <Link
                 id="tour-banking-nav"
                 href="/vouchers"
-                className={`px-2 xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                className={`hidden xl:flex px-2 xl:px-2.5 py-1.5 rounded-lg text-xs 2xl:text-[13px] transition-all items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                   isCashBankActive
                     ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-2xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60 font-medium"
@@ -748,25 +760,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 )}
               </div>
 
-              {/* 8. Universal + NEW Button */}
-              <button
-                id="tour-universal-new-btn"
-                type="button"
-                onClick={() => setIsUniversalNewOpen(true)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm shadow-emerald-600/25 transition-all cursor-pointer shrink-0 ml-1 active:scale-95"
-                title="Create Invoice, Bill, Payment or Item (Shortcut: N or C)"
-              >
-                <Plus className="w-4 h-4 stroke-[2.5]" />
-                <span>New</span>
-              </button>
             </nav>
           </div>
 
 
           {/* Right Section: Workspace Context, Quick Search & Utilities */}
-          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto pr-0.5">
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto pr-0.5 min-w-0">
+            {/* Universal + NEW Action Button (Grouped with user actions, visible across all devices) */}
+            <button
+              id="tour-universal-new-btn"
+              type="button"
+              onClick={() => setIsUniversalNewOpen(true)}
+              className="inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm shadow-emerald-600/25 transition-all cursor-pointer shrink-0 active:scale-95"
+              title="Create Invoice, Bill, Payment or Item (Shortcut: N or C)"
+            >
+              <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[2.5]" />
+              <span className="hidden sm:inline">New</span>
+            </button>
+
             {/* Company Switcher Pill */}
-            <div ref={companyRef} className="relative hidden md:block shrink-0">
+            <div ref={companyRef} className="relative hidden sm:block shrink-0 min-w-0">
               <button
                 onClick={() => {
                   setIsCompanyDropdownOpen(!isCompanyDropdownOpen);
@@ -776,13 +789,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 aria-label={`Switch Company Workspace (Active: ${activeCompany?.name || 'Company'})`}
                 aria-haspopup="true"
                 aria-expanded={isCompanyDropdownOpen}
-                className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[44px]"
+                className="flex items-center gap-1 sm:gap-1.5 px-2 py-1 sm:py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[38px] sm:min-h-[44px]"
                 title={`Active Company: ${activeCompany?.name || 'Company'}`}
               >
                 <div className="w-5 h-5 rounded-md bg-gradient-to-br from-primary/20 to-primary/10 border border-primary/25 flex items-center justify-center text-[10px] font-bold text-primary shrink-0 uppercase">
                   {(activeCompany?.name || "C")[0]}
                 </div>
-                <span className="font-semibold text-xs text-foreground truncate max-w-[70px] lg:max-w-[75px] xl:max-w-[90px] 2xl:max-w-[110px]">
+                <span className="font-semibold text-xs text-foreground truncate max-w-[65px] sm:max-w-[75px] md:max-w-[85px] lg:max-w-[75px] xl:max-w-[105px] 2xl:max-w-[130px]">
                   {activeCompany?.name || "Company"}
                 </span>
                 <ChevronDown className={`w-3 h-3 text-muted-foreground/70 shrink-0 transition-transform duration-150 ${isCompanyDropdownOpen ? "rotate-180" : ""}`} />
@@ -848,13 +861,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
 
             {/* Financial Year & Period Switcher */}
-            <div ref={fyRef} className="relative hidden md:block shrink-0">
+            <div ref={fyRef} className="relative hidden sm:block shrink-0">
               <button
                 onClick={() => setIsFYDropdownOpen(!isFYDropdownOpen)}
                 aria-label={`Financial Year (${activeFY ? (activeFY.code || activeFY.name) : "FY 26-27"})`}
                 aria-haspopup="true"
                 aria-expanded={isFYDropdownOpen}
-                className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[44px]"
+                className="flex items-center gap-1 sm:gap-1.5 px-2 py-1 sm:py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs transition-all cursor-pointer shadow-2xs min-h-[38px] sm:min-h-[44px]"
                 title={isCustomPeriod ? `Active Period: ${displayPeriod} (Click to change)` : "Change Financial Year or Period (Alt + F2)"}
               >
                 <div className="flex items-center gap-1.5 font-mono tabular-nums text-xs font-semibold text-foreground whitespace-nowrap">
@@ -946,20 +959,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <button
               id="tour-command-palette-btn"
               onClick={() => setIsCommandPaletteOpen(true)}
-              className="flex items-center justify-center p-2 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[44px] min-w-[44px] shrink-0"
+              className="flex items-center justify-center p-2 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs min-h-[38px] min-w-[38px] sm:min-h-[44px] sm:min-w-[44px] shrink-0"
               title="Quick Search & Navigation (Ctrl+K)"
               aria-label="Quick Search"
             >
               <Search className="w-4 h-4 text-muted-foreground shrink-0" />
             </button>
 
-            {/* Tally Calculator Quick Access (Alt+N or Ctrl+N) */}
+            {/* Tally Calculator Quick Access (Alt+N or Ctrl+N) - Hidden on narrow viewports to preserve navbar breathing room */}
             <button
               id="tour-calculator-btn"
               onClick={() => setIsCalculatorOpen(!isCalculatorOpen)}
               aria-label="Tally Calculator & GST Tools"
               aria-expanded={isCalculatorOpen}
-              className={`p-2 rounded-xl transition-all cursor-pointer min-h-[44px] min-w-[44px] hidden sm:flex items-center justify-center shrink-0 ${
+              className={`p-2 rounded-xl transition-all cursor-pointer min-h-[44px] min-w-[44px] hidden xl:flex items-center justify-center shrink-0 ${
                 isCalculatorOpen
                   ? "bg-primary/20 text-primary border border-primary/40 shadow-xs"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
