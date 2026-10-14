@@ -5,6 +5,8 @@ const config: CapacitorConfig = {
   appName: 'SriLekh',
   webDir: 'mobile-shell',
   server: {
+    url: 'https://vouch-pi-one.vercel.app',
+    cleartext: false,
     androidScheme: 'https',
     iosScheme: 'srilekh',
     allowNavigation: [
