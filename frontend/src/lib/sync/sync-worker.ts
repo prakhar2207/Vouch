@@ -771,7 +771,7 @@ export async function syncCompany(companyId: string, onProgress?: (msg: string) 
  */
 export async function triggerFullSync(targetCompanyId?: string) {
   if (typeof window === "undefined" || !navigator.onLine) return;
-  const cId = targetCompanyId || (typeof localStorage !== "undefined" ? (localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company")) : null);
+  const cId = targetCompanyId || (typeof localStorage !== "undefined" ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company")) : null);
   if (cId) {
     await syncCompany(cId);
   } else {

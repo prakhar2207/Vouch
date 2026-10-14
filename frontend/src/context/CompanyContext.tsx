@@ -101,7 +101,23 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
       return selected;
     } catch (err) {
-      console.error("Failed to load companies in CompanyProvider:", err);
+      console.warn("Failed to fetch companies from cloud, falling back to local storage:", err);
+      if (typeof window !== "undefined") {
+        try {
+          const cached = localStorage.getItem(CACHED_COMPANIES_KEY);
+          if (cached) {
+            const list: Company[] = JSON.parse(cached);
+            if (Array.isArray(list) && list.length > 0) {
+              setAvailableCompanies(list);
+              const savedId = localStorage.getItem(STORAGE_KEY) || localStorage.getItem("activeCompanyId");
+              const selected = list.find((c) => c.id === savedId) || list[0];
+              setActiveCompanyState(selected);
+              setLoading(false);
+              return selected;
+            }
+          }
+        } catch {}
+      }
       setLoading(false);
       return null;
     }
@@ -111,7 +127,10 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
     setActiveCompanyState(company);
     if (typeof window !== "undefined" && company) {
       localStorage.setItem(STORAGE_KEY, company.id);
-      offlineDb.masters.bulkDelete(["company", "ledgers", "categories", "products"]).catch(() => {});
+      localStorage.setItem("activeCompanyId", company.id);
+      localStorage.setItem("vouch_active_company", company.id);
+      localStorage.setItem("vouch_active_company_name", company.name || "");
+      // Retain all company data in IndexedDB (isolated by companyId) until user clears app data
     }
   };
 

@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   Keyboard,
@@ -101,11 +102,27 @@ const shortcuts = [
 
 /* ────────────────────── Main Page ────────────────────── */
 export default function LandingPage() {
+  const router = useRouter();
   const [isAuth, setIsAuth] = useState(false);
   const { setIsHelpOpen } = useShortcuts();
 
   useEffect(() => {
-    setIsAuth(isAuthenticated());
+    const authed = isAuthenticated();
+    setIsAuth(authed);
+
+    // If already authenticated, redirect straight to dashboard
+    if (authed) {
+      router.replace("/dashboard");
+      return;
+    }
+
+    // If running inside the installed mobile app (Capacitor), go straight to login
+    const isMobileApp = typeof window !== "undefined" && (Boolean((window as any).Capacitor?.isNativePlatform?.()) || (window as any).Capacitor !== undefined);
+    if (isMobileApp) {
+      router.replace("/login");
+      return;
+    }
+
     // Pre-warm the backend API gently so subsequent sign-in is instant
     const timer = setTimeout(() => {
       try {
@@ -115,7 +132,7 @@ export default function LandingPage() {
       }
     }, 1000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [router]);
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col selection:bg-[#162C5B]/15 selection:text-[#162C5B]">
