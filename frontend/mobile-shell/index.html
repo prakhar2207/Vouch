@@ -132,10 +132,11 @@
   </div>
 
   <div class="offline-card" id="offline-state">
-    <div class="offline-badge">✈ Airplane Mode Active</div>
+    <div class="offline-badge">Sign In Required</div>
     <p class="offline-desc">
-      No internet connection detected.<br />
-      Please turn <strong>OFF</strong> Airplane mode once so your account and local books can initialize on this device.
+      Please connect to the internet to sign in to your SriLekh account.
+      <br /><br />
+      <strong>Once you have signed in, you can operate the entire app offline in Airplane Mode.</strong>
     </p>
     <button class="retry-btn" onclick="retryNow()">Retry Connection</button>
   </div>
@@ -151,52 +152,51 @@
       offlineState.style.display = "block";
     }
 
-    function showLoading() {
+    function showLoading(msg) {
       loadingState.style.display = "block";
       offlineState.style.display = "none";
-      statusEl.textContent = "Connecting to workspace...";
+      if (msg) statusEl.textContent = msg;
     }
 
     function navigateToApp() {
-      if (!navigator.onLine) {
-        showOfflineCard();
+      const hasAuth = localStorage.getItem("vouch_access_token") || localStorage.getItem("access_token");
+
+      // If user has already signed in once, proceed directly to Dashboard!
+      // Even in Airplane mode, Android WebView will load the cached dashboard and local IndexedDB data.
+      if (hasAuth) {
+        showLoading("Loading local workspace...");
+        window.location.replace(baseUrl + "/dashboard");
         return;
       }
 
-      showLoading();
-      const hasAuth = localStorage.getItem("vouch_access_token") || localStorage.getItem("access_token");
-      const targetUrl = baseUrl + (hasAuth ? "/dashboard" : "/login");
-      statusEl.textContent = hasAuth ? "Opening dashboard..." : "Opening login...";
-      
-      // Attempt navigation with timeout guard
-      setTimeout(() => {
-        window.location.href = targetUrl;
-      }, 150);
+      // If user is not signed in yet:
+      if (navigator.onLine) {
+        showLoading("Opening login...");
+        window.location.replace(baseUrl + "/login");
+      } else {
+        showOfflineCard();
+      }
     }
 
     function retryNow() {
       if (navigator.onLine) {
         navigateToApp();
       } else {
-        statusEl.textContent = "Still offline. Please disable Airplane mode or enable Wi-Fi.";
+        statusEl.textContent = "Connecting to internet...";
         loadingState.style.display = "block";
         offlineState.style.display = "none";
-        setTimeout(showOfflineCard, 1500);
+        setTimeout(navigateToApp, 1000);
       }
     }
 
-    // Auto-reconnect the millisecond Airplane mode is disabled
+    // Auto-reconnect the millisecond connection is restored
     window.addEventListener("online", () => {
       console.log("[Mobile Shell] Network restored, navigating...");
       navigateToApp();
     });
 
     window.addEventListener("DOMContentLoaded", () => {
-      if (!navigator.onLine) {
-        showOfflineCard();
-      } else {
-        setTimeout(navigateToApp, 250);
-      }
+      navigateToApp();
     });
   </script>
 </body>
