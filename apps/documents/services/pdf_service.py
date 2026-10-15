@@ -34,6 +34,7 @@ class DocumentPDFService:
         watermark: bool = False,
         show_logo: bool = True,
         copy_type: str = 'ORIGINAL',
+        show_brand: bool = True,
     ) -> str:
         version = getattr(snapshot, 'source_version', 1) or 1
         updated_ts = ''
@@ -41,14 +42,15 @@ class DocumentPDFService:
             updated_ts = snapshot.snapshot_json.get('_voucher_updated_at') or snapshot.snapshot_json.get('_proforma_updated_at') or ''
         ts_clean = ''.join(c for c in str(updated_ts) if c.isalnum())
         cp_clean = ''.join(c for c in str(copy_type or 'ORIGINAL').upper() if c.isalnum())
-        return f"vouch_pdf_{snapshot.id}_v{version}_{ts_clean}_{snapshot.template_version}_wm{int(watermark)}_lg{int(show_logo)}_cp{cp_clean}"
+        return f"vouch_pdf_{snapshot.id}_v{version}_{ts_clean}_{snapshot.template_version}_wm{int(watermark)}_lg{int(show_logo)}_br{int(show_brand)}_cp{cp_clean}"
 
     @classmethod
     def invalidate_cache_for_snapshot(cls, snapshot: DocumentSnapshot):
         for wm in [0, 1]:
             for lg in [0, 1]:
-                cache.delete(f"vouch_pdf_{snapshot.id}_{snapshot.template_version}_wm{wm}_lg{lg}")
-                cache.delete(cls.get_cache_key(snapshot, watermark=bool(wm), show_logo=bool(lg)))
+                for br in [0, 1]:
+                    cache.delete(f"vouch_pdf_{snapshot.id}_{snapshot.template_version}_wm{wm}_lg{lg}")
+                    cache.delete(cls.get_cache_key(snapshot, watermark=bool(wm), show_logo=bool(lg), show_brand=bool(br)))
 
     @classmethod
     def generate_pdf_from_snapshot(
@@ -58,8 +60,9 @@ class DocumentPDFService:
         watermark: bool = False,
         show_logo: bool = True,
         copy_type: str = 'ORIGINAL',
+        show_brand: bool = True,
     ) -> bytes:
-        cache_key = cls.get_cache_key(snapshot, watermark=watermark, show_logo=show_logo, copy_type=copy_type)
+        cache_key = cls.get_cache_key(snapshot, watermark=watermark, show_logo=show_logo, copy_type=copy_type, show_brand=show_brand)
 
         if not bypass_cache:
             cached_data = cache.get(cache_key)
@@ -77,10 +80,10 @@ class DocumentPDFService:
 
         if doc_type == 'PROFORMA_INVOICE' or dto.get('is_proforma'):
             pdf_bytes = ModernProformaPDFRenderer.render(
-                dto, watermark=watermark, show_logo=show_logo
+                dto, watermark=watermark, show_logo=show_logo, show_brand=show_brand
             )
         elif doc_type in ['SALES_INVOICE', 'PURCHASE_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE']:
-            pdf_bytes = InvoicePDFRenderer.render(dto, watermark=watermark, copy_type=copy_type)
+            pdf_bytes = InvoicePDFRenderer.render(dto, watermark=watermark, copy_type=copy_type, show_brand=show_brand)
         elif doc_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL']:
             pdf_bytes = VoucherPDFRenderer.render(dto)
         elif doc_type in ['CUSTOMER_STATEMENT', 'SUPPLIER_STATEMENT', 'LEDGER']:
@@ -89,7 +92,7 @@ class DocumentPDFService:
             pdf_bytes = ReportPDFRenderer.render(dto)
         else:
             # Fallback to invoice renderer
-            pdf_bytes = InvoicePDFRenderer.render(dto, watermark=watermark, copy_type=copy_type)
+            pdf_bytes = InvoicePDFRenderer.render(dto, watermark=watermark, copy_type=copy_type, show_brand=show_brand)
 
         # Store in ephemeral cache
         try:
@@ -105,6 +108,9 @@ class DocumentPDFService:
         voucher: Voucher,
         bypass_cache: bool = False,
         copy_type: str = 'ORIGINAL',
+        watermark: bool = False,
+        show_logo: bool = True,
+        show_brand: bool = True,
     ) -> bytes:
         """
         Convenience method to render any Voucher (Sales, Purchase, Payment, etc.).
@@ -113,7 +119,14 @@ class DocumentPDFService:
         snapshot = DocumentSnapshotService.get_or_create_voucher_snapshot(
             voucher, force_refresh=bypass_cache
         )
-        return cls.generate_pdf_from_snapshot(snapshot, bypass_cache=bypass_cache, copy_type=copy_type)
+        return cls.generate_pdf_from_snapshot(
+            snapshot,
+            bypass_cache=bypass_cache,
+            copy_type=copy_type,
+            watermark=watermark,
+            show_logo=show_logo,
+            show_brand=show_brand,
+        )
 
     @classmethod
     def generate_pdf_for_statement(

@@ -80,10 +80,14 @@ def build_proforma_dto(proforma) -> Dict[str, Any]:
         tot_sgst += itm.sgst_amount
         tot_igst += itm.igst_amount
 
+        brand_val = getattr(itm, 'brand', '') or ''
+        if not brand_val and getattr(itm, 'product', None) and getattr(itm.product, 'brand', None):
+            brand_val = str(itm.product.brand.name if hasattr(itm.product.brand, 'name') else itm.product.brand)
+
         dto_items.append({
             'sn': idx,
             'name': itm.item_name,
-            'brand': getattr(itm, 'brand', '') or '',
+            'brand': brand_val,
             'hsn_code': itm.hsn_code or '',
             'quantity': float(itm.quantity),
             'unit': itm.unit or 'PCS',
@@ -104,24 +108,45 @@ def build_proforma_dto(proforma) -> Dict[str, Any]:
     total_amount = float(proforma.total_amount or Decimal('0.00'))
     round_off = float(proforma.round_off or Decimal('0.00'))
 
-    # UPI QR
-    upi_id = getattr(company, 'upi_id', '') or ''
+    # UPI QR Resolution: company -> bank ledger -> company branding settings -> party ledger -> NPCI account@ifsc fallback
+    upi_id = (getattr(company, 'upi_id', '') or '').strip()
+    if not upi_id:
+        bank_ledger = company.ledgers.filter(ledger_type='BANK').exclude(upi_id='').exclude(upi_id__isnull=True).first()
+        if bank_ledger and bank_ledger.upi_id:
+            upi_id = bank_ledger.upi_id.strip()
+    if not upi_id:
+        comp_settings = getattr(company, 'settings', None)
+        branding_dict = getattr(comp_settings, 'document_branding', {}) if comp_settings else {}
+        if isinstance(branding_dict, dict) and branding_dict.get('upi_id'):
+            upi_id = str(branding_dict['upi_id']).strip()
+    if not upi_id and getattr(proforma, 'party_ledger', None):
+        upi_id = (getattr(proforma.party_ledger, 'upi_id', '') or '').strip()
+    if not upi_id and getattr(company, 'bank_account_number', '') and getattr(company, 'bank_ifsc', ''):
+        acc = ''.join(c for c in str(company.bank_account_number) if c.isalnum())
+        ifsc = ''.join(c for c in str(company.bank_ifsc) if c.isalnum()).upper()
+        if acc and ifsc:
+            upi_id = f"{acc}@{ifsc}.ifsc.npci"
+
     upi_url = ''
     if upi_id:
         upi_url = (
             f"upi://pay?pa={urllib.parse.quote(upi_id)}"
             f"&pn={urllib.parse.quote(company.legal_name or company.name or 'Merchant')}"
             f"&am={total_amount:.2f}"
-            f"&tn={urllib.parse.quote(proforma.proforma_number)}"
+            f"&tn={urllib.parse.quote(f'Adv {proforma.proforma_number}')}"
             f"&cu=INR"
         )
 
     doc_type_label = 'PROFORMA INVOICE' if proforma.proforma_type == 'PROFORMA' else 'QUOTATION'
+    customer_notes = (proforma.customer_notes or '').strip()
 
     return {
         'document_type': 'PROFORMA_INVOICE',
         'proforma_type': proforma.proforma_type,
         'document_type_label': doc_type_label,
+        'upi_id': upi_id,
+        'upi_url': upi_url,
+        'customer_notes': customer_notes,
         'seller': {
             'name': company.legal_name or company.name,
             'gstin': company.gstin or 'Unregistered',
@@ -139,6 +164,8 @@ def build_proforma_dto(proforma) -> Dict[str, Any]:
             'stamp_url': stamp_url,
             'tagline': getattr(company, 'tagline', '') or '',
             'proprietor_name': getattr(company, 'proprietor_name', '') or '',
+            'upi_id': upi_id,
+            'upi_url': upi_url,
             'bank': {
                 'bank_name': getattr(company, 'bank_name', '') or '',
                 'account_number': getattr(company, 'bank_account_number', '') or '',
@@ -163,7 +190,8 @@ def build_proforma_dto(proforma) -> Dict[str, Any]:
             'valid_until': valid_until,
             'place_of_supply': pos,
             'is_inter_state': is_inter_state,
-            'narration': proforma.customer_notes or '',
+            'customer_notes': customer_notes,
+            'narration': customer_notes,
             'terms_and_conditions': proforma.terms_and_conditions or '',
         },
         'items': dto_items,

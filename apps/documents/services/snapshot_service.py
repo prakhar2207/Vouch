@@ -216,7 +216,7 @@ class DocumentSnapshotService:
         """
         from apps.documents.dto.proforma_dto import build_proforma_dto
 
-        CURRENT_TEMPLATE_VERSION = '2.0'
+        CURRENT_TEMPLATE_VERSION = '3.0'
         source_id = str(proforma.id)
         p_updated_at = str(proforma.updated_at) if hasattr(proforma, 'updated_at') and proforma.updated_at else ''
 
@@ -242,6 +242,17 @@ class DocumentSnapshotService:
                     if existing.total_amount is not None and proforma.total_amount is not None:
                         if Decimal(str(existing.total_amount)) != Decimal(str(proforma.total_amount)):
                             is_stale = True
+
+                # Also verify if notes, bank UPI, or items in existing snapshot match current state
+                existing_notes = str(existing_snap.get('customer_notes') or existing_snap.get('document', {}).get('customer_notes') or '').strip()
+                current_notes = str(proforma.customer_notes or '').strip()
+                if existing_notes != current_notes:
+                    is_stale = True
+
+                existing_upi = str(existing_snap.get('seller', {}).get('bank', {}).get('upi_id') or existing_snap.get('upi_id') or '').strip()
+                current_comp_upi = str(getattr(proforma.company, 'upi_id', '') or '').strip()
+                if current_comp_upi and existing_upi != current_comp_upi:
+                    is_stale = True
 
                 if not is_stale:
                     return existing

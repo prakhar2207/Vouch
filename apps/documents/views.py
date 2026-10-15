@@ -72,7 +72,17 @@ class VoucherPDFStreamAPIView(APIView):
 
         copy_type = request.query_params.get('copy', 'ORIGINAL').upper()
         bypass_cache = request.query_params.get('fresh') == '1' or request.query_params.get('download') == '1'
-        pdf_bytes = DocumentPDFService.generate_pdf_for_voucher(voucher, bypass_cache=bypass_cache, copy_type=copy_type)
+        watermark = request.query_params.get('watermark') == '1'
+        show_logo = request.query_params.get('logo') != '0'
+        show_brand = request.query_params.get('brand') != '0'
+        pdf_bytes = DocumentPDFService.generate_pdf_for_voucher(
+            voucher,
+            bypass_cache=bypass_cache,
+            copy_type=copy_type,
+            watermark=watermark,
+            show_logo=show_logo,
+            show_brand=show_brand,
+        )
 
         disposition = 'attachment' if request.query_params.get('download') == '1' else 'inline'
         
@@ -183,7 +193,7 @@ class PublicShareResolveAPIView(APIView):
                     existing_up = existing_snap.get('_voucher_updated_at')
                     v_up = str(voucher.updated_at) if hasattr(voucher, 'updated_at') and voucher.updated_at else None
                     is_stale = (
-                        snapshot.template_version != '2.1' or
+                        snapshot.template_version != DocumentSnapshotService.CURRENT_TEMPLATE_VERSION or
                         (v_up and existing_up != v_up) or
                         (snapshot.total_amount is not None and voucher.total_amount is not None and Decimal(str(snapshot.total_amount)) != Decimal(str(voucher.total_amount))) or
                         (snapshot.document_number != voucher.voucher_number)
@@ -194,6 +204,28 @@ class PublicShareResolveAPIView(APIView):
                         share.save(update_fields=['document_snapshot'])
             except Exception as e:
                 logger.warning(f"Could not refresh stale public share snapshot {snapshot.id}: {e}")
+        elif snapshot.source_type in ['ProformaInvoice', 'Proforma'] or snapshot.document_type == 'PROFORMA_INVOICE':
+            try:
+                from apps.accounting.models_proforma import ProformaInvoice
+                p_inv = ProformaInvoice.objects.filter(id=snapshot.source_id).first()
+                if p_inv:
+                    existing_snap = snapshot.snapshot_json or {}
+                    existing_up = existing_snap.get('_proforma_updated_at')
+                    p_up = str(p_inv.updated_at) if hasattr(p_inv, 'updated_at') and p_inv.updated_at else None
+                    is_stale = (
+                        snapshot.template_version != DocumentSnapshotService.CURRENT_TEMPLATE_VERSION or
+                        (p_up and existing_up != p_up) or
+                        (snapshot.total_amount is not None and p_inv.total_amount is not None and Decimal(str(snapshot.total_amount)) != Decimal(str(p_inv.total_amount))) or
+                        (snapshot.document_number != p_inv.proforma_number) or
+                        ('customer_notes' not in existing_snap and bool(p_inv.customer_notes)) or
+                        ('upi_id' not in existing_snap.get('seller', {}).get('bank', {}))
+                    )
+                    if is_stale:
+                        snapshot = DocumentSnapshotService.get_or_create_proforma_snapshot(p_inv, force_refresh=True)
+                        share.document_snapshot = snapshot
+                        share.save(update_fields=['document_snapshot'])
+            except Exception as e:
+                logger.warning(f"Could not refresh stale proforma public share snapshot {snapshot.id}: {e}")
 
         caps = get_document_capabilities(snapshot.document_type)
 
@@ -228,6 +260,8 @@ class PublicShareDownloadPDFAPIView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
 
         watermark = request.query_params.get('watermark') != '0'
+        show_brand = request.query_params.get('brand') != '0'
+        show_logo = request.query_params.get('logo') != '0'
         snapshot = share.document_snapshot
         if snapshot.source_type == 'Voucher':
             try:
@@ -237,7 +271,7 @@ class PublicShareDownloadPDFAPIView(APIView):
                     existing_up = existing_snap.get('_voucher_updated_at')
                     v_up = str(voucher.updated_at) if hasattr(voucher, 'updated_at') and voucher.updated_at else None
                     is_stale = (
-                        snapshot.template_version != '2.1' or
+                        snapshot.template_version != DocumentSnapshotService.CURRENT_TEMPLATE_VERSION or
                         (v_up and existing_up != v_up) or
                         (snapshot.total_amount is not None and voucher.total_amount is not None and Decimal(str(snapshot.total_amount)) != Decimal(str(voucher.total_amount))) or
                         (snapshot.document_number != voucher.voucher_number)
@@ -248,10 +282,32 @@ class PublicShareDownloadPDFAPIView(APIView):
                         share.save(update_fields=['document_snapshot'])
             except Exception as e:
                 logger.warning(f"Could not refresh stale public download snapshot {snapshot.id}: {e}")
+        elif snapshot.source_type in ['ProformaInvoice', 'Proforma'] or snapshot.document_type == 'PROFORMA_INVOICE':
+            try:
+                from apps.accounting.models_proforma import ProformaInvoice
+                p_inv = ProformaInvoice.objects.filter(id=snapshot.source_id).first()
+                if p_inv:
+                    existing_snap = snapshot.snapshot_json or {}
+                    existing_up = existing_snap.get('_proforma_updated_at')
+                    p_up = str(p_inv.updated_at) if hasattr(p_inv, 'updated_at') and p_inv.updated_at else None
+                    is_stale = (
+                        snapshot.template_version != DocumentSnapshotService.CURRENT_TEMPLATE_VERSION or
+                        (p_up and existing_up != p_up) or
+                        (snapshot.total_amount is not None and p_inv.total_amount is not None and Decimal(str(snapshot.total_amount)) != Decimal(str(p_inv.total_amount))) or
+                        (snapshot.document_number != p_inv.proforma_number) or
+                        ('customer_notes' not in existing_snap and bool(p_inv.customer_notes)) or
+                        ('upi_id' not in existing_snap.get('seller', {}).get('bank', {}))
+                    )
+                    if is_stale:
+                        snapshot = DocumentSnapshotService.get_or_create_proforma_snapshot(p_inv, force_refresh=True)
+                        share.document_snapshot = snapshot
+                        share.save(update_fields=['document_snapshot'])
+            except Exception as e:
+                logger.warning(f"Could not refresh stale proforma public download snapshot {snapshot.id}: {e}")
 
         copy_type = request.query_params.get('copy', 'ORIGINAL').upper()
         pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(
-            snapshot, watermark=watermark, bypass_cache=True, copy_type=copy_type
+            snapshot, watermark=watermark, bypass_cache=True, copy_type=copy_type, show_brand=show_brand, show_logo=show_logo
         )
 
         suffix = ''
@@ -411,15 +467,16 @@ class ProformaPDFStreamAPIView(APIView):
         if not proforma:
             return Response({'error': 'Proforma invoice not found or access denied.'}, status=status.HTTP_404_NOT_FOUND)
 
-        bypass_cache = request.query_params.get('fresh') == '1'
+        bypass_cache = request.query_params.get('fresh') == '1' or request.query_params.get('download') == '1'
         watermark = request.query_params.get('watermark') != '0'
         show_logo = request.query_params.get('logo') != '0'
+        show_brand = request.query_params.get('brand') != '0'
 
         snapshot = DocumentSnapshotService.get_or_create_proforma_snapshot(
             proforma, user=request.user, force_refresh=bypass_cache
         )
         pdf_bytes = DocumentPDFService.generate_pdf_from_snapshot(
-            snapshot, bypass_cache=bypass_cache, watermark=watermark, show_logo=show_logo
+            snapshot, bypass_cache=bypass_cache, watermark=watermark, show_logo=show_logo, show_brand=show_brand
         )
 
         disposition = 'attachment' if request.query_params.get('download') == '1' else 'inline'

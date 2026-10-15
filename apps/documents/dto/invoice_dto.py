@@ -72,6 +72,14 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
         if unit:
             unit_label = unit
 
+        brand_val = ''
+        if itm.product and getattr(itm.product, 'brand', None):
+            brand_val = str(itm.product.brand.name if hasattr(itm.product.brand, 'name') else itm.product.brand)
+        elif getattr(itm, 'brand', None):
+            brand_val = str(itm.brand)
+
+        desc_val = getattr(itm, 'description', '') or ''
+
         qty = itm.quantity
         rate = getattr(itm, 'rate', getattr(itm, 'unit_price', Decimal('0.00')))
         disc_pct = getattr(itm, 'discount_percent', getattr(itm, 'discount_percentage', Decimal('0.00')))
@@ -98,6 +106,8 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
             'sn': idx,
             'product_id': str(itm.product.id) if itm.product else None,
             'name': p_name,
+            'brand': brand_val,
+            'description': desc_val,
             'hsn_code': str(hsn or ''),
             'quantity': float(qty),
             'unit': str(unit or 'PCS'),
@@ -166,14 +176,23 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
             b_ifsc = (bank_ledger.bank_ifsc or '').strip()
 
     # UPI URL resolution:
-    # Strictly use the official business merchant UPI configured by the owner in Settings (company.upi_id).
-    # If not present on company, check if a bank ledger has a configured upi_id.
-    # NEVER fall back to personal phone number or fake dummy handle.
     upi_id = (getattr(company, 'upi_id', '') or '').strip()
     if not upi_id:
         bank_ledger_upi = company.ledgers.filter(ledger_type='BANK').exclude(upi_id='').exclude(upi_id__isnull=True).first()
         if bank_ledger_upi and bank_ledger_upi.upi_id:
             upi_id = bank_ledger_upi.upi_id.strip()
+
+    if not upi_id:
+        try:
+            branding = getattr(company, 'settings', None)
+            if branding and hasattr(branding, 'document_branding'):
+                doc_brand = getattr(branding, 'document_branding', {}) or {}
+                upi_id = (doc_brand.get('upi_id') or '').strip()
+        except Exception:
+            pass
+
+    if not upi_id and b_acc and b_ifsc:
+        upi_id = f"{b_acc}@{b_ifsc}.npci"
 
     upi_url = ''
     if upi_id:
@@ -191,6 +210,8 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
     if sig_field and hasattr(sig_field, 'url'):
         sig_url = sig_field.url
 
+    cust_notes = voucher.narration or ''
+
     return {
         'schema_version': '1.0',
         'document': {
@@ -206,7 +227,8 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
             'gr_rr_no': gr_rr,
             'transport': transport,
             'vehicle_no': vehicle_no,
-            'narration': voucher.narration or '',
+            'narration': cust_notes,
+            'customer_notes': cust_notes,
         },
         'seller': {
             'id': str(company.id),
@@ -264,6 +286,7 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
         },
         'tax_breakdown': tax_breakdown,
         'amount_in_words': number_to_words(final_grand_total),
+        'customer_notes': cust_notes,
         'upi_url': upi_url,
         'terms': [
             "Goods once sold will not be taken back.",

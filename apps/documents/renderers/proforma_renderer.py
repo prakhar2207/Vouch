@@ -192,6 +192,7 @@ class ModernProformaPDFRenderer:
         dto: Dict[str, Any],
         watermark: bool = True,
         show_logo: bool = True,
+        show_brand: bool = True,
     ) -> bytes:
         buffer = io.BytesIO()
 
@@ -796,6 +797,8 @@ class ModernProformaPDFRenderer:
 
         for idx, itm in enumerate(items, start=1):
             name = itm.get('name') or 'Item'
+            brand = (itm.get('brand') or '').strip()
+            desc = (itm.get('description') or '').strip()
             hsn = itm.get('hsn_code') or '-'
             qty = itm.get('quantity', 0)
             unit = itm.get('unit') or 'PCS'
@@ -808,9 +811,17 @@ class ModernProformaPDFRenderer:
             disc_str = f"{disc:.2f}%" if disc > 0 else "-"
             gst_str = f"{gst_r:.0f}%" if gst_r % 1 == 0 else f"{gst_r:.1f}%"
 
+            desc_elements = [Paragraph(f"<b>{name}</b>", s_td_bold)]
+            if show_brand and brand:
+                desc_elements.append(Spacer(1, 1.5))
+                desc_elements.append(Paragraph(f"<font size=5.5 color='#1d4ed8'><b>BRAND: {brand.upper()}</b></font>", s_td))
+            if desc:
+                desc_elements.append(Spacer(1, 1))
+                desc_elements.append(Paragraph(f"<font size=5.5 color='#64748b'>{desc}</font>", s_td))
+
             table_data.append([
                 Paragraph(str(idx), s_td_center),
-                Paragraph(name, s_td_bold),
+                desc_elements,
                 Paragraph(str(hsn), s_td_center),
                 Paragraph(f"{qty:.2f}".rstrip('0').rstrip('.') if qty % 1 == 0 else f"{qty:.2f}", s_td_right),
                 Paragraph(unit.upper(), s_td_center),
@@ -831,7 +842,8 @@ class ModernProformaPDFRenderer:
             ('BOTTOMPADDING', (0, 0), (-1, -1), 3.5),
             ('LEFTPADDING', (0, 0), (-1, -1), 2),
             ('RIGHTPADDING', (0, 0), (-1, -1), 2),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('VALIGN', (0, 0), (-1, 0), 'MIDDLE'),
+            ('VALIGN', (0, 1), (-1, -1), 'TOP'),
         ]))
         story.append(items_table)
         story.append(Spacer(1, 9))
@@ -870,27 +882,39 @@ class ModernProformaPDFRenderer:
         acc_no = bank.get('account_number') or ''
         ifsc = bank.get('ifsc') or ''
         branch = bank.get('branch') or ''
-        upi_id = bank.get('upi_id') or ''
-        upi_url = bank.get('upi_url') or ''
+        upi_id = bank.get('upi_id') or seller.get('upi_id') or dto.get('upi_id') or ''
+        upi_url = bank.get('upi_url') or seller.get('upi_url') or dto.get('upi_url') or ''
 
-        rl_upi_qr = None
-        if upi_url or (upi_id and '@' in upi_id):
-            if not upi_url:
+        if not upi_url and upi_id:
+            tot_amt = subtotals.get('grand_total', 0)
+            upi_url = (
+                f"upi://pay?pa={urllib.parse.quote(upi_id)}"
+                f"&pn={urllib.parse.quote(seller.get('name') or 'Merchant')}"
+                f"&am={tot_amt:.2f}&tn={urllib.parse.quote(f'Adv {doc_num}')}&cu=INR"
+            )
+        elif not upi_url and not upi_id and acc_no and ifsc:
+            clean_acc = ''.join(c for c in str(acc_no) if c.isalnum())
+            clean_ifsc = ''.join(c for c in str(ifsc) if c.isalnum()).upper()
+            if clean_acc and clean_ifsc:
+                upi_id = f"{clean_acc}@{clean_ifsc}.ifsc.npci"
                 tot_amt = subtotals.get('grand_total', 0)
                 upi_url = (
                     f"upi://pay?pa={urllib.parse.quote(upi_id)}"
                     f"&pn={urllib.parse.quote(seller.get('name') or 'Merchant')}"
-                    f"&am={tot_amt:.2f}&tn=Proforma&cu=INR"
+                    f"&am={tot_amt:.2f}&tn={urllib.parse.quote(f'Adv {doc_num}')}&cu=INR"
                 )
+
+        rl_upi_qr = None
+        if upi_url:
             try:
-                qr = qrcode.QRCode(box_size=3, border=1)
+                qr = qrcode.QRCode(box_size=4, border=1)
                 qr.add_data(upi_url)
                 qr.make(fit=True)
                 qr_pil = qr.make_image(fill_color="black", back_color="white")
                 qr_bio = io.BytesIO()
                 qr_pil.save(qr_bio, format='PNG')
                 qr_bio.seek(0)
-                rl_upi_qr = RLImage(qr_bio, width=48, height=48)
+                rl_upi_qr = RLImage(qr_bio, width=54, height=54)
             except Exception as e:
                 logger.warning(f"Error generating UPI QR: {e}")
 
@@ -916,14 +940,22 @@ class ModernProformaPDFRenderer:
             bank_inner_table = Table(
                 [[
                     bank_text_flow,
-                    [rl_upi_qr, Paragraph("<font size=5 color='#64748b'>Scan to Pay</font>", s_th_center)]
+                    [
+                        rl_upi_qr,
+                        Spacer(1, 1),
+                        Paragraph("<font size=5 color='#475569'><b>SCAN &amp; PAY UPI</b></font>", s_th_center)
+                    ]
                 ]],
-                colWidths=[left_bot_w - 60, 52]
+                colWidths=[left_bot_w - 65, 57]
             )
             bank_inner_table.setStyle(TableStyle([
                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('LEFTPADDING', (0, 0), (-1, -1), 0),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                ('ALIGN', (1, 0), (1, 0), 'CENTER'),
+                ('LINEBEFORE', (1, 0), (1, 0), 0.5, c_card_border),
+                ('LEFTPADDING', (0, 0), (0, 0), 0),
+                ('RIGHTPADDING', (0, 0), (0, 0), 4),
+                ('LEFTPADDING', (1, 0), (1, 0), 4),
+                ('RIGHTPADDING', (1, 0), (1, 0), 0),
                 ('TOPPADDING', (0, 0), (-1, -1), 0),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
             ]))
@@ -954,13 +986,38 @@ class ModernProformaPDFRenderer:
             Paragraph(raw_terms.replace('\n', '<br/>'), s_terms_body),
         ]
 
+        customer_notes = str(dto.get('customer_notes') or doc_meta.get('customer_notes') or doc_meta.get('narration') or '').strip()
+
         left_bottom_elements = [
             words_table,
-            Spacer(1, 6),
+            Spacer(1, 5),
             bank_card,
-            Spacer(1, 6),
+            Spacer(1, 5),
             terms_paragraphs,
         ]
+
+        # D. Customer Notes / Remarks Card
+        if customer_notes:
+            notes_card = Table(
+                [[
+                    [
+                        Paragraph("REMARKS / CUSTOMER NOTES:", s_terms_title),
+                        Spacer(1, 1),
+                        Paragraph(f"<i>{customer_notes.replace(chr(10), '<br/>')}</i>", s_terms_body),
+                    ]
+                ]],
+                colWidths=[left_bot_w]
+            )
+            notes_card.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), c_card_bg),
+                ('BOX', (0, 0), (-1, -1), 0.75, c_card_border),
+                ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 4),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ]))
+            left_bottom_elements.append(Spacer(1, 5))
+            left_bottom_elements.append(notes_card)
 
         # Build Right Column: Subtotals & Grand Total Card + Signatures
         taxable_tot = subtotals.get('taxable_amount', 0)

@@ -173,8 +173,9 @@ export default function ProformaDetailPage() {
     try {
       const wmParam = includeWatermark ? '1' : '0';
       const logoParam = includeLogo ? '1' : '0';
+      const brandParam = showBrand ? '1' : '0';
       const response = await api.get(
-        `/api/v1/documents/proforma/${doc.id}/pdf/?download=1&watermark=${wmParam}&logo=${logoParam}&fresh=1`,
+        `/api/v1/documents/proforma/${doc.id}/pdf/?download=1&watermark=${wmParam}&logo=${logoParam}&brand=${brandParam}&fresh=1`,
         { responseType: 'blob' }
       );
 

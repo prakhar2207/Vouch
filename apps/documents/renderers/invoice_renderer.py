@@ -74,21 +74,21 @@ class InvoicePDFRenderer:
     """
 
     @classmethod
-    def render(cls, dto: Dict[str, Any], watermark: bool = False, copy_type: str = 'ORIGINAL') -> bytes:
+    def render(cls, dto: Dict[str, Any], watermark: bool = False, copy_type: str = 'ORIGINAL', show_brand: bool = True) -> bytes:
         copy_upper = str(copy_type or 'ORIGINAL').upper()
 
         # Multi-copy bundle handling via pypdf merging
         if copy_upper in ['BUNDLE_LOCAL', 'BUNDLE_2']:
-            pdf_rec = cls.render_single(dto, watermark=watermark, copy_type='ORIGINAL')
-            pdf_sup = cls.render_single(dto, watermark=watermark, copy_type='SUPPLIER_LOCAL')
+            pdf_rec = cls.render_single(dto, watermark=watermark, copy_type='ORIGINAL', show_brand=show_brand)
+            pdf_sup = cls.render_single(dto, watermark=watermark, copy_type='SUPPLIER_LOCAL', show_brand=show_brand)
             return cls._merge_pdfs([pdf_rec, pdf_sup])
         elif copy_upper in ['BUNDLE_TRANSPORT', 'BUNDLE_3', 'ALL']:
-            pdf_rec = cls.render_single(dto, watermark=watermark, copy_type='ORIGINAL')
-            pdf_trans = cls.render_single(dto, watermark=watermark, copy_type='TRANSPORTER')
-            pdf_sup = cls.render_single(dto, watermark=watermark, copy_type='SUPPLIER')
+            pdf_rec = cls.render_single(dto, watermark=watermark, copy_type='ORIGINAL', show_brand=show_brand)
+            pdf_trans = cls.render_single(dto, watermark=watermark, copy_type='TRANSPORTER', show_brand=show_brand)
+            pdf_sup = cls.render_single(dto, watermark=watermark, copy_type='SUPPLIER', show_brand=show_brand)
             return cls._merge_pdfs([pdf_rec, pdf_trans, pdf_sup])
 
-        return cls.render_single(dto, watermark=watermark, copy_type=copy_upper)
+        return cls.render_single(dto, watermark=watermark, copy_type=copy_upper, show_brand=show_brand)
 
     @staticmethod
     def _merge_pdfs(pdf_list: list) -> bytes:
@@ -103,7 +103,7 @@ class InvoicePDFRenderer:
         return out.getvalue()
 
     @classmethod
-    def render_single(cls, dto: Dict[str, Any], watermark: bool = False, copy_type: str = 'ORIGINAL') -> bytes:
+    def render_single(cls, dto: Dict[str, Any], watermark: bool = False, copy_type: str = 'ORIGINAL', show_brand: bool = True) -> bytes:
         buffer = io.BytesIO()
 
         PAGE_WIDTH, PAGE_HEIGHT = A4  # 595.275 x 841.89 pt
@@ -355,10 +355,24 @@ class InvoicePDFRenderer:
             rate = itm.get('rate', 0.0)
             disc_pct = itm.get('discount_percent', 0.0)
             taxable = itm.get('taxable_amount', 0.0)
+            brand = (itm.get('brand') or '').strip()
+            desc = (itm.get('description') or '').strip()
+
+            desc_elements = [Paragraph(p_name, s_td_l)]
+            if show_brand and brand:
+                desc_elements.append(Paragraph(
+                    f"<font size='6.5' color='#475569'><b>BRAND:</b> {brand}</font>",
+                    s_td_l
+                ))
+            if desc and desc != p_name:
+                desc_elements.append(Paragraph(
+                    f"<font size='6' color='#64748b'>{desc}</font>",
+                    s_td_l
+                ))
 
             items_data.append([
                 Paragraph(sn, s_td_c),
-                Paragraph(p_name, s_td_l),
+                desc_elements if len(desc_elements) > 1 else desc_elements[0],
                 Paragraph(hsn, s_td_c),
                 Paragraph(f"{qty:.2f}", s_td_r),
                 Paragraph(unit, s_td_c),
@@ -491,6 +505,7 @@ class InvoicePDFRenderer:
             ('LINEAFTER', (0, 0), (-2, 0), 0.8, colors.black),
             ('PADDING', (0, 0), (-1, -1), 0),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('VALIGN', (1, 1), (1, num_item_rows), 'TOP'),
             ('TOPPADDING', (0, 0), (-1, 0), 3),
             ('BOTTOMPADDING', (0, 0), (-1, 0), 3),
         ]
@@ -679,6 +694,11 @@ class InvoicePDFRenderer:
         ]
         for i, t in enumerate(terms_list, 1):
             terms_elements.append(Paragraph(f"{i}. {t}", s_terms_item))
+
+        cust_notes = (dto.get('customer_notes') or doc_meta.get('narration') or dto.get('narration') or '').strip()
+        if cust_notes:
+            terms_elements.append(Spacer(1, 2))
+            terms_elements.append(Paragraph(f"<b>Notes:</b> {cust_notes}", s_terms_item))
 
         # QR Code
         qr_img = None
