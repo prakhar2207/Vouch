@@ -83,6 +83,7 @@ def serialize_proforma(p: ProformaInvoice, include_items: bool = True) -> dict:
                 "id": str(it.id),
                 "product_id": str(it.product_id) if it.product_id else None,
                 "item_name": it.item_name,
+                "brand": getattr(it, 'brand', '') or (it.product.brand if it.product and it.product.brand else '') or '',
                 "hsn_code": it.hsn_code,
                 "quantity": float(it.quantity),
                 "unit": it.unit,
@@ -286,6 +287,7 @@ class ListCreateProformaAPIView(APIView):
                     product = Product.objects.filter(id=pid, company=company).first()
 
                 name = it.get('item_name') or (product.name if product else "Item")
+                brand = it.get('brand') or (product.brand if product and product.brand else "") or ""
                 hsn = it.get('hsn_code') or (product.hsn_code if product else "")
                 qty = Decimal(str(it.get('quantity') if it.get('quantity') is not None else 1))
                 unit = it.get('unit') or (product.unit if product else 'PCS')
@@ -322,6 +324,7 @@ class ListCreateProformaAPIView(APIView):
                     proforma=proforma,
                     product=product,
                     item_name=name,
+                    brand=brand,
                     hsn_code=hsn,
                     quantity=qty,
                     unit=unit,
@@ -464,14 +467,148 @@ class ProformaDetailAPIView(APIView):
 
         data = request.data
         with transaction.atomic():
+            company = proforma.company
+
             if 'status' in data and data['status'] in ['DRAFT', 'SENT', 'ACCEPTED', 'CANCELLED']:
                 proforma.status = data['status']
+
+            if 'date' in data and data['date']:
+                v_date = data['date']
+                if isinstance(v_date, str):
+                    v_date = datetime.date.fromisoformat(v_date.split('T')[0])
+                proforma.date = v_date
+
+            if 'valid_until' in data:
+                v_until = data['valid_until']
+                if v_until and isinstance(v_until, str) and v_until.strip():
+                    try:
+                        v_until = datetime.date.fromisoformat(v_until.strip().split('T')[0])
+                    except (ValueError, TypeError):
+                        v_until = None
+                else:
+                    v_until = None
+                proforma.valid_until = v_until
+
+            if 'party_ledger_id' in data:
+                party_ledger_id = data.get('party_ledger_id')
+                proforma.party_ledger = Ledger.objects.filter(id=party_ledger_id, company=company).first() if party_ledger_id else None
+
+            if 'buyer_name' in data:
+                proforma.buyer_name = (data['buyer_name'] or '').strip()
+            if 'buyer_address' in data:
+                proforma.buyer_address = (data['buyer_address'] or '').strip()
+            if 'buyer_gstin' in data:
+                proforma.buyer_gstin = (data['buyer_gstin'] or '').strip().upper()
+            if 'buyer_state_code' in data:
+                proforma.buyer_state_code = (data['buyer_state_code'] or '').strip()
+            if 'buyer_phone' in data:
+                proforma.buyer_phone = (data['buyer_phone'] or '').strip()
+            if 'buyer_email' in data:
+                proforma.buyer_email = (data['buyer_email'] or '').strip()
+
             if 'customer_notes' in data:
                 proforma.customer_notes = data['customer_notes']
             if 'terms_and_conditions' in data:
                 proforma.terms_and_conditions = data['terms_and_conditions']
-            if 'valid_until' in data:
-                proforma.valid_until = data['valid_until']
+            if 'cartage_amount' in data:
+                proforma.cartage_amount = Decimal(str(data['cartage_amount'] or '0.00'))
+
+            raw_items = data.get('items')
+            if raw_items is not None:
+                if not raw_items:
+                    return Response({"error": "At least one item is required."}, status=400)
+
+                proforma.items.all().delete()
+
+                company_state = (company.gstin[:2] if company.gstin and len(company.gstin) >= 2 else "09")
+                target_state = proforma.buyer_state_code or (proforma.buyer_gstin[:2] if len(proforma.buyer_gstin) >= 2 else company_state)
+                is_inter_state = (target_state != company_state)
+
+                total_taxable = Decimal('0.00')
+                total_cgst = Decimal('0.00')
+                total_sgst = Decimal('0.00')
+                total_igst = Decimal('0.00')
+
+                for it in raw_items:
+                    product = None
+                    pid = it.get('product_id')
+                    if pid:
+                        product = Product.objects.filter(id=pid, company=company).first()
+
+                    name = it.get('item_name') or (product.name if product else "Item")
+                    brand = it.get('brand') or (product.brand if product and product.brand else "") or ""
+                    hsn = it.get('hsn_code') or (product.hsn_code if product else "")
+                    qty = Decimal(str(it.get('quantity') if it.get('quantity') is not None else 1))
+                    unit = it.get('unit') or (product.unit if product else 'PCS')
+                    rate = Decimal(str(it.get('rate') if it.get('rate') is not None else 0))
+                    disc_pct = Decimal(str(it.get('discount_percent') if it.get('discount_percent') is not None else 0))
+
+                    gst_val = it.get('gst_rate')
+                    if gst_val is None or gst_val == '':
+                        gst_val = getattr(product, 'gst_rate', 18) if product else 18
+                    gst_pct = Decimal(str(gst_val if gst_val is not None else 18))
+
+                    gross = qty * rate
+                    discount_val = gross * (disc_pct / Decimal('100.00'))
+                    taxable = gross - discount_val
+
+                    if is_inter_state:
+                        cgst_r = Decimal('0.00')
+                        cgst_a = Decimal('0.00')
+                        sgst_r = Decimal('0.00')
+                        sgst_a = Decimal('0.00')
+                        igst_r = gst_pct
+                        igst_a = taxable * (igst_r / Decimal('100.00'))
+                    else:
+                        cgst_r = gst_pct / Decimal('2.00')
+                        cgst_a = taxable * (cgst_r / Decimal('100.00'))
+                        sgst_r = cgst_r
+                        sgst_a = taxable * (sgst_r / Decimal('100.00'))
+                        igst_r = Decimal('0.00')
+                        igst_a = Decimal('0.00')
+
+                    line_total = taxable + cgst_a + sgst_a + igst_a
+
+                    ProformaItem.objects.create(
+                        proforma=proforma,
+                        product=product,
+                        item_name=name,
+                        brand=brand,
+                        hsn_code=hsn,
+                        quantity=qty,
+                        unit=unit,
+                        rate=rate,
+                        discount_percent=disc_pct,
+                        taxable_amount=taxable,
+                        gst_rate=gst_pct,
+                        cgst_rate=cgst_r,
+                        cgst_amount=cgst_a,
+                        sgst_rate=sgst_r,
+                        sgst_amount=sgst_a,
+                        igst_rate=igst_r,
+                        igst_amount=igst_a,
+                        total_amount=line_total
+                    )
+
+                    total_taxable += taxable
+                    total_cgst += cgst_a
+                    total_sgst += sgst_a
+                    total_igst += igst_a
+
+                total_tax = total_cgst + total_sgst + total_igst
+                gross_invoice_val = total_taxable + total_tax + proforma.cartage_amount
+                rounded_total = gross_invoice_val.quantize(Decimal('1.00'))
+                round_off = rounded_total - gross_invoice_val
+
+                proforma.subtotal = total_taxable
+                proforma.taxable_amount = total_taxable
+                proforma.cgst_amount = total_cgst
+                proforma.sgst_amount = total_sgst
+                proforma.igst_amount = total_igst
+                proforma.total_tax = total_tax
+                proforma.round_off = round_off
+                proforma.total_amount = rounded_total
+
             proforma.save()
 
         return Response({"success": True, "message": "Updated successfully.", "data": serialize_proforma(proforma, include_items=True)})
@@ -557,6 +694,7 @@ class ConvertProformaToInvoiceAPIView(APIView):
                 'product_id': str(it.product_id) if it.product_id else None,
                 'product_name': it.item_name,
                 'item_name': it.item_name,
+                'brand': getattr(it, 'brand', '') or (it.product.brand if it.product and it.product.brand else '') or '',
                 'hsn_code': it.hsn_code,
                 'quantity': float(it.quantity),
                 'unit': it.unit,

@@ -39,7 +39,7 @@ const accountingCustomCaching: RuntimeCaching[] = [
     },
     handler: new NetworkFirst({
       cacheName: "srilekh-pages-cache",
-      networkTimeoutSeconds: 2,
+      networkTimeoutSeconds: 5,
       plugins: [
         new ExpirationPlugin({
           maxEntries: 50,
@@ -47,9 +47,14 @@ const accountingCustomCaching: RuntimeCaching[] = [
         }),
         {
           handlerDidError: async () => {
-            const cachedOffline = await caches.match("/~offline");
-            if (cachedOffline) return cachedOffline;
-            return new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain" } });
+            try {
+              const cachedOffline = await caches.match("/~offline");
+              if (cachedOffline) return cachedOffline;
+            } catch {}
+            return new Response(
+              "<!DOCTYPE html><html><head><title>Offline | SriLekh</title><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'></head><body style='font-family:sans-serif;padding:2rem;text-align:center;'><h2>SriLekh Offline</h2><p>Please check your internet connection and reload.</p></body></html>",
+              { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
+            );
           },
         },
       ],

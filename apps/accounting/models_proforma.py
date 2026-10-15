@@ -118,6 +118,7 @@ class ProformaItem(models.Model):
     proforma = models.ForeignKey(ProformaInvoice, on_delete=models.CASCADE, related_name='items')
     product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True, related_name='proforma_items')
     item_name = models.CharField(max_length=255)
+    brand = models.CharField(max_length=255, blank=True, default="")
     hsn_code = models.CharField(max_length=20, blank=True, default="")
     quantity = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('1.00'))
     unit = models.CharField(max_length=20, default='PCS')

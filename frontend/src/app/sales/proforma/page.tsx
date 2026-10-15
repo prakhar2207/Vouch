@@ -1,5 +1,5 @@
 "use client";
-import { API_BASE_URL } from '@/utils/api';
+import { api, API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
@@ -27,7 +27,8 @@ import {
   ExternalLink,
   Loader2,
   Calendar,
-  Users
+  Users,
+  Pencil,
 } from 'lucide-react';
 
 export default function ProformaQuotationListPage() {
@@ -127,7 +128,13 @@ export default function ProformaQuotationListPage() {
         return;
       }
       console.error(err);
-      toast.error('Failed to load documents', err.response?.data?.error || err.message);
+      const errorMsg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (err.response?.status === 403
+          ? 'Permission denied. Please ensure you have access to this company.'
+          : 'Failed to load documents.');
+      toast.error('Failed to load documents', errorMsg);
     } finally {
       if (abortControllerRef.current === controller) {
         setLoading(false);
@@ -152,10 +159,11 @@ export default function ProformaQuotationListPage() {
     setConverting(true);
     setConvertingId(doc.id);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const resolvedCompanyId = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('current_company_id') || localStorage.getItem('vouch_active_company_id') : null);
+      const headers: Record<string, string> = {};
+      if (resolvedCompanyId) headers['X-Company-ID'] = resolvedCompanyId;
 
-      const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/proforma/${doc.id}/convert/`, {}, { headers });
+      const res = await api.post(`/api/v1/accounting/proforma/${doc.id}/convert/`, {}, { headers });
       if (res.data?.success) {
         toast.success(
           'Converted to GST Invoice!',
@@ -166,7 +174,13 @@ export default function ProformaQuotationListPage() {
       }
     } catch (err: any) {
       console.error(err);
-      toast.error('Conversion Failed', err.response?.data?.error || err.message);
+      const errorMsg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (err.response?.status === 403
+          ? 'Permission denied. Please ensure you have access to this company.'
+          : 'Failed to convert document.');
+      toast.error('Conversion Failed', errorMsg);
     } finally {
       setConverting(false);
       setConvertingId(null);
@@ -177,15 +191,23 @@ export default function ProformaQuotationListPage() {
     if (!deleteConfirmDoc) return;
     setDeleting(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const resolvedCompanyId = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('current_company_id') || localStorage.getItem('vouch_active_company_id') : null);
+      const headers: Record<string, string> = {};
+      if (resolvedCompanyId) headers['X-Company-ID'] = resolvedCompanyId;
 
-      await axios.delete(`${API_BASE_URL}/api/v1/accounting/proforma/detail/${deleteConfirmDoc.id}/`, { headers });
+      await api.delete(`/api/v1/accounting/proforma/detail/${deleteConfirmDoc.id}/`, { headers });
       toast.success('Document Deleted', `${deleteConfirmDoc.proforma_number} has been removed.`);
       setDeleteConfirmDoc(null);
       fetchProformas(page);
     } catch (err: any) {
-      toast.error('Delete Failed', err.response?.data?.error || err.message);
+      console.error(err);
+      const errorMsg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (err.response?.status === 403
+          ? 'Permission denied. Please ensure you have access to this company.'
+          : 'Failed to delete document.');
+      toast.error('Delete Failed', errorMsg);
     } finally {
       setDeleting(false);
     }
@@ -588,6 +610,17 @@ export default function ProformaQuotationListPage() {
                               >
                                 <span>View GST</span>
                                 <ExternalLink className="w-3 h-3" />
+                              </Link>
+                            )}
+
+                            {/* Edit (only if not converted) */}
+                            {!isConverted && (
+                              <Link
+                                href={`/sales/proforma/new?edit=${doc.id}`}
+                                className="p-1.5 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded-lg transition-colors"
+                                title="Edit Document"
+                              >
+                                <Pencil className="w-4 h-4" />
                               </Link>
                             )}
 

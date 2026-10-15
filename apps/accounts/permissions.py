@@ -79,6 +79,8 @@ def user_has_company_roles(user, company, allowed_roles):
     """
     if not user or not user.is_authenticated or not company:
         return False
+    if getattr(user, 'is_superuser', False):
+        return True
     role = get_user_company_role(user, company)
     if not role:
         return False
@@ -108,14 +110,57 @@ class BaseCompanyPermission(BasePermission):
             if comp:
                 return comp
 
-        # 2. From view kwargs
-        company_id = view.kwargs.get('company_id') or view.kwargs.get('pk')
+        # 2. From view kwargs (company_id)
+        company_id = view.kwargs.get('company_id')
         if company_id:
             comp = get_company_by_id(company_id)
             if comp:
                 return comp
 
-        # 3. From related IDs in view kwargs
+        # 3. From view kwargs (pk) which might be a company_id, proforma_id, voucher_id, etc.
+        pk = view.kwargs.get('pk')
+        if pk:
+            comp = get_company_by_id(pk)
+            if comp:
+                return comp
+
+            # Check if pk is a ProformaInvoice
+            try:
+                from apps.accounting.models import ProformaInvoice
+                cid = ProformaInvoice.objects.filter(id=pk).values_list('company_id', flat=True).first()
+                if cid:
+                    return get_company_by_id(cid)
+            except Exception:
+                pass
+
+            # Check if pk is a Voucher
+            try:
+                from apps.accounting.models import Voucher
+                cid = Voucher.objects.filter(id=pk).values_list('company_id', flat=True).first()
+                if cid:
+                    return get_company_by_id(cid)
+            except Exception:
+                pass
+
+            # Check if pk is a Product
+            try:
+                from apps.inventory.models import Product
+                cid = Product.objects.filter(id=pk).values_list('company_id', flat=True).first()
+                if cid:
+                    return get_company_by_id(cid)
+            except Exception:
+                pass
+
+            # Check if pk is a Ledger
+            try:
+                from apps.ledgers.models import Ledger
+                cid = Ledger.objects.filter(id=pk).values_list('company_id', flat=True).first()
+                if cid:
+                    return get_company_by_id(cid)
+            except Exception:
+                pass
+
+        # 4. From related explicit IDs in view kwargs
         voucher_id = view.kwargs.get('voucher_id')
         if voucher_id:
             from apps.accounting.models import Voucher
@@ -137,7 +182,7 @@ class BaseCompanyPermission(BasePermission):
             if cid:
                 return get_company_by_id(cid)
 
-        # 4. From request data or query params
+        # 5. From request data or query params
         if hasattr(request, 'data') and isinstance(request.data, dict):
             company_id = request.data.get('company_id')
             if company_id:
@@ -152,11 +197,23 @@ class BaseCompanyPermission(BasePermission):
                 if comp:
                     return comp
 
+        # 6. Fallback: If user has membership in exactly 1 company, resolve to that company
+        if hasattr(request, 'user') and request.user and request.user.is_authenticated:
+            try:
+                from apps.companies.models import UserCompany
+                user_companies = list(UserCompany.objects.filter(user=request.user).values_list('company_id', flat=True)[:2])
+                if len(user_companies) == 1:
+                    return get_company_by_id(user_companies[0])
+            except Exception:
+                pass
+
         return None
 
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
+        if getattr(request.user, 'is_superuser', False):
+            return True
         company = self.resolve_company(request, view)
         if not company:
             # If company cannot be resolved at view-level, deny access
@@ -166,6 +223,8 @@ class BaseCompanyPermission(BasePermission):
     def has_object_permission(self, request, view, obj):
         if not request.user or not request.user.is_authenticated:
             return False
+        if getattr(request.user, 'is_superuser', False):
+            return True
         company = getattr(obj, 'company', None)
         if company is None and hasattr(obj, 'company_id'):
             from apps.companies.models import Company

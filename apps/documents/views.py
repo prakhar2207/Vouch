@@ -403,9 +403,10 @@ class ProformaPDFStreamAPIView(APIView):
     def get(self, request, proforma_id):
         from apps.accounting.models_proforma import ProformaInvoice
 
-        proforma = ProformaInvoice.objects.filter(
-            id=proforma_id, company__users__user=request.user
-        ).select_related('company', 'party_ledger').prefetch_related('items').first()
+        qs = ProformaInvoice.objects.filter(id=proforma_id)
+        if not getattr(request.user, 'is_superuser', False):
+            qs = qs.filter(company__users__user=request.user)
+        proforma = qs.select_related('company', 'party_ledger').prefetch_related('items').first()
 
         if not proforma:
             return Response({'error': 'Proforma invoice not found or access denied.'}, status=status.HTTP_404_NOT_FOUND)

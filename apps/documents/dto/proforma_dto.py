@@ -83,6 +83,7 @@ def build_proforma_dto(proforma) -> Dict[str, Any]:
         dto_items.append({
             'sn': idx,
             'name': itm.item_name,
+            'brand': getattr(itm, 'brand', '') or '',
             'hsn_code': itm.hsn_code or '',
             'quantity': float(itm.quantity),
             'unit': itm.unit or 'PCS',

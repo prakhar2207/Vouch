@@ -1,10 +1,9 @@
 "use client";
-import { API_BASE_URL } from '@/utils/api';
+import { api } from '@/utils/api';
 import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
-import axios from 'axios';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { getAccessToken, isAuthenticated } from '@/utils/auth';
+import { isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useCompany } from '@/context/CompanyContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
@@ -45,6 +44,9 @@ function NewProformaQuotationForm() {
   const { toast } = useToast();
   const { activeCompany, companyId: activeCompanyId } = useCompany();
   const { activeFY } = useFinancialYear();
+
+  const editId = searchParams.get('edit');
+  const [isEditing, setIsEditing] = useState(false);
 
   const initialType = searchParams.get('type')?.toUpperCase() === 'QUOTATION' ? 'QUOTATION' : 'PROFORMA';
   const [proformaType, setProformaType] = useState<'PROFORMA' | 'QUOTATION'>(initialType);
@@ -144,11 +146,8 @@ function NewProformaQuotationForm() {
   const loadInitialData = async (cid: string) => {
     setLoading(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-
       // 1. Fetch parties (Sundry Debtors / Customers)
-      const partiesRes = await axios.get(`${API_BASE_URL}/api/v1/ledgers/${cid}/?limit=500`, { headers }).catch(() => null);
+      const partiesRes = await api.get(`/api/v1/ledgers/${cid}/?limit=500`).catch(() => null);
       if (partiesRes?.data?.data) {
         const partyList = partiesRes.data.data.filter((l: any) => {
           const grp = (l.group || l.group_name || '').toLowerCase();
@@ -187,7 +186,7 @@ function NewProformaQuotationForm() {
       }
 
       // 2. Fetch products
-      const prodRes = await axios.get(`${API_BASE_URL}/api/v1/inventory/products/${cid}/?limit=500`, { headers }).catch(() => null);
+      const prodRes = await api.get(`/api/v1/inventory/products/${cid}/?limit=500`).catch(() => null);
       if (prodRes?.data?.data) {
         setProducts(prodRes.data.data);
       }
@@ -198,17 +197,87 @@ function NewProformaQuotationForm() {
     }
   };
 
+  // Load existing document if editing
+  useEffect(() => {
+    if (!editId) return;
+    setIsEditing(true);
+
+    const fetchEditDoc = async () => {
+      try {
+        setLoading(true);
+        const res = await api.get(`/api/v1/accounting/proforma/detail/${editId}/`);
+        if (res.data?.success && res.data.data) {
+          const doc = res.data.data;
+          if (doc.status === 'CONVERTED') {
+            toast.error(
+              'Cannot Edit Converted Document',
+              'This document has already been converted into a GST Tax Invoice and cannot be modified.'
+            );
+            router.push(`/sales/proforma/${editId}`);
+            return;
+          }
+
+          setProformaType(doc.proforma_type === 'QUOTATION' ? 'QUOTATION' : 'PROFORMA');
+          setDocNumber(doc.proforma_number || '');
+          setEnableManualNumber(true);
+          if (doc.date) setDate(doc.date.split('T')[0]);
+          if (doc.valid_until) setValidUntil(doc.valid_until.split('T')[0]);
+          if (doc.party_ledger) {
+            setSelectedPartyId(doc.party_ledger.id || '');
+          }
+          setBuyerName(doc.buyer_name || '');
+          setBuyerAddress(doc.buyer_address || '');
+          setBuyerGstin(doc.buyer_gstin || '');
+          setBuyerStateCode(doc.buyer_state_code || '');
+          setBuyerPhone(doc.buyer_phone || '');
+          setBuyerEmail(doc.buyer_email || '');
+          if (!doc.party_ledger && (doc.buyer_name || doc.buyer_gstin)) {
+            setShowAdHocBuyer(true);
+          }
+          if (doc.cartage_amount !== undefined && doc.cartage_amount !== null) {
+            setCartageAmount(doc.cartage_amount);
+          }
+          if (doc.customer_notes !== undefined) setCustomerNotes(doc.customer_notes || '');
+          if (doc.terms_and_conditions !== undefined) setTerms(doc.terms_and_conditions || '');
+
+          if (Array.isArray(doc.items) && doc.items.length > 0) {
+            setItems(doc.items.map((it: any, index: number) => ({
+              id: it.id || String(index + 1),
+              product_id: it.product_id || it.product || undefined,
+              item_name: it.item_name || '',
+              brand: it.brand || '',
+              hsn_code: it.hsn_code || '',
+              quantity: Number(it.quantity || 1),
+              unit: it.unit || 'PCS',
+              rate: Number(it.rate || 0),
+              discount_percent: Number(it.discount_percent || 0),
+              gst_rate: Number(it.gst_rate ?? 18),
+            })));
+          }
+        }
+      } catch (err: any) {
+        console.error('Failed to load document for editing', err);
+        const status = err?.response?.status;
+        const msg = err?.response?.data?.error || (status === 403 ? 'Permission denied. Please ensure your active company is selected.' : 'Failed to load document for editing.');
+        toast.error('Load Error', msg);
+        router.push('/sales/proforma');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchEditDoc();
+  }, [editId, router, toast]);
+
   // Preview Sequence Number
   useEffect(() => {
+    if (isEditing) return;
     const fetchSeq = async () => {
       if (!companyId) return;
       try {
-        const token = getAccessToken();
-        const headers = { Authorization: `Bearer ${token}` };
         const prefix = proformaType === 'PROFORMA' ? 'PI' : 'QTN';
-        const res = await axios.get(
-          `${API_BASE_URL}/api/v1/financial-years/sequence-preview/?voucher_type=${proformaType}&date=${date}`,
-          { headers }
+        const res = await api.get(
+          `/api/v1/financial-years/sequence-preview/?voucher_type=${proformaType}&date=${date}`
         ).catch(() => null);
 
         if (res?.data?.success && res.data.data?.preview_number) {
@@ -223,7 +292,7 @@ function NewProformaQuotationForm() {
       }
     };
     fetchSeq();
-  }, [companyId, proformaType, date, activeFY]);
+  }, [companyId, proformaType, date, activeFY, isEditing]);
 
   // Handle Party Selection
   const handleSelectParty = (ledgerId: string) => {
@@ -361,10 +430,7 @@ function NewProformaQuotationForm() {
 
     setSaving(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-
-      const payload = {
+      const payload: any = {
         company_id: companyId,
         proforma_type: proformaType,
         proforma_number: enableManualNumber && docNumber.trim() ? docNumber.trim() : undefined,
@@ -382,6 +448,7 @@ function NewProformaQuotationForm() {
         terms_and_conditions: terms.trim(),
         items: validItems.map((it) => ({
           product_id: it.product_id || undefined,
+          brand: it.brand?.trim() || undefined,
           item_name: it.item_name.trim(),
           hsn_code: it.hsn_code.trim(),
           quantity: Number(it.quantity || 1),
@@ -390,29 +457,57 @@ function NewProformaQuotationForm() {
           discount_percent: Number(it.discount_percent || 0),
           gst_rate: Number(it.gst_rate || 18),
         })),
-        convert_immediately: convertImmediately,
       };
 
-      const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/proforma/`, payload, { headers });
+      if (isEditing && editId) {
+        const res = await api.put(`/api/v1/accounting/proforma/detail/${editId}/`, payload);
+        if (res.data?.success) {
+          if (convertImmediately) {
+            const convRes = await api.post(`/api/v1/accounting/proforma/${editId}/convert/`, {});
+            if (convRes.data?.success) {
+              toast.success(
+                'Converted to GST Invoice!',
+                `Updated ${proformaType} and converted to Tax Invoice ${convRes.data?.data?.voucher_number || 'INV'}!`
+              );
+              router.push('/sales');
+              return;
+            }
+          }
+          toast.success(
+            `${proformaType === 'PROFORMA' ? 'Proforma Invoice' : 'Quotation'} Updated`,
+            `Document #${docNumber || res.data.data?.proforma_number || editId} updated successfully.`
+          );
+          router.push(`/sales/proforma/${editId}`);
+        }
+      } else {
+        payload.convert_immediately = convertImmediately;
+        const res = await api.post('/api/v1/accounting/proforma/', payload);
 
-      if (res.data?.success) {
-        if (convertImmediately) {
-          toast.success(
-            'Converted to GST Invoice!',
-            `Created ${proformaType} and converted to Tax Invoice ${res.data.conversion?.voucher_number || 'INV'}!`
-          );
-          router.push(`/sales`);
-        } else {
-          toast.success(
-            `${proformaType === 'PROFORMA' ? 'Proforma Invoice' : 'Quotation'} Created`,
-            `Document #${res.data.data?.proforma_number} saved successfully.`
-          );
-          router.push(`/sales/proforma/${res.data.data?.id}`);
+        if (res.data?.success) {
+          if (convertImmediately) {
+            toast.success(
+              'Converted to GST Invoice!',
+              `Created ${proformaType} and converted to Tax Invoice ${res.data.conversion?.voucher_number || 'INV'}!`
+            );
+            router.push('/sales');
+          } else {
+            toast.success(
+              `${proformaType === 'PROFORMA' ? 'Proforma Invoice' : 'Quotation'} Created`,
+              `Document #${res.data.data?.proforma_number} saved successfully.`
+            );
+            router.push(`/sales/proforma/${res.data.data?.id}`);
+          }
         }
       }
     } catch (err: any) {
       console.error(err);
-      toast.error('Save Failed', err.response?.data?.error || err.message);
+      const errorMsg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (err.response?.status === 403
+          ? 'Permission denied. Please ensure you have access to this company.'
+          : 'Failed to save document. Please check your inputs and try again.');
+      toast.error('Save Failed', errorMsg);
     } finally {
       setSaving(false);
     }
@@ -433,7 +528,8 @@ function NewProformaQuotationForm() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold text-foreground">
-                  New {proformaType === 'PROFORMA' ? 'Proforma Invoice' : 'Quotation / Estimate'}
+                  {isEditing ? 'Edit ' : 'New '}
+                  {proformaType === 'PROFORMA' ? 'Proforma Invoice' : 'Quotation / Estimate'}
                 </h1>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold border border-blue-500/20">
                   Pre-Sale Document
@@ -672,9 +768,9 @@ function NewProformaQuotationForm() {
                         )}
                       </div>
 
-                      {/* Product select + description */}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div className="sm:col-span-2">
+                      {/* Product select + description + brand + HSN */}
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                        <div className="sm:col-span-6">
                           <label className="block text-[11px] font-medium text-muted-foreground mb-1">
                             Item Description / Product Name <span className="text-rose-500">*</span>
                           </label>
@@ -800,14 +896,25 @@ function NewProformaQuotationForm() {
                           </div>
                         </div>
 
-                        <div>
+                        <div className="sm:col-span-3">
+                          <label className="block text-[11px] font-medium text-muted-foreground mb-1">Brand</label>
+                          <input
+                            type="text"
+                            value={item.brand || ''}
+                            onChange={(e) => handleItemChange(idx, 'brand', e.target.value)}
+                            placeholder="e.g. Samsung, Tata"
+                            className="w-full px-3 py-2 bg-background border border-border rounded-xl text-xs text-foreground focus:outline-hidden"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-3">
                           <label className="block text-[11px] font-medium text-muted-foreground mb-1">HSN / SAC Code</label>
                           <input
                             type="text"
                             value={item.hsn_code}
                             onChange={(e) => handleItemChange(idx, 'hsn_code', e.target.value)}
                             placeholder="e.g. 4010"
-                            className="w-full px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden"
+                            className="w-full px-3 py-2 bg-background border border-border rounded-xl text-xs font-mono text-foreground focus:outline-hidden"
                           />
                         </div>
                       </div>
@@ -1082,7 +1189,9 @@ function NewProformaQuotationForm() {
                 ) : (
                   <Sparkles className="w-4 h-4 text-amber-300" />
                 )}
-                <span>Save &amp; Convert to GST Invoice</span>
+                <span>
+                  {isEditing ? 'Update & Convert to GST Invoice' : 'Save & Convert to GST Invoice'}
+                </span>
               </button>
 
               {/* Save as Proforma / Quote */}
@@ -1097,7 +1206,10 @@ function NewProformaQuotationForm() {
                 ) : (
                   <CheckCircle2 className="w-4 h-4" />
                 )}
-                <span>Save {proformaType === 'PROFORMA' ? 'Proforma Invoice' : 'Quotation'}</span>
+                <span>
+                  {isEditing ? 'Update ' : 'Save '}
+                  {proformaType === 'PROFORMA' ? 'Proforma Invoice' : 'Quotation'}
+                </span>
               </button>
 
               <Link

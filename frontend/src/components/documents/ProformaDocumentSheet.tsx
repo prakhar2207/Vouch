@@ -50,6 +50,7 @@ export interface ProformaDocumentSheetProps {
   titleOverride?: string;
   legalNoteOverride?: string;
   isPreviewMode?: boolean;
+  showBrand?: boolean;
 }
 
 export const STATE_NAMES: Record<string, string> = {
@@ -132,6 +133,7 @@ export default function ProformaDocumentSheet({
   titleOverride,
   legalNoteOverride,
   isPreviewMode = false,
+  showBrand = true,
 }: ProformaDocumentSheetProps) {
   // Merge branding configs
   const branding: DocumentBrandingConfig = useMemo(() => {
@@ -699,6 +701,11 @@ export default function ProformaDocumentSheet({
                               <p className="font-semibold text-slate-900 leading-snug">
                                 {item.item_name || 'Standard Item'}
                               </p>
+                              {showBrand && item.brand && (
+                                <span className="inline-block mt-0.5 text-[9.5px] uppercase font-bold tracking-wider px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-200">
+                                  Brand: {item.brand}
+                                </span>
+                              )}
                               {item.description && (
                                 <p className="text-[10.5px] text-slate-500 mt-0.5 leading-snug">
                                   {item.description}

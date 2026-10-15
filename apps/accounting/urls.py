@@ -39,6 +39,7 @@ urlpatterns = [
     path('proforma/<uuid:company_id>/', ListCreateProformaAPIView.as_view(), name='list_create_proforma_company'),
     path('proforma/detail/<uuid:pk>/', ProformaDetailAPIView.as_view(), name='proforma_detail'),
     path('proforma/<uuid:pk>/convert/', ConvertProformaToInvoiceAPIView.as_view(), name='convert_proforma_to_invoice'),
+    path('proforma/convert/<uuid:pk>/', ConvertProformaToInvoiceAPIView.as_view(), name='convert_proforma_to_invoice_alias'),
 
     path('vouchers/', UniversalVoucherAPIView.as_view(), name='universal_vouchers'),
     path('vouchers/check-duplicate/', CheckDuplicateVoucherAPIView.as_view(), name='check_duplicate_voucher'),

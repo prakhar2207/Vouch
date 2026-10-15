@@ -23,6 +23,8 @@ import {
   ShieldCheck,
   Image as ImageIcon,
   Building2,
+  Pencil,
+  Tag,
 } from 'lucide-react';
 
 export default function ProformaDetailPage() {
@@ -42,20 +44,38 @@ export default function ProformaDetailPage() {
   const [includeWatermark, setIncludeWatermark] = useState<boolean>(true);
   const [includeLogo, setIncludeLogo] = useState<boolean>(true);
   const [firmNameSize, setFirmNameSize] = useState<'large' | 'extra_large' | 'normal'>('large');
+  const [showBrand, setShowBrand] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const val = localStorage.getItem('vouch_show_brand_in_proforma');
+      return val !== null ? val === 'true' : true;
+    }
+    return true;
+  });
 
   const fetchDoc = useCallback(async () => {
     if (!docId) return;
     setLoading(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/proforma/detail/${docId}/`, { headers });
+      const activeCompanyId = typeof window !== 'undefined' 
+        ? localStorage.getItem('current_company_id') || localStorage.getItem('vouch_active_company_id')
+        : null;
+      const headers: Record<string, string> = {};
+      if (activeCompanyId) {
+        headers['X-Company-ID'] = activeCompanyId;
+      }
+      const res = await api.get(`/api/v1/accounting/proforma/detail/${docId}/`, { headers });
       if (res.data?.success) {
         setDoc(res.data.data);
       }
     } catch (err: any) {
       console.error(err);
-      toast.error('Failed to load document', err.response?.data?.error || err.message);
+      const errorMsg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (err.response?.status === 403
+          ? 'Permission denied. Please ensure you have access to this company.'
+          : 'Failed to load document.');
+      toast.error('Failed to load document', errorMsg);
     } finally {
       setLoading(false);
     }
@@ -83,9 +103,14 @@ export default function ProformaDetailPage() {
     if (!doc || doc.status === 'CONVERTED') return;
     setConverting(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/proforma/${doc.id}/convert/`, {}, { headers });
+      const activeCompanyId = typeof window !== 'undefined' 
+        ? localStorage.getItem('current_company_id') || localStorage.getItem('vouch_active_company_id')
+        : null;
+      const headers: Record<string, string> = {};
+      if (activeCompanyId) {
+        headers['X-Company-ID'] = activeCompanyId;
+      }
+      const res = await api.post(`/api/v1/accounting/proforma/${doc.id}/convert/`, {}, { headers });
       if (res.data?.success) {
         toast.success(
           'Converted to GST Tax Invoice!',
@@ -95,7 +120,13 @@ export default function ProformaDetailPage() {
       }
     } catch (err: any) {
       console.error(err);
-      toast.error('Conversion Failed', err.response?.data?.error || err.message);
+      const errorMsg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (err.response?.status === 403
+          ? 'Permission denied. Please ensure you have access to this company.'
+          : 'Failed to convert document.');
+      toast.error('Conversion Failed', errorMsg);
     } finally {
       setConverting(false);
     }
@@ -105,13 +136,25 @@ export default function ProformaDetailPage() {
     if (!doc || doc.status === 'CONVERTED') return;
     setUpdatingStatus(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      await axios.put(`${API_BASE_URL}/api/v1/accounting/proforma/detail/${doc.id}/`, { status: newStatus }, { headers });
+      const activeCompanyId = typeof window !== 'undefined' 
+        ? localStorage.getItem('current_company_id') || localStorage.getItem('vouch_active_company_id')
+        : null;
+      const headers: Record<string, string> = {};
+      if (activeCompanyId) {
+        headers['X-Company-ID'] = activeCompanyId;
+      }
+      await api.put(`/api/v1/accounting/proforma/detail/${doc.id}/`, { status: newStatus }, { headers });
       toast.success('Status Updated', `Document marked as ${newStatus}`);
       fetchDoc();
     } catch (err: any) {
-      toast.error('Failed to update status', err.response?.data?.error || err.message);
+      console.error(err);
+      const errorMsg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (err.response?.status === 403
+          ? 'Permission denied. Please ensure you have access to this company.'
+          : 'Failed to update status.');
+      toast.error('Failed to update status', errorMsg);
     } finally {
       setUpdatingStatus(false);
     }
@@ -346,6 +389,17 @@ export default function ProformaDetailPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap w-full md:w-auto justify-end">
+            {!isConverted && (
+              <Link
+                href={`/sales/proforma/new?edit=${doc.id}`}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                title="Edit Proforma Invoice / Quotation"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                <span>Edit</span>
+              </Link>
+            )}
+
             {!isConverted ? (
               <button
                 type="button"
@@ -465,6 +519,27 @@ export default function ProformaDetailPage() {
               <span>Firm: {firmNameSize === 'extra_large' ? 'Extra Large' : firmNameSize === 'normal' ? 'Normal' : 'Large (Default)'}</span>
             </button>
 
+            {/* Brand Display Toggle Button */}
+            <button
+              type="button"
+              onClick={() => {
+                const next = !showBrand;
+                setShowBrand(next);
+                if (typeof window !== 'undefined') {
+                  localStorage.setItem('vouch_show_brand_in_proforma', String(next));
+                }
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                showBrand
+                  ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30'
+                  : 'bg-card text-muted-foreground hover:text-foreground border-border'
+              }`}
+              title="Toggle item brand display on proforma / quotation"
+            >
+              <Tag className="w-3.5 h-3.5" />
+              <span>Brand: {showBrand ? 'ON' : 'OFF'}</span>
+            </button>
+
             {/* Download Vector PDF Button */}
             <button
               type="button"
@@ -503,6 +578,7 @@ export default function ProformaDetailPage() {
             company={company}
             watermarkOverride={includeWatermark}
             logoOverride={includeLogo}
+            showBrand={showBrand}
             branding={{
               firm_name_size: firmNameSize,
             }}
