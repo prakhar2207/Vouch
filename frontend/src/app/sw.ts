@@ -72,7 +72,7 @@ const accountingCustomCaching: RuntimeCaching[] = [
   {
     matcher: /\.(?:png|jpg|jpeg|svg|ico|webp)$/i,
     handler: new CacheFirst({
-      cacheName: "srilekh-static-icons",
+      cacheName: "srilekh-static-icons-v2",
       plugins: [
         new ExpirationPlugin({
           maxEntries: 64,
@@ -108,13 +108,13 @@ self.addEventListener("install", (event: any) => {
   );
 });
 
-// Cache cleanup: Wipe obsolete vouch and shrilekh caches from any existing clients
+// Cache cleanup: Wipe obsolete vouch, legacy shrilekh, and previous icon caches from existing clients
 self.addEventListener("activate", (event: any) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames
-          .filter((cacheName) => cacheName.includes("vouch") || cacheName.includes("shrilekh"))
+          .filter((cacheName) => cacheName.includes("vouch") || cacheName.includes("shrilekh") || cacheName === "srilekh-static-icons")
           .map((cacheName) => caches.delete(cacheName))
       );
     })

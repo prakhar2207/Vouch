@@ -69,6 +69,16 @@ export default function ProformaDetailPage() {
     fetchDoc();
   }, [router, fetchDoc]);
 
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      if (doc?.doc_number) {
+        document.title = `${doc.document_type === 'ESTIMATE' ? 'Quotation / Estimate' : 'Proforma Invoice'} ${doc.doc_number} | SriLekh`;
+      } else {
+        document.title = 'Proforma Invoice | SriLekh';
+      }
+    }
+  }, [doc]);
+
   const handleConvert = async () => {
     if (!doc || doc.status === 'CONVERTED') return;
     setConverting(true);

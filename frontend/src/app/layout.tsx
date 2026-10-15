@@ -42,9 +42,12 @@ export const metadata: Metadata = {
   description: "Keyboard-first cloud ERP and accounting platform with automated GST compliance and AI bill extraction.",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/favicon.ico?v=srilekh-v3",
-    shortcut: "/favicon.ico?v=srilekh-v3",
-    apple: "/icons/srilekh-apple-touch.png?v=srilekh-v3",
+    icon: [
+      { url: "/favicon.ico?v=srilekh-v5" },
+      { url: "/icon.png?v=srilekh-v5", type: "image/png" },
+    ],
+    shortcut: "/favicon.ico?v=srilekh-v5",
+    apple: "/apple-icon.png?v=srilekh-v5",
   },
   appleWebApp: {
     capable: true,

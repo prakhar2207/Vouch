@@ -573,6 +573,19 @@ export default function PrintInvoicePage() {
     }
   }, [invoice]);
 
+  // Set tab title to clear invoice reference & SriLekh branding
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      if (invoice?.invoice_number || invoice?.voucher_number) {
+        const invNo = invoice.invoice_number || invoice.voucher_number;
+        const party = invoice.party_name || invoice.party_ledger?.name || '';
+        document.title = party ? `Invoice ${invNo} - ${party} | SriLekh` : `Invoice ${invNo} | SriLekh`;
+      } else {
+        document.title = 'Tax Invoice | SriLekh';
+      }
+    }
+  }, [invoice]);
+
   if (loadError) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white p-4">

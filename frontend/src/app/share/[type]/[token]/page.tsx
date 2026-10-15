@@ -91,6 +91,16 @@ export default function PublicSharePage() {
     fetchShare();
   }, [token]);
 
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      if (data?.document_number) {
+        document.title = `${data.document_type || "Invoice"} ${data.document_number} | SriLekh`;
+      } else {
+        document.title = "View Document | SriLekh";
+      }
+    }
+  }, [data]);
+
   const handleDownloadPdf = () => {
     window.open(`${API_BASE_URL}/api/v1/documents/share/download/${token}/?t=${Date.now()}`, "_blank");
   };
