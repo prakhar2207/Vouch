@@ -5,11 +5,16 @@ import { useRouter } from "next/navigation";
 import { getAccessToken } from "@/utils/auth";
 import StateSelect from "./StateSelect";
 import { useToast } from "@/context/ToastContext";
+import { useCompany } from "@/context/CompanyContext";
 import { offlineDb } from "@/lib/db/offlineDb";
+import BarcodeScannerModal from "@/components/modals/BarcodeScannerModal";
 
 interface LineItem {
   description: string;
   brand?: string;
+  barcode?: string;
+  serial_numbers?: string;
+  product_id?: string;
   hsn_code: string;
   quantity: number;
   unit: string;
@@ -205,6 +210,8 @@ const reconcileInvoiceTotals = (data: ExtractedInvoice, buyerStateCode: string =
 export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseOcrSplitViewProps) {
   const router = useRouter();
   const { toast } = useToast();
+  const { activeCompany } = useCompany();
+  const isBarcodeEnabled = Boolean(activeCompany?.settings?.enable_barcode_scanning);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [scanMode, setScanMode] = useState<'printed' | 'handwritten'>('printed');
@@ -234,9 +241,78 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
   const [newCategoryName, setNewCategoryName] = useState<string>("");
   const [categoryDetectedMsg, setCategoryDetectedMsg] = useState<string | null>(null);
 
+  // Catalog Products & Barcode Linking State
+  const [catalogProducts, setCatalogProducts] = useState<any[]>([]);
+  const [scannerTargetIndex, setScannerTargetIndex] = useState<number | null>(null);
+
   // GST Tax Treatment State
   const [taxType, setTaxType] = useState<'IGST' | 'CGST_SGST' | 'EXEMPT'>('IGST');
   const [companyStateCode, setCompanyStateCode] = useState<string>('');
+
+  // Helper to connect scanned OCR items to existing catalog products by Barcode or Name
+  const linkItemsToCatalog = (items: LineItem[], prods: any[]): LineItem[] => {
+    if (!prods || prods.length === 0) return items;
+    return items.map((it) => {
+      const itBarcode = (it.barcode || '').trim().toLowerCase();
+      const itDesc = (it.description || '').trim().toLowerCase();
+
+      // 1. Link by Barcode if present
+      if (itBarcode) {
+        const matched = prods.find(
+          (p) => p.barcode && String(p.barcode).trim().toLowerCase() === itBarcode
+        );
+        if (matched) {
+          return {
+            ...it,
+            product_id: matched.id,
+            brand: it.brand || matched.brand || '',
+            hsn_code: it.hsn_code || matched.hsn_code || '',
+            rate: it.rate > 0 ? it.rate : Number(matched.purchase_price || matched.selling_price || 0),
+          };
+        }
+      }
+
+      // 2. Link by Product Name
+      if (itDesc) {
+        const matched = prods.find(
+          (p) => p.name && String(p.name).trim().toLowerCase() === itDesc
+        );
+        if (matched) {
+          return {
+            ...it,
+            product_id: matched.id,
+            barcode: it.barcode || matched.barcode || '',
+            brand: it.brand || matched.brand || '',
+            hsn_code: it.hsn_code || matched.hsn_code || '',
+            rate: it.rate > 0 ? it.rate : Number(matched.purchase_price || matched.selling_price || 0),
+          };
+        }
+      }
+
+      return it;
+    });
+  };
+
+  // Fetch catalog products to enable instant OCR-to-barcode linking
+  useEffect(() => {
+    if (!companyId) return;
+    const loadProducts = async () => {
+      try {
+        const cached = await offlineDb.syncedProducts.where('companyId').equals(companyId).toArray();
+        if (cached && cached.length > 0) {
+          setCatalogProducts(cached);
+        }
+        const res = await api.get(`/api/v1/inventory/products/${companyId}/`);
+        const serverProds = res.data.data || res.data || [];
+        if (Array.isArray(serverProds) && serverProds.length > 0) {
+          setCatalogProducts(serverProds);
+        }
+      } catch (e) {
+        console.warn('Could not load catalog products for barcode linking:', e);
+      }
+    };
+    loadProducts();
+  }, [companyId]);
 
   // Fetch company details to resolve state code for inter-state vs intra-state supply
   useEffect(() => {
@@ -824,18 +900,29 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
       const partyLedgerId = partyRes.data.data?.id;
 
-      // 3. Format Items for Voucher Creation with Category Allocation
-      const formattedItems = invoice.line_items.map((item) => ({
-        product_name: item.description,
-        brand: item.brand && item.brand.trim() ? item.brand.trim() : undefined,
-        hsn_code: item.hsn_code,
-        quantity: item.quantity,
-        rate: item.rate,
-        unit: item.unit || "PCS",
-        discount_percent: item.discount_percent || 0,
-        gst_rate: item.gst_rate || 18,
-        category_id: effectiveCategoryId || undefined,
-      }));
+      // 3. Format Items for Voucher Creation with Category Allocation & Barcode/Serials
+      const formattedItems = invoice.line_items.map((item) => {
+        const detailsParts: string[] = [];
+        if (item.barcode?.trim()) detailsParts.push(`Barcode: ${item.barcode.trim()}`);
+        if (item.serial_numbers?.trim()) detailsParts.push(`S/N: ${item.serial_numbers.trim()}`);
+        const lineDesc = detailsParts.length > 0 ? detailsParts.join(' | ') : undefined;
+
+        return {
+          product_name: item.description,
+          product_id: item.product_id || undefined,
+          brand: item.brand && item.brand.trim() ? item.brand.trim() : undefined,
+          barcode: item.barcode?.trim() || undefined,
+          serial_numbers: item.serial_numbers?.trim() || undefined,
+          description: lineDesc,
+          hsn_code: item.hsn_code,
+          quantity: item.quantity,
+          rate: item.rate,
+          unit: item.unit || "PCS",
+          discount_percent: item.discount_percent || 0,
+          gst_rate: item.gst_rate || 18,
+          category_id: effectiveCategoryId || undefined,
+        };
+      });
 
       // 4. Post to Universal Voucher Engine with attached document
       const payload = {
@@ -1522,6 +1609,47 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                         </div>
                       </div>
 
+                      {/* Barcode & IMEI / Serial Details (Tally F11: Only when Barcode Feature is enabled or barcode/serials detected) */}
+                      {(isBarcodeEnabled || Boolean(item.barcode || item.serial_numbers)) && (
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1 border-t border-border/40">
+                          <div className="flex-1 flex items-center gap-1.5">
+                            <span className="text-[10px] text-muted-foreground font-mono shrink-0">Barcode:</span>
+                            <input
+                              type="text"
+                              value={item.barcode || ""}
+                              onChange={(e) => updateItem(idx, "barcode", e.target.value)}
+                              placeholder="Barcode / EAN"
+                              className="flex-1 bg-background border border-input text-foreground px-2 py-1 rounded text-xs font-mono outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                            {isBarcodeEnabled && (
+                              <button
+                                type="button"
+                                onClick={() => setScannerTargetIndex(idx)}
+                                className="px-2 py-1 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded text-[10px] font-semibold flex items-center gap-1 cursor-pointer shrink-0"
+                                title="Scan barcode with camera"
+                              >
+                                📷 Scan
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex-1 flex items-center gap-1.5">
+                            <span className="text-[10px] text-muted-foreground font-mono shrink-0">IMEI/S/N:</span>
+                            <input
+                              type="text"
+                              value={item.serial_numbers || ""}
+                              onChange={(e) => updateItem(idx, "serial_numbers", e.target.value)}
+                              placeholder="Serial No. / IMEI"
+                              className="flex-1 bg-background border border-input text-foreground px-2 py-1 rounded text-xs font-mono outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                          {item.product_id && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 whitespace-nowrap">
+                              ✓ Linked
+                            </span>
+                          )}
+                        </div>
+                      )}
+
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                         <div>
                           <label className="block text-[10px] text-muted-foreground font-medium">HSN</label>
@@ -1718,6 +1846,30 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
             </div>
           </div>
         </div>
+      )}
+
+      {scannerTargetIndex !== null && (
+        <BarcodeScannerModal
+          isOpen={true}
+          onClose={() => setScannerTargetIndex(null)}
+          onScan={(code) => {
+            if (invoice && scannerTargetIndex !== null) {
+              const updated = [...invoice.line_items];
+              updated[scannerTargetIndex].barcode = code;
+              const matched = catalogProducts.find(
+                (p) => p.barcode && String(p.barcode).trim().toLowerCase() === code.trim().toLowerCase()
+              );
+              if (matched) {
+                updated[scannerTargetIndex].product_id = matched.id;
+                if (!updated[scannerTargetIndex].brand) updated[scannerTargetIndex].brand = matched.brand || '';
+              }
+              setInvoice({ ...invoice, line_items: updated });
+              toast.success(`Captured Barcode: ${code}`);
+            }
+            setScannerTargetIndex(null);
+          }}
+          title="Scan Item Barcode / QR"
+        />
       )}
     </div>
   );

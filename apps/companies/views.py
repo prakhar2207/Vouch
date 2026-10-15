@@ -325,6 +325,8 @@ class CompanyViewSet(viewsets.ModelViewSet):
             settings.enable_manual_invoice_number = request.data['enable_manual_invoice_number']
         if 'enable_advanced_item_creation' in request.data:
             settings.enable_advanced_item_creation = request.data['enable_advanced_item_creation']
+        if 'enable_barcode_scanning' in request.data:
+            settings.enable_barcode_scanning = bool(request.data['enable_barcode_scanning'])
         if 'complexity_level' in request.data:
             settings.complexity_level = request.data['complexity_level']
         if 'allow_negative_stock' in request.data:

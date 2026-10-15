@@ -579,6 +579,7 @@ def serialize_voucher_detail(voucher, include_attachment=False, user=None):
             "taxable_amount": item.taxable_amount,
             "gst_rate": item.gst_rate,
             "description": item.description or (item.product.description if item.product else "") or "",
+            "barcode": item.product.barcode or "" if item.product else "",
             "total_amount": item.total_amount
         })
     

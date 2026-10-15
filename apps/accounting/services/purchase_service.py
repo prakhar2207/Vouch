@@ -150,6 +150,10 @@ class PurchaseInvoiceService:
                         gst_rate=Decimal(str(item.get('gst_rate', '18.00')))
                     )
 
+            item_barcode = str(item.get('barcode') or '').strip()
+            item_serial = str(item.get('serial_numbers') or item.get('imei') or item.get('serial') or '').strip()
+            product = None
+
             product_id = item.get('product_id')
             if product_id:
                 from apps.common.tenant import get_company_product
@@ -161,6 +165,9 @@ class PurchaseInvoiceService:
                         if product.category_id != target_cat_id:
                             product.category = category
                             update_fields.append('category')
+                    if item_barcode and not product.barcode:
+                        product.barcode = item_barcode
+                        update_fields.append('barcode')
                     if item.get('hsn_code') and product.hsn_code != str(item['hsn_code']).strip():
                         product.hsn_code = str(item['hsn_code']).strip()
                         update_fields.append('hsn_code')
@@ -174,7 +181,23 @@ class PurchaseInvoiceService:
                             pass
                     if update_fields:
                         product.save(update_fields=update_fields)
-            else:
+            elif item_barcode:
+                # 1. Match existing product directly by Barcode
+                product = Product.objects.filter(company=company, barcode__iexact=item_barcode).first()
+                if product:
+                    update_fields = []
+                    if category_specified:
+                        target_cat_id = category.id if category else None
+                        if product.category_id != target_cat_id:
+                            product.category = category
+                            update_fields.append('category')
+                    if item.get('hsn_code') and not product.hsn_code:
+                        product.hsn_code = str(item['hsn_code']).strip()
+                        update_fields.append('hsn_code')
+                    if update_fields:
+                        product.save(update_fields=update_fields)
+
+            if not product:
                 raw_name = str(item.get('product_name') or item.get('name') or 'Unnamed Product').strip()
 
                 cat_name = category.name if category else None
@@ -184,6 +207,7 @@ class PurchaseInvoiceService:
                 
                 defaults_dict = {
                     'sku': sku,
+                    'barcode': item_barcode or None,
                     'hsn_code': item.get('hsn_code', ''),
                     'gst_rate': Decimal(str(item.get('gst_rate', '18.00'))),
                     'purchase_price': Decimal(str(item.get('rate', '0.00'))),
@@ -270,6 +294,10 @@ class PurchaseInvoiceService:
                     product.category = category
                     product.save(update_fields=['category'])
 
+                if item_barcode and not product.barcode:
+                    product.barcode = item_barcode
+                    product.save(update_fields=['barcode'])
+
             qty = Decimal(str(item['quantity']))
             unit_str = str(item.get('unit') or getattr(product, 'unit', 'PCS') or 'PCS').strip().upper()
             fractional_units = ['KG', 'KGS', 'KILOGRAM', 'KILOGRAMS', 'LTR', 'LTRS', 'LITRE', 'LITRES', 'LITER', 'LITERS', 'MTR', 'MTRS', 'METER', 'METERS', 'METRE', 'METRES']
@@ -306,6 +334,20 @@ class PurchaseInvoiceService:
             if item.get('warehouse_id'):
                 line_wh = Warehouse.objects.filter(id=item['warehouse_id'], company=company).first()
 
+            line_description = str(item.get('description') or '').strip()
+            if not line_description:
+                desc_parts = []
+                if item_barcode:
+                    desc_parts.append(f"Barcode: {item_barcode}")
+                if item_serial:
+                    desc_parts.append(f"S/N: {item_serial}")
+                line_description = " | ".join(desc_parts)
+            else:
+                if item_serial and item_serial not in line_description:
+                    line_description = f"{line_description} | S/N: {item_serial}"
+                if item_barcode and item_barcode not in line_description:
+                    line_description = f"{line_description} | Barcode: {item_barcode}"
+
             VoucherItem.objects.create(
                 voucher=voucher,
                 product=product,
@@ -325,7 +367,7 @@ class PurchaseInvoiceService:
                 igst_amount=taxes.get('igst', Decimal('0.00')),
                 cess_amount=taxes.get('cess', Decimal('0.00')),
                 hsn_code=product.hsn_code or item.get('hsn_code', ''),
-                description=item.get('description', '') or '',
+                description=line_description,
                 total_amount=total_amount
             )
             

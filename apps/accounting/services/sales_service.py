@@ -139,6 +139,9 @@ class SalesInvoiceService:
             elif category_name and str(category_name).strip() and str(category_name).lower() not in ('unassigned', 'null', 'none'):
                 category = ProductCategory.objects.filter(name__iexact=str(category_name).strip(), company=company).first()
 
+            item_barcode = str(item.get('barcode') or '').strip()
+            item_serial = str(item.get('serial_numbers') or item.get('imei') or item.get('serial') or '').strip()
+
             product = None
             product_id = item.get('product_id')
             if product_id and str(product_id).strip():
@@ -151,6 +154,9 @@ class SalesInvoiceService:
                         if product.category_id != target_cat_id:
                             product.category = category
                             update_fields.append('category')
+                    if item_barcode and not product.barcode:
+                        product.barcode = item_barcode
+                        update_fields.append('barcode')
                     if item.get('hsn_code') and product.hsn_code != str(item['hsn_code']).strip():
                         product.hsn_code = str(item['hsn_code']).strip()
                         update_fields.append('hsn_code')
@@ -164,6 +170,20 @@ class SalesInvoiceService:
                             pass
                     if update_fields:
                         product.save(update_fields=update_fields)
+            elif item_barcode:
+                product = Product.objects.filter(company=company, barcode__iexact=item_barcode).first()
+                if product:
+                    update_fields = []
+                    if category_specified:
+                        target_cat_id = category.id if category else None
+                        if product.category_id != target_cat_id:
+                            product.category = category
+                            update_fields.append('category')
+                    if item.get('hsn_code') and not product.hsn_code:
+                        product.hsn_code = str(item['hsn_code']).strip()
+                        update_fields.append('hsn_code')
+                    if update_fields:
+                        product.save(update_fields=update_fields)
 
             if not product:
                 # Auto-create product on the fly if it doesn't exist
@@ -173,6 +193,7 @@ class SalesInvoiceService:
                 
                 defaults_dict = {
                     'sku': sku,
+                    'barcode': item_barcode or None,
                     'hsn_code': item.get('hsn_code', ''),
                     'gst_rate': Decimal(str(item.get('gst_rate', '18.00'))),
                     'selling_price': Decimal(str(item.get('rate', '0.00'))),
@@ -222,6 +243,10 @@ class SalesInvoiceService:
                     if update_fields:
                         product.save(update_fields=update_fields)
 
+                if item_barcode and not product.barcode:
+                    product.barcode = item_barcode
+                    product.save(update_fields=['barcode'])
+
             qty = Decimal(str(item['quantity']))
             rate = Decimal(str(item.get('rate', '0.00')))
             discount_pct = Decimal(str(item.get('discount_percent', '0.00')))
@@ -255,6 +280,20 @@ class SalesInvoiceService:
             if item.get('warehouse_id'):
                 line_wh = Warehouse.objects.filter(id=item['warehouse_id'], company=company).first()
 
+            line_description = str(item.get('description') or '').strip()
+            if not line_description:
+                desc_parts = []
+                if item_barcode:
+                    desc_parts.append(f"Barcode: {item_barcode}")
+                if item_serial:
+                    desc_parts.append(f"S/N: {item_serial}")
+                line_description = " | ".join(desc_parts)
+            else:
+                if item_serial and item_serial not in line_description:
+                    line_description = f"{line_description} | S/N: {item_serial}"
+                if item_barcode and item_barcode not in line_description:
+                    line_description = f"{line_description} | Barcode: {item_barcode}"
+
             VoucherItem.objects.create(
                 voucher=voucher,
                 product=product,
@@ -274,7 +313,7 @@ class SalesInvoiceService:
                 igst_amount=taxes.get('igst', Decimal('0.00')),
                 cess_amount=taxes.get('cess', Decimal('0.00')),
                 hsn_code=product.hsn_code or item.get('hsn_code', ''),
-                description=item.get('description', '') or '',
+                description=line_description,
                 total_amount=total_amount
             )
             

@@ -158,6 +158,7 @@ export default function SettingsPage() {
   const [enableLedgerMapping, setEnableLedgerMapping] = useState(false);
   const [enableManualInvoice, setEnableManualInvoice] = useState(false);
   const [enableAdvancedItemCreation, setEnableAdvancedItemCreation] = useState(false);
+  const [enableBarcodeScanning, setEnableBarcodeScanning] = useState(false);
   const [complexityLevel, setComplexityLevel] = useState(1);
   const [allowNegativeStock, setAllowNegativeStock] = useState(true);
   const [salesInvoicePrefix, setSalesInvoicePrefix] = useState('');
@@ -310,6 +311,7 @@ export default function SettingsPage() {
     setEnableLedgerMapping(comp.settings?.enable_ledger_mapping || false);
     setEnableManualInvoice(comp.settings?.enable_manual_invoice_number || false);
     setEnableAdvancedItemCreation(comp.settings?.enable_advanced_item_creation || false);
+    setEnableBarcodeScanning(comp.settings?.enable_barcode_scanning || false);
     setComplexityLevel(comp.settings?.complexity_level || 1);
     setAllowNegativeStock(comp.settings?.allow_negative_stock !== false);
     setSalesInvoicePrefix(comp.settings?.sales_invoice_prefix || '');
@@ -456,6 +458,7 @@ export default function SettingsPage() {
         enable_ledger_mapping: enableLedgerMapping,
         enable_manual_invoice_number: enableManualInvoice,
         enable_advanced_item_creation: enableAdvancedItemCreation,
+        enable_barcode_scanning: enableBarcodeScanning,
         complexity_level: complexityLevel,
         allow_negative_stock: allowNegativeStock,
         sales_invoice_prefix: salesInvoicePrefix,
@@ -1875,6 +1878,24 @@ export default function SettingsPage() {
                         <div>
                           <div className="font-semibold text-xs text-foreground">Advanced Item Options</div>
                           <div className="text-[11px] text-muted-foreground">Enable custom product attributes, batch tracking, and multi-warehouse selection</div>
+                        </div>
+                      </label>
+
+                      <label className="flex items-start gap-3 p-3 rounded-xl bg-muted/20 border border-border/40 cursor-pointer hover:bg-muted/40">
+                        <input
+                          type="checkbox"
+                          checked={enableBarcodeScanning}
+                          onChange={(e) => setEnableBarcodeScanning(e.target.checked)}
+                          className="mt-0.5 rounded text-primary focus:ring-primary w-4 h-4"
+                        />
+                        <div>
+                          <div className="font-semibold text-xs text-foreground flex items-center gap-1.5">
+                            <span>Enable Barcode & Serial Scanning</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 font-bold border border-blue-500/20">F11 / POS</span>
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            Enables USB barcode scanner listener, camera scanning, duplicate item auto-increment, and IMEI / Serial recording. Keep OFF for standard clean invoicing.
+                          </div>
                         </div>
                       </label>
                     </div>

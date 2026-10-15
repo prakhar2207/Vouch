@@ -18,6 +18,7 @@ export default function PurchasePage() {
   const router = useRouter();
   const { toast } = useToast();
   const { activeCompany, companyId: activeCompanyId } = useCompany();
+  const isBarcodeEnabled = Boolean(activeCompany?.settings?.enable_barcode_scanning);
   const { workingDate, registerSaveHandler, registerAltCCallback } = useShortcuts();
   const [activeTab, setActiveTab] = useState<'OCR' | 'MANUAL'>('OCR');
   const [companyId, setCompanyId] = useState('');
@@ -707,30 +708,32 @@ export default function PurchasePage() {
                     <h2 className="text-lg font-semibold text-foreground">Line Items by Category</h2>
                     <span className="text-xs text-red-400 bg-red-400/10 px-2 py-0.5 rounded border border-red-400/20">Auto-Creates & Inherits Tax</span>
                 </div>
-                {/* Barcode Quick-Scan Input & Camera Scanner */}
-                <div className="flex items-center gap-2 w-full md:w-auto">
-                  <div className="relative w-full sm:w-64">
-                    <ScanBarcode className="w-4 h-4 text-primary absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    <input
-                      ref={barcodeInputRef}
-                      type="text"
-                      value={barcodeInput}
-                      onChange={(e) => setBarcodeInput(e.target.value)}
-                      onKeyDown={handleBarcodeScan}
-                      placeholder="Scan Barcode / SKU (Press Enter)..."
-                      className="w-full pl-9 pr-3 py-1.5 bg-muted/60 border border-input rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:bg-background transition-all font-mono"
-                    />
+                {/* Barcode Quick-Scan Input & Camera Scanner - Tally F11 Toggleable */}
+                {isBarcodeEnabled && (
+                  <div className="flex items-center gap-2 w-full md:w-auto">
+                    <div className="relative w-full sm:w-64">
+                      <ScanBarcode className="w-4 h-4 text-primary absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        ref={barcodeInputRef}
+                        type="text"
+                        value={barcodeInput}
+                        onChange={(e) => setBarcodeInput(e.target.value)}
+                        onKeyDown={handleBarcodeScan}
+                        placeholder="Scan Barcode / SKU (Press Enter)..."
+                        className="w-full pl-9 pr-3 py-1.5 bg-muted/60 border border-input rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:bg-background transition-all font-mono"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowScannerModal(true)}
+                      className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-all shrink-0 cursor-pointer shadow-sm active:scale-95 whitespace-nowrap"
+                      title="Open Camera Barcode Scanner (Phone camera / Laptop webcam)"
+                    >
+                      <Camera className="w-4 h-4" />
+                      <span className="hidden sm:inline">Camera</span>
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowScannerModal(true)}
-                    className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-all shrink-0 cursor-pointer shadow-sm active:scale-95 whitespace-nowrap"
-                    title="Open Camera Barcode Scanner (Phone camera / Laptop webcam)"
-                  >
-                    <Camera className="w-4 h-4" />
-                    <span className="hidden sm:inline">Camera</span>
-                  </button>
-                </div>
+                )}
             </div>
             
             <div className="p-2 space-y-6">
@@ -802,16 +805,18 @@ export default function PurchasePage() {
                                         <tr key={iIndex} className="hover:bg-muted/40 transition-colors">
                                             <td className="p-2">
                                                 <input type="text" placeholder="e.g. Item Name" value={item.product_name} onChange={e => updateItem(gIndex, iIndex, 'product_name', e.target.value)} className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-sm font-medium" />
-                                                <div className="mt-1">
-                                                    <input
-                                                        type="text"
-                                                        placeholder="Details / Serial Nos. / Barcode..."
-                                                        value={item.description || ''}
-                                                        onChange={e => updateItem(gIndex, iIndex, 'description', e.target.value)}
-                                                        className="w-full text-[11px] font-mono bg-muted/30 hover:bg-muted/50 focus:bg-background border border-border/50 focus:border-primary rounded px-2 py-0.5 text-foreground placeholder:text-muted-foreground outline-none transition-all"
-                                                        title="Item details, IMEI, serial numbers or barcode notes to record on purchase bill"
-                                                    />
-                                                </div>
+                                                {(isBarcodeEnabled || Boolean(item.description)) && (
+                                                    <div className="mt-1">
+                                                        <input
+                                                            type="text"
+                                                            placeholder="Details / Serial Nos. / Barcode..."
+                                                            value={item.description || ''}
+                                                            onChange={e => updateItem(gIndex, iIndex, 'description', e.target.value)}
+                                                            className="w-full text-[11px] font-mono bg-muted/30 hover:bg-muted/50 focus:bg-background border border-border/50 focus:border-primary rounded px-2 py-0.5 text-foreground placeholder:text-muted-foreground outline-none transition-all"
+                                                            title="Item details, IMEI, serial numbers or barcode notes to record on purchase bill"
+                                                        />
+                                                    </div>
+                                                )}
                                             </td>
                                             <td className="p-2">
                                                 <input type="text" placeholder="e.g. Fenner" value={item.brand || ''} onChange={e => updateItem(gIndex, iIndex, 'brand', e.target.value)} className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-sm font-medium" />

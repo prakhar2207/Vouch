@@ -10,8 +10,10 @@ from typing import List, Optional
 
 class InvoiceItemSchema(BaseModel):
     description: str = Field(description="Description or size/model number of the product without redundant category prefix, e.g. 'B 34', 'B 79', 'C 120', '6204-2RS' instead of 'V Belt B34'")
-    category: Optional[str] = Field(default="", description="Inferred category for this specific item if identifiable, e.g. 'V Belts', 'Bearings'")
-    brand: Optional[str] = Field(default="", description="Brand, make, or manufacturer of the item if mentioned on the bill, e.g. Fenner, SKF, Havells")
+    category: Optional[str] = Field(default="", description="Inferred category for this specific item if identifiable, e.g. 'V Belts', 'Bearings', 'Smartphones', 'Electronics'")
+    brand: Optional[str] = Field(default="", description="Brand, make, or manufacturer of the item if mentioned on the bill, e.g. Fenner, SKF, Havells, Samsung, Apple, Xiaomi, HP")
+    barcode: Optional[str] = Field(default="", description="Product barcode, EAN, UPC, or printed article code if present on the invoice for this item")
+    serial_numbers: Optional[str] = Field(default="", description="Serial numbers, IMEI 1/2, or unique device identifiers printed for mobile phones, laptops, electronics, appliances, or machinery")
     hsn_code: Optional[str] = Field(default="", description="HSN or SAC code")
     quantity: float = Field(default=1.0, description="Quantity")
     unit: Optional[str] = Field(default="PCS", description="Unit of measurement, e.g., PCS, KG, NOS")
@@ -184,7 +186,8 @@ class InvoiceOCRService:
                 "2. Resolve ditto marks (\", '', do, as above) by carrying forward values, rates, or descriptions from the preceding line. "
                 "3. Interpret handwriting shorthand, abbreviations (e.g., 'pkg', 'bx', 'mtr', 'nos'), and handwritten digits accurately. "
                 "4. Extract the exact Supplier Name, Supplier GSTIN, Invoice/Bill Number, Invoice Date (in YYYY-MM-DD format), Place of Supply / State Code (first 2 digits of supplier GSTIN). "
-                "5. Accurately extract all itemized line items: clean Description, Category, Brand (e.g. Fenner, SKF, PIX, NBC if mentioned), HSN code, Quantity, Unit, Rate (MRP or price before discount), Discount Percentage, and Taxable Amount. "
+                "5. Accurately extract all itemized line items: clean Description, Category, Brand (e.g. Fenner, SKF, PIX, NBC, Samsung, Apple, Xiaomi, HP, Lenovo if mentioned), HSN code, Quantity, Unit, Rate (MRP or price before discount), Discount Percentage, and Taxable Amount. "
+                "   CRITICAL FOR ELECTRONICS, SMARTPHONES, AND HARDWARE: If the invoice or line item lists Barcodes, EAN, UPC, or Serial Numbers / IMEI numbers (e.g. 'IMEI: 86234...', 'S/N: 2024...', 'Sr No:', 'Barcode: 890...', or device identifiers printed below or alongside the product), extract them into 'barcode' and 'serial_numbers'. If multiple serials/IMEIs belong to the same item quantity, list them comma-separated in 'serial_numbers'."
                 "6. TAX BREAKDOWN & GST DETECTION: Carefully inspect the bottom tax summary box, handwritten tax rows, or stamps. "
                 "   - If Supplier State != Buyer State (or different states), this is an INTER-STATE supply -> ALL tax is IGST. Set igst_amount to the full tax amount, and set cgst_amount = 0, sgst_amount = 0. "
                 "   - If Supplier State == Buyer State, this is an INTRA-STATE supply -> Split tax equally into CGST and SGST (and set igst_amount = 0). "
@@ -557,8 +560,19 @@ class InvoiceOCRService:
                 if unit in ["PCS", "PIECES", "NOS", "NO", "PC", "PKT", "PACKET", "BOX", "BAG", "SET", "DOZ", "CAN", "BTL"]:
                     qty = float(int(round(qty)))
 
+                barcode_val = ""
+                serial_val = ""
+                imei_m = re.search(r'\b(?:IMEI|S/?N|Serial|Sr\.?\s*No\.?)[:\s]+([A-Za-z0-9,\s\-_/]+)', desc, re.IGNORECASE)
+                if imei_m:
+                    serial_val = imei_m.group(1).strip()
+                barcode_m = re.search(r'\b(?:Barcode|EAN|UPC)[:\s]+([0-9]{8,14})', desc, re.IGNORECASE)
+                if barcode_m:
+                    barcode_val = barcode_m.group(1).strip()
+
                 line_items.append({
                     "description": desc,
+                    "barcode": barcode_val,
+                    "serial_numbers": serial_val,
                     "hsn_code": hsn,
                     "quantity": qty,
                     "unit": unit,
@@ -583,6 +597,8 @@ class InvoiceOCRService:
 
             line_items.append({
                 "description": item_desc,
+                "barcode": "",
+                "serial_numbers": "",
                 "hsn_code": "8482",
                 "quantity": 1.0,
                 "unit": "NOS",
