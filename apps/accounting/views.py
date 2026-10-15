@@ -578,6 +578,7 @@ def serialize_voucher_detail(voucher, include_attachment=False, user=None):
             "discount_amount": item.discount_amount,
             "taxable_amount": item.taxable_amount,
             "gst_rate": item.gst_rate,
+            "description": item.description or (item.product.description if item.product else "") or "",
             "total_amount": item.total_amount
         })
     
@@ -1235,6 +1236,7 @@ class VoucherDetailAPIView(APIView):
                             discount_amount=discount_amt,
                             taxable_amount=taxable_amount,
                             gst_rate=gst_pct,
+                            description=item.get('description', '') or '',
                             total_amount=total_line_amount
                         )
 

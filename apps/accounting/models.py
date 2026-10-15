@@ -239,6 +239,7 @@ class VoucherItem(models.Model):
     igst_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     cess_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     hsn_code = models.CharField(max_length=50, null=True, blank=True)
+    description = models.TextField(null=True, blank=True)
     
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
 

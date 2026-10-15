@@ -14,6 +14,7 @@ import {
   ChevronDown,
   ChevronUp,
   ScanBarcode,
+  Camera,
   AlertTriangle,
   CheckCircle2,
   ArrowRight,
@@ -39,6 +40,7 @@ import {
 } from 'lucide-react';
 import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
+import BarcodeScannerModal from '@/components/modals/BarcodeScannerModal';
 
 /**
  * Resolves remembered party rate strictly matching the brand.
@@ -175,10 +177,11 @@ export default function SalesPage() {
   const [partyRates, setPartyRates] = useState<Record<string, any>>({});
   const [loadingPartyRates, setLoadingPartyRates] = useState(false);
   const [groupedItems, setGroupedItems] = useState<any[]>([
-    { category_id: '', hsn_code: '', gst_rate: undefined, items: [ { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: 0, purchase_cost: 0, last_party_rate: null, last_party_date: null, last_party_vnum: null } ] }
+    { category_id: '', hsn_code: '', gst_rate: undefined, items: [ { product_name: '', product_id: '', brand: '', unit: 'PCS', quantity: 1, rate: 0, discount_percent: 0, description: '', purchase_cost: 0, last_party_rate: null, last_party_date: null, last_party_vnum: null } ] }
   ]);
   const [barcodeInput, setBarcodeInput] = useState('');
   const [globalDiscount, setGlobalDiscount] = useState<string>('');
+  const [showScannerModal, setShowScannerModal] = useState(false);
   const barcodeInputRef = React.useRef<HTMLInputElement>(null);
 
   // Close brand modal on Escape key
@@ -1114,10 +1117,8 @@ export default function SalesPage() {
     ]);
   };
 
-  const handleBarcodeScan = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
-    const rawCode = barcodeInput.trim();
+  const processScannedBarcode = (code: string) => {
+    const rawCode = code.trim();
     if (!rawCode) return;
 
     const codeLower = rawCode.toLowerCase();
@@ -1136,13 +1137,30 @@ export default function SalesPage() {
 
     const newGroups = [...groupedItems];
 
-    // Check if already in current line items -> increment quantity
+    // Detail associated with this specific scan (Barcode / Serial / IMEI)
+    const scanDetail = matchedProd.barcode && String(matchedProd.barcode).trim().toLowerCase() !== codeLower
+      ? `S/N: ${rawCode}`
+      : `Barcode: ${rawCode}`;
+
+    // Check if already in current line items -> increment quantity & append barcode details
     for (let g = 0; g < newGroups.length; g++) {
       for (let i = 0; i < newGroups[g].items.length; i++) {
         const it = newGroups[g].items[i];
-        if (it.product_id === matchedProd.id) {
+        if (it.product_id === matchedProd.id || (it.product_name && it.product_name.toLowerCase() === matchedProd.name.toLowerCase())) {
           const newQty = (Number(it.quantity) || 0) + 1;
           it.quantity = newQty;
+
+          // Append barcode / serial details to item description
+          const currentDesc = String(it.description || '').trim();
+          if (currentDesc) {
+            if (!currentDesc.includes(rawCode)) {
+              it.description = `${currentDesc}, ${rawCode}`;
+            }
+          } else {
+            const baseDesc = matchedProd.description ? `${matchedProd.description} | ` : '';
+            it.description = `${baseDesc}${scanDetail}`;
+          }
+
           setGroupedItems(newGroups);
           toast.success(`Incremented ${matchedProd.name} (Qty: ${newQty})`);
           setBarcodeInput('');
@@ -1159,6 +1177,9 @@ export default function SalesPage() {
       : (pastRateInfo?.purchase_cost ?? 0);
     const rate = (pastRateInfo && Number(pastRateInfo.rate) > 0) ? Number(pastRateInfo.rate) : catalogMrp;
 
+    const baseDesc = matchedProd.description ? `${matchedProd.description} | ` : '';
+    const initialDesc = `${baseDesc}${scanDetail}`;
+
     const newItem = {
       product_name: matchedProd.name,
       product_id: matchedProd.id,
@@ -1170,6 +1191,7 @@ export default function SalesPage() {
       mrp: catalogMrp,
       purchase_cost: purchaseCost,
       discount_percent: currentPartyDiscount > 0 ? currentPartyDiscount : 0,
+      description: initialDesc,
       last_party_rate: pastRateInfo ? Number(pastRateInfo.rate) : null,
       last_party_date: pastRateInfo ? pastRateInfo.voucher_date : null,
       last_party_vnum: pastRateInfo ? pastRateInfo.voucher_number : null,
@@ -1208,6 +1230,12 @@ export default function SalesPage() {
     setGroupedItems(newGroups);
     toast.success(`Added ${matchedProd.name}`);
     setBarcodeInput('');
+  };
+
+  const handleBarcodeScan = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    processScannedBarcode(barcodeInput);
   };
   
   const removeCategoryGroup = (gIndex: number) => {
@@ -2082,9 +2110,9 @@ export default function SalesPage() {
                     </button>
                   </div>
 
-                  {/* Barcode Quick-Scan Input (P1-5) */}
-                  <div className="flex items-center gap-2 w-full sm:w-72">
-                    <div className="relative w-full">
+                  {/* Barcode Quick-Scan Input (P1-5) & Camera Scanner */}
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <div className="relative w-full sm:w-64">
                       <ScanBarcode className="w-4 h-4 text-primary absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <input
                         ref={barcodeInputRef}
@@ -2096,6 +2124,15 @@ export default function SalesPage() {
                         className="w-full pl-9 pr-3 py-1.5 bg-muted/60 border border-input rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:bg-background transition-all font-mono"
                       />
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowScannerModal(true)}
+                      className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-all shrink-0 cursor-pointer shadow-sm active:scale-95 whitespace-nowrap"
+                      title="Open Camera Barcode Scanner (Phone camera / Laptop webcam)"
+                    >
+                      <Camera className="w-4 h-4" />
+                      <span className="hidden sm:inline">Camera</span>
+                    </button>
                   </div>
                 </div>
             </div>
@@ -2232,6 +2269,18 @@ export default function SalesPage() {
 
                                         {/* Product Badges (Brand, Stock, Last Sold, Cost, Margin, MRP) */}
                                         {renderItemBadges(gIndex, iIndex, item, group)}
+
+                                        {/* Item Details / Serial Nos. / Barcode Notes */}
+                                        <div className="mt-1.5">
+                                            <input
+                                                type="text"
+                                                placeholder="Details / Serial Nos. / Barcode..."
+                                                value={item.description || ''}
+                                                onChange={e => updateItem(gIndex, iIndex, 'description', e.target.value)}
+                                                className="w-full text-xs font-mono bg-muted/40 border border-border/60 focus:border-primary rounded-lg px-2.5 py-1.5 text-foreground placeholder:text-muted-foreground outline-none transition-all"
+                                                title="Item details, IMEI, serial numbers or barcode notes to print on bill"
+                                            />
+                                        </div>
 
                                         {/* Numerical Inputs Grid: Qty, Rate, Disc% */}
                                         <div className="grid grid-cols-3 gap-2 pt-1">
@@ -2400,6 +2449,18 @@ export default function SalesPage() {
                                                 </div>
 
                                                 {renderItemBadges(gIndex, iIndex, item, group)}
+
+                                                {/* Item Details / Serial Nos. / Barcode Notes */}
+                                                <div className="mt-1">
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Details / Serial Nos. / Barcode..."
+                                                        value={item.description || ''}
+                                                        onChange={e => updateItem(gIndex, iIndex, 'description', e.target.value)}
+                                                        className="w-full text-[11px] font-mono bg-muted/30 hover:bg-muted/50 focus:bg-background border border-border/50 focus:border-primary rounded px-2 py-0.5 text-foreground placeholder:text-muted-foreground outline-none transition-all"
+                                                        title="Item details, IMEI, serial numbers or barcode notes to print on bill"
+                                                    />
+                                                </div>
                                             </td>
                                             <td className="p-2">
                                                 <input 
@@ -3410,6 +3471,14 @@ export default function SalesPage() {
           </div>
         );
       })()}
+
+      {/* Camera Barcode Scanner Modal (Webcam / Mobile Camera) */}
+      <BarcodeScannerModal
+        isOpen={showScannerModal}
+        onClose={() => setShowScannerModal(false)}
+        onScan={processScannedBarcode}
+        title="Sales Invoice - Scan Item Barcode / QR"
+      />
     </DashboardLayout>
   );
 }

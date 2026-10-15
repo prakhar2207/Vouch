@@ -32,6 +32,7 @@ interface EditableItem {
   unit: string;
   rate: number;
   gst_rate: number;
+  description?: string;
 }
 
 interface CategoryOption {
@@ -169,6 +170,7 @@ export default function EditPurchaseInvoiceModal({
           unit: item.unit || "PCS",
           rate: parseFloat(item.rate) || 0,
           gst_rate: parseFloat(item.gst_rate) || 18,
+          description: item.description || "",
         }));
 
         if (loadedItems.length === 0) {
@@ -370,6 +372,7 @@ export default function EditPurchaseInvoiceModal({
           rate: it.rate,
           unit: it.unit.trim().toUpperCase() || "PCS",
           gst_rate: it.gst_rate,
+          description: it.description || "",
         })),
       };
 

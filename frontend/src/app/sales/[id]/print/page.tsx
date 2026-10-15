@@ -435,7 +435,8 @@ export default function PrintInvoicePage() {
                 state_code: p.party_state_code || p.buyer_state_code || '',
               },
               items: (p.items || []).map((it: any) => ({
-                product_name: it.product_name || it.name || it.description || 'Item',
+                product_name: it.product_name || it.name || 'Item',
+                description: it.description || '',
                 brand: it.brand || '',
                 hsn_code: it.hsn_code || '',
                 quantity: Number(it.quantity || 1),
@@ -1403,6 +1404,11 @@ export default function PrintInvoicePage() {
                                       {showBrand && item.brand && (
                                           <div className={`${isCompactDensity ? 'text-[9px]' : 'text-[10px]'} text-slate-600 font-normal mt-0.5`}>
                                               Brand: {item.brand}
+                                          </div>
+                                      )}
+                                      {item.description && (
+                                          <div className={`${isCompactDensity ? 'text-[8.5px]' : 'text-[9.5px]'} text-slate-600 font-mono mt-0.5 whitespace-pre-wrap`}>
+                                              {item.description}
                                           </div>
                                       )}
                                   </td>
@@ -2419,6 +2425,11 @@ export default function PrintInvoicePage() {
                       </span>
                     )}
                   </div>
+                  {item.description && (
+                    <div className="text-[9.5px] font-mono text-slate-600 leading-tight mt-0.5 whitespace-pre-wrap">
+                      {item.description}
+                    </div>
+                  )}
                   <div className="flex justify-between text-[10px] text-slate-700">
                     <span>HSN: {item.hsn_code || '-'} | GST: {item.gst_rate}%</span>
                     <span>

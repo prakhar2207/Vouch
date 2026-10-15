@@ -325,6 +325,7 @@ class PurchaseInvoiceService:
                 igst_amount=taxes.get('igst', Decimal('0.00')),
                 cess_amount=taxes.get('cess', Decimal('0.00')),
                 hsn_code=product.hsn_code or item.get('hsn_code', ''),
+                description=item.get('description', '') or '',
                 total_amount=total_amount
             )
             

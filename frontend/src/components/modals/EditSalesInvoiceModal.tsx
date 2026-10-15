@@ -34,6 +34,7 @@ interface EditableSalesItem {
   rate: number;
   discount_percent: number;
   gst_rate: number;
+  description?: string;
 }
 
 interface CategoryOption {
@@ -180,6 +181,7 @@ export default function EditSalesInvoiceModal({
           rate: parseFloat(item.rate) || 0,
           discount_percent: item.discount_percent !== undefined && item.discount_percent !== null ? parseFloat(item.discount_percent) : 0,
           gst_rate: parseFloat(item.gst_rate) || 18,
+          description: item.description || "",
         }));
 
         if (loadedItems.length === 0) {
@@ -413,6 +415,7 @@ export default function EditSalesInvoiceModal({
           unit: it.unit.trim().toUpperCase() || "PCS",
           discount_percent: it.discount_percent !== undefined && it.discount_percent !== null ? Number(it.discount_percent) : 0,
           gst_rate: it.gst_rate,
+          description: it.description || "",
         })),
       };
 

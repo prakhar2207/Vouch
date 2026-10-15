@@ -1,6 +1,6 @@
 "use client";
 import api from '@/utils/api';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { isAuthenticated } from '@/utils/auth';
@@ -11,6 +11,8 @@ import { useCompany } from '@/context/CompanyContext';
 import { useToast } from '@/context/ToastContext';
 import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
+import { ScanBarcode, Camera, Trash2, Plus } from 'lucide-react';
+import BarcodeScannerModal from '@/components/modals/BarcodeScannerModal';
 
 export default function PurchasePage() {
   const router = useRouter();
@@ -36,10 +38,14 @@ export default function PurchasePage() {
   const [cartageAmount, setCartageAmount] = useState<number | string>('');
   
   const [categories, setCategories] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const [showScannerModal, setShowScannerModal] = useState(false);
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
   const [partyRates, setPartyRates] = useState<Record<string, any>>({});
   const [loadingPartyRates, setLoadingPartyRates] = useState(false);
   const [groupedItems, setGroupedItems] = useState<any[]>([
-    { category_id: '', hsn_code: '', gst_rate: undefined, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 } ] }
+    { category_id: '', hsn_code: '', gst_rate: undefined, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0, description: '' } ] }
   ]);
 
   const fetchPartyRates = async (pId: string, currentCompanyId?: string) => {
@@ -138,10 +144,11 @@ export default function PurchasePage() {
       // 1. Attempt to load company-scoped cached masters immediately
       if (resolvedCompanyId) {
         try {
-          const [cachedComp, cachedLedgers, cachedCats] = await Promise.all([
+          const [cachedComp, cachedLedgers, cachedCats, cachedProds] = await Promise.all([
             offlineDb.masters.get(`company_${resolvedCompanyId}`),
             offlineDb.masters.get(`ledgers_${resolvedCompanyId}`),
             offlineDb.masters.get(`categories_${resolvedCompanyId}`),
+            offlineDb.masters.get(`products_${resolvedCompanyId}`),
           ]);
 
           if (cachedComp?.data) {
@@ -154,6 +161,7 @@ export default function PurchasePage() {
             applyDefaultPurchaseLedgers(cachedLedgers.data, cachedComp?.data?.settings?.enable_ledger_mapping || false);
           }
           if (cachedCats?.data?.length) setCategories(cachedCats.data);
+          if (cachedProds?.data?.length) setProducts(cachedProds.data);
         } catch (cacheErr) {
           console.warn('Could not read from local offline cache', cacheErr);
         }
@@ -175,18 +183,22 @@ export default function PurchasePage() {
       // Cache scoped by company
       offlineDb.masters.put({ key: `company_${cId}`, data: comp, updatedAt: Date.now() }).catch(() => {});
 
-      const [ledgersRes, catsRes] = await Promise.all([
+      const [ledgersRes, catsRes, prodsRes] = await Promise.all([
         api.get(`/api/v1/ledgers/${cId}/`),
         api.get(`/api/v1/inventory/categories/${cId}/`),
+        api.get(`/api/v1/inventory/products/${cId}/`).catch(() => ({ data: { data: [] } })),
       ]);
       const ledgerList = ledgersRes.data?.data || (Array.isArray(ledgersRes.data) ? ledgersRes.data : []);
       const catList = catsRes.data?.data || (Array.isArray(catsRes.data) ? catsRes.data : []);
+      const prodList = prodsRes.data?.data || (Array.isArray(prodsRes.data) ? prodsRes.data : []);
 
       setLedgers(ledgerList);
       setCategories(catList);
+      setProducts(prodList);
 
       offlineDb.masters.put({ key: `ledgers_${cId}`, data: ledgerList, updatedAt: Date.now() }).catch(() => {});
       offlineDb.masters.put({ key: `categories_${cId}`, data: catList, updatedAt: Date.now() }).catch(() => {});
+      offlineDb.masters.put({ key: `products_${cId}`, data: prodList, updatedAt: Date.now() }).catch(() => {});
 
       applyDefaultPurchaseLedgers(ledgerList, isMappingEnabled);
     } catch (err) {
@@ -363,9 +375,131 @@ export default function PurchasePage() {
     setGroupedItems(newGroups);
   };
 
+  const processScannedBarcode = (code: string) => {
+    const rawCode = code.trim();
+    if (!rawCode) return;
+
+    const codeLower = rawCode.toLowerCase();
+    const matchedProd = products.find((p: any) => 
+      (p.barcode && String(p.barcode).trim().toLowerCase() === codeLower) ||
+      (p.sku && String(p.sku).trim().toLowerCase() === codeLower) ||
+      (p.alias && String(p.alias).trim().toLowerCase() === codeLower) ||
+      (p.name && String(p.name).trim().toLowerCase() === codeLower)
+    );
+
+    if (!matchedProd) {
+      toast.error(`Barcode / SKU "${rawCode}" not found in catalog.`);
+      setBarcodeInput('');
+      return;
+    }
+
+    const newGroups = [...groupedItems];
+
+    // Detail associated with this specific scan (Barcode / Serial / IMEI)
+    const scanDetail = matchedProd.barcode && String(matchedProd.barcode).trim().toLowerCase() !== codeLower
+      ? `S/N: ${rawCode}`
+      : `Barcode: ${rawCode}`;
+
+    // Check if already in current line items -> increment quantity & append details
+    for (let g = 0; g < newGroups.length; g++) {
+      for (let i = 0; i < newGroups[g].items.length; i++) {
+        const it = newGroups[g].items[i];
+        if (it.product_id === matchedProd.id || (it.product_name && it.product_name.toLowerCase() === matchedProd.name.toLowerCase())) {
+          const newQty = (Number(it.quantity) || 0) + 1;
+          it.quantity = newQty;
+
+          // Append barcode / serial details to item description
+          const currentDesc = String(it.description || '').trim();
+          if (currentDesc) {
+            if (!currentDesc.includes(rawCode)) {
+              it.description = `${currentDesc}, ${rawCode}`;
+            }
+          } else {
+            const baseDesc = matchedProd.description ? `${matchedProd.description} | ` : '';
+            it.description = `${baseDesc}${scanDetail}`;
+          }
+
+          setGroupedItems(newGroups);
+          toast.success(`Incremented ${matchedProd.name} (Qty: ${newQty})`);
+          setBarcodeInput('');
+          return;
+        }
+      }
+    }
+
+    // Determine purchase rate: party rate for brand, catalog purchase price, or selling price
+    const cleanName = String(matchedProd.name || '').trim().toLowerCase();
+    const cleanBrand = String(matchedProd.brand || '').trim().toLowerCase();
+    const keyBrand = `${cleanName}|${cleanBrand}`;
+    const pastRateInfo = (matchedProd.id && partyRates[matchedProd.id]) || partyRates[keyBrand] || partyRates[cleanName];
+
+    let rate = 0;
+    if (pastRateInfo && Number(pastRateInfo.rate) > 0) {
+      rate = Number(pastRateInfo.rate);
+    } else if (Number(matchedProd.purchase_price) > 0) {
+      rate = Number(matchedProd.purchase_price);
+    } else if (Number(matchedProd.selling_price) > 0) {
+      rate = Number(matchedProd.selling_price);
+    }
+
+    const baseDesc = matchedProd.description ? `${matchedProd.description} | ` : '';
+    const initialDesc = `${baseDesc}${scanDetail}`;
+
+    const newItem = {
+      product_name: matchedProd.name,
+      product_id: matchedProd.id,
+      brand: matchedProd.brand || '',
+      unit: matchedProd.unit || 'PCS',
+      quantity: 1,
+      rate: rate,
+      discount_percent: 0,
+      description: initialDesc,
+    };
+
+    const targetCatId = matchedProd.category_id;
+    let targetGroupIdx = newGroups.findIndex((g: any) => g.category_id === targetCatId);
+
+    if (targetGroupIdx === -1 && newGroups.length === 1 && !newGroups[0].items[0]?.product_id && !newGroups[0].items[0]?.product_name) {
+      targetGroupIdx = 0;
+      if (targetCatId) {
+        newGroups[0].category_id = targetCatId;
+        const cat = categories.find(c => c.id === targetCatId);
+        if (cat) {
+          newGroups[0].hsn_code = cat.hsn_code || '';
+          newGroups[0].gst_rate = Number(cat.gst_rate) || 18;
+        }
+      }
+      newGroups[0].items[0] = newItem;
+    } else if (targetGroupIdx !== -1) {
+      if (newGroups[targetGroupIdx].items.length === 1 && !newGroups[targetGroupIdx].items[0]?.product_id && !newGroups[targetGroupIdx].items[0]?.product_name) {
+        newGroups[targetGroupIdx].items[0] = newItem;
+      } else {
+        newGroups[targetGroupIdx].items.push(newItem);
+      }
+    } else {
+      const cat = categories.find(c => c.id === targetCatId);
+      newGroups.push({
+        category_id: targetCatId || '',
+        hsn_code: cat?.hsn_code || '',
+        gst_rate: Number(cat?.gst_rate) || 18,
+        items: [newItem]
+      });
+    }
+
+    setGroupedItems(newGroups);
+    toast.success(`Added ${matchedProd.name}`);
+    setBarcodeInput('');
+  };
+
+  const handleBarcodeScan = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    processScannedBarcode(barcodeInput);
+  };
+
   const addRow = (gIndex: number) => {
     const newGroups = [...groupedItems];
-    newGroups[gIndex].items.push({ product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 });
+    newGroups[gIndex].items.push({ product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0, description: '' });
     setGroupedItems(newGroups);
   };
 
@@ -377,7 +511,7 @@ export default function PurchasePage() {
   };
 
   const addCategoryGroup = () => {
-    setGroupedItems([...groupedItems, { category_id: '', hsn_code: '', gst_rate: undefined, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0 } ] }]);
+    setGroupedItems([...groupedItems, { category_id: '', hsn_code: '', gst_rate: undefined, items: [ { product_name: '', brand: '', quantity: 1, rate: 0, discount_percent: 0, description: '' } ] }]);
   };
   
   const removeCategoryGroup = (gIndex: number) => {
@@ -568,9 +702,35 @@ export default function PurchasePage() {
 
         {/* Line Items Card */}
         <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-border flex justify-between items-center">
-                <h2 className="text-lg font-semibold text-foreground">Line Items by Category</h2>
-                <span className="text-xs text-red-400 bg-red-400/10 px-2 py-1 rounded border border-red-400/20">Auto-Creates & Inherits Tax</span>
+            <div className="p-4 sm:p-6 border-b border-border flex flex-col md:flex-row justify-between md:items-center gap-4">
+                <div>
+                    <h2 className="text-lg font-semibold text-foreground">Line Items by Category</h2>
+                    <span className="text-xs text-red-400 bg-red-400/10 px-2 py-0.5 rounded border border-red-400/20">Auto-Creates & Inherits Tax</span>
+                </div>
+                {/* Barcode Quick-Scan Input & Camera Scanner */}
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                  <div className="relative w-full sm:w-64">
+                    <ScanBarcode className="w-4 h-4 text-primary absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      ref={barcodeInputRef}
+                      type="text"
+                      value={barcodeInput}
+                      onChange={(e) => setBarcodeInput(e.target.value)}
+                      onKeyDown={handleBarcodeScan}
+                      placeholder="Scan Barcode / SKU (Press Enter)..."
+                      className="w-full pl-9 pr-3 py-1.5 bg-muted/60 border border-input rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:bg-background transition-all font-mono"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowScannerModal(true)}
+                    className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-all shrink-0 cursor-pointer shadow-sm active:scale-95 whitespace-nowrap"
+                    title="Open Camera Barcode Scanner (Phone camera / Laptop webcam)"
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span className="hidden sm:inline">Camera</span>
+                  </button>
+                </div>
             </div>
             
             <div className="p-2 space-y-6">
@@ -642,6 +802,16 @@ export default function PurchasePage() {
                                         <tr key={iIndex} className="hover:bg-muted/40 transition-colors">
                                             <td className="p-2">
                                                 <input type="text" placeholder="e.g. Item Name" value={item.product_name} onChange={e => updateItem(gIndex, iIndex, 'product_name', e.target.value)} className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-sm font-medium" />
+                                                <div className="mt-1">
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Details / Serial Nos. / Barcode..."
+                                                        value={item.description || ''}
+                                                        onChange={e => updateItem(gIndex, iIndex, 'description', e.target.value)}
+                                                        className="w-full text-[11px] font-mono bg-muted/30 hover:bg-muted/50 focus:bg-background border border-border/50 focus:border-primary rounded px-2 py-0.5 text-foreground placeholder:text-muted-foreground outline-none transition-all"
+                                                        title="Item details, IMEI, serial numbers or barcode notes to record on purchase bill"
+                                                    />
+                                                </div>
                                             </td>
                                             <td className="p-2">
                                                 <input type="text" placeholder="e.g. Fenner" value={item.brand || ''} onChange={e => updateItem(gIndex, iIndex, 'brand', e.target.value)} className="w-full min-h-[34px] bg-background/50 border border-border/60 hover:border-input focus:border-primary focus:bg-background rounded-md px-2.5 py-1.5 outline-none text-foreground transition-all text-sm font-medium" />
@@ -778,6 +948,14 @@ export default function PurchasePage() {
         )}
 
       </div>
+
+      {/* Camera Barcode Scanner Modal (Webcam / Mobile Camera) */}
+      <BarcodeScannerModal
+        isOpen={showScannerModal}
+        onClose={() => setShowScannerModal(false)}
+        onScan={processScannedBarcode}
+        title="Purchase Invoice - Scan Item Barcode / QR"
+      />
     </DashboardLayout>
   );
 }
