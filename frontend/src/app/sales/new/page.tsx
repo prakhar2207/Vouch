@@ -37,6 +37,7 @@ import {
   Layers,
   Trash2,
   Percent,
+  ArrowUpDown,
 } from 'lucide-react';
 import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
 import { offlineDb } from '@/lib/db/offlineDb';
@@ -565,6 +566,22 @@ export default function SalesPage() {
       }))
     })));
     toast.success(`Applied ${safeDisc}% discount to all items`, "You can still edit individual item discounts below.");
+  };
+
+  const sortItems = (direction: 'ASC' | 'DESC') => {
+    setGroupedItems((prev: any[]) => {
+      return prev.map((group: any) => {
+        const sortedItems = [...group.items].sort((a: any, b: any) => {
+          const nameA = String(a.product_name || a.name || a.description || '').trim();
+          const nameB = String(b.product_name || b.name || b.description || '').trim();
+          const comp = nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+          return direction === 'ASC' ? comp : -comp;
+        });
+        return { ...group, items: sortedItems };
+      });
+    });
+    const label = direction === 'ASC' ? 'ascending order (A → Z)' : 'descending order (Z → A)';
+    toast.success('Items Sorted', `Line items arranged in ${label}.`);
   };
 
   const handleToggleManualInvoice = (manual: boolean) => {
@@ -2108,6 +2125,31 @@ export default function SalesPage() {
                       title="Apply this discount percentage to all items (individual items remain fully editable)"
                     >
                       Apply
+                    </button>
+                  </div>
+
+                  {/* Item Sorting Controls (Ascending / Descending) */}
+                  <div className="flex items-center bg-muted/50 border border-border rounded-lg p-0.5 gap-1 shadow-2xs">
+                    <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1 pl-1.5">
+                      <ArrowUpDown className="w-3 h-3" />
+                      <span className="hidden sm:inline">Sort:</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => sortItems('ASC')}
+                      className="px-2 py-0.5 rounded text-xs font-bold text-foreground hover:bg-background transition-colors cursor-pointer"
+                      title="Sort all items Ascending (A → Z)"
+                    >
+                      A → Z
+                    </button>
+                    <div className="w-[1px] h-3 bg-border my-auto" />
+                    <button
+                      type="button"
+                      onClick={() => sortItems('DESC')}
+                      className="px-2 py-0.5 rounded text-xs font-bold text-foreground hover:bg-background transition-colors cursor-pointer"
+                      title="Sort all items Descending (Z → A)"
+                    >
+                      Z → A
                     </button>
                   </div>
 

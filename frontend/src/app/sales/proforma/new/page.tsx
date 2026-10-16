@@ -391,17 +391,19 @@ function NewProformaQuotationForm() {
     setItems((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const sortItemsAscending = () => {
+  const sortItems = (direction: 'ASC' | 'DESC') => {
     setItems((prev) => {
       const copy = [...prev];
       copy.sort((a, b) => {
         const nameA = (a.item_name || '').trim();
         const nameB = (b.item_name || '').trim();
-        return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+        const comp = nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+        return direction === 'ASC' ? comp : -comp;
       });
       return copy;
     });
-    toast.success('Items Sorted', 'Items arranged in ascending natural order (A → Z).');
+    const label = direction === 'ASC' ? 'ascending natural order (A → Z)' : 'descending order (Z → A)';
+    toast.success('Items Sorted', `Items arranged in ${label}.`);
   };
 
   const moveItemUp = (index: number) => {
@@ -793,15 +795,26 @@ function NewProformaQuotationForm() {
                 </div>
                 <div className="flex items-center gap-2">
                   {items.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={sortItemsAscending}
-                      className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
-                      title="Sort all items in ascending alphanumeric order (A → Z)"
-                    >
-                      <ArrowUpDown className="w-3.5 h-3.5" />
-                      <span>Sort A-Z</span>
-                    </button>
+                    <div className="inline-flex items-center p-0.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400">
+                      <button
+                        type="button"
+                        onClick={() => sortItems('ASC')}
+                        className="px-2 py-1 rounded text-xs font-bold hover:bg-amber-500/20 transition-colors flex items-center gap-1 cursor-pointer"
+                        title="Sort items Ascending (A → Z)"
+                      >
+                        <ArrowUpDown className="w-3 h-3" />
+                        <span>A → Z</span>
+                      </button>
+                      <div className="w-[1px] h-3 bg-amber-500/30 my-auto" />
+                      <button
+                        type="button"
+                        onClick={() => sortItems('DESC')}
+                        className="px-2 py-1 rounded text-xs font-bold hover:bg-amber-500/20 transition-colors flex items-center gap-1 cursor-pointer"
+                        title="Sort items Descending (Z → A)"
+                      >
+                        <span>Z → A</span>
+                      </button>
+                    </div>
                   )}
                   <button
                     type="button"

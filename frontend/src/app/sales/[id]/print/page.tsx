@@ -34,7 +34,8 @@ import {
   Tag,
   Maximize2,
   Truck,
-  Building2
+  Building2,
+  ArrowUpDown
 } from 'lucide-react';
 import AuditHistoryModal from '@/components/modals/AuditHistoryModal';
 
@@ -251,6 +252,7 @@ export default function PrintInvoicePage() {
   const [copiedMessage, setCopiedMessage] = useState<boolean>(false);
   const [preferredWhatsAppClient, setPreferredWhatsAppClient] = useState<'web' | 'app'>('web');
   const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
+  const [itemSortOrder, setItemSortOrder] = useState<'ORIGINAL' | 'ASC' | 'DESC'>('ORIGINAL');
   const [showBrand, setShowBrand] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const val = localStorage.getItem('vouch_show_brand_in_sales_invoice');
@@ -625,7 +627,20 @@ export default function PrintInvoicePage() {
   );
 
   const getSheetsToRender = (): SheetConfig[] => {
-    const rawItems = invoice?.items || [];
+    let rawItems = [...(invoice?.items || [])];
+    if (itemSortOrder === 'ASC') {
+      rawItems.sort((a: any, b: any) => {
+        const nameA = String(a.product_name || a.product?.name || a.name || a.description || '').trim();
+        const nameB = String(b.product_name || b.product?.name || b.name || b.description || '').trim();
+        return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+      });
+    } else if (itemSortOrder === 'DESC') {
+      rawItems.sort((a: any, b: any) => {
+        const nameA = String(a.product_name || a.product?.name || a.name || a.description || '').trim();
+        const nameB = String(b.product_name || b.product?.name || b.name || b.description || '').trim();
+        return nameB.localeCompare(nameA, undefined, { numeric: true, sensitivity: 'base' });
+      });
+    }
     const itemChunks = chunkInvoiceItems(rawItems, pageLayoutMode);
     const pagesPerCopy = itemChunks.length;
 
@@ -2175,6 +2190,46 @@ export default function PrintInvoicePage() {
                 <Building2 className="w-3.5 h-3.5 text-amber-400" />
                 <span>Firm: {firmHeaderSize === 'XL' ? 'Extra Large' : firmHeaderSize === 'COMPACT' ? 'Compact' : 'Large (Default)'}</span>
               </button>
+            )}
+
+            {/* Item Sorting Controls (Ascending / Descending) */}
+            {invoice?.items && invoice.items.length > 1 && (
+              <div className="flex items-center p-1 bg-slate-800 rounded-xl border border-slate-700 text-xs font-semibold">
+                <span className="px-2 py-0.5 text-[11px] text-amber-400 font-semibold flex items-center gap-1">
+                  <ArrowUpDown className="w-3 h-3" />
+                  <span>Sort:</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setItemSortOrder('ORIGINAL')}
+                  className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                    itemSortOrder === 'ORIGINAL' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Original Entry Order"
+                >
+                  Orig
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setItemSortOrder('ASC')}
+                  className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                    itemSortOrder === 'ASC' ? 'bg-amber-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Sort Ascending (A → Z)"
+                >
+                  A → Z
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setItemSortOrder('DESC')}
+                  className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                    itemSortOrder === 'DESC' ? 'bg-amber-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Sort Descending (Z → A)"
+                >
+                  Z → A
+                </button>
+              </div>
             )}
 
             {/* Dynamic QR Mode Toggle on Desktop */}

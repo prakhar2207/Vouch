@@ -6,8 +6,6 @@ import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import { api, API_BASE_URL } from '@/utils/api';
 import DashboardLayout from '@/components/DashboardLayout';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 import { useToast } from '@/context/ToastContext';
 import ProformaDocumentSheet from '@/components/documents/ProformaDocumentSheet';
 import { 
@@ -165,7 +163,7 @@ export default function ProformaDetailPage() {
 
   const [isSorting, setIsSorting] = useState(false);
 
-  const handleSortAscending = async () => {
+  const handleSort = async (sortAction: 'sort_ascending' | 'sort_descending') => {
     if (!doc || doc.status === 'CONVERTED') return;
     setIsSorting(true);
     try {
@@ -176,9 +174,10 @@ export default function ProformaDetailPage() {
       if (activeCompanyId) {
         headers['X-Company-ID'] = activeCompanyId;
       }
-      const res = await api.put(`/api/v1/accounting/proforma/detail/${doc.id}/`, { action: 'sort_ascending' }, { headers });
+      const res = await api.put(`/api/v1/accounting/proforma/detail/${doc.id}/`, { action: sortAction }, { headers });
       if (res.data?.success) {
-        toast.success('Items Sorted', 'Items arranged in ascending order (A → Z).');
+        const isDesc = sortAction === 'sort_descending';
+        toast.success('Items Sorted', `Items arranged in ${isDesc ? 'descending (Z → A)' : 'ascending (A → Z)'} order.`);
         if (res.data.data) {
           setDoc(res.data.data);
         } else {
@@ -198,101 +197,17 @@ export default function ProformaDetailPage() {
   const company = doc?.company_details || {};
   const totalAmount = Number(doc?.total_amount || 0);
 
-  // Pixel-Perfect PDF Export (Identical to Print View) with Backend Fallback
+  // High-Resolution Direct Vector PDF Stream from Backend (Lightweight ~74KB, 100% Vector, Instant)
   const handleDownloadPdf = async () => {
     if (!doc) return;
     setIsGeneratingPdf(true);
 
     try {
       const cleanFilename = `${(doc.proforma_number || 'PROFORMA').replace(/[/\\:*?"<>|]/g, '-').trim()}.pdf`;
-      const sheetElements = Array.from(document.querySelectorAll('.proforma-page-sheet')) as HTMLElement[];
-
-      if (sheetElements.length > 0) {
-        const targetWidthPx = 794;
-        const pdf = new jsPDF({
-          orientation: 'portrait',
-          unit: 'mm',
-          format: 'a4',
-        });
-        const a4Width = 210;
-        const a4Height = 297;
-
-        for (let sheetIdx = 0; sheetIdx < sheetElements.length; sheetIdx++) {
-          const element = sheetElements[sheetIdx];
-
-          const sandbox = document.createElement('div');
-          sandbox.className = 'light print-sandbox-root';
-          sandbox.setAttribute('data-theme', 'light');
-          sandbox.style.position = 'fixed';
-          sandbox.style.left = '-99999px';
-          sandbox.style.top = '0';
-          sandbox.style.width = `${targetWidthPx}px`;
-          sandbox.style.minWidth = `${targetWidthPx}px`;
-          sandbox.style.maxWidth = `${targetWidthPx}px`;
-          sandbox.style.zIndex = '-9999';
-          sandbox.style.backgroundColor = '#ffffff';
-          sandbox.style.color = '#000000';
-          sandbox.style.overflow = 'visible';
-
-          const printStyle = document.createElement('style');
-          printStyle.textContent = `
-            .print-sandbox-root, .print-sandbox-root * {
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-              box-sizing: border-box !important;
-            }
-          `;
-          sandbox.appendChild(printStyle);
-
-          const clone = element.cloneNode(true) as HTMLElement;
-          clone.classList.remove('dark');
-          clone.classList.add('light');
-          clone.style.width = `${targetWidthPx}px`;
-          clone.style.minWidth = `${targetWidthPx}px`;
-          clone.style.maxWidth = `${targetWidthPx}px`;
-          clone.style.height = '1123px';
-          clone.style.minHeight = '1123px';
-          clone.style.maxHeight = '1123px';
-          clone.style.boxSizing = 'border-box';
-          clone.style.backgroundColor = '#ffffff';
-          clone.style.margin = '0';
-          clone.style.boxShadow = 'none';
-          clone.style.border = 'none';
-
-          sandbox.appendChild(clone);
-          document.body.appendChild(sandbox);
-
-          let canvas;
-          try {
-            canvas = await (html2canvas as any)(clone, {
-              scale: 2,
-              useCORS: true,
-              allowTaint: true,
-              logging: false,
-              backgroundColor: '#ffffff',
-              windowWidth: 1200,
-              width: targetWidthPx,
-            });
-          } finally {
-            document.body.removeChild(sandbox);
-          }
-
-          const imgData = canvas.toDataURL('image/png');
-          if (sheetIdx > 0) {
-            pdf.addPage('a4', 'portrait');
-          }
-          pdf.addImage(imgData, 'PNG', 0, 0, a4Width, a4Height);
-        }
-
-        pdf.save(cleanFilename);
-        toast.success('PDF Downloaded', `Saved as ${cleanFilename}`);
-        return;
-      }
-
-      // Fallback: Backend vector PDF stream
       const wmParam = includeWatermark ? '1' : '0';
       const logoParam = includeLogo ? '1' : '0';
       const brandParam = showBrand ? '1' : '0';
+
       const response = await api.get(
         `/api/v1/documents/proforma/${doc.id}/pdf/?download=1&watermark=${wmParam}&logo=${logoParam}&brand=${brandParam}&fresh=1`,
         { responseType: 'blob' }
@@ -310,7 +225,7 @@ export default function ProformaDetailPage() {
       toast.success('PDF Downloaded', `Saved as ${cleanFilename}`);
     } catch (err: any) {
       console.error('PDF Export Error:', err);
-      toast.error('Download Failed', err?.message || 'Could not download official PDF.');
+      toast.error('Download Failed', err?.response?.data?.error || err?.message || 'Could not download official PDF.');
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -469,239 +384,249 @@ export default function ProformaDetailPage() {
       <div className="max-w-5xl mx-auto space-y-4 pb-20 print:p-0 print:m-0 print:pb-0 print:space-y-0">
         
         {/* Action Header (Hidden in Print) */}
-        <div className="print:hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-card/70 backdrop-blur-md border border-border p-3.5 rounded-2xl shadow-xs">
+        <div className="print:hidden bg-card border border-border rounded-2xl p-4 shadow-sm space-y-3.5">
           
-          <div className="flex items-center gap-3">
-            <Link
-              href="/sales/proforma"
-              className="p-2 rounded-xl bg-card border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-2xs"
-              title="Back to Proformas"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </Link>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className={`px-2 py-0.5 rounded text-[10.5px] font-black uppercase tracking-wider ${
-                  isPI ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20' : 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20'
-                }`}>
-                  {isPI ? 'PROFORMA INVOICE' : 'QUOTATION'}
-                </span>
-                <h1 className="text-base font-black text-foreground font-mono">
-                  {doc.proforma_number}
-                </h1>
-                <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
-                  isConverted 
-                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-                    : doc.status === 'ACCEPTED'
-                    ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20'
-                    : doc.status === 'SENT'
-                    ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
-                    : 'bg-muted text-muted-foreground border border-border'
-                }`}>
-                  {doc.status}
-                </span>
+          {/* Top Row: Title & Primary Actions */}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+            <div className="flex items-center gap-3">
+              <Link
+                href="/sales/proforma"
+                className="p-2 rounded-xl bg-muted/60 hover:bg-muted border border-border text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+                title="Back to Proformas & Quotations"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </Link>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`px-2 py-0.5 rounded text-[10.5px] font-black uppercase tracking-wider ${
+                    isPI ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20' : 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20'
+                  }`}>
+                    {isPI ? 'PROFORMA' : 'QUOTATION'}
+                  </span>
+                  <h1 className="text-base font-black text-foreground font-mono">
+                    {doc.proforma_number}
+                  </h1>
+                  <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                    isConverted 
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                      : doc.status === 'ACCEPTED'
+                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20'
+                      : doc.status === 'SENT'
+                      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
+                      : 'bg-muted text-muted-foreground border border-border'
+                  }`}>
+                    {doc.status}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Issued on <strong className="text-foreground">{doc.date}</strong> {doc.created_by ? `by ${doc.created_by}` : ''}
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Issued on <strong className="text-foreground">{doc.date}</strong> {doc.created_by ? `by ${doc.created_by}` : ''}
-              </p>
+            </div>
+
+            {/* Main Action Buttons */}
+            <div className="flex items-center gap-2 flex-wrap w-full md:w-auto justify-end">
+              {!isConverted ? (
+                <button
+                  type="button"
+                  onClick={handleConvert}
+                  disabled={converting}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Convert this quotation to a GST Tax Invoice"
+                >
+                  {converting ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  )}
+                  <span>Convert to Invoice</span>
+                </button>
+              ) : (
+                <Link
+                  href="/sales"
+                  className="px-3 py-1.5 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Invoice #{doc.converted_voucher_number || 'INV'}</span>
+                  <ExternalLink className="w-3 h-3" />
+                </Link>
+              )}
+
+              {!isConverted && (
+                <Link
+                  href={`/sales/proforma/new?edit=${doc.id}`}
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  title="Edit Proforma / Quotation"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  <span>Edit</span>
+                </Link>
+              )}
+
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                title="Print Document"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Print</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadPdf}
+                disabled={isGeneratingPdf}
+                className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+                title="Download PDF"
+              >
+                {isGeneratingPdf ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                <span>Download PDF</span>
+              </button>
+
+              <div className="flex items-center gap-1 pl-1">
+                <button
+                  type="button"
+                  onClick={handleShareWhatsApp}
+                  className="p-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 rounded-xl transition-colors cursor-pointer"
+                  title="Share on WhatsApp"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  disabled={isGeneratingShareLink}
+                  className="p-2 bg-muted hover:bg-muted/80 border border-border text-foreground rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                  title={shareUrl ? 'Copy Public Share Link' : 'Generate & Copy Share Link'}
+                >
+                  {isGeneratingShareLink ? (
+                    <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
+                  ) : copiedLink ? (
+                    <Check className="w-4 h-4 text-emerald-500" />
+                  ) : (
+                    <Copy className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap w-full md:w-auto justify-end">
-            {!isConverted && doc?.items && doc.items.length > 1 && (
+          {/* Bottom Row: Document Settings & Sorting Bar */}
+          <div className="pt-3 border-t border-border flex flex-col md:flex-row justify-between items-start md:items-center gap-2.5 text-xs">
+            {/* Display Toggles */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Display:</span>
               <button
                 type="button"
-                onClick={handleSortAscending}
-                disabled={isSorting}
-                className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                title="Sort items alphabetically in ascending order (A → Z)"
+                onClick={() => setIncludeWatermark(!includeWatermark)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border ${
+                  includeWatermark
+                    ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30'
+                    : 'bg-muted/40 text-muted-foreground hover:text-foreground border-border'
+                }`}
+                title="Toggle Watermark"
               >
-                {isSorting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <ArrowUpDown className="w-3.5 h-3.5" />
-                )}
-                <span>Sort A-Z</span>
+                <ShieldCheck className="w-3 h-3" />
+                <span>Watermark {includeWatermark ? 'ON' : 'OFF'}</span>
               </button>
-            )}
 
-            {!isConverted && (
-              <Link
-                href={`/sales/proforma/new?edit=${doc.id}`}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                title="Edit Proforma Invoice / Quotation"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-                <span>Edit</span>
-              </Link>
-            )}
-
-            {!isConverted ? (
               <button
                 type="button"
-                onClick={handleConvert}
-                disabled={converting}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                onClick={() => setIncludeLogo(!includeLogo)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border ${
+                  includeLogo
+                    ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30'
+                    : 'bg-muted/40 text-muted-foreground hover:text-foreground border-border'
+                }`}
+                title="Toggle Logo"
               >
-                {converting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                )}
-                <span>Convert to Tax Invoice</span>
+                <ImageIcon className="w-3 h-3" />
+                <span>Logo {includeLogo ? 'ON' : 'OFF'}</span>
               </button>
-            ) : (
-              <Link
-                href="/sales"
-                className="px-3 py-1.5 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Invoice #{doc.converted_voucher_number || 'INV'}</span>
-                <ExternalLink className="w-3 h-3" />
-              </Link>
-            )}
 
-            {!isConverted && doc.status !== 'SENT' && (
               <button
                 type="button"
-                onClick={() => handleUpdateStatus('SENT')}
-                disabled={updatingStatus}
-                className="px-2.5 py-1.5 bg-card hover:bg-muted border border-border rounded-xl text-xs font-semibold text-foreground transition-colors cursor-pointer flex items-center gap-1"
+                onClick={() => {
+                  const next = !showBrand;
+                  setShowBrand(next);
+                  if (typeof window !== 'undefined') {
+                    localStorage.setItem('vouch_show_brand_in_proforma', String(next));
+                  }
+                }}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border ${
+                  showBrand
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                    : 'bg-muted/40 text-muted-foreground hover:text-foreground border-border'
+                }`}
+                title="Toggle Brand Column"
               >
-                <Send className="w-3 h-3 text-slate-500" />
-                <span>Sent</span>
+                <Tag className="w-3 h-3" />
+                <span>Brand {showBrand ? 'ON' : 'OFF'}</span>
               </button>
-            )}
+            </div>
 
-            {!isConverted && doc.status !== 'ACCEPTED' && (
-              <button
-                type="button"
-                onClick={() => handleUpdateStatus('ACCEPTED')}
-                disabled={updatingStatus}
-                className="px-2.5 py-1.5 bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 border border-blue-500/30 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1"
-              >
-                <CheckCircle2 className="w-3 h-3" />
-                <span>Accept</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={handleCopyLink}
-              disabled={isGeneratingShareLink}
-              className="p-1.5 bg-card hover:bg-muted border border-border text-foreground rounded-xl transition-colors cursor-pointer disabled:opacity-50"
-              title={shareUrl ? 'Copy Public Link' : 'Generate & Copy Public Share Link'}
-            >
-              {isGeneratingShareLink ? (
-                <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" />
-              ) : copiedLink ? (
-                <Check className="w-3.5 h-3.5 text-emerald-500" />
-              ) : (
-                <Copy className="w-3.5 h-3.5 text-muted-foreground" />
+            {/* Right: Item Sorting & Status Quick Actions */}
+            <div className="flex items-center gap-3 flex-wrap">
+              {doc?.items && doc.items.length > 1 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                    {isSorting ? <Loader2 className="w-3 h-3 animate-spin text-amber-500" /> : <ArrowUpDown className="w-3 h-3 text-amber-500" />}
+                    <span>Sort:</span>
+                  </span>
+                  <div className="inline-flex items-center p-0.5 rounded-lg bg-muted border border-border">
+                    <button
+                      type="button"
+                      onClick={() => handleSort('sort_ascending')}
+                      disabled={isSorting}
+                      className="px-2 py-0.5 rounded text-xs font-bold text-foreground hover:bg-background transition-colors cursor-pointer disabled:opacity-50"
+                      title="Sort items Ascending (A → Z)"
+                    >
+                      A → Z
+                    </button>
+                    <div className="w-[1px] h-3 bg-border my-auto" />
+                    <button
+                      type="button"
+                      onClick={() => handleSort('sort_descending')}
+                      disabled={isSorting}
+                      className="px-2 py-0.5 rounded text-xs font-bold text-foreground hover:bg-background transition-colors cursor-pointer disabled:opacity-50"
+                      title="Sort items Descending (Z → A)"
+                    >
+                      Z → A
+                    </button>
+                  </div>
+                </div>
               )}
-            </button>
 
-            <button
-              type="button"
-              onClick={handleShareWhatsApp}
-              className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
-              title="Share via WhatsApp"
-            >
-              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-              <span>WhatsApp</span>
-            </button>
-
-            {/* Logo Watermark Toggle Button */}
-            <button
-              type="button"
-              onClick={() => setIncludeWatermark(!includeWatermark)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer border ${
-                includeWatermark
-                  ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30'
-                  : 'bg-card text-muted-foreground hover:text-foreground border-border'
-              }`}
-              title="Toggle company logo watermark on proforma document and export"
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Watermark: {includeWatermark ? 'ON' : 'OFF'}</span>
-            </button>
-
-            {/* Logo Display Toggle Button */}
-            <button
-              type="button"
-              onClick={() => setIncludeLogo(!includeLogo)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer border ${
-                includeLogo
-                  ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30'
-                  : 'bg-card text-muted-foreground hover:text-foreground border-border'
-              }`}
-              title="Toggle company logo display on header"
-            >
-              <ImageIcon className="w-3.5 h-3.5" />
-              <span>Logo: {includeLogo ? 'ON' : 'OFF'}</span>
-            </button>
-
-            {/* Firm Name Size Toggle Button */}
-            <button
-              type="button"
-              onClick={() => {
-                const next = firmNameSize === 'large' ? 'extra_large' : firmNameSize === 'extra_large' ? 'normal' : 'large';
-                setFirmNameSize(next);
-              }}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer border bg-card text-muted-foreground hover:text-foreground border-border"
-              title="Adjust firm name header size on proforma"
-            >
-              <Building2 className="w-3.5 h-3.5 text-amber-500" />
-              <span>Firm: {firmNameSize === 'extra_large' ? 'Extra Large' : firmNameSize === 'normal' ? 'Normal' : 'Large (Default)'}</span>
-            </button>
-
-            {/* Brand Display Toggle Button */}
-            <button
-              type="button"
-              onClick={() => {
-                const next = !showBrand;
-                setShowBrand(next);
-                if (typeof window !== 'undefined') {
-                  localStorage.setItem('vouch_show_brand_in_proforma', String(next));
-                }
-              }}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer border ${
-                showBrand
-                  ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30'
-                  : 'bg-card text-muted-foreground hover:text-foreground border-border'
-              }`}
-              title="Toggle item brand display on proforma / quotation"
-            >
-              <Tag className="w-3.5 h-3.5" />
-              <span>Brand: {showBrand ? 'ON' : 'OFF'}</span>
-            </button>
-
-            {/* Download Vector PDF Button */}
-            <button
-              type="button"
-              onClick={handleDownloadPdf}
-              disabled={isGeneratingPdf}
-              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
-              title="Download High-Resolution Vector PDF"
-            >
-              {isGeneratingPdf ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Download className="w-3.5 h-3.5" />
+              {!isConverted && (
+                <div className="flex items-center gap-1.5 border-l border-border pl-3">
+                  {doc.status !== 'SENT' && (
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateStatus('SENT')}
+                      disabled={updatingStatus}
+                      className="px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                    >
+                      Mark Sent
+                    </button>
+                  )}
+                  {doc.status !== 'ACCEPTED' && (
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateStatus('ACCEPTED')}
+                      disabled={updatingStatus}
+                      className="px-2 py-1 rounded text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 transition-colors cursor-pointer"
+                    >
+                      Mark Accepted
+                    </button>
+                  )}
+                </div>
               )}
-              <span>Download PDF</span>
-            </button>
-
-            {/* Print Button */}
-            <button
-              type="button"
-              onClick={() => window.print()}
-              className="px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-              title="Print Document"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>Print</span>
-            </button>
+            </div>
           </div>
         </div>
 

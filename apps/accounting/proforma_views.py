@@ -481,21 +481,23 @@ class ProformaDetailAPIView(APIView):
 
         data = request.data
 
-        # 1-Click natural alphanumeric sort (A-Z)
-        if data.get('action') == 'sort_ascending':
+        # 1-Click natural alphanumeric sort (A-Z or Z-A)
+        if data.get('action') in ['sort_ascending', 'sort_descending']:
             import re
             def natural_key(name):
                 return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', name or '')]
 
             existing_items = list(proforma.items.all())
-            existing_items.sort(key=lambda x: natural_key(x.item_name))
+            reverse_order = (data.get('action') == 'sort_descending')
+            existing_items.sort(key=lambda x: natural_key(x.item_name), reverse=reverse_order)
             for idx, itm in enumerate(existing_items):
                 itm.order_index = idx
                 itm.save(update_fields=['order_index'])
 
+            mode_str = "descending order (Z-A)" if reverse_order else "ascending order (A-Z)"
             return Response({
                 "success": True,
-                "message": "Items sorted in ascending order (A-Z).",
+                "message": f"Items sorted in {mode_str}.",
                 "data": serialize_proforma(proforma, include_items=True)
             })
 
