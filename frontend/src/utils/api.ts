@@ -121,7 +121,7 @@ async function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
 
   // Automatic tenant isolation: attach X-Company-ID from localStorage
   if (typeof window !== 'undefined') {
-    const activeCompanyId = localStorage.getItem('vouch_active_company_id');
+    const activeCompanyId = localStorage.getItem('vouch_active_company_id') || localStorage.getItem('current_company_id');
     if (activeCompanyId && !config.headers?.['X-Company-ID']) {
       if (!config.headers) config.headers = {} as InternalAxiosRequestConfig['headers'];
       config.headers['X-Company-ID'] = activeCompanyId;

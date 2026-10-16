@@ -144,12 +144,14 @@ function NewProformaQuotationForm() {
   }, [router, activeCompanyId]);
 
   const loadInitialData = async (cid: string) => {
+    if (!cid) return;
     setLoading(true);
     try {
       // 1. Fetch parties (Sundry Debtors / Customers)
       const partiesRes = await api.get(`/api/v1/ledgers/${cid}/?limit=500`).catch(() => null);
-      if (partiesRes?.data?.data) {
-        const partyList = partiesRes.data.data.filter((l: any) => {
+      const rawParties = partiesRes?.data?.data || (Array.isArray(partiesRes?.data) ? partiesRes.data : []);
+      if (Array.isArray(rawParties) && rawParties.length > 0) {
+        const partyList = rawParties.filter((l: any) => {
           const grp = (l.group || l.group_name || '').toLowerCase();
           const lt = (l.ledger_type || '').toUpperCase();
           const role = (l.canonical_role || '').toUpperCase();
@@ -165,7 +167,7 @@ function NewProformaQuotationForm() {
             grp.includes('income') ||
             grp.includes('duties')
           ) {
-            if (!grp.includes('debtor') && !grp.includes('creditor')) return false;
+            if (!grp.includes('debtor') && !grp.includes('creditor') && !grp.includes('customer')) return false;
           }
 
           return (
@@ -187,8 +189,9 @@ function NewProformaQuotationForm() {
 
       // 2. Fetch products
       const prodRes = await api.get(`/api/v1/inventory/products/${cid}/?limit=500`).catch(() => null);
-      if (prodRes?.data?.data) {
-        setProducts(prodRes.data.data);
+      const rawProds = prodRes?.data?.data || (Array.isArray(prodRes?.data) ? prodRes.data : []);
+      if (Array.isArray(rawProds)) {
+        setProducts(rawProds);
       }
     } catch (e) {
       console.error(e);
@@ -217,25 +220,36 @@ function NewProformaQuotationForm() {
             return;
           }
 
+          const targetCompanyId = doc.company_id || activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') || localStorage.getItem('current_company_id') : '') || '';
+          if (targetCompanyId) {
+            setCompanyId(targetCompanyId);
+            await loadInitialData(targetCompanyId);
+          }
+
           setProformaType(doc.proforma_type === 'QUOTATION' ? 'QUOTATION' : 'PROFORMA');
           setDocNumber(doc.proforma_number || '');
           setEnableManualNumber(true);
           if (doc.date) setDate(doc.date.split('T')[0]);
           if (doc.valid_until) setValidUntil(doc.valid_until.split('T')[0]);
-          if (doc.party_ledger) {
-            setSelectedPartyId(doc.party_ledger.id || '');
+
+          const resolvedPartyId = doc.party_ledger_id || doc.party_ledger?.id || '';
+          if (resolvedPartyId) {
+            setSelectedPartyId(resolvedPartyId);
+            setShowAdHocBuyer(false);
+          } else if (doc.buyer_name || doc.buyer_gstin) {
+            setShowAdHocBuyer(true);
+          } else {
+            setShowAdHocBuyer(false);
           }
-          setBuyerName(doc.buyer_name || '');
+
+          setBuyerName(doc.buyer_name || doc.party_name || '');
           setBuyerAddress(doc.buyer_address || '');
           setBuyerGstin(doc.buyer_gstin || '');
           setBuyerStateCode(doc.buyer_state_code || '');
           setBuyerPhone(doc.buyer_phone || '');
           setBuyerEmail(doc.buyer_email || '');
-          if (!doc.party_ledger && (doc.buyer_name || doc.buyer_gstin)) {
-            setShowAdHocBuyer(true);
-          }
           if (doc.cartage_amount !== undefined && doc.cartage_amount !== null) {
-            setCartageAmount(doc.cartage_amount);
+            setCartageAmount(Number(doc.cartage_amount) || '');
           }
           if (doc.customer_notes !== undefined) setCustomerNotes(doc.customer_notes || '');
           if (doc.terms_and_conditions !== undefined) setTerms(doc.terms_and_conditions || '');
@@ -600,6 +614,11 @@ function NewProformaQuotationForm() {
                       className="w-full px-3 py-2 bg-background border border-border rounded-xl text-xs text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/30"
                     >
                       <option value="">-- Select Customer / Party --</option>
+                      {selectedPartyId && !parties.some((p) => p.id === selectedPartyId) && (
+                        <option value={selectedPartyId}>
+                          {buyerName || 'Selected Customer'} (Current)
+                        </option>
+                      )}
                       {parties.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.name} {p.gstin ? `(${p.gstin})` : ''} {p.group ? `[${p.group}]` : ''}
@@ -1017,6 +1036,43 @@ function NewProformaQuotationForm() {
               </div>
             </div>
 
+            {/* Freight & Cartage Card */}
+            <div className="bg-card border border-border rounded-2xl p-5 shadow-xs space-y-3">
+              <div className="flex items-center justify-between border-b border-border pb-3">
+                <div className="flex items-center gap-2">
+                  <Truck className="w-4 h-4 text-primary" />
+                  <h2 className="text-sm font-bold text-foreground">Freight &amp; Delivery Charges (Cartage)</h2>
+                </div>
+                {Number(cartageAmount) > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-primary/10 text-primary border border-primary/20 font-mono">
+                    +₹{Number(cartageAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">
+                    Cartage / Freight Outward (₹)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-mono text-xs font-bold">₹</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={cartageAmount}
+                      onChange={(e) => setCartageAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full pl-7 pr-3 py-2 bg-background border border-border rounded-xl text-xs font-mono font-bold text-foreground focus:outline-hidden"
+                    />
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Added to quotation grand total as freight/delivery charges.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {/* Terms & Notes Card */}
             <div className="bg-card border border-border rounded-2xl p-5 shadow-xs space-y-4">
               <h2 className="text-sm font-bold text-foreground">Commercial Terms &amp; Customer Notes</h2>
@@ -1150,14 +1206,15 @@ function NewProformaQuotationForm() {
                   </>
                 )}
 
-                {totals.cartage > 0 && (
-                  <div className="flex justify-between pt-2">
-                    <span className="text-muted-foreground font-sans">Cartage / Freight:</span>
-                    <span className="font-semibold text-foreground">
-                      ₹{totals.cartage.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                )}
+                <div className="flex justify-between items-center pt-2">
+                  <span className="text-muted-foreground font-sans flex items-center gap-1.5">
+                    <Truck className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span>Cartage / Freight:</span>
+                  </span>
+                  <span className={`font-semibold ${totals.cartage > 0 ? 'text-foreground' : 'text-muted-foreground'}`}>
+                    {totals.cartage > 0 ? `+₹${totals.cartage.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '₹0.00'}
+                  </span>
+                </div>
 
                 {totals.roundOff !== 0 && (
                   <div className="flex justify-between pt-2 text-muted-foreground">
