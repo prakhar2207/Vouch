@@ -164,17 +164,26 @@ class ProformaNumberedCanvas(canvas.Canvas):
     def draw_footer(self, total_pages: int):
         self.saveState()
         fnt = 'SegoeUI' if SEGOE_LOADED else ('Roboto' if ROBOTO_LOADED else 'Helvetica')
-        self.setFont(fnt, 7.5)
-        self.setFillColor(colors.HexColor('#94a3b8'))
+        PAGE_WIDTH = 595.275
+        MARGIN_X = 28.35
 
-        # Left legal note matching ProformaDocumentSheet:
-        # e.g., "QTN/26-27/0007 • Commercial Estimate / Quotation — Not a GST Tax Invoice"
-        left_text = f"{self.doc_number} • {self.footer_legal_text}" if self.doc_number else self.footer_legal_text
-        self.drawString(28.35, 18, left_text)
+        # Horizontal divider above footer matching ProformaDocumentSheet
+        self.setStrokeColor(colors.HexColor('#cbd5e1'))
+        self.setLineWidth(0.75)
+        self.line(MARGIN_X, 32, PAGE_WIDTH - MARGIN_X, 32)
+
+        # Footer text matching ProformaDocumentSheet
+        self.setFont(fnt, 8)
+        self.setFillColor(colors.HexColor('#64748b'))
+
+        # Safe separator (bullet or dash)
+        sep = " • " if (SEGOE_LOADED or ROBOTO_LOADED) else " - "
+        left_text = f"{self.doc_number}{sep}{self.footer_legal_text}" if self.doc_number else self.footer_legal_text
+        self.drawString(MARGIN_X, 18, left_text)
 
         # Right page number
         page_str = f"Page {self._pageNumber} of {total_pages}"
-        self.drawRightString(595.275 - 28.35, 18, page_str)
+        self.drawRightString(PAGE_WIDTH - MARGIN_X, 18, page_str)
         self.restoreState()
 
 
@@ -913,10 +922,12 @@ class ModernProformaPDFRenderer:
         # Build Left Column:
         # A. Amount in Words Box
         words_text = dto.get('amount_in_words') or 'Zero Rupees Only'
+        if not words_text.startswith('INR '):
+            words_text = f"INR {words_text}"
         words_table = Table(
             [[
                 [
-                    Paragraph("AMOUNT IN WORDS (INR)", s_words_head),
+                    Paragraph("AMOUNT CHARGEABLE (IN WORDS)", s_words_head),
                     Spacer(1, 1),
                     Paragraph(f"<b>{words_text}</b>", s_words_val),
                 ]
@@ -1052,28 +1063,12 @@ class ModernProformaPDFRenderer:
             terms_paragraphs,
         ]
 
-        # D. Customer Notes / Remarks Card
+        # D. Customer Notes / Remarks (matching ProformaDocumentSheet)
         if customer_notes:
-            notes_card = Table(
-                [[
-                    [
-                        Paragraph("REMARKS / CUSTOMER NOTES:", s_terms_title),
-                        Spacer(1, 1),
-                        Paragraph(f"<i>{customer_notes.replace(chr(10), '<br/>')}</i>", s_terms_body),
-                    ]
-                ]],
-                colWidths=[left_bot_w]
-            )
-            notes_card.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, -1), c_card_bg),
-                ('BOX', (0, 0), (-1, -1), 0.75, c_card_border),
-                ('LEFTPADDING', (0, 0), (-1, -1), 6),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-                ('TOPPADDING', (0, 0), (-1, -1), 4),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ]))
-            left_bottom_elements.append(Spacer(1, 5))
-            left_bottom_elements.append(notes_card)
+            left_bottom_elements.append(Spacer(1, 4))
+            left_bottom_elements.append(Paragraph("REMARKS / NOTES:", s_terms_title))
+            left_bottom_elements.append(Spacer(1, 1))
+            left_bottom_elements.append(Paragraph(f"<i>{customer_notes.replace(chr(10), '<br/>')}</i>", s_terms_body))
 
         # Build Right Column: Subtotals & Grand Total Card + HSN Summary
         taxable_tot = subtotals.get('taxable_amount', 0)
@@ -1085,21 +1080,21 @@ class ModernProformaPDFRenderer:
         grand_total = subtotals.get('grand_total', 0)
 
         tot_rows = [
-            [Paragraph("Taxable Amount:", s_total_label), Paragraph(fmt_curr(taxable_tot), s_total_val)],
+            [Paragraph("Taxable Amount", s_total_label), Paragraph(fmt_curr(taxable_tot), s_total_val)],
         ]
         if is_inter_state:
-            tot_rows.append([Paragraph("Add: IGST:", s_total_label), Paragraph(fmt_curr(igst_tot), s_total_val)])
+            tot_rows.append([Paragraph("Integrated GST (IGST)", s_total_label), Paragraph(fmt_curr(igst_tot), s_total_val)])
         else:
-            tot_rows.append([Paragraph("Add: CGST:", s_total_label), Paragraph(fmt_curr(cgst_tot), s_total_val)])
-            tot_rows.append([Paragraph("Add: SGST:", s_total_label), Paragraph(fmt_curr(sgst_tot), s_total_val)])
+            tot_rows.append([Paragraph("Central GST (CGST)", s_total_label), Paragraph(fmt_curr(cgst_tot), s_total_val)])
+            tot_rows.append([Paragraph("State GST (SGST)", s_total_label), Paragraph(fmt_curr(sgst_tot), s_total_val)])
 
         if cartage > 0:
-            tot_rows.append([Paragraph("Freight / Cartage:", s_total_label), Paragraph(fmt_curr(cartage), s_total_val)])
-        if abs(round_off) > 0.001:
-            tot_rows.append([Paragraph("Round Off:", s_total_label), Paragraph(fmt_curr(round_off), s_total_val)])
+            tot_rows.append([Paragraph("Cartage / Delivery", s_total_label), Paragraph(fmt_curr(cartage), s_total_val)])
+        if abs(round_off) >= 0.005:
+            tot_rows.append([Paragraph("Round Off", s_total_label), Paragraph(f"+{round_off:.2f}" if round_off > 0 else f"{round_off:.2f}", s_total_val)])
 
         tot_rows.append([
-            Paragraph("Grand Total:", s_grand_label),
+            Paragraph("Grand Total", s_grand_label),
             Paragraph(f"₹ {fmt_curr(grand_total)}", s_grand_val),
         ])
 
@@ -1269,10 +1264,11 @@ class ModernProformaPDFRenderer:
                 story.append(parties_table)
                 story.append(Spacer(1, 6))
             else:
+                sep = " • " if (SEGOE_LOADED or ROBOTO_LOADED) else " - "
                 compact_header_table = Table(
                     [[
-                        Paragraph(f"<b>{company_name.upper()}</b>  <font color='#94a3b8'>•</font>  <font color='#64748b'>{doc_type_label}</font>", s_compact_seller),
-                        Paragraph(f"<font color='#64748b'>Doc:</font> <b>{doc_num}</b>  |  <font color='#64748b'>Date:</font> <b>{doc_date}</b>", s_compact_meta),
+                        Paragraph(f"<b>{company_name.upper()}</b>  <font color='#94a3b8'>{sep}</font>  <font color='#475569'><b>{doc_type_label}</b></font>", s_compact_seller),
+                        Paragraph(f"<font color='#64748b'>Doc:</font> <b>{doc_num}</b>    <font color='#64748b'>Date:</font> <b>{doc_date}</b>", s_compact_meta),
                     ]],
                     colWidths=[USABLE_WIDTH * 0.6, USABLE_WIDTH * 0.4]
                 )
@@ -1393,8 +1389,7 @@ class ModernProformaPDFRenderer:
             story.append(p_table)
 
             if not is_last:
-                # Continuation Notice
-                story.append(Spacer(1, 8))
+                # Continuation Notice - pushed to bottom of page matching ProformaDocumentSheet
                 cont_table = Table(
                     [[
                         Paragraph(f"<i>Document continued on Page {p_num + 1} of {total_pages}...</i>", s_cont_main),
@@ -1412,13 +1407,14 @@ class ModernProformaPDFRenderer:
                     ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
                     ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                 ]))
-                story.append(cont_table)
+                story.append(PushToBottomAndDraw([cont_table]))
             else:
-                # Final Page Summary & Signatures Block
-                story.append(Spacer(1, 6))
-                story.append(bottom_table)
-                story.append(Spacer(1, 6))
-                story.append(full_sig_table)
+                # Final Page Summary & Signatures Block - PUSHED TO BOTTOM TO MATCH PROFORMA DOCUMENT SHEET
+                story.append(PushToBottomAndDraw([
+                    bottom_table,
+                    Spacer(1, 8),
+                    full_sig_table,
+                ]))
 
         # ═══════════════════════════════════════════════════════════════════
         # 5. WATERMARK CALLBACK
@@ -1458,7 +1454,7 @@ class ModernProformaPDFRenderer:
             leftMargin=MARGIN_X,
             rightMargin=MARGIN_X,
             topMargin=MARGIN_Y,
-            bottomMargin=MARGIN_Y + 12,
+            bottomMargin=44,
         )
 
         class CustomNumberedCanvas(ProformaNumberedCanvas):

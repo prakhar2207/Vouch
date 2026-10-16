@@ -178,8 +178,12 @@ def build_proforma_dto(proforma) -> Dict[str, Any]:
             f"&cu=INR"
         )
 
-    doc_type_label = 'PROFORMA INVOICE' if proforma.proforma_type == 'PROFORMA' else 'QUOTATION'
+    doc_type_label = 'PROFORMA INVOICE' if proforma.proforma_type == 'PROFORMA' else 'COMMERCIAL QUOTATION'
     customer_notes = (proforma.customer_notes or '').strip()
+    if not customer_notes:
+        comp_settings = getattr(company, 'settings', None)
+        branding_dict = getattr(comp_settings, 'document_branding', {}) if comp_settings else {}
+        customer_notes = (branding_dict.get('default_notes') or '').strip()
 
     return {
         'document_type': 'PROFORMA_INVOICE',
