@@ -225,8 +225,14 @@ export default function ProformaDocumentSheet({
   const roundOff = Number(doc?.round_off || 0);
   const finalGrandTotal = Number(doc?.total_amount || 0);
 
-  // UPI payment URL
-  const upiId = company?.bank_details?.upi_id || company?.upi_id || company?.bank_account_number || '';
+  // Bank and Payment details (robust fallback for nested bank_details or flat company fields)
+  const bankDetails = company?.bank_details || {};
+  const bankName = bankDetails.bank_name || company?.bank_name || '';
+  const bankAccount = bankDetails.account_number || company?.bank_account_number || company?.account_number || '';
+  const bankIfsc = bankDetails.ifsc || company?.bank_ifsc || company?.ifsc || '';
+  const bankBranch = bankDetails.branch || company?.bank_branch || '';
+  const upiId = bankDetails.upi_id || company?.upi_id || (bankAccount && bankIfsc ? `${bankAccount}@${bankIfsc}.ifsc.npci` : '');
+
   const upiPayUrl = useMemo(() => {
     if (upiId && upiId.includes('@')) {
       return `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(company?.legal_name || company?.name || 'Merchant')}&am=${finalGrandTotal.toFixed(2)}&tn=${encodeURIComponent(`Adv ${doc?.proforma_number || ''}`)}&cu=INR`;
@@ -459,7 +465,7 @@ export default function ProformaDocumentSheet({
           <div
             key={`page-${pageNumber}`}
             id={isFirstPage ? 'proforma-sheet' : undefined}
-            className={`proforma-page-sheet w-[210mm] min-w-[210mm] max-w-[210mm] min-h-[297mm] max-h-[297mm] bg-white text-slate-900 flex flex-col justify-between mx-auto font-sans border border-slate-200 shadow-md print:shadow-none print:border-none relative overflow-hidden box-border p-8 sm:p-10 ${
+            className={`proforma-page-sheet w-[210mm] min-w-[210mm] max-w-[210mm] min-h-[297mm] bg-white text-slate-900 flex flex-col justify-between mx-auto font-sans border border-slate-200 shadow-md print:shadow-none print:border-none relative box-border p-6 sm:p-8 print:p-0 ${
               !isLastPage ? 'break-after-page page-break-after-always' : ''
             }`}
             style={{
@@ -827,56 +833,72 @@ export default function ProformaDocumentSheet({
                 <div className="pt-4 border-t border-slate-200 mt-auto">
                   
                   {/* Two Column Layout: Left Details / Right Calculations */}
-                  <div className="grid grid-cols-12 gap-6 items-start">
+                  <div className="grid grid-cols-12 gap-4 items-start">
                     
                     {/* Left 7 Columns: Words, Bank Details, UPI QR, Notes & Terms */}
-                    <div className="col-span-7 space-y-3">
+                    <div className="col-span-7 space-y-2">
                       
                       {/* Amount in words */}
                       {showAmountInWords && (
-                        <div className="bg-slate-50/70 border border-slate-200/80 rounded-lg p-2.5 text-xs">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                        <div className="bg-slate-50/70 border border-slate-200/80 rounded-lg p-2 text-xs">
+                          <span className="text-[9.5px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
                             Amount Chargeable (in words)
                           </span>
-                          <p className="font-semibold text-slate-800 italic leading-snug">
+                          <p className="font-semibold text-slate-800 italic leading-tight text-[11px]">
                             {numberToWords(finalGrandTotal)}
                           </p>
                         </div>
                       )}
 
-                      {/* Bank Details & UPI QR */}
-                      {(showBankDetails || showUpiQr) && (company?.bank_name || upiPayUrl) && (
-                        <div className="grid grid-cols-12 gap-3 bg-slate-50/60 border border-slate-200/80 rounded-lg p-2.5 text-xs">
-                          {showBankDetails && company?.bank_name && (
-                            <div className={showUpiQr && upiPayUrl ? "col-span-8 space-y-0.5 text-[11px]" : "col-span-12 space-y-0.5 text-[11px]"}>
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-                                Bank Payment Details
+                      {/* Bank Details & UPI QR (Compact, harmonized with ReportLab PDF) */}
+                      {(showBankDetails || showUpiQr) && (bankName || bankAccount || upiPayUrl || upiId) && (
+                        <div className="bg-slate-50/70 border border-slate-200/80 rounded-lg p-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            {/* Left: Bank text lines */}
+                            <div className="flex-1 min-w-0 space-y-0.5 text-[10.5px]">
+                              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                                Bank &amp; Payment Details
                               </span>
-                              <div>Bank: <strong className="text-slate-800 font-semibold">{company.bank_name}</strong></div>
-                              <div>A/C No: <strong className="font-mono text-slate-900 font-bold">{company.bank_account_number || company.account_number}</strong></div>
-                              <div>IFSC: <strong className="font-mono text-slate-800 font-semibold">{company.bank_ifsc || company.ifsc}</strong></div>
-                              {company.bank_branch && <div>Branch: {company.bank_branch}</div>}
+                              {bankName && (
+                                <div className="truncate text-slate-700">Bank: <strong className="text-slate-900 font-semibold">{bankName}</strong></div>
+                              )}
+                              {bankAccount && (
+                                <div className="font-mono text-slate-700">A/C No: <strong className="text-slate-900 font-bold">{bankAccount}</strong></div>
+                              )}
+                              {bankIfsc && (
+                                <div className="font-mono text-slate-700">IFSC: <strong className="text-slate-800 font-semibold">{bankIfsc}</strong></div>
+                              )}
+                              {bankBranch && (
+                                <div className="truncate text-slate-600">Branch: <span>{bankBranch}</span></div>
+                              )}
+                              {upiId && (
+                                <div className="font-mono text-slate-700 truncate">UPI ID: <strong className="font-semibold text-slate-900">{upiId}</strong></div>
+                              )}
+                              {!bankName && !bankAccount && !upiId && (
+                                <div className="italic text-slate-500">Bank details available on request</div>
+                              )}
                             </div>
-                          )}
 
-                          {showUpiQr && upiPayUrl && (
-                            <div className={showBankDetails && company?.bank_name ? "col-span-4 flex flex-col items-center justify-center pl-2 border-l border-slate-200" : "col-span-12 flex flex-col items-center justify-center"}>
-                              <div className="p-1 bg-white border border-slate-200 rounded">
-                                <QRCode value={upiPayUrl} size={58} />
+                            {/* Right: Compact UPI QR */}
+                            {showUpiQr && upiPayUrl && (
+                              <div className="shrink-0 flex flex-col items-center justify-center pl-2.5 border-l border-slate-200/80">
+                                <div className="p-1 bg-white border border-slate-200 rounded shadow-2xs">
+                                  <QRCode value={upiPayUrl} size={46} />
+                                </div>
+                                <span className="text-[7.5px] font-bold text-slate-500 mt-0.5 uppercase tracking-tight">
+                                  Scan &amp; Pay UPI
+                                </span>
                               </div>
-                              <span className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-wide">
-                                Scan & Pay UPI
-                              </span>
-                            </div>
-                          )}
+                            )}
+                          </div>
                         </div>
                       )}
 
                       {/* Terms & Conditions */}
                       {showTerms && termsText && (
-                        <div className="text-[10.5px] text-slate-500 leading-snug space-y-0.5">
-                          <span className="font-bold text-slate-600 uppercase tracking-wider text-[10px] block">
-                            Terms & Conditions
+                        <div className="text-[10px] text-slate-500 leading-snug space-y-0.5">
+                          <span className="font-bold text-slate-600 uppercase tracking-wider text-[9.5px] block">
+                            Terms &amp; Conditions
                           </span>
                           <p className="whitespace-pre-line text-slate-600">
                             {termsText}
@@ -886,8 +908,8 @@ export default function ProformaDocumentSheet({
 
                       {/* Customer Notes */}
                       {customerNotes && (
-                        <div className="text-[10.5px] text-slate-500 leading-snug">
-                          <span className="font-bold text-slate-600 uppercase tracking-wider text-[10px] block">
+                        <div className="text-[10px] text-slate-500 leading-snug">
+                          <span className="font-bold text-slate-600 uppercase tracking-wider text-[9.5px] block">
                             Remarks / Notes:
                           </span>
                           <p className="italic text-slate-600">{customerNotes}</p>
@@ -896,10 +918,10 @@ export default function ProformaDocumentSheet({
                     </div>
 
                     {/* Right 5 Columns: Subtotals Breakdown & Highlighted Grand Total */}
-                    <div className="col-span-5 space-y-2">
-                      <div className="bg-slate-50/70 border border-slate-200/80 rounded-lg p-3 text-xs space-y-1.5">
+                    <div className="col-span-5 space-y-1.5">
+                      <div className="bg-slate-50/70 border border-slate-200/80 rounded-lg p-2.5 text-xs space-y-1">
                         
-                        <div className="flex justify-between items-center text-slate-600">
+                        <div className="flex justify-between items-center text-slate-600 text-[11px]">
                           <span>Taxable Amount</span>
                           <span className="font-mono font-semibold text-slate-900">
                             {subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -908,13 +930,13 @@ export default function ProformaDocumentSheet({
 
                         {!isInterState ? (
                           <>
-                            <div className="flex justify-between items-center text-slate-600">
+                            <div className="flex justify-between items-center text-slate-600 text-[11px]">
                               <span>Central GST (CGST)</span>
                               <span className="font-mono font-medium text-slate-800">
                                 {totalCgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                               </span>
                             </div>
-                            <div className="flex justify-between items-center text-slate-600">
+                            <div className="flex justify-between items-center text-slate-600 text-[11px]">
                               <span>State GST (SGST)</span>
                               <span className="font-mono font-medium text-slate-800">
                                 {totalSgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -922,7 +944,7 @@ export default function ProformaDocumentSheet({
                             </div>
                           </>
                         ) : (
-                          <div className="flex justify-between items-center text-slate-600">
+                          <div className="flex justify-between items-center text-slate-600 text-[11px]">
                             <span>Integrated GST (IGST)</span>
                             <span className="font-mono font-medium text-slate-800">
                               {totalIgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -931,7 +953,7 @@ export default function ProformaDocumentSheet({
                         )}
 
                         {cartageAmount > 0 && (
-                          <div className="flex justify-between items-center text-slate-600">
+                          <div className="flex justify-between items-center text-slate-600 text-[11px]">
                             <span>Cartage / Delivery</span>
                             <span className="font-mono font-medium text-slate-800">
                               {cartageAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -940,7 +962,7 @@ export default function ProformaDocumentSheet({
                         )}
 
                         {Math.abs(roundOff) >= 0.005 && (
-                          <div className="flex justify-between items-center text-slate-500 text-[11px]">
+                          <div className="flex justify-between items-center text-slate-500 text-[10px]">
                             <span>Round Off</span>
                             <span className="font-mono">
                               {roundOff > 0 ? `+${roundOff.toFixed(2)}` : roundOff.toFixed(2)}
@@ -950,11 +972,11 @@ export default function ProformaDocumentSheet({
 
                         {/* Grand Total Pill */}
                         <div 
-                          className="flex justify-between items-center pt-2.5 pb-1 border-t border-slate-300 font-bold"
+                          className="flex justify-between items-center pt-2 pb-0.5 border-t border-slate-300 font-bold"
                           style={{ color: accentColor }}
                         >
-                          <span className="text-sm font-extrabold uppercase tracking-wide">Grand Total</span>
-                          <span className="text-base font-mono font-black">
+                          <span className="text-xs font-extrabold uppercase tracking-wide">Grand Total</span>
+                          <span className="text-sm font-mono font-black">
                             {formatIndianCurrency(finalGrandTotal)}
                           </span>
                         </div>
@@ -962,21 +984,21 @@ export default function ProformaDocumentSheet({
 
                       {/* Small HSN Summary Table (if enabled) */}
                       {showHsnSummary && hsnSummary.length > 0 && (
-                        <div className="border border-slate-200/80 rounded-lg overflow-hidden text-[10px]">
+                        <div className="border border-slate-200/80 rounded-lg overflow-hidden text-[9.5px]">
                           <table className="w-full text-right border-collapse">
                             <thead>
                               <tr className="bg-slate-100/70 text-slate-600 font-bold border-b border-slate-200">
-                                <th className="p-1 text-left">HSN</th>
-                                <th className="p-1">Taxable</th>
-                                <th className="p-1">Tax</th>
+                                <th className="py-0.5 px-1 text-left">HSN</th>
+                                <th className="py-0.5 px-1">Taxable</th>
+                                <th className="py-0.5 px-1">Tax</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 text-slate-700">
                               {hsnSummary.map((hsnRow, hIdx) => (
                                 <tr key={`hsn-${hIdx}`}>
-                                  <td className="p-1 text-left font-mono">{hsnRow.hsn_code} ({hsnRow.gst_rate}%)</td>
-                                  <td className="p-1 font-mono">{hsnRow.taxable_amount.toFixed(2)}</td>
-                                  <td className="p-1 font-mono font-semibold">{hsnRow.total_tax.toFixed(2)}</td>
+                                  <td className="py-0.5 px-1 text-left font-mono">{hsnRow.hsn_code} ({hsnRow.gst_rate}%)</td>
+                                  <td className="py-0.5 px-1 font-mono">{hsnRow.taxable_amount.toFixed(2)}</td>
+                                  <td className="py-0.5 px-1 font-mono font-semibold">{hsnRow.total_tax.toFixed(2)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -987,32 +1009,32 @@ export default function ProformaDocumentSheet({
                   </div>
 
                   {/* ── SIGNATURES BLOCK ── */}
-                  <div className="grid grid-cols-2 gap-8 mt-5 pt-4 border-t border-slate-200 text-xs">
+                  <div className="grid grid-cols-2 gap-4 mt-3 pt-2.5 border-t border-slate-200 text-xs">
                     
                     {/* Left: Customer Acceptance */}
-                    <div className="flex flex-col justify-between h-24 border border-dashed border-slate-300 rounded-lg p-2.5">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        Customer Acceptance / Seal & Signature
+                    <div className="flex flex-col justify-between h-16 border border-dashed border-slate-300 rounded-lg p-2">
+                      <span className="text-[9.5px] font-bold uppercase tracking-wider text-slate-400">
+                        Customer Acceptance / Seal &amp; Signature
                       </span>
-                      <div className="flex justify-between items-end text-[10px] text-slate-400 pt-2 border-t border-slate-200/60">
+                      <div className="flex justify-between items-end text-[9.5px] text-slate-400 pt-1 border-t border-slate-200/60">
                         <span>Authorized Signatory</span>
                         <span>Date: ____________</span>
                       </div>
                     </div>
 
                     {/* Right: Seller Authorized Signatory */}
-                    <div className="flex flex-col justify-between h-24 border border-slate-200/80 rounded-lg p-2.5 bg-slate-50/40 text-right">
-                      <span className="text-[10.5px] font-bold text-slate-700">
+                    <div className="flex flex-col justify-between h-16 border border-slate-200/80 rounded-lg p-2 bg-slate-50/40 text-right">
+                      <span className="text-[9.5px] font-bold text-slate-700">
                         For {company?.legal_name || company?.name || 'SriLekh Merchant'}
                       </span>
                       
-                      <div className="flex items-center justify-end gap-3 my-auto">
+                      <div className="flex items-center justify-end gap-2.5 my-auto">
                         {stampSrc && (
                           <img
                             crossOrigin="anonymous"
                             src={stampSrc}
                             alt="Official Stamp"
-                            className="h-10 max-w-[80px] object-contain opacity-80"
+                            className="h-8 max-w-[65px] object-contain opacity-80"
                           />
                         )}
                         {signatureSrc ? (
@@ -1020,14 +1042,14 @@ export default function ProformaDocumentSheet({
                             crossOrigin="anonymous"
                             src={signatureSrc}
                             alt="Authorized Signature"
-                            className="h-10 max-w-[120px] object-contain"
+                            className="h-8 max-w-[100px] object-contain"
                           />
                         ) : (
-                          <div className="h-12" />
+                          <div className="h-6" />
                         )}
                       </div>
 
-                      <div className="text-[10px] font-bold text-slate-600 border-t border-slate-200/60 pt-1">
+                      <div className="text-[9.5px] font-bold text-slate-600 border-t border-slate-200/60 pt-0.5">
                         Authorised Signatory
                       </div>
                     </div>
