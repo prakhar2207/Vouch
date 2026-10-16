@@ -21,11 +21,15 @@ import {
   Info, 
   ChevronDown, 
   Loader2, 
-  Receipt 
+  Receipt,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 
 interface LineItem {
   id: string;
+  order_index?: number;
   product_id?: string;
   item_name: string;
   hsn_code: string;
@@ -257,6 +261,7 @@ function NewProformaQuotationForm() {
           if (Array.isArray(doc.items) && doc.items.length > 0) {
             setItems(doc.items.map((it: any, index: number) => ({
               id: it.id || String(index + 1),
+              order_index: it.order_index !== undefined ? it.order_index : index,
               product_id: it.product_id || it.product || undefined,
               item_name: it.item_name || '',
               brand: it.brand || '',
@@ -386,6 +391,41 @@ function NewProformaQuotationForm() {
     setItems((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const sortItemsAscending = () => {
+    setItems((prev) => {
+      const copy = [...prev];
+      copy.sort((a, b) => {
+        const nameA = (a.item_name || '').trim();
+        const nameB = (b.item_name || '').trim();
+        return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+      });
+      return copy;
+    });
+    toast.success('Items Sorted', 'Items arranged in ascending natural order (A → Z).');
+  };
+
+  const moveItemUp = (index: number) => {
+    if (index === 0) return;
+    setItems((prev) => {
+      const next = [...prev];
+      const temp = next[index - 1];
+      next[index - 1] = next[index];
+      next[index] = temp;
+      return next;
+    });
+  };
+
+  const moveItemDown = (index: number) => {
+    setItems((prev) => {
+      if (index >= prev.length - 1) return prev;
+      const next = [...prev];
+      const temp = next[index + 1];
+      next[index + 1] = next[index];
+      next[index] = temp;
+      return next;
+    });
+  };
+
   // Computed Totals
   const totals = useMemo(() => {
     let taxableTotal = 0;
@@ -460,7 +500,8 @@ function NewProformaQuotationForm() {
         cartage_amount: totals.cartage,
         customer_notes: customerNotes.trim(),
         terms_and_conditions: terms.trim(),
-        items: validItems.map((it) => ({
+        items: validItems.map((it, idx) => ({
+          order_index: idx,
           product_id: it.product_id || undefined,
           brand: it.brand?.trim() || undefined,
           item_name: it.item_name.trim(),
@@ -742,19 +783,35 @@ function NewProformaQuotationForm() {
 
             {/* Line Items Card */}
             <div className="bg-card border border-border rounded-2xl p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center justify-between border-b border-border pb-3 flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   <FileText className="w-4 h-4 text-primary" />
                   <h2 className="text-sm font-bold text-foreground">Items, Products &amp; Price Breakdown</h2>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-mono">
+                    {items.length} {items.length === 1 ? 'item' : 'items'}
+                  </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={addItemRow}
-                  className="px-3 py-1 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add Line</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  {items.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={sortItemsAscending}
+                      className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Sort all items in ascending alphanumeric order (A → Z)"
+                    >
+                      <ArrowUpDown className="w-3.5 h-3.5" />
+                      <span>Sort A-Z</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={addItemRow}
+                    className="px-3 py-1 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Line</span>
+                  </button>
+                </div>
               </div>
 
               {/* Line items list */}
@@ -772,19 +829,45 @@ function NewProformaQuotationForm() {
                       className="p-3.5 bg-muted/20 hover:bg-muted/30 border border-border rounded-xl space-y-3 transition-colors"
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-muted-foreground uppercase">
-                          Item #{idx + 1}
-                        </span>
-                        {items.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeItemRow(idx)}
-                            className="p-1 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded transition-colors cursor-pointer"
-                            title="Remove line"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-muted-foreground uppercase">
+                            Item #{idx + 1}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {items.length > 1 && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => moveItemUp(idx)}
+                                disabled={idx === 0}
+                                className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Move item up"
+                              >
+                                <ArrowUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveItemDown(idx)}
+                                disabled={idx === items.length - 1}
+                                className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Move item down"
+                              >
+                                <ArrowDown className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                          {items.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeItemRow(idx)}
+                              className="p-1 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded transition-colors cursor-pointer ml-1"
+                              title="Remove line"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       {/* Product select + description + brand + HSN */}

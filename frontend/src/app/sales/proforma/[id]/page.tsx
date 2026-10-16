@@ -27,6 +27,7 @@ import {
   Building2,
   Pencil,
   Tag,
+  ArrowUpDown,
 } from 'lucide-react';
 
 export default function ProformaDetailPage() {
@@ -159,6 +160,36 @@ export default function ProformaDetailPage() {
       toast.error('Failed to update status', errorMsg);
     } finally {
       setUpdatingStatus(false);
+    }
+  };
+
+  const [isSorting, setIsSorting] = useState(false);
+
+  const handleSortAscending = async () => {
+    if (!doc || doc.status === 'CONVERTED') return;
+    setIsSorting(true);
+    try {
+      const activeCompanyId = typeof window !== 'undefined' 
+        ? localStorage.getItem('current_company_id') || localStorage.getItem('vouch_active_company_id')
+        : null;
+      const headers: Record<string, string> = {};
+      if (activeCompanyId) {
+        headers['X-Company-ID'] = activeCompanyId;
+      }
+      const res = await api.put(`/api/v1/accounting/proforma/detail/${doc.id}/`, { action: 'sort_ascending' }, { headers });
+      if (res.data?.success) {
+        toast.success('Items Sorted', 'Items arranged in ascending order (A → Z).');
+        if (res.data.data) {
+          setDoc(res.data.data);
+        } else {
+          fetchDoc();
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Failed to sort items', err.response?.data?.error || 'An error occurred while sorting items.');
+    } finally {
+      setIsSorting(false);
     }
   };
 
@@ -477,6 +508,23 @@ export default function ProformaDetailPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap w-full md:w-auto justify-end">
+            {!isConverted && doc?.items && doc.items.length > 1 && (
+              <button
+                type="button"
+                onClick={handleSortAscending}
+                disabled={isSorting}
+                className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                title="Sort items alphabetically in ascending order (A → Z)"
+              >
+                {isSorting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <ArrowUpDown className="w-3.5 h-3.5" />
+                )}
+                <span>Sort A-Z</span>
+              </button>
+            )}
+
             {!isConverted && (
               <Link
                 href={`/sales/proforma/new?edit=${doc.id}`}

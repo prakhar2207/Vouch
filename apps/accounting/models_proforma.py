@@ -116,6 +116,7 @@ class ProformaInvoice(models.Model):
 class ProformaItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     proforma = models.ForeignKey(ProformaInvoice, on_delete=models.CASCADE, related_name='items')
+    order_index = models.PositiveIntegerField(default=0, db_index=True)
     product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True, related_name='proforma_items')
     item_name = models.CharField(max_length=255)
     brand = models.CharField(max_length=255, blank=True, default="")
@@ -135,7 +136,7 @@ class ProformaItem(models.Model):
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
 
     class Meta:
-        ordering = ['id']
+        ordering = ['order_index', 'id']
 
     def __str__(self):
         return f"{self.item_name} ({self.quantity} {self.unit} @ ₹{self.rate})"

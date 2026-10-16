@@ -64,7 +64,7 @@ def build_proforma_dto(proforma) -> Dict[str, Any]:
         is_inter_state = str(company.state_code) != str(buyer_state)
 
     # Line items
-    items = list(proforma.items.all())
+    items = list(proforma.items.all().order_by('order_index', 'id'))
     tot_qty = Decimal('0.00')
     tot_taxable = Decimal('0.00')
     tot_cgst = Decimal('0.00')

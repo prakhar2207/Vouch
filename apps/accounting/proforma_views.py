@@ -89,6 +89,7 @@ def serialize_proforma(p: ProformaInvoice, include_items: bool = True) -> dict:
         data["items"] = [
             {
                 "id": str(it.id),
+                "order_index": getattr(it, 'order_index', 0),
                 "product_id": str(it.product_id) if it.product_id else None,
                 "item_name": it.item_name,
                 "brand": getattr(it, 'brand', '') or (it.product.brand if it.product and it.product.brand else '') or '',
@@ -107,7 +108,7 @@ def serialize_proforma(p: ProformaInvoice, include_items: bool = True) -> dict:
                 "igst_amount": float(it.igst_amount),
                 "total_amount": float(it.total_amount),
             }
-            for it in p.items.all()
+            for it in p.items.all().order_by('order_index', 'id')
         ]
     return data
 
@@ -288,7 +289,7 @@ class ListCreateProformaAPIView(APIView):
             total_sgst = Decimal('0.00')
             total_igst = Decimal('0.00')
 
-            for it in raw_items:
+            for idx, it in enumerate(raw_items):
                 product = None
                 pid = it.get('product_id')
                 if pid:
@@ -302,6 +303,10 @@ class ListCreateProformaAPIView(APIView):
                 rate = Decimal(str(it.get('rate') if it.get('rate') is not None else 0))
                 disc_pct = Decimal(str(it.get('discount_percent') if it.get('discount_percent') is not None else 0))
                 
+                order_idx = it.get('order_index')
+                if order_idx is None:
+                    order_idx = idx
+
                 gst_val = it.get('gst_rate')
                 if gst_val is None or gst_val == '':
                     gst_val = getattr(product, 'gst_rate', 18) if product else 18
@@ -330,6 +335,7 @@ class ListCreateProformaAPIView(APIView):
 
                 ProformaItem.objects.create(
                     proforma=proforma,
+                    order_index=int(order_idx),
                     product=product,
                     item_name=name,
                     brand=brand,
@@ -474,6 +480,38 @@ class ProformaDetailAPIView(APIView):
             return Response({"error": "Cannot edit a proforma invoice that has already been converted to a GST Tax Invoice."}, status=400)
 
         data = request.data
+
+        # 1-Click natural alphanumeric sort (A-Z)
+        if data.get('action') == 'sort_ascending':
+            import re
+            def natural_key(name):
+                return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', name or '')]
+
+            existing_items = list(proforma.items.all())
+            existing_items.sort(key=lambda x: natural_key(x.item_name))
+            for idx, itm in enumerate(existing_items):
+                itm.order_index = idx
+                itm.save(update_fields=['order_index'])
+
+            return Response({
+                "success": True,
+                "message": "Items sorted in ascending order (A-Z).",
+                "data": serialize_proforma(proforma, include_items=True)
+            })
+
+        # Manual reordering by IDs
+        if 'reorder_item_ids' in data and isinstance(data['reorder_item_ids'], list):
+            item_map = {str(it.id): it for it in proforma.items.all()}
+            for idx, item_id in enumerate(data['reorder_item_ids']):
+                if str(item_id) in item_map:
+                    item_map[str(item_id)].order_index = idx
+                    item_map[str(item_id)].save(update_fields=['order_index'])
+            return Response({
+                "success": True,
+                "message": "Items reordered successfully.",
+                "data": serialize_proforma(proforma, include_items=True)
+            })
+
         with transaction.atomic():
             company = proforma.company
 
@@ -537,7 +575,7 @@ class ProformaDetailAPIView(APIView):
                 total_sgst = Decimal('0.00')
                 total_igst = Decimal('0.00')
 
-                for it in raw_items:
+                for idx, it in enumerate(raw_items):
                     product = None
                     pid = it.get('product_id')
                     if pid:
@@ -550,6 +588,10 @@ class ProformaDetailAPIView(APIView):
                     unit = it.get('unit') or (product.unit if product else 'PCS')
                     rate = Decimal(str(it.get('rate') if it.get('rate') is not None else 0))
                     disc_pct = Decimal(str(it.get('discount_percent') if it.get('discount_percent') is not None else 0))
+
+                    order_idx = it.get('order_index')
+                    if order_idx is None:
+                        order_idx = idx
 
                     gst_val = it.get('gst_rate')
                     if gst_val is None or gst_val == '':
@@ -579,6 +621,7 @@ class ProformaDetailAPIView(APIView):
 
                     ProformaItem.objects.create(
                         proforma=proforma,
+                        order_index=int(order_idx),
                         product=product,
                         item_name=name,
                         brand=brand,
