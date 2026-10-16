@@ -30,7 +30,71 @@ def get_user_display_name(usr):
     return full or getattr(usr, 'email', str(usr))
 
 
-def serialize_proforma(p: ProformaInvoice, include_items: bool = True) -> dict:
+def build_proforma_company_details(comp, party_ledger=None) -> dict:
+    if not comp:
+        return {}
+
+    sig_url = getattr(comp, 'signature_data', None) or ''
+    if not sig_url and getattr(comp, 'proprietor_signature', None):
+        try:
+            sig_url = comp.proprietor_signature.url
+        except Exception:
+            sig_url = ''
+
+    logo_url = getattr(comp, 'logo_data', None) or ''
+    if not logo_url and getattr(comp, 'logo', None):
+        try:
+            logo_url = comp.logo.url
+        except Exception:
+            logo_url = ''
+
+    stamp_url = getattr(comp, 'stamp_data', None) or ''
+    if not stamp_url and getattr(comp, 'stamp', None):
+        try:
+            stamp_url = comp.stamp.url
+        except Exception:
+            stamp_url = ''
+
+    comp_settings = getattr(comp, 'settings', None)
+    branding = getattr(comp_settings, 'document_branding', {}) if comp_settings else {}
+
+    upi_id = getattr(comp, 'upi_id', '') or (getattr(party_ledger, 'upi_id', '') if party_ledger else '')
+
+    return {
+        "name": comp.name,
+        "legal_name": getattr(comp, 'legal_name', '') or comp.name,
+        "logo_url": logo_url,
+        "logo_data": getattr(comp, 'logo_data', '') or '',
+        "stamp_url": stamp_url,
+        "stamp_data": getattr(comp, 'stamp_data', '') or '',
+        "website": getattr(comp, 'website', '') or '',
+        "gstin": comp.gstin,
+        "pan": getattr(comp, 'pan', ''),
+        "state_code": getattr(comp, 'state_code', ''),
+        "state_name": getattr(comp, 'state_name', ''),
+        "email": getattr(comp, 'email', ''),
+        "phone": getattr(comp, 'phone', ''),
+        "address": getattr(comp, 'address', ''),
+        "city": getattr(comp, 'city', ''),
+        "pincode": getattr(comp, 'pincode', ''),
+        "tagline": getattr(comp, 'tagline', ''),
+        "proprietor_name": getattr(comp, 'proprietor_name', ''),
+        "signature_url": sig_url,
+        "signature_data": getattr(comp, 'signature_data', '') or '',
+        "settings": {
+            "document_branding": branding,
+        },
+        "bank_details": {
+            "bank_name": getattr(comp, 'bank_name', ''),
+            "account_number": getattr(comp, 'bank_account_number', ''),
+            "ifsc": getattr(comp, 'bank_ifsc', ''),
+            "branch": getattr(comp, 'bank_branch', ''),
+            "upi_id": upi_id,
+        }
+    }
+
+
+def serialize_proforma(p: ProformaInvoice, include_items: bool = True, include_company: bool = True) -> dict:
     annotated_count = getattr(p, 'annotated_items_count', None)
     if annotated_count is not None:
         items_cnt = annotated_count
@@ -110,6 +174,8 @@ def serialize_proforma(p: ProformaInvoice, include_items: bool = True) -> dict:
             }
             for it in p.items.all().order_by('order_index', 'id')
         ]
+    if include_company and getattr(p, 'company', None):
+        data["company_details"] = build_proforma_company_details(p.company, getattr(p, 'party_ledger', None))
     return data
 
 
@@ -181,7 +247,7 @@ class ListCreateProformaAPIView(APIView):
 
         return Response({
             "success": True,
-            "data": [serialize_proforma(p, include_items=False) for p in results],
+            "data": [serialize_proforma(p, include_items=False, include_company=False) for p in results],
             "total_count": filtered_count,
             "metrics": {
                 "total_count": total_count,
@@ -406,66 +472,7 @@ class ProformaDetailAPIView(APIView):
         if not proforma:
             return Response({"error": "Proforma invoice not found."}, status=404)
 
-        data = serialize_proforma(proforma, include_items=True)
-        comp = proforma.company
-
-        sig_url = getattr(comp, 'signature_data', None) or ''
-        if not sig_url and getattr(comp, 'proprietor_signature', None):
-            try:
-                sig_url = comp.proprietor_signature.url
-            except Exception:
-                sig_url = ''
-
-        logo_url = getattr(comp, 'logo_data', None) or ''
-        if not logo_url and getattr(comp, 'logo', None):
-            try:
-                logo_url = comp.logo.url
-            except Exception:
-                logo_url = ''
-
-        stamp_url = getattr(comp, 'stamp_data', None) or ''
-        if not stamp_url and getattr(comp, 'stamp', None):
-            try:
-                stamp_url = comp.stamp.url
-            except Exception:
-                stamp_url = ''
-
-        comp_settings = getattr(comp, 'settings', None)
-        branding = getattr(comp_settings, 'document_branding', {}) if comp_settings else {}
-
-        # Add company billing meta for print layout
-        data["company_details"] = {
-            "name": comp.name,
-            "legal_name": getattr(comp, 'legal_name', '') or comp.name,
-            "logo_url": logo_url,
-            "logo_data": getattr(comp, 'logo_data', '') or '',
-            "stamp_url": stamp_url,
-            "stamp_data": getattr(comp, 'stamp_data', '') or '',
-            "website": getattr(comp, 'website', '') or '',
-            "gstin": comp.gstin,
-            "pan": getattr(comp, 'pan', ''),
-            "state_code": getattr(comp, 'state_code', ''),
-            "state_name": getattr(comp, 'state_name', ''),
-            "email": getattr(comp, 'email', ''),
-            "phone": getattr(comp, 'phone', ''),
-            "address": getattr(comp, 'address', ''),
-            "city": getattr(comp, 'city', ''),
-            "pincode": getattr(comp, 'pincode', ''),
-            "tagline": getattr(comp, 'tagline', ''),
-            "proprietor_name": getattr(comp, 'proprietor_name', ''),
-            "signature_url": sig_url,
-            "signature_data": getattr(comp, 'signature_data', '') or '',
-            "settings": {
-                "document_branding": branding,
-            },
-            "bank_details": {
-                "bank_name": getattr(comp, 'bank_name', ''),
-                "account_number": getattr(comp, 'bank_account_number', ''),
-                "ifsc": getattr(comp, 'bank_ifsc', ''),
-                "branch": getattr(comp, 'bank_branch', ''),
-                "upi_id": getattr(comp, 'upi_id', '') or getattr(proforma.party_ledger, 'upi_id', ''),
-            }
-        }
+        data = serialize_proforma(proforma, include_items=True, include_company=True)
         return Response({"success": True, "data": data})
 
     def put(self, request, pk):

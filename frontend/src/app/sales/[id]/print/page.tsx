@@ -1073,11 +1073,23 @@ export default function PrintInvoicePage() {
     }
     setIsGeneratingPdf(true);
     try {
-      const pdfResult = await generateInvoicePdf();
       const filename = getCleanInvoiceFilename(copyMode);
       const isMobile = isMobileOrPWA();
-      if (!isMobile && pdfResult) {
-        triggerPdfDownload(pdfResult.blobUrl, filename);
+      let pdfBlobUrl: string | null = null;
+
+      try {
+        const pdfResp = await api.get(
+          `/api/v1/documents/vouchers/${invoiceId}/pdf/?fresh=1&copy=${copyMode}&brand=${showBrand ? '1' : '0'}&t=${Date.now()}`,
+          { responseType: 'blob' }
+        );
+        pdfBlobUrl = window.URL.createObjectURL(pdfResp.data);
+      } catch (streamErr) {
+        const pdfResult = await generateInvoicePdf();
+        if (pdfResult) pdfBlobUrl = pdfResult.blobUrl;
+      }
+
+      if (!isMobile && pdfBlobUrl) {
+        triggerPdfDownload(pdfBlobUrl, filename);
       }
       const { appUrl, webUrl } = getWhatsAppUrls();
       if (target === 'web') {
@@ -1140,24 +1152,27 @@ export default function PrintInvoicePage() {
         console.warn('Could not generate document share token, using fallback URL:', shareErr);
       }
 
-      // Fetch official high-definition deterministic PDF matching printed invoice exactly
+      // Fetch official high-definition vector PDF stream (Lightweight < 100 KB)
       let pdfFile: File | null = null;
       let pdfBlobUrl: string | null = null;
 
       try {
-        const clientPdf = await generateInvoicePdf();
-        if (clientPdf) {
-          pdfFile = clientPdf.file;
-          pdfBlobUrl = clientPdf.blobUrl;
-        }
-      } catch (clientErr) {
-        console.warn('Client PDF generation error, trying backend fallback:', clientErr);
+        const pdfResp = await api.get(
+          `/api/v1/documents/vouchers/${invoiceId}/pdf/?fresh=1&copy=${copyMode}&brand=${showBrand ? '1' : '0'}&t=${Date.now()}`,
+          { responseType: 'blob' }
+        );
+        pdfFile = new File([pdfResp.data], filename, { type: 'application/pdf' });
+        pdfBlobUrl = window.URL.createObjectURL(pdfResp.data);
+      } catch (backendErr) {
+        console.warn('Backend vector PDF stream failed, trying client canvas fallback:', backendErr);
         try {
-          const pdfResp = await api.get(`/api/v1/documents/vouchers/${invoiceId}/pdf/?fresh=1&copy=${copyMode}&t=${Date.now()}`, { responseType: 'blob' });
-          pdfFile = new File([pdfResp.data], filename, { type: 'application/pdf' });
-          pdfBlobUrl = window.URL.createObjectURL(pdfResp.data);
-        } catch (backendErr) {
-          console.warn('Backend fallback also failed:', backendErr);
+          const clientPdf = await generateInvoicePdf();
+          if (clientPdf) {
+            pdfFile = clientPdf.file;
+            pdfBlobUrl = clientPdf.blobUrl;
+          }
+        } catch (clientErr) {
+          console.warn('Client PDF generation fallback also failed:', clientErr);
         }
       }
 
@@ -1226,24 +1241,28 @@ export default function PrintInvoicePage() {
     setIsGeneratingPdf(true);
     try {
       const filename = getCleanInvoiceFilename(copyMode);
-      // 1. Generate client-side PDF directly from on-screen sheets to ensure 100% fidelity with printed invoice
+
+      // 1. Direct high-performance vector PDF stream from backend (Crisp vector, ~50-80 KB, Instant)
+      try {
+        const response = await api.get(
+          `/api/v1/documents/vouchers/${invoiceId}/pdf/?download=1&fresh=1&copy=${copyMode}&brand=${showBrand ? '1' : '0'}&t=${Date.now()}`,
+          { responseType: 'blob' }
+        );
+        const blobUrl = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+        triggerPdfDownload(blobUrl, filename);
+        return;
+      } catch (backendErr) {
+        console.warn('Backend vector PDF stream failed, attempting client-side canvas fallback:', backendErr);
+      }
+
+      // 2. Client-side canvas fallback if backend unavailable
       const pdfResult = await generateInvoicePdf();
       if (pdfResult) {
         triggerPdfDownload(pdfResult.blobUrl, filename);
         return;
       }
 
-      // 2. Fallback to backend PDF stream if canvas rendering unavailable
-      try {
-        const response = await api.get(`/api/v1/documents/vouchers/${invoiceId}/pdf/?download=1&fresh=1&copy=${copyMode}&t=${Date.now()}`, {
-          responseType: 'blob',
-        });
-        const blobUrl = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
-        triggerPdfDownload(blobUrl, filename);
-      } catch (backendErr) {
-        console.error('Fallback backend PDF stream also failed:', backendErr);
-        alert('Could not generate invoice PDF. Please try printing via browser print dialog.');
-      }
+      alert('Could not generate invoice PDF. Please try printing via browser print dialog.');
     } catch (err: any) {
       console.error('PDF download failed:', err);
     } finally {

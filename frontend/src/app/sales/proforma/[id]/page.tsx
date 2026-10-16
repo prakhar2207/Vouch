@@ -179,7 +179,11 @@ export default function ProformaDetailPage() {
         const isDesc = sortAction === 'sort_descending';
         toast.success('Items Sorted', `Items arranged in ${isDesc ? 'descending (Z → A)' : 'ascending (A → Z)'} order.`);
         if (res.data.data) {
-          setDoc(res.data.data);
+          setDoc((prev: any) => ({
+            ...prev,
+            ...res.data.data,
+            company_details: res.data.data.company_details || prev?.company_details,
+          }));
         } else {
           fetchDoc();
         }
@@ -194,7 +198,7 @@ export default function ProformaDetailPage() {
 
   const isConverted = doc?.status === 'CONVERTED';
   const isPI = (doc?.proforma_type || 'PROFORMA') === 'PROFORMA';
-  const company = doc?.company_details || {};
+  const company = doc?.company_details || doc?.company || {};
   const totalAmount = Number(doc?.total_amount || 0);
 
   // High-Resolution Direct Vector PDF Stream from Backend (Lightweight ~74KB, 100% Vector, Instant)
