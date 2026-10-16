@@ -187,13 +187,36 @@ class ProformaNumberedCanvas(canvas.Canvas):
         self.restoreState()
 
 
-def chunk_proforma_items(items: list) -> list:
+def estimate_item_height(itm: dict, show_brand: bool = True) -> float:
     """
-    Exact mirror of ProformaDocumentSheet.tsx pagination engine:
-    - Single page capacity: <= 12 items
-    - Multi-page 2-page balancing: <= 22 items
-    - Multi-page 3+ pages: Page 1 holds 12 items, middle pages up to 16,
-      final page holds closing summary + up to 10 items (orphan prevention for <= 2)
+    Estimates the vertical rendered height in points for an item row.
+    Matches ReportLab and HTML table rendering metrics.
+    """
+    h = 16.5
+    name = str(itm.get('name') or itm.get('item_name') or '')
+    if len(name) > 35:
+        h += 10.0 * (len(name) // 35)
+    brand = str(itm.get('brand') or '').strip()
+    if show_brand and brand:
+        h += 10.0
+    desc = str(itm.get('description') or '').strip()
+    if desc:
+        lines = max(1, (len(desc) + 40) // 45)
+        h += 9.5 * lines
+    return h
+
+
+def chunk_proforma_items(items: list, show_brand: bool = True) -> list:
+    """
+    Dynamic space calculation and multi-page pagination engine matching Tally, Busy and sales invoices:
+    - Calculates the actual vertical height required by each item based on name length, brand, and description.
+    - Single page capacity: <= 265 pt of items (fits full header, bill/ship parties, items, and full closing summary).
+    - 2-page capacity: Up to (H_P1 + H_LAST) ~980 pt of items (~40-45 single-line items).
+      Page 1 holds ~70% of item height, filling the page properly without leaving an empty void.
+      Page 2 holds remaining items (at least 80 pt / 5 items) + full statutory closing summary.
+    - 3+ pages capacity: Page 1 holds up to 520 pt, intermediate pages up to 680 pt,
+      and the final page holds remaining items + full closing summary.
+    - Completely eliminates arbitrary 12-item cutoffs, empty white voids, and orphan pages.
     """
     if not items:
         return [{
@@ -207,7 +230,18 @@ def chunk_proforma_items(items: list) -> list:
             'carried_over': 0.0,
         }]
 
-    if len(items) <= 12:
+    # Usable item heights (in points) per page type
+    H_SINGLE_ITEMS = 265.0   # Max item height on 1-page document with full footer
+    H_P1_MULTI = 520.0       # Max item height on Page 1 of multi-page
+    H_MID_MULTI = 680.0      # Max item height on intermediate pages
+    H_LAST_MULTI = 460.0     # Max item height on final page with full footer
+    MIN_LAST_H = 80.0        # At least 80pt (~4-5 items) on final page to prevent orphan footer
+
+    item_heights = [estimate_item_height(it, show_brand) for it in items]
+    total_h = sum(item_heights)
+
+    # 1. Fits on single page
+    if total_h <= H_SINGLE_ITEMS:
         tot_taxable = sum(float(it.get('taxable_amount') or 0.0) for it in items)
         return [{
             'page_number': 1,
@@ -220,34 +254,62 @@ def chunk_proforma_items(items: list) -> list:
             'carried_over': tot_taxable,
         }]
 
+    # 2. Fits on 2 pages (Proportional Tally/Busy Balancing)
     chunks = []
-    remaining = list(items)
-
-    if len(remaining) <= 22:
-        final_page_count = max(3, min(10, int(len(remaining) * 0.45)))
-        p1_count = len(remaining) - final_page_count
-        chunks.append(remaining[:p1_count])
-        chunks.append(remaining[p1_count:])
+    if total_h <= (H_P1_MULTI + H_LAST_MULTI):
+        p1_items = []
+        p1_h = 0.0
+        target_p1_h = min(H_P1_MULTI, max(total_h - H_LAST_MULTI, total_h * 0.70))
+        for idx, (it, h) in enumerate(zip(items, item_heights)):
+            remaining_h = sum(item_heights[idx:])
+            if p1_h + h <= target_p1_h and remaining_h - h >= MIN_LAST_H:
+                p1_items.append(it)
+                p1_h += h
+            else:
+                break
+        
+        if len(p1_items) == 0:
+            p1_items = items[:max(1, len(items) // 2)]
+        p2_items = items[len(p1_items):]
+        chunks = [p1_items, p2_items]
     else:
-        p1_count = 12
-        chunks.append(remaining[:p1_count])
-        remaining = remaining[p1_count:]
+        # 3 or more pages
+        chunks = []
+        rem_items = list(items)
+        rem_heights = list(item_heights)
 
-        while len(remaining) > 0:
-            if len(remaining) <= 10:
-                if len(remaining) <= 2 and len(chunks) > 0:
-                    prev = chunks[-1]
-                    if len(prev) > 4:
-                        borrow_count = 3 - len(remaining)
-                        borrowed = prev[-borrow_count:]
-                        chunks[-1] = prev[:-borrow_count]
-                        remaining = borrowed + remaining
-                chunks.append(remaining)
+        # Page 1
+        p1_items = []
+        p1_h = 0.0
+        while rem_items:
+            h = rem_heights[0]
+            if p1_h + h <= H_P1_MULTI and len(rem_items) > 3:
+                p1_items.append(rem_items.pop(0))
+                p1_h += rem_heights.pop(0)
+            else:
+                break
+        chunks.append(p1_items)
+
+        # Middle and final pages
+        while rem_items:
+            rem_total_h = sum(rem_heights)
+            if rem_total_h <= H_LAST_MULTI:
+                chunks.append(rem_items)
                 break
             else:
-                take = min(16, len(remaining) - 3)
-                chunks.append(remaining[:take])
-                remaining = remaining[take:]
+                mid_items = []
+                mid_h = 0.0
+                while rem_items:
+                    h = rem_heights[0]
+                    if mid_h + h <= H_MID_MULTI and sum(rem_heights[1:]) >= MIN_LAST_H:
+                        mid_items.append(rem_items.pop(0))
+                        mid_h += rem_heights.pop(0)
+                    else:
+                        break
+                if not mid_items:
+                    mid_items.append(rem_items.pop(0))
+                    rem_heights.pop(0)
+                chunks.append(mid_items)
 
     total_pages = len(chunks)
     result = []
@@ -1244,7 +1306,7 @@ class ModernProformaPDFRenderer:
         # 4. MULTI-PAGE STORY ASSEMBLY (EXACT MATCH TO PROFORMA DOCUMENT SHEET)
         # ═══════════════════════════════════════════════════════════════════
         col_widths = [22, 154, 46, 34, 30, 50, 40, 56, 42, 64.5]
-        page_chunks = chunk_proforma_items(items)
+        page_chunks = chunk_proforma_items(items, show_brand=show_brand)
         total_pages = len(page_chunks)
 
         for p_idx, chunk_data in enumerate(page_chunks):

@@ -124,6 +124,24 @@ function resolveMediaUrl(raw?: string): string {
   return `${API_BASE_URL}${raw.startsWith('/') ? '' : '/'}${raw}`;
 }
 
+export function estimateItemHeight(item: any, showBrand: boolean = true): number {
+  let h = 16.5;
+  const name = String(item.item_name || item.name || '');
+  if (name.length > 35) {
+    h += 10.0 * Math.floor(name.length / 35);
+  }
+  const brand = String(item.brand || '').trim();
+  if (showBrand && brand) {
+    h += 10.0;
+  }
+  const desc = String(item.description || '').trim();
+  if (desc) {
+    const lines = Math.max(1, Math.floor((desc.length + 40) / 45));
+    h += 9.5 * lines;
+  }
+  return h;
+}
+
 export default function ProformaDocumentSheet({
   doc,
   company,
@@ -275,7 +293,7 @@ export default function ProformaDocumentSheet({
   }, [doc?.items, isInterState]);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // PAGINATION ENGINE: CALCULATES SHEET SPLITS WITH ORPHAN ROW PREVENTER
+  // PAGINATION ENGINE: CALCULATES SHEET SPLITS WITH DYNAMIC HEIGHT BALANCING
   // ═══════════════════════════════════════════════════════════════════════════
   const pages = useMemo(() => {
     const rawItems: any[] = Array.isArray(doc?.items) ? doc.items : [];
@@ -293,8 +311,17 @@ export default function ProformaDocumentSheet({
       }
     ];
 
-    // Single-page limit: up to 12 items fit on 1 sheet with compact spacing
-    if (items.length <= 12) {
+    const H_SINGLE_ITEMS = 265.0; // Up to ~16 single-line items
+    const H_P1_MULTI = 520.0;     // Max item height on Page 1 of multi-page
+    const H_MID_MULTI = 680.0;    // Max item height on intermediate pages
+    const H_LAST_MULTI = 460.0;   // Max item height on final page with full footer
+    const MIN_LAST_H = 80.0;      // At least 80pt (~4-5 items) on final page to prevent orphan footer
+
+    const itemHeights = items.map((it: any) => estimateItemHeight(it, showBrand));
+    const totalH = itemHeights.reduce((acc: number, val: number) => acc + val, 0);
+
+    // 1. Fits on single page
+    if (totalH <= H_SINGLE_ITEMS) {
       return [{
         pageNumber: 1,
         totalPages: 1,
@@ -307,42 +334,71 @@ export default function ProformaDocumentSheet({
       }];
     }
 
-    // Multi-page document:
-    // Tally-Exact Proportional Balancing & Orphan Prevention:
-    // - Page 1 Capacity: Header + Parties + ~12 items (no closing footer)
-    // - Middle pages: Compact Header + ~16 items
-    // - Last page: Compact Header + Totals & Signatures block + up to 10 items
-    const chunks: any[][] = [];
-    let remaining = [...items];
-
-    if (remaining.length <= 22) {
-      // 2 Pages: Proportionately balance items so neither page looks empty
-      const finalPageCount = Math.max(3, Math.min(10, Math.floor(remaining.length * 0.45)));
-      const p1Count = remaining.length - finalPageCount;
-      chunks.push(remaining.slice(0, p1Count));
-      chunks.push(remaining.slice(p1Count));
+    // 2. Fits on 2 pages (Proportional Tally/Busy Balancing)
+    let chunks: any[][] = [];
+    if (totalH <= (H_P1_MULTI + H_LAST_MULTI)) {
+      const p1Items: any[] = [];
+      let p1H = 0;
+      const targetP1H = Math.min(H_P1_MULTI, Math.max(totalH - H_LAST_MULTI, totalH * 0.70));
+      for (let idx = 0; idx < items.length; idx++) {
+        const it = items[idx];
+        const h = itemHeights[idx];
+        const remH = itemHeights.slice(idx).reduce((a: number, b: number) => a + b, 0);
+        if (p1H + h <= targetP1H && remH - h >= MIN_LAST_H) {
+          p1Items.push(it);
+          p1H += h;
+        } else {
+          break;
+        }
+      }
+      if (p1Items.length === 0) {
+        p1Items.push(...items.slice(0, Math.max(1, Math.floor(items.length / 2))));
+      }
+      chunks = [p1Items, items.slice(p1Items.length)];
     } else {
-      // 3 or more pages:
-      const p1Count = 12;
-      chunks.push(remaining.slice(0, p1Count));
-      remaining = remaining.slice(p1Count);
+      // 3 or more pages
+      chunks = [];
+      const remItems = [...items];
+      const remHeights = [...itemHeights];
 
-      while (remaining.length > 0) {
-        if (remaining.length <= 10) {
-          if (remaining.length <= 2 && chunks.length > 0) {
-            const prev = chunks[chunks.length - 1];
-            if (prev.length > 4) {
-              const borrowCount = 3 - remaining.length;
-              const borrowed = prev.splice(prev.length - borrowCount, borrowCount);
-              remaining.unshift(...borrowed);
-            }
-          }
-          chunks.push(remaining);
+      // Page 1
+      const p1Items: any[] = [];
+      let p1H = 0;
+      while (remItems.length > 0) {
+        const h = remHeights[0];
+        if (p1H + h <= H_P1_MULTI && remItems.length > 3) {
+          p1Items.push(remItems.shift()!);
+          p1H += remHeights.shift()!;
+        } else {
+          break;
+        }
+      }
+      chunks.push(p1Items);
+
+      // Middle and final pages
+      while (remItems.length > 0) {
+        const remTotalH = remHeights.reduce((a, b) => a + b, 0);
+        if (remTotalH <= H_LAST_MULTI) {
+          chunks.push(remItems);
           break;
         } else {
-          const take = Math.min(16, remaining.length - 3);
-          chunks.push(remaining.slice(0, take));
-          remaining = remaining.slice(take);
+          const midItems: any[] = [];
+          let midH = 0;
+          while (remItems.length > 0) {
+            const h = remHeights[0];
+            const futureH = remHeights.slice(1).reduce((a, b) => a + b, 0);
+            if (midH + h <= H_MID_MULTI && futureH >= MIN_LAST_H) {
+              midItems.push(remItems.shift()!);
+              midH += remHeights.shift()!;
+            } else {
+              break;
+            }
+          }
+          if (midItems.length === 0) {
+            midItems.push(remItems.shift()!);
+            remHeights.shift();
+          }
+          chunks.push(midItems);
         }
       }
     }
@@ -381,7 +437,7 @@ export default function ProformaDocumentSheet({
         carriedOverSubtotal: carriedOver,
       };
     });
-  }, [doc?.items]);
+  }, [doc?.items, showBrand]);
 
   const totalPagesCount = pages.length;
 
