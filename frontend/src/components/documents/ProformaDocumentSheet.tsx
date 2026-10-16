@@ -710,32 +710,32 @@ export default function ProformaDocumentSheet({
                   <table className="w-full text-xs border-collapse">
                     <thead>
                       <tr 
-                        className="text-[11px] font-bold uppercase tracking-wider text-slate-700 border-y border-slate-200"
+                        className="text-[10px] font-bold uppercase tracking-wider text-slate-700 border-y border-slate-200"
                         style={{ backgroundColor: `${accentColor}06` }}
                       >
-                        <th className="py-2 px-2 text-center w-8">#</th>
-                        <th className="py-2 px-2 text-left">Description of Goods / Services</th>
-                        <th className="py-2 px-2 text-center w-16">HSN/SAC</th>
-                        <th className="py-2 px-2 text-right w-12">Qty</th>
-                        <th className="py-2 px-1 text-left w-10">Unit</th>
-                        <th className="py-2 px-2 text-right w-20">Rate</th>
-                        <th className="py-2 px-1 text-right w-12">Disc%</th>
-                        <th className="py-2 px-2 text-right w-24">Taxable</th>
-                        <th className="py-2 px-1 text-center w-14">GST</th>
-                        <th className="py-2 px-2 text-right w-24">Amount</th>
+                        <th className="py-1.5 px-1.5 text-center w-8">#</th>
+                        <th className="py-1.5 px-2 text-left">Description of Goods / Services</th>
+                        <th className="py-1.5 px-1.5 text-center w-16">HSN/SAC</th>
+                        <th className="py-1.5 px-1.5 text-right w-12">Qty</th>
+                        <th className="py-1.5 px-1 text-center w-10">Unit</th>
+                        <th className="py-1.5 px-1.5 text-right w-20">Rate</th>
+                        <th className="py-1.5 px-1 text-right w-12">Disc%</th>
+                        <th className="py-1.5 px-1.5 text-right w-22">Taxable</th>
+                        <th className="py-1.5 px-1 text-center w-12">GST</th>
+                        <th className="py-1.5 px-2 text-right w-24">Amount</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {/* Tally Brought Forward row on Page 2+ */}
                       {!isFirstPage && (
-                        <tr className="border-b-2 border-slate-300 font-semibold bg-slate-50/80 text-xs">
-                          <td colSpan={7} className="py-2 px-3 text-right italic text-slate-700">
+                        <tr className="border-b-2 border-slate-300 font-semibold bg-slate-50/80 text-[10px]">
+                          <td colSpan={7} className="py-1.5 px-2 text-right italic text-slate-700">
                             Total Brought Forward from Page {pageNumber - 1} &rarr;
                           </td>
-                          <td className="py-2 px-2 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                          <td className="py-1.5 px-1.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
                             {broughtForwardSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                           </td>
-                          <td colSpan={2} className="py-2"></td>
+                          <td colSpan={2} className="py-1.5"></td>
                         </tr>
                       )}
 
@@ -750,46 +750,46 @@ export default function ProformaDocumentSheet({
 
                         return (
                           <tr key={`item-${serial}`} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="py-2.5 px-2 text-center text-slate-400 font-mono text-[11px]">
+                            <td className="py-1 px-1.5 text-center text-slate-400 font-mono text-[9.5px]">
                               {serial}
                             </td>
-                            <td className="py-2.5 px-2 text-left">
-                              <p className="font-semibold text-slate-900 leading-snug">
+                            <td className="py-1 px-2 text-left">
+                              <p className="font-bold text-slate-900 leading-tight text-[10.5px]">
                                 {item.item_name || 'Standard Item'}
                               </p>
                               {showBrand && item.brand && (
-                                <span className="inline-block mt-0.5 text-[9.5px] uppercase font-bold tracking-wider px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-200">
+                                <span className="inline-block mt-0.5 text-[8.5px] uppercase font-bold tracking-wider px-1 py-0.2 bg-blue-50 text-blue-700 rounded border border-blue-200">
                                   Brand: {item.brand}
                                 </span>
                               )}
                               {item.description && (
-                                <p className="text-[10.5px] text-slate-500 mt-0.5 leading-snug">
+                                <p className="text-[9.5px] text-slate-500 mt-0.5 leading-snug">
                                   {item.description}
                                 </p>
                               )}
                             </td>
-                            <td className="py-2.5 px-2 text-center font-mono text-[11px] text-slate-600">
+                            <td className="py-1 px-1.5 text-center font-mono text-[10px] text-slate-600">
                               {item.hsn_code || '—'}
                             </td>
-                            <td className="py-2.5 px-2 text-right font-medium text-slate-800">
+                            <td className="py-1 px-1.5 text-right font-medium text-slate-800 text-[10px]">
                               {qty}
                             </td>
-                            <td className="py-2.5 px-1 text-left text-slate-500 text-[11px]">
+                            <td className="py-1 px-1 text-center text-slate-500 text-[9.5px]">
                               {item.unit || 'PCS'}
                             </td>
-                            <td className="py-2.5 px-2 text-right font-mono text-slate-800">
+                            <td className="py-1 px-1.5 text-right font-mono text-slate-800 text-[10px]">
                               {rate.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                             </td>
-                            <td className="py-2.5 px-1 text-right text-slate-500">
+                            <td className="py-1 px-1 text-right text-slate-500 text-[9.5px]">
                               {disc > 0 ? `${disc}%` : '—'}
                             </td>
-                            <td className="py-2.5 px-2 text-right font-mono font-medium text-slate-900">
+                            <td className="py-1 px-1.5 text-right font-mono font-medium text-slate-900 text-[10px]">
                               {taxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                             </td>
-                            <td className="py-2.5 px-1 text-center font-mono text-[11px] text-slate-600">
+                            <td className="py-1 px-1 text-center font-mono text-[9.5px] text-slate-600">
                               {gstRate}%
                             </td>
-                            <td className="py-2.5 px-2 text-right font-mono font-bold text-slate-900">
+                            <td className="py-1 px-2 text-right font-mono font-bold text-slate-900 text-[10px]">
                               {total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                             </td>
                           </tr>
@@ -798,14 +798,14 @@ export default function ProformaDocumentSheet({
 
                       {/* Tally Carried Over row on Intermediate Pages */}
                       {!isLastPage && (
-                        <tr className="border-t-2 border-slate-300 font-semibold bg-slate-50/80 text-xs">
-                          <td colSpan={7} className="py-2 px-3 text-right italic text-slate-700">
+                        <tr className="border-t-2 border-slate-300 font-semibold bg-slate-50/80 text-[10px]">
+                          <td colSpan={7} className="py-1.5 px-2 text-right italic text-slate-700">
                             Total Carried Over to Page {pageNumber + 1} &rarr;
                           </td>
-                          <td className="py-2 px-2 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                          <td className="py-1.5 px-1.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
                             {carriedOverSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                           </td>
-                          <td colSpan={2} className="py-2"></td>
+                          <td colSpan={2} className="py-1.5"></td>
                         </tr>
                       )}
 

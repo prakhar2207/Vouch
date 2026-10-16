@@ -39,6 +39,7 @@ export default function ProformaDetailPage() {
   const [converting, setConverting] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [isGeneratingShareLink, setIsGeneratingShareLink] = useState(false);
@@ -235,6 +236,56 @@ export default function ProformaDetailPage() {
     }
   };
 
+  // Direct Vector PDF Print (Guarantees 100% exact match to downloaded PDF)
+  const handlePrint = async () => {
+    if (!doc) return;
+    setIsPrinting(true);
+
+    try {
+      const wmParam = includeWatermark ? '1' : '0';
+      const logoParam = includeLogo ? '1' : '0';
+      const brandParam = showBrand ? '1' : '0';
+
+      const response = await api.get(
+        `/api/v1/documents/proforma/${doc.id}/pdf/?watermark=${wmParam}&logo=${logoParam}&brand=${brandParam}&fresh=1`,
+        { responseType: 'blob' }
+      );
+
+      const blobUrl = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      iframe.src = blobUrl;
+
+      iframe.onload = () => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch {
+          window.print();
+        } finally {
+          setTimeout(() => {
+            if (document.body.contains(iframe)) {
+              document.body.removeChild(iframe);
+            }
+            window.URL.revokeObjectURL(blobUrl);
+          }, 60000);
+        }
+      };
+
+      document.body.appendChild(iframe);
+    } catch (err) {
+      console.error('Direct PDF print error, falling back to window.print():', err);
+      window.print();
+    } finally {
+      setIsPrinting(false);
+    }
+  };
+
   const handleGenerateShareLink = async (): Promise<string> => {
     if (shareUrl) return shareUrl;
     setIsGeneratingShareLink(true);
@@ -358,14 +409,14 @@ export default function ProformaDetailPage() {
           }
           .proforma-page-sheet {
             box-sizing: border-box !important;
-            width: 100% !important;
-            min-width: 100% !important;
-            max-width: 100% !important;
-            height: 100vh !important;
-            max-height: 100vh !important;
-            min-height: 0 !important;
-            margin: 0 !important;
-            padding: 8mm 10mm !important;
+            width: 210mm !important;
+            min-width: 210mm !important;
+            max-width: 210mm !important;
+            height: 297mm !important;
+            min-height: 297mm !important;
+            max-height: 297mm !important;
+            margin: 0 auto !important;
+            padding: 10mm 10mm !important;
             box-shadow: none !important;
             border: none !important;
             border-radius: 0 !important;
@@ -469,11 +520,16 @@ export default function ProformaDetailPage() {
 
               <button
                 type="button"
-                onClick={() => window.print()}
-                className="px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                onClick={handlePrint}
+                disabled={isPrinting}
+                className="px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
                 title="Print Document"
               >
-                <Printer className="w-3.5 h-3.5" />
+                {isPrinting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Printer className="w-3.5 h-3.5" />
+                )}
                 <span>Print</span>
               </button>
 
