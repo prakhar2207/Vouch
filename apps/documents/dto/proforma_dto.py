@@ -104,7 +104,48 @@ def build_proforma_dto(proforma) -> Dict[str, Any]:
             'total_amount': float(itm.total_amount),
         })
 
-    tot_tax = tot_cgst + tot_sgst + tot_igst
+    # HSN Tax Breakdown Summary
+    hsn_map: Dict[str, Dict[str, Any]] = {}
+    for itm in items:
+        hsn = (itm.hsn_code or 'N/A').strip()
+        rate = float(itm.gst_rate or 0)
+        key = f"{hsn}-{rate}"
+        taxable = float(itm.taxable_amount or 0)
+        cgst = float(itm.cgst_amount or 0)
+        sgst = float(itm.sgst_amount or 0)
+        igst = float(itm.igst_amount or 0)
+        if cgst == 0 and sgst == 0 and igst == 0 and rate > 0 and taxable > 0:
+            if is_inter_state:
+                igst = (taxable * rate) / 100.0
+            else:
+                cgst = (taxable * rate) / 200.0
+                sgst = (taxable * rate) / 200.0
+        tot_item_tax = cgst + sgst + igst
+        if key not in hsn_map:
+            hsn_map[key] = {
+                'hsn_code': hsn,
+                'gst_rate': rate,
+                'taxable_amount': taxable,
+                'cgst_amount': cgst,
+                'sgst_amount': sgst,
+                'igst_amount': igst,
+                'total_tax': tot_item_tax,
+            }
+        else:
+            hsn_map[key]['taxable_amount'] += taxable
+            hsn_map[key]['cgst_amount'] += cgst
+            hsn_map[key]['sgst_amount'] += sgst
+            hsn_map[key]['igst_amount'] += igst
+            hsn_map[key]['total_tax'] += tot_item_tax
+
+    hsn_summary = sorted(list(hsn_map.values()), key=lambda x: x['gst_rate'])
+
+    final_taxable = float(proforma.taxable_amount) if (proforma.taxable_amount is not None and proforma.taxable_amount > 0) else float(tot_taxable)
+    final_cgst = float(proforma.cgst_amount) if (proforma.cgst_amount is not None and proforma.cgst_amount > 0) else float(tot_cgst)
+    final_sgst = float(proforma.sgst_amount) if (proforma.sgst_amount is not None and proforma.sgst_amount > 0) else float(tot_sgst)
+    final_igst = float(proforma.igst_amount) if (proforma.igst_amount is not None and proforma.igst_amount > 0) else float(tot_igst)
+    final_total_tax = float(proforma.total_tax) if (proforma.total_tax is not None and proforma.total_tax > 0) else float(final_cgst + final_sgst + final_igst)
+
     total_amount = float(proforma.total_amount or Decimal('0.00'))
     round_off = float(proforma.round_off or Decimal('0.00'))
 
@@ -195,13 +236,14 @@ def build_proforma_dto(proforma) -> Dict[str, Any]:
             'terms_and_conditions': proforma.terms_and_conditions or '',
         },
         'items': dto_items,
+        'hsn_summary': hsn_summary,
         'subtotals': {
             'total_quantity': float(tot_qty),
-            'taxable_amount': float(tot_taxable),
-            'cgst_amount': float(tot_cgst),
-            'sgst_amount': float(tot_sgst),
-            'igst_amount': float(tot_igst),
-            'total_tax': float(tot_tax),
+            'taxable_amount': final_taxable,
+            'cgst_amount': final_cgst,
+            'sgst_amount': final_sgst,
+            'igst_amount': final_igst,
+            'total_tax': final_total_tax,
             'cartage_amount': float(proforma.cartage_amount or Decimal('0.00')),
             'round_off': round_off,
             'grand_total': total_amount,

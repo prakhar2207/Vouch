@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import { api, API_BASE_URL } from '@/utils/api';
 import DashboardLayout from '@/components/DashboardLayout';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import { useToast } from '@/context/ToastContext';
 import ProformaDocumentSheet from '@/components/documents/ProformaDocumentSheet';
 import { 
@@ -165,12 +167,98 @@ export default function ProformaDetailPage() {
   const company = doc?.company_details || {};
   const totalAmount = Number(doc?.total_amount || 0);
 
-  // High-Resolution Direct Vector PDF Stream from Backend
+  // Pixel-Perfect PDF Export (Identical to Print View) with Backend Fallback
   const handleDownloadPdf = async () => {
     if (!doc) return;
     setIsGeneratingPdf(true);
 
     try {
+      const cleanFilename = `${(doc.proforma_number || 'PROFORMA').replace(/[/\\:*?"<>|]/g, '-').trim()}.pdf`;
+      const sheetElements = Array.from(document.querySelectorAll('.proforma-page-sheet')) as HTMLElement[];
+
+      if (sheetElements.length > 0) {
+        const targetWidthPx = 794;
+        const pdf = new jsPDF({
+          orientation: 'portrait',
+          unit: 'mm',
+          format: 'a4',
+        });
+        const a4Width = 210;
+        const a4Height = 297;
+
+        for (let sheetIdx = 0; sheetIdx < sheetElements.length; sheetIdx++) {
+          const element = sheetElements[sheetIdx];
+
+          const sandbox = document.createElement('div');
+          sandbox.className = 'light print-sandbox-root';
+          sandbox.setAttribute('data-theme', 'light');
+          sandbox.style.position = 'fixed';
+          sandbox.style.left = '-99999px';
+          sandbox.style.top = '0';
+          sandbox.style.width = `${targetWidthPx}px`;
+          sandbox.style.minWidth = `${targetWidthPx}px`;
+          sandbox.style.maxWidth = `${targetWidthPx}px`;
+          sandbox.style.zIndex = '-9999';
+          sandbox.style.backgroundColor = '#ffffff';
+          sandbox.style.color = '#000000';
+          sandbox.style.overflow = 'visible';
+
+          const printStyle = document.createElement('style');
+          printStyle.textContent = `
+            .print-sandbox-root, .print-sandbox-root * {
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+              box-sizing: border-box !important;
+            }
+          `;
+          sandbox.appendChild(printStyle);
+
+          const clone = element.cloneNode(true) as HTMLElement;
+          clone.classList.remove('dark');
+          clone.classList.add('light');
+          clone.style.width = `${targetWidthPx}px`;
+          clone.style.minWidth = `${targetWidthPx}px`;
+          clone.style.maxWidth = `${targetWidthPx}px`;
+          clone.style.height = '1123px';
+          clone.style.minHeight = '1123px';
+          clone.style.maxHeight = '1123px';
+          clone.style.boxSizing = 'border-box';
+          clone.style.backgroundColor = '#ffffff';
+          clone.style.margin = '0';
+          clone.style.boxShadow = 'none';
+          clone.style.border = 'none';
+
+          sandbox.appendChild(clone);
+          document.body.appendChild(sandbox);
+
+          let canvas;
+          try {
+            canvas = await (html2canvas as any)(clone, {
+              scale: 2,
+              useCORS: true,
+              allowTaint: true,
+              logging: false,
+              backgroundColor: '#ffffff',
+              windowWidth: 1200,
+              width: targetWidthPx,
+            });
+          } finally {
+            document.body.removeChild(sandbox);
+          }
+
+          const imgData = canvas.toDataURL('image/png');
+          if (sheetIdx > 0) {
+            pdf.addPage('a4', 'portrait');
+          }
+          pdf.addImage(imgData, 'PNG', 0, 0, a4Width, a4Height);
+        }
+
+        pdf.save(cleanFilename);
+        toast.success('PDF Downloaded', `Saved as ${cleanFilename}`);
+        return;
+      }
+
+      // Fallback: Backend vector PDF stream
       const wmParam = includeWatermark ? '1' : '0';
       const logoParam = includeLogo ? '1' : '0';
       const brandParam = showBrand ? '1' : '0';
@@ -180,7 +268,6 @@ export default function ProformaDetailPage() {
       );
 
       const blobUrl = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
-      const cleanFilename = `${(doc.proforma_number || 'PROFORMA').replace(/[/\\:*?"<>|]/g, '-').trim()}.pdf`;
       const a = document.createElement('a');
       a.href = blobUrl;
       a.download = cleanFilename;
