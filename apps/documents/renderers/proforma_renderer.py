@@ -446,83 +446,91 @@ class ModernProformaPDFRenderer:
                 return None
 
         # Build styles
+        firm_name_size = branding.get('firm_name_size') or 'large'
+        if firm_name_size == 'extra_large':
+            f_seller_size, f_seller_leading = 22, 25
+        elif firm_name_size == 'normal':
+            f_seller_size, f_seller_leading = 15, 18
+        else:  # default large (matches printed copy text-xl/2xl)
+            f_seller_size, f_seller_leading = 18, 21
+
         s_title_pill = ParagraphStyle(
             'TitlePill',
             fontName=f_bold,
-            fontSize=10,
-            leading=12,
+            fontSize=11,
+            leading=13.5,
             alignment=TA_CENTER,
             textColor=c_text,
         )
         s_title_sub = ParagraphStyle(
             'TitleSub',
             fontName=f_italic,
-            fontSize=6.5,
-            leading=8.5,
+            fontSize=7.5,
+            leading=9.5,
             alignment=TA_CENTER,
             textColor=c_muted,
         )
         s_seller_name = ParagraphStyle(
             'SellerName',
             fontName=f_bold,
-            fontSize=13,
-            leading=15,
+            fontSize=f_seller_size,
+            leading=f_seller_leading,
             alignment=TA_LEFT,
             textColor=c_accent,
         )
         s_seller_tagline = ParagraphStyle(
             'SellerTagline',
             fontName=f_italic,
-            fontSize=7.5,
-            leading=9.5,
+            fontSize=8.5,
+            leading=10.5,
             alignment=TA_LEFT,
             textColor=c_muted,
         )
         s_seller_details = ParagraphStyle(
             'SellerDetails',
             fontName=f_norm,
-            fontSize=7.5,
-            leading=10,
+            fontSize=8.5,
+            leading=11.5,
             alignment=TA_LEFT,
             textColor=c_dark_muted,
         )
         s_meta_label = ParagraphStyle(
             'MetaLabel',
             fontName=f_norm,
-            fontSize=7,
-            leading=9,
+            fontSize=8.5,
+            leading=10.5,
             alignment=TA_LEFT,
             textColor=c_muted,
         )
         s_meta_value = ParagraphStyle(
             'MetaValue',
             fontName=f_bold,
-            fontSize=7.5,
-            leading=9.5,
+            fontSize=9,
+            leading=11,
             alignment=TA_RIGHT,
             textColor=c_text,
         )
         s_card_head = ParagraphStyle(
             'CardHead',
             fontName=f_bold,
-            fontSize=6.5,
-            leading=8.5,
+            fontSize=7.5,
+            leading=9.5,
             alignment=TA_LEFT,
             textColor=c_muted,
         )
         s_card_party_name = ParagraphStyle(
             'CardPartyName',
             fontName=f_bold,
-            fontSize=9.5,
-            leading=11.5,
+            fontSize=11.5,
+            leading=14,
             alignment=TA_LEFT,
             textColor=c_text,
         )
         s_card_body = ParagraphStyle(
             'CardBody',
             fontName=f_norm,
-            fontSize=7.5,
-            leading=9.5,
+            fontSize=8.5,
+            leading=11,
             alignment=TA_LEFT,
             textColor=c_dark_muted,
         )
@@ -570,136 +578,136 @@ class ModernProformaPDFRenderer:
         s_total_label = ParagraphStyle(
             'TotalLabel',
             fontName=f_norm,
-            fontSize=7.5,
-            leading=9.5,
+            fontSize=8,
+            leading=10,
             alignment=TA_LEFT,
             textColor=c_muted,
         )
         s_total_val = ParagraphStyle(
             'TotalVal',
             fontName=f_bold,
-            fontSize=7.5,
-            leading=9.5,
+            fontSize=8.5,
+            leading=10.5,
             alignment=TA_RIGHT,
             textColor=c_text,
         )
         s_grand_label = ParagraphStyle(
             'GrandLabel',
             fontName=f_bold,
-            fontSize=9.5,
-            leading=12,
+            fontSize=10.5,
+            leading=13,
             alignment=TA_LEFT,
             textColor=c_accent,
         )
         s_grand_val = ParagraphStyle(
             'GrandVal',
             fontName=f_bold,
-            fontSize=10,
-            leading=12.5,
+            fontSize=11.5,
+            leading=14,
             alignment=TA_RIGHT,
             textColor=c_accent,
         )
         s_words_head = ParagraphStyle(
             'WordsHead',
             fontName=f_bold,
-            fontSize=6.5,
-            leading=8.5,
+            fontSize=7.5,
+            leading=9.5,
             textColor=c_muted,
         )
         s_words_val = ParagraphStyle(
             'WordsVal',
             fontName=f_bold,
-            fontSize=7.5,
-            leading=10,
+            fontSize=8.5,
+            leading=11,
             textColor=c_text,
         )
         s_bank_title = ParagraphStyle(
             'BankTitle',
             fontName=f_bold,
-            fontSize=6.5,
-            leading=8.5,
+            fontSize=7.5,
+            leading=9.5,
             textColor=c_muted,
         )
         s_bank_body = ParagraphStyle(
             'BankBody',
             fontName=f_norm,
-            fontSize=7,
-            leading=9,
+            fontSize=8,
+            leading=10.5,
             textColor=c_dark_muted,
         )
         s_terms_title = ParagraphStyle(
             'TermsTitle',
             fontName=f_bold,
-            fontSize=6.5,
-            leading=8.5,
+            fontSize=7.5,
+            leading=9.5,
             textColor=c_muted,
         )
         s_terms_body = ParagraphStyle(
             'TermsBody',
             fontName=f_norm,
-            fontSize=6.5,
-            leading=8.5,
+            fontSize=7.5,
+            leading=9.5,
             textColor=colors.HexColor('#475569'),
         )
         s_sig_title = ParagraphStyle(
             'SigTitle',
-            fontName=f_norm,
-            fontSize=7,
-            leading=9,
+            fontName=f_bold,
+            fontSize=7.5,
+            leading=9.5,
             alignment=TA_CENTER,
             textColor=c_muted,
         )
         s_sig_comp = ParagraphStyle(
             'SigComp',
             fontName=f_bold,
-            fontSize=7.5,
-            leading=9.5,
+            fontSize=8.5,
+            leading=10.5,
             alignment=TA_CENTER,
             textColor=c_text,
         )
         s_compact_seller = ParagraphStyle(
             'CompactSeller',
             fontName=f_bold,
-            fontSize=8,
-            leading=10,
+            fontSize=9.5,
+            leading=11.5,
             textColor=c_accent,
         )
         s_compact_meta = ParagraphStyle(
             'CompactMeta',
             fontName=f_norm,
-            fontSize=7.5,
-            leading=10,
+            fontSize=8.5,
+            leading=10.5,
             alignment=TA_RIGHT,
             textColor=c_dark_muted,
         )
         s_carry_label = ParagraphStyle(
             'CarryLabel',
             fontName=f_italic,
-            fontSize=7,
-            leading=9,
+            fontSize=7.5,
+            leading=9.5,
             alignment=TA_RIGHT,
             textColor=c_dark_muted,
         )
         s_carry_val = ParagraphStyle(
             'CarryVal',
             fontName=f_bold,
-            fontSize=7,
-            leading=9,
+            fontSize=7.5,
+            leading=9.5,
             alignment=TA_RIGHT,
             textColor=c_text,
         )
         s_cont_main = ParagraphStyle(
             'ContMain',
             fontName=f_italic,
-            fontSize=7,
-            leading=9,
+            fontSize=7.5,
+            leading=9.5,
             textColor=c_dark_muted,
         )
         s_cont_sub = ParagraphStyle(
             'ContSub',
             fontName=f_norm,
-            fontSize=6.5,
-            leading=8.5,
+            fontSize=7,
+            leading=9,
             alignment=TA_RIGHT,
             textColor=c_muted,
         )
@@ -814,15 +822,15 @@ class ModernProformaPDFRenderer:
             [Paragraph("Valid Until:", s_meta_label), Paragraph(f"<b>{valid_until}</b>", s_meta_value)],
             [Paragraph("Place of Supply:", s_meta_label), Paragraph(f"<b>{pos}</b>", s_meta_value)],
         ]
-        meta_table = Table(meta_rows, colWidths=[65, right_header_w - 65])
+        meta_table = Table(meta_rows, colWidths=[72, right_header_w - 72])
         meta_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, -1), c_card_bg),
             ('BOX', (0, 0), (-1, -1), 0.75, c_card_border),
             ('INNERGRID', (0, 0), (-1, -1), 0.5, c_pill_bg),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 3),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 2.5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
 
@@ -1098,14 +1106,14 @@ class ModernProformaPDFRenderer:
             Paragraph(f"₹ {fmt_curr(grand_total)}", s_grand_val),
         ])
 
-        totals_table = Table(tot_rows, colWidths=[right_bot_w - 75, 75])
+        totals_table = Table(tot_rows, colWidths=[right_bot_w - 90, 90])
         totals_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, -2), c_card_bg),
             ('BACKGROUND', (0, -1), (-1, -1), c_pill_bg),
             ('BOX', (0, 0), (-1, -1), 0.75, c_card_border),
             ('LINEBELOW', (0, -2), (-1, -2), 0.75, c_table_divider),
-            ('LEFTPADDING', (0, 0), (-1, -1), 7),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 7),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
             ('TOPPADDING', (0, 0), (-1, -2), 3),
             ('BOTTOMPADDING', (0, 0), (-1, -2), 3),
             ('TOPPADDING', (0, -1), (-1, -1), 5),
