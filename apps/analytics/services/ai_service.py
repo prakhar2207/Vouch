@@ -681,7 +681,12 @@ class AnalyticsEngine:
             company=company,
             forecast_list=forecast_list,
             anchor_date=anchor_date,
-            history_span_days=history_span_days
+            history_span_days=history_span_days,
+            factors_meta={
+                "month_end_surge_multiplier": round(month_end_surge_multiplier, 2),
+                "baseline_daily_rate": round(effective_base, 2),
+                "repeat_buyers_modeled": repeat_buyers_count,
+            }
         )
 
         # 8. Historical Daily Series & Combined Seamless Timeline (Sales vs Purchases vs Profit)
@@ -1164,7 +1169,7 @@ class AnalyticsEngine:
         }
 
     @staticmethod
-    def get_monthly_comparison(company: Company, forecast_list=None, anchor_date=None, history_span_days=0):
+    def get_monthly_comparison(company: Company, forecast_list=None, anchor_date=None, history_span_days=0, factors_meta=None):
         """
         Calculates Month-over-Month (MoM) and Year-over-Year (YoY) Performance & Projection Benchmark:
         1. Present Month:
@@ -1398,6 +1403,11 @@ class AnalyticsEngine:
             except Exception:
                 pass
 
+        f_meta = factors_meta or {}
+        surge_mult = float(f_meta.get("month_end_surge_multiplier", 1.30))
+        base_rate = float(f_meta.get("baseline_daily_rate", current_daily_run_rate or 0.0))
+        repeat_count = int(f_meta.get("repeat_buyers_modeled", 0))
+
         return {
             "current_month": {
                 "month_name": anchor_date.strftime('%B %Y'),
@@ -1411,7 +1421,11 @@ class AnalyticsEngine:
                 "projected_month_total": projected_month_total,
                 "completion_pct": completion_pct,
                 "current_daily_run_rate": current_daily_run_rate,
-                "projected_daily_run_rate": projected_daily_run_rate
+                "projected_daily_run_rate": projected_daily_run_rate,
+                "month_end_surge_multiplier": surge_mult,
+                "baseline_daily_rate": base_rate,
+                "repeat_buyers_modeled": repeat_count,
+                "calculation_formula": f"₹{mtd_sales:,.2f} (Actual MTD) + ₹{remaining_forecast:,.2f} ({days_remaining}d Forecast) = ₹{projected_month_total:,.2f}",
             },
             "previous_month": {
                 "month_name": last_month_name or "Previous Month",
