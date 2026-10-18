@@ -13,6 +13,9 @@ interface LineItem {
   description: string;
   brand?: string;
   barcode?: string;
+  color?: string;
+  imei_numbers?: string[];
+  attributes?: Record<string, any>;
   serial_numbers?: string;
   product_id?: string;
   hsn_code: string;
@@ -244,17 +247,19 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
   // Catalog Products & Barcode Linking State
   const [catalogProducts, setCatalogProducts] = useState<any[]>([]);
   const [scannerTargetIndex, setScannerTargetIndex] = useState<number | null>(null);
+  const [scannerField, setScannerField] = useState<'barcode' | 'imei'>('barcode');
 
   // GST Tax Treatment State
   const [taxType, setTaxType] = useState<'IGST' | 'CGST_SGST' | 'EXEMPT'>('IGST');
   const [companyStateCode, setCompanyStateCode] = useState<string>('');
 
-  // Helper to connect scanned OCR items to existing catalog products by Barcode or Name
+  // Helper to connect scanned OCR items to existing catalog products by Barcode, IMEI, or Name
   const linkItemsToCatalog = (items: LineItem[], prods: any[]): LineItem[] => {
     if (!prods || prods.length === 0) return items;
     return items.map((it) => {
       const itBarcode = (it.barcode || '').trim().toLowerCase();
       const itDesc = (it.description || '').trim().toLowerCase();
+      const itemImeis = it.imei_numbers || [];
 
       // 1. Link by Barcode if present
       if (itBarcode) {
@@ -272,7 +277,30 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
         }
       }
 
-      // 2. Link by Product Name
+      // 2. Link by IMEI in attributes if present
+      if (itemImeis.length > 0) {
+        const matched = prods.find((p) => {
+          if (p.attributes && typeof p.attributes === 'object') {
+            const pImeis = p.attributes.imei_numbers;
+            if (Array.isArray(pImeis)) {
+              return itemImeis.some((im) => pImeis.includes(im));
+            }
+          }
+          return false;
+        });
+        if (matched) {
+          return {
+            ...it,
+            product_id: matched.id,
+            barcode: it.barcode || matched.barcode || '',
+            brand: it.brand || matched.brand || '',
+            hsn_code: it.hsn_code || matched.hsn_code || '',
+            rate: it.rate > 0 ? it.rate : Number(matched.purchase_price || matched.selling_price || 0),
+          };
+        }
+      }
+
+      // 3. Link by Product Name
       if (itDesc) {
         const matched = prods.find(
           (p) => p.name && String(p.name).trim().toLowerCase() === itDesc
@@ -900,11 +928,13 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
 
       const partyLedgerId = partyRes.data.data?.id;
 
-      // 3. Format Items for Voucher Creation with Category Allocation & Barcode/Serials
+      // 3. Format Items for Voucher Creation with Category Allocation & Barcode/Serials/Attributes
       const formattedItems = invoice.line_items.map((item) => {
         const detailsParts: string[] = [];
+        if (item.color?.trim()) detailsParts.push(`Color: ${item.color.trim()}`);
         if (item.barcode?.trim()) detailsParts.push(`Barcode: ${item.barcode.trim()}`);
-        if (item.serial_numbers?.trim()) detailsParts.push(`S/N: ${item.serial_numbers.trim()}`);
+        if (item.imei_numbers && item.imei_numbers.length > 0) detailsParts.push(`IMEI: ${item.imei_numbers.join(', ')}`);
+        else if (item.serial_numbers?.trim()) detailsParts.push(`S/N: ${item.serial_numbers.trim()}`);
         const lineDesc = detailsParts.length > 0 ? detailsParts.join(' | ') : undefined;
 
         return {
@@ -913,6 +943,9 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           brand: item.brand && item.brand.trim() ? item.brand.trim() : undefined,
           barcode: item.barcode?.trim() || undefined,
           serial_numbers: item.serial_numbers?.trim() || undefined,
+          color: item.color?.trim() || undefined,
+          imei_numbers: item.imei_numbers && item.imei_numbers.length > 0 ? item.imei_numbers : undefined,
+          attributes: item.attributes || undefined,
           description: lineDesc,
           hsn_code: item.hsn_code,
           quantity: item.quantity,
@@ -1610,43 +1643,124 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
                       </div>
 
                       {/* Barcode & IMEI / Serial Details (Tally F11: Only when Barcode Feature is enabled or barcode/serials detected) */}
-                      {(isBarcodeEnabled || Boolean(item.barcode || item.serial_numbers)) && (
-                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1 border-t border-border/40">
-                          <div className="flex-1 flex items-center gap-1.5">
-                            <span className="text-[10px] text-muted-foreground font-mono shrink-0">Barcode:</span>
-                            <input
-                              type="text"
-                              value={item.barcode || ""}
-                              onChange={(e) => updateItem(idx, "barcode", e.target.value)}
-                              placeholder="Barcode / EAN"
-                              className="flex-1 bg-background border border-input text-foreground px-2 py-1 rounded text-xs font-mono outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                            {isBarcodeEnabled && (
-                              <button
-                                type="button"
-                                onClick={() => setScannerTargetIndex(idx)}
-                                className="px-2 py-1 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded text-[10px] font-semibold flex items-center gap-1 cursor-pointer shrink-0"
-                                title="Scan barcode with camera"
-                              >
-                                📷 Scan
-                              </button>
+                      {(isBarcodeEnabled || Boolean(item.barcode || item.serial_numbers || item.color || (item.imei_numbers && item.imei_numbers.length > 0))) && (
+                        <div className="flex flex-col gap-2 pt-2 border-t border-border/40">
+                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                            {/* Color Field */}
+                            <div className="sm:w-36 flex items-center gap-1.5">
+                              <span className="text-[10px] text-muted-foreground font-mono shrink-0">Color:</span>
+                              <input
+                                type="text"
+                                value={item.color || ""}
+                                onChange={(e) => updateItem(idx, "color", e.target.value)}
+                                placeholder="e.g. Black"
+                                className="w-full bg-background border border-input text-foreground px-2 py-1 rounded text-xs outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                            {/* Barcode Field */}
+                            <div className="flex-1 flex items-center gap-1.5">
+                              <span className="text-[10px] text-muted-foreground font-mono shrink-0">Barcode:</span>
+                              <input
+                                type="text"
+                                value={item.barcode || ""}
+                                onChange={(e) => updateItem(idx, "barcode", e.target.value)}
+                                placeholder="Barcode / EAN"
+                                className="flex-1 bg-background border border-input text-foreground px-2 py-1 rounded text-xs font-mono outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                              {isBarcodeEnabled && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setScannerField('barcode');
+                                    setScannerTargetIndex(idx);
+                                  }}
+                                  className="px-2 py-1 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded text-[10px] font-semibold flex items-center gap-1 cursor-pointer shrink-0"
+                                  title="Scan barcode with camera"
+                                >
+                                  📷 Scan
+                                </button>
+                              )}
+                            </div>
+                            {/* Serial numbers / S/N */}
+                            <div className="flex-1 flex items-center gap-1.5">
+                              <span className="text-[10px] text-muted-foreground font-mono shrink-0">S/N:</span>
+                              <input
+                                type="text"
+                                value={item.serial_numbers || ""}
+                                onChange={(e) => updateItem(idx, "serial_numbers", e.target.value)}
+                                placeholder="Serial Number"
+                                className="flex-1 bg-background border border-input text-foreground px-2 py-1 rounded text-xs font-mono outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                            {item.product_id && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 whitespace-nowrap">
+                                ✓ Linked
+                              </span>
                             )}
                           </div>
-                          <div className="flex-1 flex items-center gap-1.5">
-                            <span className="text-[10px] text-muted-foreground font-mono shrink-0">IMEI/S/N:</span>
-                            <input
-                              type="text"
-                              value={item.serial_numbers || ""}
-                              onChange={(e) => updateItem(idx, "serial_numbers", e.target.value)}
-                              placeholder="Serial No. / IMEI"
-                              className="flex-1 bg-background border border-input text-foreground px-2 py-1 rounded text-xs font-mono outline-none focus:ring-1 focus:ring-blue-500"
-                            />
+
+                          {/* Multi-IMEI Section for Electronics */}
+                          <div className="bg-muted/30 p-2 rounded-lg border border-border/50 space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                                📱 IMEI Numbers ({item.imei_numbers?.length || 0})
+                              </span>
+                              <div className="flex items-center gap-1">
+                                {isBarcodeEnabled && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setScannerField('imei');
+                                      setScannerTargetIndex(idx);
+                                    }}
+                                    className="px-2 py-0.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 rounded text-[10px] font-medium flex items-center gap-1 cursor-pointer"
+                                  >
+                                    📷 Scan IMEI
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            {/* IMEI Chips */}
+                            <div className="flex flex-wrap gap-1.5 items-center">
+                              {(item.imei_numbers || []).map((imei, imeiIdx) => (
+                                <span
+                                  key={imeiIdx}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-blue-600 dark:text-blue-400 font-mono text-[11px]"
+                                >
+                                  {imei}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const newImeis = (item.imei_numbers || []).filter((_, i) => i !== imeiIdx);
+                                      updateItem(idx, "imei_numbers", newImeis);
+                                    }}
+                                    className="hover:text-red-500 ml-0.5 text-xs font-bold"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                              {/* Quick add single IMEI input */}
+                              <input
+                                type="text"
+                                placeholder="+ Type IMEI & Enter"
+                                className="bg-background border border-input text-foreground px-2 py-0.5 rounded text-[11px] font-mono w-36 outline-none focus:ring-1 focus:ring-blue-500"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    const val = e.currentTarget.value.trim();
+                                    if (val) {
+                                      const existing = item.imei_numbers || [];
+                                      if (!existing.includes(val)) {
+                                        updateItem(idx, "imei_numbers", [...existing, val]);
+                                      }
+                                      e.currentTarget.value = '';
+                                    }
+                                  }
+                                }}
+                              />
+                            </div>
                           </div>
-                          {item.product_id && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 whitespace-nowrap">
-                              ✓ Linked
-                            </span>
-                          )}
                         </div>
                       )}
 
@@ -1855,20 +1969,74 @@ export default function PurchaseOcrSplitView({ companyId, onSuccess }: PurchaseO
           onScan={(code) => {
             if (invoice && scannerTargetIndex !== null) {
               const updated = [...invoice.line_items];
-              updated[scannerTargetIndex].barcode = code;
-              const matched = catalogProducts.find(
-                (p) => p.barcode && String(p.barcode).trim().toLowerCase() === code.trim().toLowerCase()
-              );
-              if (matched) {
-                updated[scannerTargetIndex].product_id = matched.id;
-                if (!updated[scannerTargetIndex].brand) updated[scannerTargetIndex].brand = matched.brand || '';
+              const curItem = updated[scannerTargetIndex];
+              const cleanCode = code.trim();
+
+              if (scannerField === 'imei') {
+                const existingImeis = curItem.imei_numbers ? [...curItem.imei_numbers] : [];
+                if (!existingImeis.includes(cleanCode)) {
+                  existingImeis.push(cleanCode);
+                  curItem.imei_numbers = existingImeis;
+                  if (curItem.quantity < existingImeis.length) {
+                    curItem.quantity = existingImeis.length;
+                    const r = parseFloat(String(curItem.rate)) || 0;
+                    const d = parseFloat(String(curItem.discount_percent)) || 0;
+                    const amountBefore = curItem.quantity * r;
+                    curItem.amount = Number((amountBefore - amountBefore * (d / 100)).toFixed(2));
+                  }
+                }
+                // Try matching catalog item with this IMEI
+                const matched = catalogProducts.find((p) => {
+                  if (p.attributes && typeof p.attributes === 'object') {
+                    const pImeis = p.attributes.imei_numbers;
+                    if (Array.isArray(pImeis) && pImeis.includes(cleanCode)) return true;
+                  }
+                  return false;
+                });
+                if (matched) {
+                  curItem.product_id = matched.id;
+                  if (!curItem.brand) curItem.brand = matched.brand || '';
+                }
+                toast.success(`Captured IMEI: ${cleanCode}`);
+              } else {
+                curItem.barcode = cleanCode;
+                const matched = catalogProducts.find(
+                  (p) => p.barcode && String(p.barcode).trim().toLowerCase() === cleanCode.toLowerCase()
+                );
+                if (matched) {
+                  curItem.product_id = matched.id;
+                  if (!curItem.brand) curItem.brand = matched.brand || '';
+                }
+                toast.success(`Captured Barcode: ${cleanCode}`);
               }
-              setInvoice({ ...invoice, line_items: updated });
-              toast.success(`Captured Barcode: ${code}`);
+
+              // Recalculate totals
+              const sub = Number(updated.reduce((s, i) => s + (Number(i.amount) || 0), 0).toFixed(2));
+              let totalTax = updated.reduce((s, it) => {
+                const amt = Number(it.amount || 0);
+                const r = Number(it.gst_rate ?? 18);
+                return s + Number((amt * (r / 100)).toFixed(2));
+              }, 0);
+              totalTax = Number(totalTax.toFixed(2));
+              const half = Number((totalTax / 2).toFixed(2));
+              const unrounded = Number((sub + totalTax).toFixed(2));
+              const roundedTot = Math.round(unrounded);
+              const autoRoundOff = Number((roundedTot - unrounded).toFixed(2));
+
+              setInvoice({
+                ...invoice,
+                line_items: updated,
+                subtotal: sub,
+                cgst_amount: invoice.igst_amount > 0 ? 0 : half,
+                sgst_amount: invoice.igst_amount > 0 ? 0 : Number((totalTax - half).toFixed(2)),
+                igst_amount: invoice.igst_amount > 0 ? totalTax : 0,
+                round_off: autoRoundOff,
+                total_amount: roundedTot,
+              });
             }
             setScannerTargetIndex(null);
           }}
-          title="Scan Item Barcode / QR"
+          title={scannerField === 'imei' ? "Scan Item IMEI" : "Scan Item Barcode / QR"}
         />
       )}
     </div>

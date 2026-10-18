@@ -8,6 +8,22 @@ import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useCompany } from '@/context/CompanyContext';
 import { useToast } from '@/context/ToastContext';
+import BarcodeScannerModal from '@/components/modals/BarcodeScannerModal';
+import { 
+  Plus, 
+  Trash2, 
+  Barcode as BarcodeIcon, 
+  Camera, 
+  Tag, 
+  Smartphone, 
+  Palette, 
+  Check, 
+  X, 
+  ShieldCheck, 
+  Sparkles, 
+  Layers,
+  Cpu
+} from 'lucide-react';
 
 export default function NewItemInCategoryPage() {
   const router = useRouter();
@@ -20,6 +36,17 @@ export default function NewItemInCategoryPage() {
   const [category, setCategory] = useState<any>(null);
   const [companyId, setCompanyId] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Features, Custom Attributes & Multi-IMEI State
+  const [attributes, setAttributes] = useState<Record<string, any>>({});
+  const [imeiList, setImeiList] = useState<string[]>([]);
+  const [currentImeiInput, setCurrentImeiInput] = useState('');
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scannerTarget, setScannerTarget] = useState<'BARCODE' | 'IMEI'>('IMEI');
+  const [customKeyInput, setCustomKeyInput] = useState('');
+  const [customValInput, setCustomValInput] = useState('');
+  const [showAddCustomModal, setShowAddCustomModal] = useState(false);
+  const [activeFeatureTab, setActiveFeatureTab] = useState<'ALL' | 'IMEI' | 'COLOR' | 'SPECS'>('ALL');
 
   const [formData, setFormData] = useState({
     name: '',
@@ -89,6 +116,101 @@ export default function NewItemInCategoryPage() {
     }
   };
 
+  // IMEI management
+  const handleAddImei = (code: string) => {
+    const clean = code.trim();
+    if (!clean) return;
+    if (imeiList.includes(clean)) {
+      toast.warning('Duplicate IMEI', `IMEI "${clean}" is already in the list.`);
+      return;
+    }
+    const updated = [...imeiList, clean];
+    setImeiList(updated);
+    setAttributes(prev => ({ ...prev, imei_numbers: updated }));
+
+    // Sync into description for electronics invoices & quotations
+    setFormData(prev => {
+      const parts = prev.description ? prev.description.split(' | ').filter(p => !p.startsWith('IMEI:')) : [];
+      parts.push(`IMEI: ${updated.join(', ')}`);
+      // If opening stock is 0 or less than IMEI count, update opening stock to match IMEI count
+      const currentStock = parseFloat(prev.opening_qty) || 0;
+      const newStock = Math.max(currentStock, updated.length);
+      return { 
+        ...prev, 
+        description: parts.join(' | '),
+        opening_qty: newStock.toString()
+      };
+    });
+    setCurrentImeiInput('');
+    toast.success('IMEI Attached', `Added ${clean} (${updated.length} total)`);
+  };
+
+  const handleRemoveImei = (indexToRemove: number) => {
+    const updated = imeiList.filter((_, idx) => idx !== indexToRemove);
+    setImeiList(updated);
+    setAttributes(prev => {
+      const next = { ...prev };
+      if (updated.length > 0) next.imei_numbers = updated;
+      else delete next.imei_numbers;
+      return next;
+    });
+    setFormData(prev => {
+      const parts = prev.description ? prev.description.split(' | ').filter(p => !p.startsWith('IMEI:')) : [];
+      if (updated.length > 0) parts.push(`IMEI: ${updated.join(', ')}`);
+      return { ...prev, description: parts.join(' | ') };
+    });
+  };
+
+  const handleSetColor = (colorName: string) => {
+    const clean = colorName.trim();
+    setAttributes(prev => {
+      const next = { ...prev };
+      if (clean) next.color = clean;
+      else delete next.color;
+      return next;
+    });
+    setFormData(prev => {
+      const parts = prev.description ? prev.description.split(' | ').filter(p => !p.startsWith('Color:')) : [];
+      if (clean) parts.unshift(`Color: ${clean}`);
+      return { ...prev, description: parts.join(' | ') };
+    });
+  };
+
+  const handleAddCustomAttribute = (key: string, value: string) => {
+    const k = key.trim();
+    const v = value.trim();
+    if (!k || !v) return;
+    setAttributes(prev => ({ ...prev, [k]: v }));
+    setShowAddCustomModal(false);
+    setCustomKeyInput('');
+    setCustomValInput('');
+    toast.success('Feature Added', `${k}: ${v}`);
+  };
+
+  const handleRemoveAttribute = (key: string) => {
+    setAttributes(prev => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    if (key === 'color') {
+      setFormData(prev => {
+        const parts = prev.description ? prev.description.split(' | ').filter(p => !p.startsWith('Color:')) : [];
+        return { ...prev, description: parts.join(' | ') };
+      });
+    }
+  };
+
+  const handleBarcodeScanned = (scannedCode: string) => {
+    if (scannerTarget === 'BARCODE') {
+      setFormData(prev => ({ ...prev, barcode: scannedCode }));
+      toast.success('Barcode Scanned', scannedCode);
+      setIsScannerOpen(false);
+    } else {
+      handleAddImei(scannedCode);
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -98,6 +220,7 @@ export default function NewItemInCategoryPage() {
 
       const payload = {
         ...formData,
+        attributes,
         selling_price: parseFloat(formData.selling_price) || 0,
         wholesaler_price: parseFloat(formData.wholesaler_price) || 0,
         min_selling_price: parseFloat(formData.min_selling_price) || 0,
@@ -107,7 +230,7 @@ export default function NewItemInCategoryPage() {
         conversion_factor: parseFloat(formData.conversion_factor.toString()) || 1,
         category_id: categoryId,
         track_batches: trackBatch,
-        track_serial_numbers: trackSerial,
+        track_serial_numbers: trackSerial || imeiList.length > 0,
       };
 
       const res = await axios.post(`${API_BASE_URL}/api/v1/inventory/products/${companyId}/`, payload, { headers });
@@ -325,6 +448,250 @@ export default function NewItemInCategoryPage() {
                     </div>
                   </div>
 
+                {/* ───── FEATURES & CUSTOM ATTRIBUTES (ELECTRONICS / IMEI / SPECS) ───── */}
+                <div className="bg-card border border-border rounded-xl shadow-sm p-6 space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-lg flex items-center justify-center text-sm font-bold">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                          <span>Features & Attributes</span>
+                          {Object.keys(attributes).length > 0 && (
+                            <span className="text-xs bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded-full font-bold">
+                              {Object.keys(attributes).length} Active
+                            </span>
+                          )}
+                        </h2>
+                        <p className="text-xs text-muted-foreground">Add Color, Multi-IMEI numbers, Specifications, or Custom product tags.</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddCustomModal(true)}
+                        className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>+ Add Feature</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Feature Quick-Add Pills */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScannerTarget('IMEI');
+                        setIsScannerOpen(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg border border-purple-500/30 bg-purple-500/10 text-purple-700 dark:text-purple-300 text-xs font-semibold flex items-center gap-1.5 hover:bg-purple-500/20 transition-colors cursor-pointer"
+                    >
+                      <Camera className="w-3.5 h-3.5 text-purple-500" />
+                      <span>📷 Scan Barcode / IMEI</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const defaultColors = ['Space Black', 'Titanium Gray', 'Silver', 'Gold', 'Midnight Blue', 'White'];
+                        const currentColor = attributes.color || '';
+                        const nextIndex = (defaultColors.indexOf(currentColor) + 1) % defaultColors.length;
+                        handleSetColor(defaultColors[nextIndex]);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                        attributes.color
+                          ? 'border-blue-500/40 bg-blue-500/15 text-blue-700 dark:text-blue-300 font-bold'
+                          : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground'
+                      }`}
+                    >
+                      <Palette className="w-3.5 h-3.5 text-blue-500" />
+                      <span>{attributes.color ? `Color: ${attributes.color}` : '+ Add Color'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleAddCustomAttribute('Storage', '128GB')}
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                        attributes.Storage
+                          ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold'
+                          : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground'
+                      }`}
+                    >
+                      <Cpu className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>{attributes.Storage ? `Storage: ${attributes.Storage}` : '+ Storage (128GB)'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleAddCustomAttribute('Warranty', '1 Year')}
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                        attributes.Warranty
+                          ? 'border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold'
+                          : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground'
+                      }`}
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
+                      <span>{attributes.Warranty ? `Warranty: ${attributes.Warranty}` : '+ 1 Year Warranty'}</span>
+                    </button>
+                  </div>
+
+                  {/* Multi-IMEI / Serial Manager for Electronics Shops */}
+                  <div className="p-4 bg-muted/30 dark:bg-muted/10 border border-border rounded-xl space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Smartphone className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                        <span className="text-xs font-bold uppercase tracking-wider text-foreground">
+                          IMEI / Serial Numbers ({imeiList.length})
+                        </span>
+                        <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded font-mono">
+                          Single Item Master Tracking
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setScannerTarget('IMEI');
+                          setIsScannerOpen(true);
+                        }}
+                        className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors self-start sm:self-auto"
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>Scan IMEI Barcode</span>
+                      </button>
+                    </div>
+
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      For mobile & electronics shops: All unique 15-digit IMEIs for this model are attached here under this single item. Searching any IMEI will find this product.
+                    </p>
+
+                    {/* IMEI Input & Add */}
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="Type 15-digit IMEI or Serial number and hit Enter..."
+                        value={currentImeiInput}
+                        onChange={e => setCurrentImeiInput(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddImei(currentImeiInput);
+                          }
+                        }}
+                        className="flex-1 bg-background border border-input text-foreground px-3 py-2 rounded-lg text-xs font-mono outline-none focus:ring-2 focus:ring-purple-500 shadow-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleAddImei(currentImeiInput)}
+                        disabled={!currentImeiInput.trim()}
+                        className="px-3.5 py-2 bg-muted hover:bg-muted/80 text-foreground border border-input rounded-lg text-xs font-bold disabled:opacity-50 transition-colors cursor-pointer"
+                      >
+                        Add IMEI
+                      </button>
+                    </div>
+
+                    {/* IMEI Chips List */}
+                    {imeiList.length > 0 ? (
+                      <div className="flex items-center gap-2 flex-wrap pt-1 max-h-48 overflow-y-auto">
+                        {imeiList.map((imei, idx) => (
+                          <div
+                            key={idx}
+                            className="bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/25 px-2.5 py-1 rounded-lg text-xs font-mono font-bold flex items-center gap-2 shadow-2xs group"
+                          >
+                            <span className="text-[10px] text-purple-400 font-normal">#{idx + 1}</span>
+                            <span>{imei}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveImei(idx)}
+                              className="text-purple-400 hover:text-red-500 transition-colors p-0.5 rounded cursor-pointer"
+                              title="Remove IMEI"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground italic">
+                        No IMEIs attached yet. Scan with camera or type above to add.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Color Selector / Custom Attributes List */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Color Input */}
+                    <div className="p-3 bg-muted/20 border border-border rounded-xl space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                          <Palette className="w-3.5 h-3.5 text-blue-500" />
+                          <span>Product Color</span>
+                        </label>
+                        {attributes.color && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAttribute('color')}
+                            className="text-[10px] text-rose-500 hover:underline cursor-pointer"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="e.g. Space Black, Titanium Gray, Silver"
+                        value={attributes.color || ''}
+                        onChange={e => handleSetColor(e.target.value)}
+                        className="w-full bg-background border border-input text-foreground px-3 py-1.5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    {/* Active Attributes Badges */}
+                    <div className="p-3 bg-muted/20 border border-border rounded-xl space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                          <Tag className="w-3.5 h-3.5 text-emerald-500" />
+                          <span>Active Specifications ({Object.keys(attributes).filter(k => k !== 'imei_numbers' && k !== 'color').length})</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setShowAddCustomModal(true)}
+                          className="text-[11px] text-primary hover:underline cursor-pointer font-semibold"
+                        >
+                          + Add New
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {Object.entries(attributes)
+                          .filter(([k]) => k !== 'imei_numbers' && k !== 'color')
+                          .map(([key, val]) => (
+                            <span
+                              key={key}
+                              className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 px-2 py-0.5 rounded text-xs font-medium flex items-center gap-1.5"
+                            >
+                              <span className="font-semibold text-emerald-600 dark:text-emerald-400">{key}:</span>
+                              <span>{String(val)}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveAttribute(key)}
+                                className="text-muted-foreground hover:text-red-500 cursor-pointer"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          ))}
+                        {Object.keys(attributes).filter(k => k !== 'imei_numbers' && k !== 'color').length === 0 && (
+                          <span className="text-[11px] text-muted-foreground italic">No custom specs added.</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 {/* ───── ZONE 2 & 3: ADVANCED (Conditionally rendered) ───── */}
                 {enableAdvancedItemCreation && (
                   <>
@@ -488,7 +855,20 @@ export default function NewItemInCategoryPage() {
                               <input type="text" placeholder="Auto-generated if blank" value={formData.sku} onChange={e => setFormData({ ...formData, sku: e.target.value })} className="w-full bg-background border border-input text-foreground p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm shadow-xs" />
                             </div>
                             <div>
-                              <label className="block text-sm font-medium text-muted-foreground mb-1.5">Barcode</label>
+                              <div className="flex items-center justify-between mb-1.5">
+                                <label className="block text-sm font-medium text-muted-foreground">Barcode</label>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setScannerTarget('BARCODE');
+                                    setIsScannerOpen(true);
+                                  }}
+                                  className="text-xs text-primary hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                                >
+                                  <Camera className="w-3 h-3" />
+                                  <span>Scan</span>
+                                </button>
+                              </div>
                               <input type="text" placeholder="Scan or enter barcode" value={formData.barcode} onChange={e => setFormData({ ...formData, barcode: e.target.value })} className="w-full bg-background border border-input text-foreground p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm shadow-xs" />
                             </div>
                           </div>
@@ -656,13 +1036,35 @@ export default function NewItemInCategoryPage() {
                   <div className="bg-card border border-border rounded-xl shadow-sm p-4">
                     <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-3">Active Features</p>
                     <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${imeiList.length > 0 ? 'bg-purple-500' : 'bg-muted-foreground/40'}`}></span>
+                          <span className={imeiList.length > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'}>IMEI / Serial</span>
+                        </div>
+                        {imeiList.length > 0 && (
+                          <span className="text-[10px] font-mono font-bold bg-purple-500/10 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded">
+                            {imeiList.length} items
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${Object.keys(attributes).length > 0 ? 'bg-indigo-500' : 'bg-muted-foreground/40'}`}></span>
+                          <span className={Object.keys(attributes).length > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'}>Attributes</span>
+                        </div>
+                        {Object.keys(attributes).length > 0 && (
+                          <span className="text-[10px] font-mono font-bold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded">
+                            {Object.keys(attributes).length} active
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2 text-sm">
                         <span className={`w-2 h-2 rounded-full ${trackBatch ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`}></span>
                         <span className={trackBatch ? 'text-foreground font-medium' : 'text-muted-foreground'}>Batch Tracking</span>
                       </div>
                       <div className="flex items-center gap-2 text-sm">
-                        <span className={`w-2 h-2 rounded-full ${trackSerial ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`}></span>
-                        <span className={trackSerial ? 'text-foreground font-medium' : 'text-muted-foreground'}>Serial Tracking</span>
+                        <span className={`w-2 h-2 rounded-full ${trackSerial || imeiList.length > 0 ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`}></span>
+                        <span className={trackSerial || imeiList.length > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'}>Serial Tracking</span>
                       </div>
                       <div className="flex items-center gap-2 text-sm">
                         <span className={`w-2 h-2 rounded-full ${formData.alternate_unit ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`}></span>
@@ -674,6 +1076,87 @@ export default function NewItemInCategoryPage() {
               </div>
             </div>
           </form>
+
+          {/* Barcode & IMEI Scanner Modal */}
+          {isScannerOpen && (
+            <BarcodeScannerModal
+              isOpen={isScannerOpen}
+              onClose={() => setIsScannerOpen(false)}
+              onScan={handleBarcodeScanned}
+              title={scannerTarget === 'BARCODE' ? "Scan Product Barcode" : "Scan IMEI / Serial Barcode"}
+              continuous={scannerTarget === 'IMEI'}
+            />
+          )}
+
+          {/* Add Custom Attribute / Specification Modal */}
+          {showAddCustomModal && (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-sm p-5 space-y-4 animate-in fade-in zoom-in-95">
+                <div className="flex items-center justify-between border-b border-border pb-3">
+                  <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                    <Tag className="w-4 h-4 text-primary" />
+                    <span>Add Product Feature / Spec</span>
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCustomModal(false)}
+                    className="text-muted-foreground hover:text-foreground p-1 rounded cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1">Feature Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Storage, RAM, Battery, Processor"
+                      value={customKeyInput}
+                      onChange={e => setCustomKeyInput(e.target.value)}
+                      className="w-full bg-background border border-input text-foreground px-3 py-2 rounded-lg text-xs outline-none focus:ring-2 focus:ring-primary shadow-xs"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1">Feature Value</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 256GB, 12GB, 5000mAh, Snapdragon 8 Gen 3"
+                      value={customValInput}
+                      onChange={e => setCustomValInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddCustomAttribute(customKeyInput, customValInput);
+                        }
+                      }}
+                      className="w-full bg-background border border-input text-foreground px-3 py-2 rounded-lg text-xs outline-none focus:ring-2 focus:ring-primary shadow-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCustomModal(false)}
+                    className="px-3 py-1.5 rounded-lg border border-input text-muted-foreground hover:text-foreground text-xs cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAddCustomAttribute(customKeyInput, customValInput)}
+                    disabled={!customKeyInput.trim() || !customValInput.trim()}
+                    className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-bold disabled:opacity-50 cursor-pointer"
+                  >
+                    Add Feature
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </DashboardLayout>

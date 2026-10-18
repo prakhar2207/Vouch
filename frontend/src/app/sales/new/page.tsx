@@ -1274,36 +1274,49 @@ export default function SalesPage() {
       (p.barcode && String(p.barcode).trim().toLowerCase() === codeLower) ||
       (p.sku && String(p.sku).trim().toLowerCase() === codeLower) ||
       (p.alias && String(p.alias).trim().toLowerCase() === codeLower) ||
-      (p.name && String(p.name).trim().toLowerCase() === codeLower)
+      (p.name && String(p.name).trim().toLowerCase() === codeLower) ||
+      (p.attributes && typeof p.attributes === 'object' && Array.isArray(p.attributes.imei_numbers) && p.attributes.imei_numbers.some((im: string) => String(im).trim().toLowerCase() === codeLower))
     );
 
     if (!matchedProd) {
-      toast.error(`Barcode / SKU "${rawCode}" not found in catalog.`);
+      toast.error(`Barcode / IMEI "${rawCode}" not found in catalog.`);
       setBarcodeInput('');
       return;
     }
 
     const newGroups = [...groupedItems];
 
+    // Check if this scan matched an IMEI
+    const isImeiMatch = Boolean(
+      (matchedProd.attributes && typeof matchedProd.attributes === 'object' && Array.isArray(matchedProd.attributes.imei_numbers) && matchedProd.attributes.imei_numbers.some((im: string) => String(im).trim().toLowerCase() === codeLower)) ||
+      (rawCode.length === 15 && /^\d+$/.test(rawCode))
+    );
+
     // Detail associated with this specific scan (Barcode / Serial / IMEI)
-    const scanDetail = matchedProd.barcode && String(matchedProd.barcode).trim().toLowerCase() !== codeLower
-      ? `S/N: ${rawCode}`
-      : `Barcode: ${rawCode}`;
+    const scanDetail = isImeiMatch
+      ? `IMEI: ${rawCode}`
+      : (matchedProd.barcode && String(matchedProd.barcode).trim().toLowerCase() !== codeLower
+          ? `S/N: ${rawCode}`
+          : `Barcode: ${rawCode}`);
 
     // Check if already in current line items -> increment quantity & append barcode details
     for (let g = 0; g < newGroups.length; g++) {
       for (let i = 0; i < newGroups[g].items.length; i++) {
         const it = newGroups[g].items[i];
         if (it.product_id === matchedProd.id || (it.product_name && it.product_name.toLowerCase() === matchedProd.name.toLowerCase())) {
+          const currentDesc = String(it.description || '').trim();
+          if (isImeiMatch && currentDesc.includes(rawCode)) {
+            toast.info(`IMEI ${rawCode} is already attached to this line item.`);
+            setBarcodeInput('');
+            return;
+          }
+
           const newQty = (Number(it.quantity) || 0) + 1;
           it.quantity = newQty;
 
           // Append barcode / serial details to item description
-          const currentDesc = String(it.description || '').trim();
           if (currentDesc) {
-            if (!currentDesc.includes(rawCode)) {
-              it.description = `${currentDesc}, ${rawCode}`;
-            }
+            it.description = `${currentDesc}, ${scanDetail}`;
           } else {
             const baseDesc = matchedProd.description ? `${matchedProd.description} | ` : '';
             it.description = `${baseDesc}${scanDetail}`;
@@ -1326,7 +1339,9 @@ export default function SalesPage() {
     const rate = (pastRateInfo && Number(pastRateInfo.rate) > 0) ? Number(pastRateInfo.rate) : catalogMrp;
 
     const baseDesc = matchedProd.description ? `${matchedProd.description} | ` : '';
-    const initialDesc = `${baseDesc}${scanDetail}`;
+    const prodColor = matchedProd.attributes?.color;
+    const colorPrefix = prodColor ? `Color: ${prodColor} | ` : '';
+    const initialDesc = `${colorPrefix}${baseDesc}${scanDetail}`;
 
     const newItem = {
       product_name: matchedProd.name,
@@ -1620,13 +1635,17 @@ export default function SalesPage() {
       const pAlias = (p.alias || '').toLowerCase();
       const pSku = (p.sku || '').toLowerCase();
       const pDesc = (p.description || '').toLowerCase();
+      const pBarcode = (p.barcode || '').toLowerCase();
+      const pAttrs = p.attributes ? JSON.stringify(p.attributes).toLowerCase() : '';
       return (
         pName.includes(query) ||
         pAlpha.includes(queryAlpha) ||
         pBrand.includes(query) ||
         pAlias.includes(query) ||
         pSku.includes(query) ||
-        pDesc.includes(query)
+        pDesc.includes(query) ||
+        pBarcode.includes(query) ||
+        pAttrs.includes(query)
       );
     });
 
@@ -1884,6 +1903,52 @@ export default function SalesPage() {
             <span>● Stock:</span>
             <strong>{availStock} {matched.unit || 'PCS'}</strong>
           </span>
+        )}
+
+        {/* 2b. Color Pill */}
+        {matched?.attributes?.color && (
+          <span className="text-[10px] px-2 py-0.5 rounded-md border font-medium bg-purple-50 text-purple-800 border-purple-200 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 flex items-center gap-1">
+            <span>Color:</span>
+            <strong>{matched.attributes.color}</strong>
+          </span>
+        )}
+
+        {/* 2c. Multi-IMEI Selector for Electronics */}
+        {Array.isArray(matched?.attributes?.imei_numbers) && matched.attributes.imei_numbers.length > 0 && (
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-[9px] text-muted-foreground font-semibold uppercase flex items-center gap-0.5">
+              <span>📱</span> Attach IMEI:
+            </span>
+            {matched.attributes.imei_numbers.map((im: string) => {
+              const currentDesc = String(item.description || '');
+              const isAttached = currentDesc.includes(im);
+              return (
+                <button
+                  key={im}
+                  type="button"
+                  onClick={() => {
+                    const desc = String(item.description || '').trim();
+                    if (isAttached) {
+                      const cleaned = desc.replace(new RegExp(`(?:,?\\s*IMEI:\\s*${im}|${im})`, 'g'), '').replace(/^[,\s|]+|[,\s|]+$/g, '').trim();
+                      updateItem(gIndex, iIndex, 'description', cleaned);
+                    } else {
+                      const imeiPart = `IMEI: ${im}`;
+                      const newDesc = desc ? `${desc}, ${imeiPart}` : imeiPart;
+                      updateItem(gIndex, iIndex, 'description', newDesc);
+                    }
+                  }}
+                  className={`text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                    isAttached
+                      ? 'bg-blue-600 text-white border-blue-700 dark:bg-blue-600 font-bold'
+                      : 'bg-muted/70 text-foreground hover:bg-muted border-border'
+                  }`}
+                  title={isAttached ? 'Click to remove this IMEI from invoice' : 'Click to attach this IMEI to this invoice item'}
+                >
+                  {isAttached ? `✓ ${im}` : `+ ${im}`}
+                </button>
+              );
+            })}
+          </div>
         )}
 
         {/* 3. Brand-Specific Last Billed HUD Card */}

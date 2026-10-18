@@ -13,6 +13,7 @@ import BulkBrandDiscountModal from '@/components/modals/BulkBrandDiscountModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 import ItemHistoryModal from '@/components/modals/ItemHistoryModal';
 import { offlineDb } from '@/lib/db/offlineDb';
+import BarcodeScannerModal from '@/components/modals/BarcodeScannerModal';
 import { 
   ArrowUpDown, 
   FileSpreadsheet, 
@@ -31,7 +32,11 @@ import {
   History,
   BarChart2,
   FileText,
-  RefreshCw
+  RefreshCw,
+  Camera,
+  Smartphone,
+  Palette,
+  Copy
 } from 'lucide-react';
 
 type SortOption = 
@@ -102,6 +107,16 @@ export default function CategoryDetailPage() {
 
   // Item Bill History State
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<any>(null);
+
+  // Item IMEI Management Modal State
+  const [selectedImeiItem, setSelectedImeiItem] = useState<any>(null);
+  const [imeiModalList, setImeiModalList] = useState<string[]>([]);
+  const [newImeiInput, setNewImeiInput] = useState('');
+  const [isImeiSaving, setIsImeiSaving] = useState(false);
+
+  // Barcode Scanner Modal State
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scannerMode, setScannerMode] = useState<'SEARCH' | 'IMEI_MODAL'>('SEARCH');
 
   useEffect(() => {
     if (!isAuthenticated()) { router.push('/login'); return; }
@@ -180,6 +195,96 @@ export default function CategoryDetailPage() {
     }
   };
 
+  // IMEI Manager Handlers for Electronics Items
+  const openImeiManager = (item: any) => {
+    setSelectedImeiItem(item);
+    const imeis = item.attributes?.imei_numbers || [];
+    setImeiModalList(Array.isArray(imeis) ? [...imeis] : [String(imeis)]);
+    setNewImeiInput('');
+  };
+
+  const handleAddImeiInModal = (code: string) => {
+    const clean = code.trim();
+    if (!clean) return;
+    if (imeiModalList.includes(clean)) {
+      toast.warning('Duplicate IMEI', `IMEI "${clean}" is already in the list.`);
+      return;
+    }
+    const updated = [...imeiModalList, clean];
+    setImeiModalList(updated);
+    setNewImeiInput('');
+    toast.success('IMEI Added', clean);
+  };
+
+  const handleRemoveImeiInModal = (indexToRemove: number) => {
+    setImeiModalList(prev => prev.filter((_, idx) => idx !== indexToRemove));
+  };
+
+  const handleSaveImeis = async () => {
+    if (!selectedImeiItem) return;
+    setIsImeiSaving(true);
+    try {
+      const pid = selectedImeiItem.id;
+      const currentAttrs = selectedImeiItem.attributes ? { ...selectedImeiItem.attributes } : {};
+      if (imeiModalList.length > 0) {
+        currentAttrs.imei_numbers = imeiModalList;
+      } else {
+        delete currentAttrs.imei_numbers;
+      }
+
+      // Update description with IMEI list
+      let desc = selectedImeiItem.description || '';
+      const parts = desc.split(' | ').filter((p: string) => !p.startsWith('IMEI:'));
+      if (imeiModalList.length > 0) {
+        parts.push(`IMEI: ${imeiModalList.join(', ')}`);
+      }
+      const newDesc = parts.join(' | ');
+
+      const payload = {
+        attributes: currentAttrs,
+        description: newDesc,
+        track_serial_numbers: imeiModalList.length > 0,
+      };
+
+      const res = await api.patch(
+        `/api/v1/inventory/products/${companyId}/${pid}/`,
+        payload
+      );
+      if (res.data.success) {
+        setProducts(prev => {
+          const updated = prev.map(p => {
+            if (p.id === pid) return { ...p, ...payload };
+            if (p.variants) {
+              return {
+                ...p,
+                variants: p.variants.map((v: any) => v.id === pid ? { ...v, ...payload } : v)
+              };
+            }
+            return p;
+          });
+          offlineDb.masters.put({ key: `category_products_${categoryId}`, data: updated, updatedAt: Date.now() }).catch(() => {});
+          return updated;
+        });
+        toast.success('IMEIs Updated', `Updated ${imeiModalList.length} IMEIs for ${selectedImeiItem.name}`);
+        setSelectedImeiItem(null);
+      }
+    } catch (err: any) {
+      toast.error('Failed to update IMEIs', err.response?.data?.error || err.message);
+    } finally {
+      setIsImeiSaving(false);
+    }
+  };
+
+  const handleBarcodeScanned = (scannedCode: string) => {
+    if (scannerMode === 'SEARCH') {
+      setSearch(scannedCode);
+      toast.success('Barcode Scanned', `Found item for ${scannedCode}`);
+      setIsScannerOpen(false);
+    } else if (scannerMode === 'IMEI_MODAL') {
+      handleAddImeiInModal(scannedCode);
+    }
+  };
+
   const startEdit = (p: any) => {
     setEditingId(p.id);
     const sp = parseFloat(p.selling_price) || 0;
@@ -191,6 +296,9 @@ export default function CategoryDetailPage() {
       name: p.name,
       alias: p.alias || '',
       brand: p.brand || '',
+      barcode: p.barcode || '',
+      description: p.description || '',
+      attributes: p.attributes ? { ...p.attributes } : {},
       selling_price: sp,
       wholesaler_price: p.wholesaler_price,
       purchase_price: pp,
@@ -331,10 +439,19 @@ export default function CategoryDetailPage() {
   // Filter items based on search and selected brands
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
-      const matchesSearch = 
-        p.name.toLowerCase().includes(search.toLowerCase()) ||
-        (p.brand || '').toLowerCase().includes(search.toLowerCase()) ||
-        p.sku.toLowerCase().includes(search.toLowerCase());
+      const sLower = search.toLowerCase().trim();
+      let matchesSearch = true;
+      if (sLower) {
+        const attrsStr = p.attributes ? JSON.stringify(p.attributes).toLowerCase() : '';
+        matchesSearch = 
+          p.name.toLowerCase().includes(sLower) ||
+          (p.brand || '').toLowerCase().includes(sLower) ||
+          (p.alias || '').toLowerCase().includes(sLower) ||
+          (p.sku || '').toLowerCase().includes(sLower) ||
+          (p.barcode || '').toLowerCase().includes(sLower) ||
+          (p.description || '').toLowerCase().includes(sLower) ||
+          attrsStr.includes(sLower);
+      }
       
       if (!matchesSearch) return false;
 
@@ -710,16 +827,28 @@ export default function CategoryDetailPage() {
             {/* Filter & Sort Controls Toolbar */}
             <div className="p-3 sm:p-4 border-b border-border/60 bg-muted/15 flex flex-col md:flex-row md:items-center justify-between gap-3">
               
-              {/* Search Bar */}
-              <div className="relative w-full md:max-w-xs">
-                <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-2.5" />
+              {/* Search Bar with Camera Barcode/IMEI Scanner */}
+              <div className="relative w-full md:max-w-xs flex items-center">
+                <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-2.5 pointer-events-none" />
                 <input
                   type="text"
-                  placeholder="Search item, size, brand, SKU..."
+                  placeholder="Search name, IMEI, barcode..."
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  className="bg-muted/30 border border-border/70 text-foreground pl-9 pr-3.5 py-1.5 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 w-full text-xs transition-all"
+                  className="bg-muted/30 border border-border/70 text-foreground pl-9 pr-16 py-1.5 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 w-full text-xs transition-all shadow-2xs"
                 />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScannerMode('SEARCH');
+                    setIsScannerOpen(true);
+                  }}
+                  className="absolute right-1.5 px-2 py-0.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Scan barcode or IMEI with camera to locate item"
+                >
+                  <Camera className="w-3 h-3" />
+                  <span>Scan</span>
+                </button>
               </div>
 
               {/* Sort By Dropdown & Count */}
@@ -1008,6 +1137,42 @@ export default function CategoryDetailPage() {
                               </div>
                             </div>
 
+                            {/* Features, Color & IMEI Badges */}
+                            {(v.attributes?.color || (v.attributes?.imei_numbers && Array.isArray(v.attributes.imei_numbers) && v.attributes.imei_numbers.length > 0) || v.track_serial_numbers) && (
+                              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                                {v.attributes?.color && (
+                                  <span className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded font-semibold flex items-center gap-1">
+                                    <Palette className="w-2.5 h-2.5" />
+                                    <span>{v.attributes.color}</span>
+                                  </span>
+                                )}
+                                {v.attributes?.imei_numbers && Array.isArray(v.attributes.imei_numbers) && v.attributes.imei_numbers.length > 0 ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openImeiManager(v);
+                                    }}
+                                    className="text-[10px] bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 px-1.5 py-0.5 rounded font-mono font-bold flex items-center gap-1 cursor-pointer hover:bg-purple-500/20 transition-colors"
+                                  >
+                                    <Smartphone className="w-2.5 h-2.5" />
+                                    <span>{v.attributes.imei_numbers.length} IMEIs</span>
+                                  </button>
+                                ) : v.track_serial_numbers ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openImeiManager(v);
+                                    }}
+                                    className="text-[10px] text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/30 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800/30 hover:underline cursor-pointer"
+                                  >
+                                    + Add IMEI
+                                  </button>
+                                ) : null}
+                              </div>
+                            )}
+
                             {/* 3-Column Financial & Stock Metrics Grid */}
                             <div className="grid grid-cols-3 gap-2 pt-1 border-t border-border/30">
                               <div className="bg-muted/30 rounded-lg p-1.5 text-center">
@@ -1163,10 +1328,49 @@ export default function CategoryDetailPage() {
                                 </button>
                               )}
                             </div>
-                            <div className="flex gap-1 mt-1 flex-wrap">
+                            <div className="flex gap-1 mt-1 flex-wrap items-center">
+                              {v.attributes?.color && (
+                                <span className="bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 text-[9px] px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800/40 font-semibold flex items-center gap-1">
+                                  <Palette className="w-2.5 h-2.5 text-blue-500" />
+                                  <span>{v.attributes.color}</span>
+                                </span>
+                              )}
+                              {v.attributes?.imei_numbers && Array.isArray(v.attributes.imei_numbers) && v.attributes.imei_numbers.length > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openImeiManager(v);
+                                  }}
+                                  className="bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:hover:bg-purple-900/50 dark:text-purple-300 text-[9px] px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800/40 font-mono font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                  title="View and manage attached IMEI numbers"
+                                >
+                                  <Smartphone className="w-2.5 h-2.5 text-purple-500" />
+                                  <span>{v.attributes.imei_numbers.length} IMEIs</span>
+                                </button>
+                              ) : v.track_serial_numbers ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openImeiManager(v);
+                                  }}
+                                  className="bg-purple-50 text-purple-700 dark:bg-purple-500/10 dark:text-purple-400 text-[9px] px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-500/20 font-medium cursor-pointer hover:underline"
+                                  title="Click to attach IMEI numbers"
+                                >
+                                  + IMEI
+                                </button>
+                              ) : null}
+                              {v.attributes && Object.entries(v.attributes)
+                                .filter(([k]) => k !== 'imei_numbers' && k !== 'color')
+                                .slice(0, 1)
+                                .map(([key, val]) => (
+                                  <span key={key} className="bg-muted text-muted-foreground text-[9px] px-1.5 py-0.5 rounded border border-border/50">
+                                    {key}: {String(val)}
+                                  </span>
+                                ))}
                               {v.tax_override && <span className="bg-rose-50 text-rose-700 dark:bg-red-500/10 dark:text-red-400 text-[9px] px-1.5 py-0.5 rounded border border-rose-200 dark:border-red-500/20 font-medium">Tax Override</span>}
                               {v.track_batches && <span className="bg-emerald-50 text-emerald-700 dark:bg-green-500/10 dark:text-green-400 text-[9px] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-green-500/20 font-medium">Batches</span>}
-                              {v.track_serial_numbers && <span className="bg-purple-50 text-purple-700 dark:bg-purple-500/10 dark:text-purple-400 text-[9px] px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-500/20 font-medium">Serial</span>}
                             </div>
                           </td>
 
@@ -1456,6 +1660,163 @@ export default function CategoryDetailPage() {
           productName={selectedHistoryItem ? `${selectedHistoryItem.name}${selectedHistoryItem.brand ? ` (${selectedHistoryItem.brand})` : ''}` : ''}
           companyId={companyId}
         />
+
+        {/* Item IMEI & Serial Numbers Management Modal */}
+        {selectedImeiItem && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-lg p-5 sm:p-6 space-y-4 animate-in fade-in zoom-in-95">
+              <div className="flex items-start justify-between border-b border-border pb-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Smartphone className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                    <h3 className="text-base font-bold text-foreground">
+                      IMEI / Serial Numbers
+                    </h3>
+                    <span className="text-xs bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 px-2 py-0.5 rounded-full font-bold">
+                      {imeiModalList.length} Units
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-semibold text-foreground">{selectedImeiItem.name}</span>
+                    {selectedImeiItem.brand && ` (${selectedImeiItem.brand})`}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedImeiItem(null)}
+                  className="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Add or Scan Barcode/IMEI */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-muted-foreground">Attach New IMEI</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScannerMode('IMEI_MODAL');
+                      setIsScannerOpen(true);
+                    }}
+                    className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>Scan with Camera</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="Type 15-digit IMEI and press Enter..."
+                    value={newImeiInput}
+                    onChange={e => setNewImeiInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddImeiInModal(newImeiInput);
+                      }
+                    }}
+                    className="flex-1 bg-background border border-input text-foreground px-3 py-2 rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-purple-500 shadow-xs"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleAddImeiInModal(newImeiInput)}
+                    disabled={!newImeiInput.trim()}
+                    className="px-4 py-2 bg-muted hover:bg-muted/80 text-foreground border border-input rounded-xl text-xs font-bold disabled:opacity-50 cursor-pointer"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+
+              {/* IMEI Chips List */}
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-muted-foreground">
+                  Attached Device IMEIs ({imeiModalList.length})
+                </label>
+                <div className="bg-muted/30 border border-border rounded-xl p-3 max-h-60 overflow-y-auto space-y-1.5">
+                  {imeiModalList.length > 0 ? (
+                    imeiModalList.map((imei, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-2 rounded-lg bg-card border border-border text-xs font-mono group hover:border-purple-500/40 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-[10px] text-muted-foreground font-sans">#{idx + 1}</span>
+                          <span className="font-bold text-foreground select-all">{imei}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(imei);
+                              toast.success('Copied', `IMEI ${imei} copied to clipboard`);
+                            }}
+                            className="p-1 text-muted-foreground hover:text-foreground rounded cursor-pointer"
+                            title="Copy IMEI"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveImeiInModal(idx)}
+                            className="p-1 text-muted-foreground hover:text-red-500 rounded cursor-pointer"
+                            title="Remove IMEI"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-6 text-xs text-muted-foreground italic">
+                      No IMEI numbers attached to this product yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-between pt-3 border-t border-border">
+                <span className="text-[11px] text-muted-foreground">
+                  Saved automatically to product attributes & description
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedImeiItem(null)}
+                    className="px-3.5 py-1.5 rounded-xl border border-input text-muted-foreground hover:text-foreground text-xs font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveImeis}
+                    disabled={isImeiSaving}
+                    className="px-5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-md transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isImeiSaving ? "Saving..." : "Save Changes"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Global Barcode / IMEI Scanner */}
+        {isScannerOpen && (
+          <BarcodeScannerModal
+            isOpen={isScannerOpen}
+            onClose={() => setIsScannerOpen(false)}
+            onScan={handleBarcodeScanned}
+            title={scannerMode === 'SEARCH' ? "Scan Item Barcode to Search" : "Scan IMEI / Serial Barcode"}
+            continuous={scannerMode === 'IMEI_MODAL'}
+          />
+        )}
       </div>
     </DashboardLayout>
   );

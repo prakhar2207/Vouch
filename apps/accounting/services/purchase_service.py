@@ -334,19 +334,84 @@ class PurchaseInvoiceService:
             if item.get('warehouse_id'):
                 line_wh = Warehouse.objects.filter(id=item['warehouse_id'], company=company).first()
 
+            item_color = str(item.get('color') or '').strip()
+            item_imei_list = list(item.get('imei_numbers') or [])
+            if isinstance(item_imei_list, str):
+                item_imei_list = [x.strip() for x in item_imei_list.split(',') if x.strip()]
+            item_attributes = item.get('attributes') or {}
+            if not isinstance(item_attributes, dict):
+                try:
+                    import json
+                    item_attributes = json.loads(item_attributes)
+                except Exception:
+                    item_attributes = {}
+
+            # Also pull IMEIs from serial_numbers if serial_numbers contains 15-digit IMEIs
+            if item_serial:
+                ser_parts = [s.strip() for s in re.split(r'[,|/\s]+', item_serial) if s.strip()]
+                for sp in ser_parts:
+                    if len(sp) == 15 and sp.isdigit() and sp not in item_imei_list:
+                        item_imei_list.append(sp)
+
+            # Synchronize product attributes (Color, IMEI list, Specs)
+            prod_attrs = dict(product.attributes or {})
+            attrs_updated = False
+            if item_color and not prod_attrs.get('color'):
+                prod_attrs['color'] = item_color
+                attrs_updated = True
+            if item_imei_list:
+                existing_imeis = prod_attrs.get('imei_numbers') or []
+                if not isinstance(existing_imeis, list):
+                    existing_imeis = [str(existing_imeis)]
+                for imei in item_imei_list:
+                    if imei not in existing_imeis:
+                        existing_imeis.append(imei)
+                        attrs_updated = True
+                prod_attrs['imei_numbers'] = existing_imeis
+            if item_attributes:
+                for k, v in item_attributes.items():
+                    if k not in prod_attrs:
+                        prod_attrs[k] = v
+                        attrs_updated = True
+            
+            prod_update_fields = []
+            if attrs_updated:
+                product.attributes = prod_attrs
+                prod_update_fields.append('attributes')
+
+            # Ensure IMEI and color are noted in product.description if not already present
+            existing_desc = (product.description or '').strip()
+            new_desc_parts = []
+            if item_color and f"Color: {item_color}" not in existing_desc:
+                new_desc_parts.append(f"Color: {item_color}")
+            if item_imei_list:
+                imei_str = ", ".join(item_imei_list)
+                if imei_str not in existing_desc:
+                    new_desc_parts.append(f"IMEI: {imei_str}")
+            if new_desc_parts:
+                combined_desc = " | ".join(new_desc_parts)
+                product.description = f"{existing_desc} | {combined_desc}".strip(" |")
+                prod_update_fields.append('description')
+
+            if prod_update_fields:
+                product.save(update_fields=prod_update_fields)
+
             line_description = str(item.get('description') or '').strip()
-            if not line_description:
-                desc_parts = []
-                if item_barcode:
-                    desc_parts.append(f"Barcode: {item_barcode}")
-                if item_serial:
-                    desc_parts.append(f"S/N: {item_serial}")
-                line_description = " | ".join(desc_parts)
-            else:
-                if item_serial and item_serial not in line_description:
-                    line_description = f"{line_description} | S/N: {item_serial}"
-                if item_barcode and item_barcode not in line_description:
-                    line_description = f"{line_description} | Barcode: {item_barcode}"
+            desc_parts = []
+            if item_color and f"Color: {item_color}" not in line_description:
+                desc_parts.append(f"Color: {item_color}")
+            if item_barcode and item_barcode not in line_description:
+                desc_parts.append(f"Barcode: {item_barcode}")
+            if item_imei_list:
+                imei_str = ", ".join(item_imei_list)
+                if imei_str not in line_description:
+                    desc_parts.append(f"IMEI: {imei_str}")
+            elif item_serial and item_serial not in line_description:
+                desc_parts.append(f"S/N: {item_serial}")
+
+            if desc_parts:
+                extra = " | ".join(desc_parts)
+                line_description = f"{line_description} | {extra}".strip(" |") if line_description else extra
 
             VoucherItem.objects.create(
                 voucher=voucher,

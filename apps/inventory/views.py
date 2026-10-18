@@ -233,7 +233,8 @@ class ProductListView(APIView):
                         Q(alias__icontains=term) |
                         Q(sku__icontains=term) |
                         Q(barcode__icontains=term) |
-                        Q(description__icontains=term)
+                        Q(description__icontains=term) |
+                        Q(attributes__icontains=term)
                     )
                 
             category_stock_val = Decimal('0.00')
@@ -257,6 +258,7 @@ class ProductListView(APIView):
                     "alias": p.alias or "",
                     "brand": p.brand or "",
                     "description": p.description or "",
+                    "attributes": p.attributes or {},
                     "sku": p.sku,
                     "barcode": p.barcode or "",
                     "category": p.category.name if p.category else "Unassigned",
@@ -327,6 +329,14 @@ class ProductListView(APIView):
             conversion_factor = to_decimal(data.get('conversion_factor', '1.0000'))
             override_gst_rate = to_decimal(data['override_gst_rate']) if data.get('override_gst_rate') else None
 
+            attributes = data.get('attributes') or {}
+            if not isinstance(attributes, dict):
+                try:
+                    import json
+                    attributes = json.loads(attributes)
+                except Exception:
+                    attributes = {}
+
             with transaction.atomic():
                 product = Product.objects.create(
                     company=company,
@@ -337,6 +347,7 @@ class ProductListView(APIView):
                     sku=sku,
                     barcode=data.get('barcode', ''),
                     description=data.get('description', ''),
+                    attributes=attributes,
                     unit=data.get('unit', 'PCS'),
                     alternate_unit=data.get('alternate_unit', ''),
                     conversion_factor=conversion_factor,
@@ -406,6 +417,44 @@ class ProductDetailView(APIView):
             return [IsAuthenticated(), IsCompanyMember()]
         return [IsAuthenticated(), CanManageInventory()]
 
+    def get(self, request, company_id, product_id):
+        try:
+            company = Company.objects.get(id=company_id, users__user=request.user)
+            p = Product.objects.select_related('category').get(id=product_id, company=company)
+            sq = p.stock_quantity if p.stock_quantity is not None else Decimal('0.00')
+            return Response({
+                "success": True,
+                "data": {
+                    "id": str(p.id),
+                    "name": p.name,
+                    "alias": p.alias or "",
+                    "brand": p.brand or "",
+                    "description": p.description or "",
+                    "attributes": p.attributes or {},
+                    "sku": p.sku,
+                    "barcode": p.barcode or "",
+                    "category": p.category.name if p.category else "Unassigned",
+                    "category_id": str(p.category.id) if p.category else None,
+                    "hsn_code": p.hsn_code or "",
+                    "unit": p.unit,
+                    "alternate_unit": p.alternate_unit or "",
+                    "conversion_factor": str(p.conversion_factor),
+                    "gst_rate": str(p.gst_rate),
+                    "tax_override": p.tax_override,
+                    "selling_price": p.selling_price,
+                    "wholesaler_price": p.wholesaler_price,
+                    "min_selling_price": p.min_selling_price,
+                    "purchase_price": p.purchase_price,
+                    "stock_quantity": int(round(sq)) if is_integer_unit(p.unit) else sq,
+                    "costing_method": getattr(p, 'costing_method', 'AVG_COST') or 'AVG_COST',
+                    "reorder_level": p.reorder_level,
+                    "track_batches": p.track_batches,
+                    "track_serial_numbers": p.track_serial_numbers
+                }
+            })
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
     def patch(self, request, company_id, product_id):
         try:
             company = Company.objects.get(id=company_id, users__user=request.user)
@@ -415,6 +464,18 @@ class ProductDetailView(APIView):
             if 'name' in data: product.name = data['name']
             if 'alias' in data: product.alias = data['alias']
             if 'brand' in data: product.brand = data['brand']
+            if 'description' in data: product.description = data['description']
+            if 'barcode' in data: product.barcode = data['barcode']
+            if 'attributes' in data:
+                attrs = data['attributes']
+                if isinstance(attrs, dict):
+                    product.attributes = attrs
+                elif isinstance(attrs, str):
+                    try:
+                        import json
+                        product.attributes = json.loads(attrs)
+                    except Exception:
+                        pass
             if 'selling_price' in data: product.selling_price = to_decimal(data['selling_price'])
             if 'wholesaler_price' in data: product.wholesaler_price = to_decimal(data['wholesaler_price'])
             if 'min_selling_price' in data: product.min_selling_price = to_decimal(data['min_selling_price'])

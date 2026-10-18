@@ -72,6 +72,9 @@ class Product(models.Model):
     track_batches = models.BooleanField(default=False)
     track_serial_numbers = models.BooleanField(default=False)
     
+    # Custom attributes & features (e.g. color, imei_numbers list, specs, warranty)
+    attributes = models.JSONField(default=dict, blank=True)
+    
     # Feature 8: Inventory Valuation & Costing Method
     COSTING_METHOD_CHOICES = (
         ('AVG_COST', 'Average Cost'),
