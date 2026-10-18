@@ -1577,10 +1577,10 @@ function AnalyticsHubContent() {
                         </div>
                         <div className="font-mono text-[10.5px] bg-background/90 p-2 rounded border border-border/50 space-y-0.5">
                           <div className="text-emerald-700 dark:text-emerald-400">
-                            • Billed MTD (Oct 1–{forecast?.monthly_comparison?.current_month?.days_elapsed || 18}): ₹{(forecast?.monthly_comparison?.current_month?.mtd_actual_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                            • Billed MTD ({forecast?.monthly_comparison?.current_month?.short_name || "Day"} 1–{forecast?.monthly_comparison?.current_month?.days_elapsed || 1}): ₹{(forecast?.monthly_comparison?.current_month?.mtd_actual_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                           </div>
                           <div className="text-purple-700 dark:text-purple-400">
-                            • Remaining Forecast ({forecast?.monthly_comparison?.current_month?.days_remaining || 13} days): +₹{(forecast?.monthly_comparison?.current_month?.remaining_projected_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                            • Remaining Forecast ({forecast?.monthly_comparison?.current_month?.days_remaining || 0} days): +₹{(forecast?.monthly_comparison?.current_month?.remaining_projected_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                           </div>
                           <div className="border-t border-border/40 pt-1 font-bold text-foreground">
                             = Estimated Month Close: ₹{(forecast?.monthly_comparison?.current_month?.projected_month_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
@@ -1589,17 +1589,17 @@ function AnalyticsHubContent() {
 
                         <div className="text-[10.5px] text-muted-foreground space-y-1">
                           <div className="font-semibold text-foreground">
-                            Why ₹{(forecast?.monthly_comparison?.current_month?.remaining_projected_sales || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })} for the remaining {forecast?.monthly_comparison?.current_month?.days_remaining || 13} days?
+                            Why ₹{(forecast?.monthly_comparison?.current_month?.remaining_projected_sales || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })} for the remaining {forecast?.monthly_comparison?.current_month?.days_remaining || 0} days?
                           </div>
                           <div className="grid grid-cols-1 gap-1">
                             <div>
-                              • <strong>Baseline Sales Velocity:</strong> ₹{(forecast?.monthly_comparison?.current_month?.baseline_daily_rate || 7424).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/day based on your recent 30-day billing volume.
+                              • <strong>Baseline Sales Velocity:</strong> ₹{(forecast?.monthly_comparison?.current_month?.baseline_daily_rate || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}/day based on your recent 30-day billing volume.
                             </div>
                             <div>
-                              • <strong>Month-End Order Surge (25th–31st):</strong> B2B dealers typically rush orders before month-end (+{Math.round(((forecast?.monthly_comparison?.current_month?.month_end_surge_multiplier || 1.30) - 1.0) * 100)}% boost applied to final 7 days).
+                              • <strong>Month-End Order Surge:</strong> B2B dealers typically rush orders before month-end (+{Math.round(((forecast?.monthly_comparison?.current_month?.month_end_surge_multiplier || 1.30) - 1.0) * 100)}% boost applied to final days).
                             </div>
                             <div>
-                              • <strong>Customer Repurchase Cycles:</strong> Models {forecast?.monthly_comparison?.current_month?.repeat_buyers_modeled || forecast?.factors_analyzed?.repeat_buyers_modeled || 23} recurring buyers due for stock replenishment in late October.
+                              • <strong>Customer Repurchase Cycles:</strong> Models {forecast?.monthly_comparison?.current_month?.repeat_buyers_modeled || forecast?.factors_analyzed?.repeat_buyers_modeled || 0} recurring buyers due for stock replenishment late this month.
                             </div>
                           </div>
                         </div>
