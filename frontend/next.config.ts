@@ -6,7 +6,14 @@ const withSerwist = withSerwistInit({
   swSrc: "src/app/sw.ts",
   swDest: "public/sw.js",
   additionalPrecacheEntries: [
-    { url: "/~offline", revision: "v1" },
+    { url: "/~offline", revision: "v2" },
+    { url: "/dashboard", revision: "v2" },
+    { url: "/sales", revision: "v2" },
+    { url: "/sales/new", revision: "v2" },
+    { url: "/ledgers", revision: "v2" },
+    { url: "/parties", revision: "v2" },
+    { url: "/inventory", revision: "v2" },
+    { url: "/login", revision: "v2" },
   ],
   disable: process.env.NODE_ENV === "development",
 });

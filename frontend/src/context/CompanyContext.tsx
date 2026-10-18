@@ -56,9 +56,55 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
         }
       }
     } catch {}
+
+    // Fallback: load companies from IndexedDB
+    offlineDb.masters.get('all_companies').then((entry) => {
+      if (entry?.data && Array.isArray(entry.data) && entry.data.length > 0) {
+        setAvailableCompanies((prev) => (prev.length > 0 ? prev : entry.data));
+        const savedId = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
+        const found = entry.data.find((c: any) => c.id === savedId) || entry.data[0];
+        if (found) {
+          setActiveCompanyState((prev) => prev || found);
+          setLoading(false);
+        }
+      }
+    }).catch(() => {});
   }, []);
 
   const refreshCompanies = useCallback(async (): Promise<Company | null> => {
+    // If offline: skip network call immediately and use local cache
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      if (typeof window !== "undefined") {
+        try {
+          const cached = localStorage.getItem(CACHED_COMPANIES_KEY);
+          if (cached) {
+            const list: Company[] = JSON.parse(cached);
+            if (Array.isArray(list) && list.length > 0) {
+              setAvailableCompanies(list);
+              const savedId = localStorage.getItem(STORAGE_KEY) || localStorage.getItem("activeCompanyId");
+              const selected = list.find((c) => c.id === savedId) || list[0];
+              setActiveCompanyState(selected);
+              setLoading(false);
+              return selected;
+            }
+          }
+        } catch {}
+      }
+      try {
+        const entry = await offlineDb.masters.get('all_companies');
+        if (entry?.data && Array.isArray(entry.data) && entry.data.length > 0) {
+          setAvailableCompanies(entry.data);
+          const savedId = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
+          const selected = entry.data.find((c: any) => c.id === savedId) || entry.data[0];
+          setActiveCompanyState(selected);
+          setLoading(false);
+          return selected;
+        }
+      } catch {}
+      setLoading(false);
+      return null;
+    }
+
     if (!isAuthenticated()) {
       setLoading(false);
       return null;
@@ -77,6 +123,8 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
           localStorage.setItem(CACHED_COMPANIES_KEY, JSON.stringify(list));
         } catch {}
       }
+      // Persist in IndexedDB for resilient offline cold starts
+      offlineDb.masters.put({ key: 'all_companies', data: list, updatedAt: Date.now() }).catch(() => {});
 
       if (list.length === 0) {
         setActiveCompanyState(null);
@@ -97,6 +145,9 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
       setActiveCompanyState(selected);
       if (typeof window !== "undefined" && selected) {
         localStorage.setItem(STORAGE_KEY, selected.id);
+        localStorage.setItem("activeCompanyId", selected.id);
+        localStorage.setItem("vouch_active_company", selected.id);
+        localStorage.setItem("vouch_active_company_name", selected.name || "");
       }
       setLoading(false);
       return selected;
@@ -118,6 +169,17 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
           }
         } catch {}
       }
+      try {
+        const entry = await offlineDb.masters.get('all_companies');
+        if (entry?.data && Array.isArray(entry.data) && entry.data.length > 0) {
+          setAvailableCompanies(entry.data);
+          const savedId = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
+          const selected = entry.data.find((c: any) => c.id === savedId) || entry.data[0];
+          setActiveCompanyState(selected);
+          setLoading(false);
+          return selected;
+        }
+      } catch {}
       setLoading(false);
       return null;
     }
@@ -130,7 +192,22 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem("activeCompanyId", company.id);
       localStorage.setItem("vouch_active_company", company.id);
       localStorage.setItem("vouch_active_company_name", company.name || "");
-      // Retain all company data in IndexedDB (isolated by companyId) until user clears app data
+      // Sync to Capacitor native Preferences if available
+      try {
+        const cap = (window as any).Capacitor;
+        if (cap?.Plugins?.Preferences) {
+          cap.Plugins.Preferences.set({ key: 'vouch_active_company_id', value: company.id });
+          cap.Plugins.Preferences.set({ key: 'vouch_active_company_name', value: company.name || '' });
+          if (company.state_code) {
+            cap.Plugins.Preferences.set({ key: 'vouch_active_company_state_code', value: company.state_code });
+          }
+          if (company.gstin) {
+            cap.Plugins.Preferences.set({ key: 'vouch_active_company_gstin', value: company.gstin });
+          }
+        }
+      } catch {}
+      // Retain company in IndexedDB
+      offlineDb.masters.put({ key: `company_${company.id}`, data: company, updatedAt: Date.now() }).catch(() => {});
     }
   };
 

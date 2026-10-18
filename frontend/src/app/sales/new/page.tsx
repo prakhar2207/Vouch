@@ -250,20 +250,35 @@ export default function SalesPage() {
 
   useEffect(() => {
     const fetchSeq = async () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        try {
+          const count = await offlineDb.vouchers.count();
+          const dateStr = (invoiceDate || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
+          setSeqPreview(`OFF-${dateStr}-${String(count + 1).padStart(4, '0')}`);
+        } catch {
+          setSeqPreview(`OFF-${Date.now().toString().slice(-6)}`);
+        }
+        return;
+      }
       try {
         const token = getAccessToken();
         const res = await axios.get(
           `${API_BASE_URL}/api/v1/financial-years/sequence-preview/?voucher_type=SALES&date=${invoiceDate}&company_id=${companyId}`,
-          { headers: { Authorization: `Bearer ${token}`, 'X-Company-ID': companyId } }
+          { headers: { Authorization: `Bearer ${token}`, 'X-Company-ID': companyId }, timeout: 3500 }
         );
         if (res.data?.success && res.data.data?.preview_number) {
           setSeqPreview(res.data.data.preview_number);
         }
       } catch (err) {
-        // quiet fallback
+        // Fallback offline preview
+        try {
+          const count = await offlineDb.vouchers.count();
+          const dateStr = (invoiceDate || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
+          setSeqPreview(`OFF-${dateStr}-${String(count + 1).padStart(4, '0')}`);
+        } catch {}
       }
     };
-    if (companyId) {
+    if (companyId || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       fetchSeq();
     }
   }, [invoiceDate, companyId]);
@@ -289,7 +304,9 @@ export default function SalesPage() {
   }, [registerAltCCallback]);
 
   useEffect(() => {
-    if (!isAuthenticated()) {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      // Offline mode: proceed with local/prestored data, never redirect to login
+    } else if (!isAuthenticated()) {
       router.push('/login');
       return;
     }
@@ -346,9 +363,40 @@ export default function SalesPage() {
     }
   }, [activeCompanyId, activeCompany]);
 
+  const ensureFallbackMasters = () => {
+    setLedgers((prev) => {
+      if (prev.length > 0) return prev;
+      return [
+        { id: 'offline-cash-customer', name: 'Cash Customer / Walk-in', ledger_type: 'CUSTOMER', group: 'Sundry Debtors' },
+        { id: 'offline-sales-acc', name: 'Sales Account', ledger_type: 'SALES', group: 'Sales Accounts' },
+        { id: 'offline-cgst', name: 'CGST', ledger_type: 'TAX', group: 'Duties and Taxes' },
+        { id: 'offline-sgst', name: 'SGST', ledger_type: 'TAX', group: 'Duties and Taxes' },
+        { id: 'offline-igst', name: 'IGST', ledger_type: 'TAX', group: 'Duties and Taxes' },
+      ];
+    });
+    setPartyLedgerId((prev) => prev || 'offline-cash-customer');
+    setSalesLedgerId((prev) => prev || 'offline-sales-acc');
+    setCgstLedgerId((prev) => prev || 'offline-cgst');
+    setSgstLedgerId((prev) => prev || 'offline-sgst');
+    setIgstLedgerId((prev) => prev || 'offline-igst');
+    setCategories((prev) => {
+      if (prev.length > 0) return prev;
+      return [{ id: 'offline-general', name: 'General Goods', hsn_code: '9999', gst_rate: 18 }];
+    });
+  };
+
   const fetchBaseData = async (targetCompanyId?: string) => {
     try {
-      const resolvedCompanyId = targetCompanyId || activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
+      let resolvedCompanyId = targetCompanyId || activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') : null);
+
+      if (!resolvedCompanyId) {
+        try {
+          const compEntry = await offlineDb.masters.get('all_companies');
+          if (compEntry?.data?.length) {
+            resolvedCompanyId = compEntry.data[0].id;
+          }
+        } catch {}
+      }
 
       // Purge legacy unscoped offline cache keys to prevent cross-tenant contamination
       offlineDb.masters.bulkDelete(['company', 'ledgers', 'categories', 'products']).catch(() => {});
@@ -380,15 +428,56 @@ export default function SalesPage() {
         } catch (cacheErr) {
           console.warn('Could not read from local offline cache', cacheErr);
         }
+
+        // 1b. If ledgers or products are still empty, load from Dexie synced tables
+        try {
+          const [localLedgers, localProds] = await Promise.all([
+            offlineDb.syncedLedgers.where('companyId').equals(resolvedCompanyId).toArray(),
+            offlineDb.syncedProducts.where('companyId').equals(resolvedCompanyId).toArray(),
+          ]);
+          if (localLedgers.length > 0) {
+            setLedgers((prev) => (prev.length > 0 ? prev : localLedgers.map((l: any) => ({
+              id: l.id,
+              name: l.name,
+              ledger_type: l.ledgerType,
+              gstin: l.gstin,
+              state_code: l.stateCode,
+              group: l.group || 'Sundry Debtors',
+              phone: l.phone,
+            }))));
+            applyDefaultLedgers(localLedgers, false, resolvedCompanyId);
+          }
+          if (localProds.length > 0) {
+            setProducts((prev) => (prev.length > 0 ? prev : localProds.map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              sku: p.sku,
+              brand: p.brand,
+              unit: p.unit,
+              sales_price: p.salesPrice,
+              purchase_price: p.purchasePrice,
+              gst_rate: p.gstRate,
+            }))));
+          }
+        } catch {}
       }
 
-      // 2. Fetch fresh masters from server
+      // Ensure minimal fallback masters exist so invoice creation is never blocked
+      ensureFallbackMasters();
+
+      // If offline: skip network request entirely for instant response
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setLoading(false);
+        return;
+      }
+
+      // 2. Fetch fresh masters from server (when online)
       const token = getAccessToken();
       const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
       if (resolvedCompanyId) {
         headers['X-Company-ID'] = resolvedCompanyId;
       }
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers });
+      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, { headers, timeout: 5000 });
       const compList = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
       const comp = (resolvedCompanyId ? compList.find((c: any) => c.id === resolvedCompanyId) : null) || compList[0];
       const cId = comp?.id;
@@ -407,9 +496,9 @@ export default function SalesPage() {
       offlineDb.masters.put({ key: `company_${cId}`, data: comp, updatedAt: Date.now() }).catch(() => {});
 
       const [ledgersRes, catsRes, prodsRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/api/v1/ledgers/${cId}/`, { headers }),
-        axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cId}/`, { headers }),
-        axios.get(`${API_BASE_URL}/api/v1/inventory/products/${cId}/`, { headers }).catch(() => ({ data: { data: [] } }))
+        axios.get(`${API_BASE_URL}/api/v1/ledgers/${cId}/`, { headers, timeout: 5000 }),
+        axios.get(`${API_BASE_URL}/api/v1/inventory/categories/${cId}/`, { headers, timeout: 5000 }),
+        axios.get(`${API_BASE_URL}/api/v1/inventory/products/${cId}/`, { headers, timeout: 5000 }).catch(() => ({ data: { data: [] } }))
       ]);
       const ledgerList = ledgersRes.data?.data || (Array.isArray(ledgersRes.data) ? ledgersRes.data : []);
       const catList = catsRes.data?.data || (Array.isArray(catsRes.data) ? catsRes.data : []);
@@ -471,49 +560,65 @@ export default function SalesPage() {
   const fetchPartyRates = async (pId: string, currentCompanyId?: string) => {
     const targetCompanyId = currentCompanyId || companyId;
     if (!pId || !targetCompanyId) return;
+
+    const applyRates = (rates: Record<string, any>) => {
+      setPartyRates(rates);
+      setGroupedItems(prev => prev.map((group: any) => ({
+        ...group,
+        items: group.items.map((item: any) => {
+          if (!item.product_name) return item;
+          const pastRateInfo = resolvePartyRateForBrand(rates, item.product_id, item.product_name, item.brand);
+          const purchaseCost = (item.purchase_cost && Number(item.purchase_cost) > 0)
+            ? Number(item.purchase_cost)
+            : (pastRateInfo?.purchase_cost ?? 0);
+          if (pastRateInfo && Number(pastRateInfo.rate) > 0) {
+            return {
+              ...item,
+              rate: Number(pastRateInfo.rate),
+              last_party_rate: Number(pastRateInfo.rate),
+              last_party_date: pastRateInfo.voucher_date,
+              last_party_vnum: pastRateInfo.voucher_number,
+              purchase_cost: purchaseCost
+            };
+          }
+          return {
+            ...item,
+            last_party_rate: null,
+            last_party_date: null,
+            last_party_vnum: null,
+            purchase_cost: purchaseCost
+          };
+        })
+      })));
+    };
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      try {
+        const cached = await offlineDb.masters.get(`party_rates_${pId}`);
+        if (cached?.data) applyRates(cached.data);
+      } catch {}
+      return;
+    }
+
     try {
       setLoadingPartyRates(true);
       const token = getAccessToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await axios.get(
         `${API_BASE_URL}/api/v1/accounting/party-rates/?party_id=${pId}&company_id=${targetCompanyId}`,
-        { headers }
+        { headers, timeout: 3500 }
       );
       if (res.data?.success) {
         const rates = res.data.data || {};
-        setPartyRates(rates);
-
-        // Auto-populate past party rates onto any already-selected line items
-        setGroupedItems(prev => prev.map((group: any) => ({
-          ...group,
-          items: group.items.map((item: any) => {
-            if (!item.product_name) return item;
-            const pastRateInfo = resolvePartyRateForBrand(rates, item.product_id, item.product_name, item.brand);
-            const purchaseCost = (item.purchase_cost && Number(item.purchase_cost) > 0)
-              ? Number(item.purchase_cost)
-              : (pastRateInfo?.purchase_cost ?? 0);
-            if (pastRateInfo && Number(pastRateInfo.rate) > 0) {
-              return {
-                ...item,
-                rate: Number(pastRateInfo.rate),
-                last_party_rate: Number(pastRateInfo.rate),
-                last_party_date: pastRateInfo.voucher_date,
-                last_party_vnum: pastRateInfo.voucher_number,
-                purchase_cost: purchaseCost
-              };
-            }
-            return {
-              ...item,
-              last_party_rate: null,
-              last_party_date: null,
-              last_party_vnum: null,
-              purchase_cost: purchaseCost
-            };
-          })
-        })));
+        applyRates(rates);
+        offlineDb.masters.put({ key: `party_rates_${pId}`, data: rates, updatedAt: Date.now() }).catch(() => {});
       }
     } catch (err) {
-      console.error('Failed to fetch party rates', err);
+      // Fallback to local cached party rates
+      try {
+        const cached = await offlineDb.masters.get(`party_rates_${pId}`);
+        if (cached?.data) applyRates(cached.data);
+      } catch {}
     } finally {
       setLoadingPartyRates(false);
     }
@@ -716,8 +821,32 @@ export default function SalesPage() {
         payload.upi_id = upiId.trim();
       }
       
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        const offlineRes = await queueOfflineVoucher('SALES', payload, invoiceDate);
+        const resolvedVnum = enableManualInvoice && invoiceNumber.trim() ? invoiceNumber.trim() : (seqPreview || offlineRes.localId);
+        await ingestVoucherLocally(companyId || 'offline-company', {
+          id: offlineRes.localId,
+          voucherType: 'SALES',
+          voucherNumber: resolvedVnum,
+          voucherDate: invoiceDate,
+          dueDate: (payload as any).due_date || invoiceDate,
+          totalAmount: grandTotal,
+          partyName: selectedParty?.name || buyerName || 'Customer',
+          partyLedgerId: selectedParty?.id || null,
+          status: 'POSTED',
+        });
+        toast.success(
+          "Saved Offline",
+          `Invoice ${resolvedVnum} saved to your device. Will sync automatically when connected.`
+        );
+        setSaving(false);
+        router.push('/sales');
+        router.refresh();
+        return;
+      }
+
       try {
-        const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/sales-invoice/`, payload, { headers, timeout: 8000 });
+        const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/sales-invoice/`, payload, { headers, timeout: 5000 });
         if (res.data?.voucher) {
           const vData = res.data.voucher;
           await ingestVoucherLocally(companyId, {
@@ -738,20 +867,21 @@ export default function SalesPage() {
         const isNetworkErr = !navigator.onLine || postErr.code === 'ERR_NETWORK' || !postErr.response;
         if (isNetworkErr) {
           const offlineRes = await queueOfflineVoucher('SALES', payload, invoiceDate);
-          await ingestVoucherLocally(companyId, {
+          const fallbackVnum = enableManualInvoice && invoiceNumber.trim() ? invoiceNumber.trim() : (seqPreview || offlineRes.localId);
+          await ingestVoucherLocally(companyId || 'offline-company', {
             id: offlineRes.localId,
             voucherType: 'SALES',
-            voucherNumber: offlineRes.localId,
+            voucherNumber: fallbackVnum,
             voucherDate: invoiceDate,
             dueDate: (payload as any).due_date || invoiceDate,
             totalAmount: grandTotal,
-            partyName: selectedParty?.name || 'Customer',
+            partyName: selectedParty?.name || buyerName || 'Customer',
             partyLedgerId: selectedParty?.id || null,
             status: 'POSTED',
           });
           toast.success(
             "Saved Offline",
-            `Saved to your device. Will sync automatically when connected.`
+            `Invoice ${fallbackVnum} saved to your device. Will sync automatically when connected.`
           );
           router.push('/sales');
           router.refresh();

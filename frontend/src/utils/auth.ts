@@ -1,6 +1,21 @@
 import Cookies from 'js-cookie';
 import { jwtDecode } from 'jwt-decode';
 
+const syncCapacitorPreference = (key: string, value: string | null) => {
+  if (typeof window !== 'undefined') {
+    try {
+      const cap = (window as any).Capacitor;
+      if (cap?.Plugins?.Preferences) {
+        if (value === null) {
+          cap.Plugins.Preferences.remove({ key });
+        } else {
+          cap.Plugins.Preferences.set({ key, value });
+        }
+      }
+    } catch {}
+  }
+};
+
 export const setTokens = (access: string, refresh?: string) => {
   const isSecure = typeof window !== 'undefined' && window.location.protocol === 'https:';
   if (access && access !== 'undefined' && access !== 'null') {
@@ -9,6 +24,7 @@ export const setTokens = (access: string, refresh?: string) => {
       try {
         localStorage.setItem('vouch_access_token', access);
       } catch {}
+      syncCapacitorPreference('vouch_access_token', access);
     }
   }
   if (refresh && refresh !== 'undefined' && refresh !== 'null') {
@@ -17,6 +33,7 @@ export const setTokens = (access: string, refresh?: string) => {
       try {
         localStorage.setItem('vouch_refresh_token', refresh);
       } catch {}
+      syncCapacitorPreference('vouch_refresh_token', refresh);
     }
   }
 };
@@ -60,6 +77,10 @@ export const removeTokens = () => {
       localStorage.removeItem('vouch_active_company_id');
       localStorage.removeItem('vouch_user');
     } catch {}
+    syncCapacitorPreference('vouch_access_token', null);
+    syncCapacitorPreference('vouch_refresh_token', null);
+    syncCapacitorPreference('vouch_active_company_id', null);
+    syncCapacitorPreference('vouch_user', null);
   }
 };
 

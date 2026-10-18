@@ -13,6 +13,12 @@ export default function OfflineFallback() {
         It looks like your internet connection is down. Don&apos;t worry — your cached SriLekh records and offline data remain safe and accessible on your device.
       </p>
       <div className="flex flex-wrap gap-3 justify-center items-center">
+        <Link
+          href="/sales/new"
+          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl shadow-lg flex items-center gap-2 transition-all cursor-pointer"
+        >
+          📝 Create Sales Invoice Offline
+        </Link>
         <button
           onClick={() => window.location.reload()}
           className="px-5 py-2.5 bg-primary text-primary-foreground text-xs font-semibold rounded-lg hover:bg-primary/90 transition-colors cursor-pointer shadow-sm"
@@ -20,16 +26,16 @@ export default function OfflineFallback() {
           🔄 Retry Connection
         </button>
         <Link
+          href="/sales"
+          className="px-5 py-2.5 bg-muted hover:bg-muted/80 text-foreground text-xs font-semibold rounded-lg border border-border transition-colors"
+        >
+          View Sales Invoices
+        </Link>
+        <Link
           href="/dashboard"
           className="px-5 py-2.5 bg-muted hover:bg-muted/80 text-foreground text-xs font-semibold rounded-lg border border-border transition-colors"
         >
           Go to Dashboard
-        </Link>
-        <Link
-          href="/inventory"
-          className="px-5 py-2.5 bg-muted hover:bg-muted/80 text-foreground text-xs font-semibold rounded-lg border border-border transition-colors"
-        >
-          View Inventory
         </Link>
       </div>
     </div>

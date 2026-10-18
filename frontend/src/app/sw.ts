@@ -39,20 +39,76 @@ const accountingCustomCaching: RuntimeCaching[] = [
     },
     handler: new NetworkFirst({
       cacheName: "srilekh-pages-cache",
-      networkTimeoutSeconds: 5,
+      networkTimeoutSeconds: 2,
       plugins: [
         new ExpirationPlugin({
-          maxEntries: 50,
-          maxAgeSeconds: 7 * 24 * 60 * 60, // 7 days
+          maxEntries: 60,
+          maxAgeSeconds: 14 * 24 * 60 * 60, // 14 days
         }),
         {
-          handlerDidError: async () => {
+          handlerDidError: async ({ request }: any) => {
             try {
+              // 1. Try exact match from cache first
+              const exactMatch = await caches.match(request);
+              if (exactMatch) return exactMatch;
+
+              const reqUrl = request?.url || "";
+
+              // 2. Intelligent route-specific fallbacks
+              if (reqUrl.includes("/sales/new")) {
+                const salesNew = await caches.match("/sales/new");
+                if (salesNew) return salesNew;
+              }
+              if (reqUrl.includes("/sales")) {
+                const sales = await caches.match("/sales");
+                if (sales) return sales;
+              }
+              if (reqUrl.includes("/dashboard")) {
+                const dash = await caches.match("/dashboard");
+                if (dash) return dash;
+              }
+              if (reqUrl.includes("/inventory")) {
+                const inv = await caches.match("/inventory");
+                if (inv) return inv;
+              }
+              if (reqUrl.includes("/parties") || reqUrl.includes("/ledgers")) {
+                const parties = await caches.match("/parties") || await caches.match("/ledgers");
+                if (parties) return parties;
+              }
+
+              // 3. Fallback to cached dedicated offline page
               const cachedOffline = await caches.match("/~offline");
               if (cachedOffline) return cachedOffline;
             } catch {}
+
             return new Response(
-              "<!DOCTYPE html><html><head><title>Offline | SriLekh</title><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'></head><body style='font-family:sans-serif;padding:2rem;text-align:center;'><h2>SriLekh Offline</h2><p>Please check your internet connection and reload.</p></body></html>",
+              `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SriLekh - Offline Mode</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0F172A; color: #F8FAFC; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; text-align: center; }
+    .card { background: #1E293B; border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 28px; max-width: 360px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5); }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 20px; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.3); color: #FBBF24; font-size: 11px; font-weight: 700; margin-bottom: 12px; }
+    h2 { font-size: 20px; margin: 0 0 8px; font-weight: 800; }
+    p { font-size: 13px; color: #94A3B8; line-height: 1.5; margin: 0 0 20px; }
+    .btn { display: block; width: 100%; box-sizing: border-box; background: #2563EB; color: #fff; text-decoration: none; padding: 12px; border-radius: 10px; font-weight: 700; font-size: 14px; margin-bottom: 10px; }
+    .btn-secondary { background: rgba(255,255,255,0.08); color: #E2E8F0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">⚡ OFFLINE MODE</div>
+    <h2>SriLekh Offline</h2>
+    <p>Your local accounting engine is operational. You can continue creating sales invoices without internet.</p>
+    <a href="/sales/new" class="btn">📝 Create Sales Invoice</a>
+    <a href="/sales" class="btn btn-secondary">📋 View Sales</a>
+    <a href="/dashboard" class="btn btn-secondary">📊 Dashboard</a>
+  </div>
+</body>
+</html>`,
               { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
             );
           },
