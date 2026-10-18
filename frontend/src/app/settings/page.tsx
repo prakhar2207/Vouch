@@ -13,6 +13,7 @@ import { getStateName } from '@/utils/gstStates';
 import { useFinancialYear } from '@/context/FinancialYearContext';
 import { useAccountingPeriod } from '@/context/PeriodContext';
 import { useToast } from '@/context/ToastContext';
+import { getDeviceCounterCode, setDeviceCounterCode } from '@/lib/sync/sequence-service';
 import ProformaDocumentSheet from '@/components/documents/ProformaDocumentSheet';
 import {
   Users,
@@ -163,6 +164,7 @@ export default function SettingsPage() {
   const [allowNegativeStock, setAllowNegativeStock] = useState(true);
   const [salesInvoicePrefix, setSalesInvoicePrefix] = useState('');
   const [purchaseInvoicePrefix, setPurchaseInvoicePrefix] = useState('');
+  const [deviceCounterCode, setDeviceCounterCodeState] = useState('');
   const [saving, setSaving] = useState(false);
 
   // Team & RBAC State
@@ -316,6 +318,7 @@ export default function SettingsPage() {
     setAllowNegativeStock(comp.settings?.allow_negative_stock !== false);
     setSalesInvoicePrefix(comp.settings?.sales_invoice_prefix || '');
     setPurchaseInvoicePrefix(comp.settings?.purchase_invoice_prefix || '');
+    setDeviceCounterCodeState(getDeviceCounterCode(comp.id));
   };
 
   const handleTabChange = (newTab: string) => {
@@ -545,6 +548,13 @@ export default function SettingsPage() {
         }
       });
       
+      if (company?.id) {
+        setDeviceCounterCode(deviceCounterCode, company.id);
+        if (salesInvoicePrefix) {
+          localStorage.setItem(`vouch_company_prefix_${company.id}`, salesInvoicePrefix.trim());
+        }
+      }
+
       toast.success('Settings Saved Successfully', `Changes saved for ${name || company.name}.`);
       await refreshCompanies();
       loadCompanyData(company.id);
@@ -1825,6 +1835,81 @@ export default function SettingsPage() {
                           placeholder="e.g. BILL/ or PUR/"
                           className="w-full bg-muted/30 border border-input text-foreground text-xs p-2.5 rounded-xl font-mono"
                         />
+                      </div>
+                    </div>
+
+                    {/* Multi-Counter POS Billing Series (GST Rule 46b) */}
+                    <div className="p-4 rounded-xl bg-blue-50/60 dark:bg-blue-950/25 border border-blue-200/70 dark:border-blue-900/40 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div>
+                          <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                            Multi-Counter POS Billing Series (GST Rule 46b)
+                          </div>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            Assign a unique Counter / Terminal ID to this device to prevent invoice number clashes when multiple billing counters operate offline simultaneously.
+                          </p>
+                        </div>
+                        {deviceCounterCode && (
+                          <span className="self-start sm:self-auto inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200 border border-blue-300 dark:border-blue-700">
+                            Counter: {deviceCounterCode}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                            This Device Counter Code
+                          </label>
+                          <input
+                            type="text"
+                            value={deviceCounterCode}
+                            onChange={(e) => setDeviceCounterCodeState(e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ''))}
+                            placeholder="e.g. A, B, C1, MOB1"
+                            maxLength={6}
+                            className="w-full bg-background border border-input text-foreground text-xs p-2 rounded-lg font-mono uppercase tracking-wider font-semibold"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-2">
+                          <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                            Quick Select Preset Counter
+                          </label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[
+                              { label: 'Single Counter (Default)', val: '' },
+                              { label: 'Counter A', val: 'A' },
+                              { label: 'Counter B', val: 'B' },
+                              { label: 'Counter C', val: 'C' },
+                              { label: 'Mobile 1', val: 'MOB1' },
+                            ].map((preset) => (
+                              <button
+                                key={preset.val}
+                                type="button"
+                                onClick={() => setDeviceCounterCodeState(preset.val)}
+                                className={`text-[11px] px-2.5 py-1 rounded-md border font-medium transition-colors ${
+                                  deviceCounterCode === preset.val
+                                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                                    : 'bg-background hover:bg-muted text-muted-foreground border-border'
+                                }`}
+                              >
+                                {preset.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-blue-200/50 dark:border-blue-900/40 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                        <span className="text-muted-foreground">
+                          Sample Continuous Series on this Device:
+                        </span>
+                        <span className="font-mono font-bold text-blue-700 dark:text-blue-300 bg-white/80 dark:bg-black/40 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800">
+                          {deviceCounterCode
+                            ? `${salesInvoicePrefix ? salesInvoicePrefix.replace(/\/+$/, '') : 'INV'}/26-27/${deviceCounterCode}-0145`
+                            : `${salesInvoicePrefix ? salesInvoicePrefix.replace(/\/+$/, '') : 'INV'}/26-27/0145`}
+                        </span>
                       </div>
                     </div>
 

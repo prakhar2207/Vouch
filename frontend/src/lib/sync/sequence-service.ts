@@ -15,17 +15,36 @@ export function getFinancialYearCode(dateStr?: string): string {
   return `${startYY}-${endYY}`;
 }
 
-export interface ParsedSequencePattern {
-  prefix: string;
-  fyCode: string;
-  maxNumber: number;
-  padLength: number;
-  patternType: 'SLASH_FY' | 'DASH' | 'NUMERIC' | 'GENERIC';
+/**
+ * Gets the configured Counter / POS Terminal code for this specific device.
+ * e.g., "A", "B", "C1", "MOB1" or empty string for standard single-counter series.
+ */
+export function getDeviceCounterCode(companyId?: string): string {
+  if (typeof localStorage === 'undefined') return '';
+  return (
+    localStorage.getItem(`vouch_counter_code_${companyId}`) ||
+    localStorage.getItem('vouch_device_counter_code') ||
+    ''
+  ).trim().toUpperCase();
+}
+
+/**
+ * Persists the Counter / POS Terminal code for this specific device in local storage.
+ */
+export function setDeviceCounterCode(code: string, companyId?: string): void {
+  if (typeof localStorage === 'undefined') return;
+  const clean = (code || '').trim().toUpperCase();
+  localStorage.setItem('vouch_device_counter_code', clean);
+  if (companyId) {
+    localStorage.setItem(`vouch_counter_code_${companyId}`, clean);
+  }
 }
 
 /**
  * Inspects local IndexedDB cached vouchers, outbox queue, and localStorage to determine
- * the highest existing invoice number and the company's numbering format (e.g. INV/26-27/0144 -> 144).
+ * the highest existing invoice number and the company's numbering format.
+ * 
+ * Supports both Single Counter (INV/26-27/0145) and Multi-Counter POS series (INV/26-27/A-0145).
  */
 export async function getOfflineNextSequence(
   companyId: string,
@@ -34,9 +53,16 @@ export async function getOfflineNextSequence(
 ): Promise<string> {
   const vTypeUpper = (voucherType || 'SALES').toUpperCase();
   const currentFyCode = getFinancialYearCode(invoiceDate);
+  const counterCode = getDeviceCounterCode(companyId);
 
   let maxNum = 0;
   let detectedPrefix = 'INV';
+  if (typeof localStorage !== 'undefined' && companyId) {
+    const savedPfx = localStorage.getItem(`vouch_company_prefix_${companyId}`);
+    if (savedPfx) {
+      detectedPrefix = savedPfx.trim().replace(/\/+$/, '');
+    }
+  }
   let detectedFy = currentFyCode;
   let padLength = 4;
   let detectedPattern: 'SLASH_FY' | 'DASH' | 'NUMERIC' | 'GENERIC' = 'SLASH_FY';
@@ -46,6 +72,26 @@ export async function getOfflineNextSequence(
     const clean = String(numStr).trim();
     // Exclude internal client transaction placeholders like OFF- or TX-
     if (/^OFF-/i.test(clean) || /^TX-/i.test(clean) || /^PENDING/i.test(clean)) return;
+
+    // 0. Multi-counter format with Counter Prefix: PREFIX/YY-YY/COUNTER-0001 (e.g. INV/26-27/A-0144)
+    if (counterCode) {
+      const counterRegex = new RegExp(`^([A-Za-z0-9_-]+)\\/(\\d{2}-\\d{2}|\\d{4}-\\d{2})\\/${counterCode}-(\\d+)$`, 'i');
+      const counterMatch = clean.match(counterRegex);
+      if (counterMatch) {
+        const pfx = counterMatch[1];
+        const fy = counterMatch[2];
+        const nStr = counterMatch[3];
+        const n = parseInt(nStr, 10);
+        if (!isNaN(n) && n > maxNum) {
+          maxNum = n;
+          detectedPrefix = pfx;
+          detectedFy = fy;
+          padLength = Math.max(padLength, nStr.length);
+          detectedPattern = 'SLASH_FY';
+        }
+        return;
+      }
+    }
 
     // 1. Standard Indian GST format: PREFIX/YY-YY/0001 (e.g. INV/26-27/0144)
     const slashMatch = clean.match(/^([A-Za-z0-9_-]+)\/(\d{2}-\d{2}|\d{4}-\d{2})\/(\d+)$/);
@@ -145,7 +191,8 @@ export async function getOfflineNextSequence(
 
   // 4. Check cached values from localStorage
   if (typeof localStorage !== 'undefined' && companyId) {
-    const lastNumKey = `vouch_last_sales_seq_${companyId}`;
+    const counterSuffix = counterCode ? `_${counterCode}` : '';
+    const lastNumKey = `vouch_last_sales_seq_${companyId}${counterSuffix}`;
     const storedLast = localStorage.getItem(lastNumKey);
     if (storedLast) {
       const n = parseInt(storedLast, 10);
@@ -155,7 +202,7 @@ export async function getOfflineNextSequence(
     }
 
     // Also inspect any online next sequence pre-cached before disconnecting
-    const nextSeqKey = `vouch_next_seq_${companyId}_${vTypeUpper}`;
+    const nextSeqKey = `vouch_next_seq_${companyId}_${vTypeUpper}${counterSuffix}`;
     const preCachedNext = localStorage.getItem(nextSeqKey);
     if (preCachedNext) {
       inspectNumber(preCachedNext);
@@ -165,15 +212,23 @@ export async function getOfflineNextSequence(
   const nextNumber = maxNum + 1;
 
   // Format into official, continuous invoice number compliant with GST Rule 46(b)
+  const fyCode = detectedFy || currentFyCode;
+  const paddedNumber = String(nextNumber).padStart(padLength, '0');
+
+  if (counterCode) {
+    // Multi-counter series: INV/26-27/A-0145
+    return `${detectedPrefix}/${fyCode}/${counterCode}-${paddedNumber}`;
+  }
+
   if (detectedPattern === 'SLASH_FY') {
-    return `${detectedPrefix}/${detectedFy || currentFyCode}/${String(nextNumber).padStart(padLength, '0')}`;
+    return `${detectedPrefix}/${fyCode}/${paddedNumber}`;
   } else if (detectedPattern === 'DASH') {
-    return `${detectedPrefix}-${String(nextNumber).padStart(padLength, '0')}`;
+    return `${detectedPrefix}-${paddedNumber}`;
   } else if (detectedPattern === 'NUMERIC') {
     return String(nextNumber).padStart(padLength, '0');
   } else {
     // Default fallback format
-    return `${detectedPrefix}/${currentFyCode}/${String(nextNumber).padStart(4, '0')}`;
+    return `${detectedPrefix}/${fyCode}/${String(nextNumber).padStart(4, '0')}`;
   }
 }
 
@@ -187,7 +242,9 @@ export function advanceOfflineSequence(companyId: string, assignedVoucherNumber:
   if (match) {
     const num = parseInt(match[1], 10);
     if (!isNaN(num) && num > 0) {
-      const lastKey = `vouch_last_sales_seq_${companyId}`;
+      const counterCode = getDeviceCounterCode(companyId);
+      const counterSuffix = counterCode ? `_${counterCode}` : '';
+      const lastKey = `vouch_last_sales_seq_${companyId}${counterSuffix}`;
       const current = parseInt(localStorage.getItem(lastKey) || '0', 10);
       if (num > current) {
         localStorage.setItem(lastKey, String(num));
