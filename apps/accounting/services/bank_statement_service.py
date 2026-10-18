@@ -1189,21 +1189,39 @@ class BankStatementService:
                     proc_mime = img_mime
 
                 res_dict = None
-                for b_model in ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.8-flash", "gemini-2.5-flash"]:
+                for b_model in ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.8-flash"]:
                     try:
-                        response = client.models.generate_content(
-                            model=b_model,
-                            contents=[
-                                types.Part.from_bytes(data=proc_bytes, mime_type=proc_mime),
-                                prompt
-                            ],
-                            config=types.GenerateContentConfig(
-                                response_mime_type="application/json",
-                                response_schema=BankStatementExtractionSchema,
-                                temperature=0.1
+                        try:
+                            response = client.models.generate_content(
+                                model=b_model,
+                                contents=[
+                                    types.Part.from_bytes(data=proc_bytes, mime_type=proc_mime),
+                                    prompt
+                                ],
+                                config=types.GenerateContentConfig(
+                                    response_mime_type="application/json",
+                                    response_schema=BankStatementExtractionSchema,
+                                    temperature=0.1
+                                )
                             )
-                        )
-                        res_dict = json.loads(response.text)
+                        except Exception as s_err:
+                            response = client.models.generate_content(
+                                model=b_model,
+                                contents=[
+                                    types.Part.from_bytes(data=proc_bytes, mime_type=proc_mime),
+                                    prompt
+                                ],
+                                config=types.GenerateContentConfig(
+                                    response_mime_type="application/json",
+                                    temperature=0.1
+                                )
+                            )
+                        resp_text = response.text or ""
+                        if "```json" in resp_text:
+                            resp_text = resp_text.split("```json", 1)[1].split("```", 1)[0].strip()
+                        elif "```" in resp_text:
+                            resp_text = resp_text.split("```", 1)[1].split("```", 1)[0].strip()
+                        res_dict = json.loads(resp_text)
                         if res_dict:
                             break
                     except Exception as b_err:

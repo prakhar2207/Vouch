@@ -15,7 +15,10 @@ class InvoiceItemSchema(BaseModel):
     color: Optional[str] = Field(default="", description="Color of the product if mentioned on the invoice, e.g. Titanium Gray, Space Black, Starlight, Midnight Blue, Silver, Gold")
     imei_numbers: List[str] = Field(default_factory=list, description="List of unique 15-digit IMEI numbers or serial numbers for this product")
     serial_numbers: Optional[str] = Field(default="", description="Comma-separated IMEI numbers, serial numbers, or unique device identifiers")
-    attributes: Optional[dict] = Field(default_factory=dict, description="Extracted product specifications/features, e.g. {'color': 'Titanium Gray', 'storage': '256GB', 'ram': '12GB', 'model': 'S24 Ultra'}")
+    storage: Optional[str] = Field(default="", description="Internal storage capacity if mentioned, e.g. 128GB, 256GB, 512GB, 1TB")
+    ram: Optional[str] = Field(default="", description="RAM capacity if mentioned, e.g. 8GB, 12GB, 16GB")
+    warranty: Optional[str] = Field(default="", description="Warranty terms if stated, e.g. 1 Year, 6 Months")
+    specifications: Optional[str] = Field(default="", description="Other key specifications, dimensions, or features")
     barcode: Optional[str] = Field(default="", description="Product barcode, EAN, UPC, or printed article code if present on the invoice for this item")
     hsn_code: Optional[str] = Field(default="", description="HSN or SAC code")
     quantity: float = Field(default=1.0, description="Quantity")
@@ -76,31 +79,46 @@ def parse_words_to_number(text: str) -> float:
 
 
 class InvoiceOCRService:
-    _DEPRECATED_MODELS = {"gemini-2.0-flash", "gemini-2.0-flash-lite"}
+    _DEPRECATED_MODELS = {
+        "gemini-2.0-flash", 
+        "gemini-2.0-flash-lite", 
+        "gemini-2-flash", 
+        "gemini-2-flash-lite", 
+        "gemini-2.5-pro", 
+        "gemini-3.1-pro", 
+        "gemini-4-argon",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+    }
 
     @classmethod
     def get_candidate_models(cls, scan_mode: str = "auto") -> List[str]:
         """
-        Dynamically yields available vision models with highest quota and vision capabilities,
-        filtering out any sunset / 404 models permanently.
+        Dynamically yields available vision models ordered by active quota,
+        filtering out any 0-quota or deprecated models permanently.
         """
         if scan_mode == "handwritten":
             preferred = [
                 "gemini-3.6-flash",
-                "gemini-3.8-flash",
                 "gemini-3.7-flash",
+                "gemini-3-flash",
                 "gemini-2.5-flash",
                 "gemini-3.1-flash-lite",
                 "gemini-3.5-flash-lite",
+                "gemini-2.5-flash-lite",
+                "gemini-3.8-flash",
             ]
         else:
-            # "printed" or "auto": Prioritize 500 RPD / 15 RPM high-quota models
+            # "printed" or "auto": Prioritize 500 RPD / 15 RPM high-quota models first
             preferred = [
                 "gemini-3.1-flash-lite",
                 "gemini-3.5-flash-lite",
                 "gemini-3.6-flash",
-                "gemini-3.8-flash",
+                "gemini-3.7-flash",
+                "gemini-3-flash",
+                "gemini-2.5-flash-lite",
                 "gemini-2.5-flash",
+                "gemini-3.8-flash",
             ]
         return [m for m in preferred if m not in cls._DEPRECATED_MODELS]
 
@@ -192,7 +210,7 @@ class InvoiceOCRService:
                 "5. Accurately extract all itemized line items: clean Description, Category, Brand (e.g. Samsung, Apple, Xiaomi, HP, Lenovo, Fenner, SKF, PIX), Color (e.g. Titanium Gray, Space Black, Starlight, Midnight Blue, Silver, Gold), HSN code, Quantity, Unit, Rate (MRP or price before discount), Discount Percentage, and Taxable Amount. "
                 "   CRITICAL FOR ELECTRONICS, SMARTPHONES, LAPTOPS & APPLIANCES: "
                 "   - Extract Color: If color is mentioned (e.g. 'Silver', 'Black', 'Blue', 'Titanium Gray', 'Gold', 'Purple'), populate 'color'. "
-                "   - Extract Specifications/Attributes: Extract technical specs into 'attributes' dictionary (e.g. {'color': 'Titanium Gray', 'storage': '256GB', 'ram': '12GB', 'model': 'S24 Ultra'}). "
+                "   - Extract Specifications: Populate 'storage' (e.g. '128GB', '256GB'), 'ram' (e.g. '8GB', '12GB'), 'warranty' (e.g. '1 Year', '6 Months'), and 'specifications'. "
                 "   - Extract All IMEI / Serial Numbers: In electronics shops, 1 product line item may have quantity 1, 2, or 5 with distinct 15-digit IMEI numbers (IMEI 1, IMEI 2) or Serial Numbers (S/N) listed on the line or below it. Extract all individual 15-digit IMEI numbers into 'imei_numbers' array AND list them comma-separated in 'serial_numbers'. "
                 "   - In 'description', include the clean product name with specifications (e.g. 'Samsung S24 Ultra 256GB (Titanium Gray)'). "
                 "   - If Barcode / EAN / UPC is printed, extract into 'barcode'."
@@ -238,7 +256,8 @@ class InvoiceOCRService:
                                 )
                             except Exception as schema_err:
                                 s_err = str(schema_err).lower()
-                                if "schema" in s_err or "not supported" in s_err or "response_schema" in s_err:
+                                if any(kw in s_err for kw in ["schema", "not supported", "response_schema", "additionalproperties", "invalid argument", "400"]):
+                                    print(f"[Gemini Schema Fallback] Retrying {model_name} in pure JSON mode due to: {schema_err}")
                                     response = client.models.generate_content(
                                         model=model_name,
                                         contents=[
@@ -283,6 +302,19 @@ class InvoiceOCRService:
                                     cleaned_desc = strip_category_prefix(desc, item_cat)
                                     if cleaned_desc:
                                         it["description"] = cleaned_desc
+
+                                    # Consolidate attributes for inventory & voucher synchronization
+                                    attrs = it.get("attributes") or {}
+                                    if not isinstance(attrs, dict):
+                                        attrs = {}
+                                    for attr_key in ["color", "storage", "ram", "warranty", "specifications"]:
+                                        val = it.get(attr_key)
+                                        if val and str(val).strip() and attr_key not in attrs:
+                                            attrs[attr_key] = str(val).strip()
+                                    if it.get("imei_numbers") and "imei_numbers" not in attrs:
+                                        attrs["imei_numbers"] = it["imei_numbers"]
+                                    it["attributes"] = attrs
+
                             result["validation"] = InvoiceOCRService.validate_invoice_math(result, buyer_state_code=buyer_state_code)
                             return _attach_pdf_previews(result)
                         except Exception as gemini_err:

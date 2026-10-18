@@ -389,21 +389,39 @@ class PriceListService:
                     "Output strict JSON adhering to the schema."
                 )
                 
-                for model_name in ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.8-flash", "gemini-2.5-flash"]:
+                for model_name in ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.8-flash"]:
                     try:
-                        response = client.models.generate_content(
-                            model=model_name,
-                            contents=[
-                                types.Part.from_bytes(data=gemini_bytes, mime_type="application/pdf"),
-                                prompt
-                            ],
-                            config=types.GenerateContentConfig(
-                                response_mime_type="application/json",
-                                response_schema=PriceListExtractionSchema,
-                                temperature=0.1
+                        try:
+                            response = client.models.generate_content(
+                                model=model_name,
+                                contents=[
+                                    types.Part.from_bytes(data=gemini_bytes, mime_type="application/pdf"),
+                                    prompt
+                                ],
+                                config=types.GenerateContentConfig(
+                                    response_mime_type="application/json",
+                                    response_schema=PriceListExtractionSchema,
+                                    temperature=0.1
+                                )
                             )
-                        )
-                        parsed_json = json.loads(response.text)
+                        except Exception as s_err:
+                            response = client.models.generate_content(
+                                model=model_name,
+                                contents=[
+                                    types.Part.from_bytes(data=gemini_bytes, mime_type="application/pdf"),
+                                    prompt
+                                ],
+                                config=types.GenerateContentConfig(
+                                    response_mime_type="application/json",
+                                    temperature=0.1
+                                )
+                            )
+                        resp_text = response.text or ""
+                        if "```json" in resp_text:
+                            resp_text = resp_text.split("```json", 1)[1].split("```", 1)[0].strip()
+                        elif "```" in resp_text:
+                            resp_text = resp_text.split("```", 1)[1].split("```", 1)[0].strip()
+                        parsed_json = json.loads(resp_text)
                         raw_items = parsed_json.get("items") if isinstance(parsed_json, dict) else []
                         if raw_items and len(raw_items) > 0:
                             return parsed_json, model_name
