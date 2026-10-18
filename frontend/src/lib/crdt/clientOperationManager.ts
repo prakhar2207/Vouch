@@ -237,15 +237,17 @@ export class ClientOperationManager {
         id: params.localId,
         companyId: params.companyId,
         voucherType: params.voucherType.toUpperCase(),
-        voucherNumber: params.transactionId,
+        voucherNumber: params.payload?.voucher_number || params.transactionId,
         voucherDate: params.voucherDate,
         dueDate: p.due_date || params.voucherDate,
         partyLedgerId,
         partyName,
-        status: "POSTED",
+        status: "PENDING_SYNC",
         totalAmount,
         narration: p.narration || `Created offline via SriLekh Protocol`,
-        serverUpdatedAt: Date.now()
+        serverUpdatedAt: Date.now(),
+        isOffline: true,
+        syncStatus: "OFFLINE_PENDING",
       };
       await offlineDb.syncedVouchers.put(projectedVoucher);
 

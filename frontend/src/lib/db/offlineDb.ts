@@ -41,13 +41,16 @@ export interface SyncedVoucher {
   referenceNumber?: string;
   partyLedgerId?: string | null;
   partyName?: string;
-  status: "DRAFT" | "POSTED" | "CANCELLED" | "REVERSED" | "SUPERSEDED" | "CORRECTED";
+  status: "DRAFT" | "POSTED" | "CANCELLED" | "REVERSED" | "SUPERSEDED" | "CORRECTED" | "PENDING_SYNC";
   totalAmount: number; // numeric float/decimal representation
   roundOff?: number; // round-off adjustment (+/-)
   paymentStatus?: "PAID" | "PARTIAL" | "UNPAID" | "ALLOCATED" | "UNALLOCATED";
   paidAmount?: number;
   narration?: string;
   serverUpdatedAt: number;
+  isOffline?: boolean;
+  syncStatus?: "OFFLINE_PENDING" | "SYNCING" | "SYNCED" | "SYNC_FAILED" | string;
+  errorMessage?: string;
 }
 
 export interface SyncedLedger {

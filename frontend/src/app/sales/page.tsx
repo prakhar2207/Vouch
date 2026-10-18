@@ -44,7 +44,7 @@ import {
 import { offlineDb } from '@/lib/db/offlineDb';
 import { PeriodPreset, computePeriodDateRange } from "@/utils/periodRanges";
 
-import { retryFailedVoucher, pullIncrementalChanges } from '@/lib/sync/sync-worker';
+import { retryFailedVoucher, pullIncrementalChanges, triggerFullSync } from '@/lib/sync/sync-worker';
 import { vouchersRepository, ledgersRepository } from '@/lib/data';
 import SemanticBalance from '@/components/accounting/SemanticBalance';
 
@@ -493,6 +493,34 @@ function SalesInvoiceListContent() {
 
   const executeDelete = async (voucherId: string) => {
     try {
+      const targetVoucher = invoices.find((i) => i.id === voucherId);
+      const isOfflineItem =
+        String(voucherId).startsWith('offline_') ||
+        String(voucherId).startsWith('cmd-') ||
+        Boolean(targetVoucher?.isOffline) ||
+        targetVoucher?.syncStatus === 'OFFLINE_PENDING' ||
+        targetVoucher?.status === 'PENDING_SYNC';
+
+      if (isOfflineItem) {
+        // Clean up from local stores directly without sending invalid 403 request to server
+        await offlineDb.syncedVouchers.delete(voucherId).catch(() => {});
+        const cleanId = String(voucherId).replace(/^offline_/, '');
+        await offlineDb.outboxQueue.where('transactionId').equals(cleanId).delete().catch(() => {});
+        await offlineDb.outboxQueue.where('operationId').equals(cleanId).delete().catch(() => {});
+        await offlineDb.operationLog.where('transactionId').equals(cleanId).delete().catch(() => {});
+        await offlineDb.operationLog.where('operationId').equals(cleanId).delete().catch(() => {});
+        await offlineDb.vouchers.where('localId').equals(cleanId).delete().catch(() => {});
+        if (targetVoucher?.voucher_number) {
+          await offlineDb.syncedVouchers.where('voucherNumber').equals(targetVoucher.voucher_number).delete().catch(() => {});
+        }
+        await vouchersRepository.deleteVoucher(voucherId);
+
+        setInvoices((prev) => prev.filter((i) => i.id !== voucherId));
+        setDeleteConfirmParams(null);
+        toast.success('Offline sales invoice removed from device.');
+        return;
+      }
+
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const res = await axios.delete(`${API_BASE_URL}/api/vouchers/${voucherId}/`, { headers });
@@ -506,8 +534,9 @@ function SalesInvoiceListContent() {
         toast.error('Failed to delete invoice', res.data.error);
       }
     } catch (err: any) {
-      if (err.response?.status === 404) {
+      if (err.response?.status === 404 || err.response?.status === 403) {
         setInvoices((prev) => prev.filter((i) => i.id !== voucherId));
+        await offlineDb.syncedVouchers.delete(voucherId).catch(() => {});
         await vouchersRepository.deleteVoucher(voucherId);
         setDeleteConfirmParams(null);
         toast.success('Voucher cleaned up from local records.');
@@ -1374,11 +1403,26 @@ function SalesInvoiceListContent() {
                               </button>
                             )}
                           </div>
-                        ) : inv.syncStatus === 'OFFLINE_PENDING' || inv.isOffline || inv.status === 'PENDING_SYNC' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30">
-                            <CloudOff className="w-2.5 h-2.5" />
-                            Saved offline — waiting to sync
-                          </span>
+                        ) : inv.syncStatus === 'OFFLINE_PENDING' || inv.isOffline || inv.status === 'PENDING_SYNC' || String(inv.id).startsWith('offline_') || String(inv.id).startsWith('cmd-') ? (
+                          <div className="flex items-center gap-1">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30">
+                              <CloudOff className="w-2.5 h-2.5" />
+                              Saved offline — waiting to sync
+                            </span>
+                            <button
+                              type="button"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                toast.info('Syncing...', 'Uploading offline invoice to server...');
+                                await triggerFullSync(activeCompanyId || undefined);
+                                fetchInvoices(page);
+                              }}
+                              className="p-0.5 hover:bg-amber-500/20 text-amber-500 rounded"
+                              title="Sync now"
+                            >
+                              <RefreshCw className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
                             <CheckCircle className="w-2.5 h-2.5" />
@@ -1546,11 +1590,26 @@ function SalesInvoiceListContent() {
                                     </button>
                                   )}
                                 </div>
-                              ) : inv.syncStatus === 'OFFLINE_PENDING' || inv.isOffline || inv.status === 'PENDING_SYNC' ? (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30" title="Saved locally on this device. Will sync automatically when connected.">
-                                  <CloudOff className="w-3.5 h-3.5" />
-                                  Saved offline — waiting to sync
-                                </span>
+                              ) : inv.syncStatus === 'OFFLINE_PENDING' || inv.isOffline || inv.status === 'PENDING_SYNC' || String(inv.id).startsWith('offline_') || String(inv.id).startsWith('cmd-') ? (
+                                <div className="flex items-center gap-1.5 justify-center">
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30" title="Saved locally on this device. Will sync automatically when connected.">
+                                    <CloudOff className="w-3.5 h-3.5" />
+                                    Saved offline — waiting to sync
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      toast.info('Syncing...', 'Uploading offline invoice to server...');
+                                      await triggerFullSync(activeCompanyId || undefined);
+                                      fetchInvoices(page);
+                                    }}
+                                    className="p-1 hover:bg-amber-500/20 text-amber-500 rounded transition-colors cursor-pointer"
+                                    title="Sync now"
+                                  >
+                                    <RefreshCw className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               ) : (
                                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" title="Authoritatively synced and posted on server">
                                   <CheckCircle className="w-3.5 h-3.5" />

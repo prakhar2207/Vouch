@@ -332,28 +332,30 @@ export class VouchersRepository {
         }
       }
 
-      return {
-        ...v,
-        type: vType,
-        voucherType: vType,
-        voucher_number: vNum,
-        voucherNumber: vNum,
-        voucher_date: vDate,
-        voucherDate: vDate,
-        date: vDate,
-        party_name: pName,
-        partyName: pName,
-        total_amount: totAmt,
-        totalAmount: totAmt,
-        round_off: v.roundOff ?? (v as any).round_off ?? (v as any).roundOff ?? 0,
-        roundOff: v.roundOff ?? (v as any).round_off ?? (v as any).roundOff ?? 0,
-        payment_status: pStatus,
-        paymentStatus: pStatus,
-        paid_amount: paidAmt,
-        paidAmount: paidAmt,
-        syncStatus: "SYNCED",
-      };
-    });
+        const isOff = Boolean(v.isOffline) || v.syncStatus === 'OFFLINE_PENDING' || v.status === 'PENDING_SYNC' || String(v.id).startsWith('offline_') || String(v.id).startsWith('cmd-');
+        return {
+          ...v,
+          type: vType,
+          voucherType: vType,
+          voucher_number: vNum,
+          voucherNumber: vNum,
+          voucher_date: vDate,
+          voucherDate: vDate,
+          date: vDate,
+          party_name: pName,
+          partyName: pName,
+          total_amount: totAmt,
+          totalAmount: totAmt,
+          round_off: v.roundOff ?? (v as any).round_off ?? (v as any).roundOff ?? 0,
+          roundOff: v.roundOff ?? (v as any).round_off ?? (v as any).roundOff ?? 0,
+          payment_status: pStatus,
+          paymentStatus: pStatus,
+          paid_amount: paidAmt,
+          paidAmount: paidAmt,
+          isOffline: isOff,
+          syncStatus: isOff ? "OFFLINE_PENDING" : (v.syncStatus || "SYNCED"),
+        };
+      });
 
     // 4. Sort: newest date first, then serverUpdatedAt descending (crash-proof)
     normalizedLocal.sort((a, b) => {

@@ -1,3 +1,4 @@
+import axios from "axios";
 import { offlineDb, SyncedVoucher, SyncedLedger, SyncedProduct } from "../db/offlineDb";
 import { LocalAnalyticsEngine } from "../analytics/analytics-engine";
 import { API_BASE_URL } from "@/utils/api";
@@ -116,7 +117,7 @@ export interface VoucherIngestInput {
   due_date?: string | null;
   referenceNumber?: string;
   reference_number?: string;
-  status?: "DRAFT" | "POSTED" | "CANCELLED" | "REVERSED" | "SUPERSEDED" | "CORRECTED";
+  status?: "DRAFT" | "POSTED" | "CANCELLED" | "REVERSED" | "SUPERSEDED" | "CORRECTED" | "PENDING_SYNC";
   paymentStatus?: "PAID" | "PARTIAL" | "UNPAID" | "ALLOCATED" | "UNALLOCATED";
   payment_status?: "PAID" | "PARTIAL" | "UNPAID" | "ALLOCATED" | "UNALLOCATED";
   paidAmount?: number | string;
@@ -126,6 +127,8 @@ export interface VoucherIngestInput {
   server_updated_at?: number;
   financialYearId?: string | null;
   financial_year_id?: string | null;
+  isOffline?: boolean;
+  syncStatus?: "OFFLINE_PENDING" | "SYNCING" | "SYNCED" | "SYNC_FAILED" | string;
 }
 
 interface SyncManagerRegistration {
@@ -244,48 +247,206 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
       .filter((item) => !item.nextRetryAt || item.nextRetryAt <= now)
       .toArray();
 
-    if (pending.length === 0) return { processed: 0, failed: 0 };
-
     const token = getAccessToken();
     if (!token) return { processed: 0, failed: 0 };
 
     // 1. Drain legacy OfflineVoucher records into authoritative CRDT operation log
-    for (const item of pending) {
-      try {
-        await offlineDb.vouchers.update(item.id!, { status: "SYNCING" });
-        const companyId = (item.payload?.company_id || item.payload?.company || "") as string;
-        
-        await ClientOperationManager.recordLocalVoucherMutation({
-          companyId,
-          voucherType: item.voucherType,
-          voucherDate: item.voucherDate,
-          payload: item.payload,
-          transactionId: item.localId
-        });
+    if (pending.length > 0) {
+      for (const item of pending) {
+        try {
+          await offlineDb.vouchers.update(item.id!, { status: "SYNCING" });
+          const companyId = (item.payload?.company_id || item.payload?.company || "") as string;
+          
+          await ClientOperationManager.recordLocalVoucherMutation({
+            companyId,
+            voucherType: item.voucherType,
+            voucherDate: item.voucherDate,
+            payload: item.payload,
+            transactionId: item.localId
+          });
 
-        await offlineDb.vouchers.update(item.id!, {
-          status: "SYNCED",
-          syncedAt: Date.now(),
-          nextRetryAt: undefined
-        });
-        processedCount++;
-      } catch (err: unknown) {
-        console.warn("Failed to migrate legacy voucher to protocol operation:", err);
-        failedCount++;
+          await offlineDb.vouchers.update(item.id!, {
+            status: "SYNCED",
+            syncedAt: Date.now(),
+            nextRetryAt: undefined
+          });
+          processedCount++;
+        } catch (err: unknown) {
+          console.warn("Failed to migrate legacy voucher to protocol operation:", err);
+          failedCount++;
+        }
       }
     }
 
-    // 2. Authoritative Protocol Sync via ClientOperationManager
-    const protoResult = await ClientOperationManager.syncOutboxWithServer(API_BASE_URL);
-    processedCount += protoResult.syncedCount;
+    // 2. Direct Accounting API Sync for offline sales invoices
+    try {
+      const salesUploaded = await pushPendingSalesInvoices();
+      processedCount += salesUploaded;
+    } catch (salesErr) {
+      console.warn("Direct sales invoice push error:", salesErr);
+    }
 
-    // 3. Purge fully migrated and synced legacy vouchers to eliminate dual-path overhead
+    // 3. Authoritative Protocol Sync via ClientOperationManager
+    try {
+      const protoResult = await ClientOperationManager.syncOutboxWithServer(API_BASE_URL);
+      processedCount += protoResult.syncedCount;
+    } catch (protoErr) {
+      console.warn("Protocol CRDT sync error:", protoErr);
+    }
+
+    // 4. Purge fully migrated and synced legacy vouchers to eliminate dual-path overhead
     await purgeLegacyOfflineVouchers();
 
     return { processed: processedCount, failed: failedCount };
   } finally {
     isSyncInProgress = false;
   }
+}
+
+/**
+ * Pushes queued sales invoice outbox items directly to Django /api/v1/accounting/sales-invoice/
+ * and reconciles local IndexedDB records upon server confirmation.
+ */
+export async function pushPendingSalesInvoices(): Promise<number> {
+  if (typeof window === "undefined" || !navigator.onLine) return 0;
+  const token = getAccessToken();
+  if (!token) return 0;
+
+  const queued = await offlineDb.outboxQueue
+    .where("status")
+    .anyOf(["QUEUED", "FAILED"])
+    .toArray();
+
+  if (queued.length === 0) return 0;
+
+  let uploadedCount = 0;
+
+  for (const item of queued) {
+    if ((item.retryCount || 0) >= 10) continue;
+    if (item.nextRetryAt && Date.now() < item.nextRetryAt) continue;
+
+    const op = await offlineDb.operationLog.get(item.operationId);
+    if (!op || !op.payload) {
+      if (item.id) await offlineDb.outboxQueue.delete(item.id);
+      continue;
+    }
+
+    const p = op.payload;
+    const vType = String(p.voucher_type || "SALES").toUpperCase();
+
+    if (vType === "SALES") {
+      try {
+        if (item.id) await offlineDb.outboxQueue.update(item.id, { status: "IN_FLIGHT" });
+
+        const cleanItems = (p.items || []).map((it: any) => {
+          const itemCopy = { ...it };
+          if (!itemCopy.product_id) delete itemCopy.product_id;
+          if (!itemCopy.category_id) delete itemCopy.category_id;
+          return itemCopy;
+        });
+
+        const postPayload: Record<string, any> = {
+          company_id: p.company_id,
+          party_ledger_id: p.party_ledger_id,
+          voucher_number: p.voucher_number || undefined,
+          voucher_date: p.voucher_date,
+          items: cleanItems,
+          post_immediately: true,
+          is_reverse_charge: false,
+        };
+
+        if (p.sales_ledger_id) postPayload.sales_ledger_id = p.sales_ledger_id;
+        if (p.cgst_ledger_id) postPayload.cgst_ledger_id = p.cgst_ledger_id;
+        if (p.sgst_ledger_id) postPayload.sgst_ledger_id = p.sgst_ledger_id;
+        if (p.igst_ledger_id) postPayload.igst_ledger_id = p.igst_ledger_id;
+        if (p.cartage_amount) postPayload.cartage_amount = Number(p.cartage_amount);
+        if (p.discount_amount) postPayload.discount_amount = Number(p.discount_amount);
+        if (p.buyer_name) postPayload.buyer_name = p.buyer_name;
+        if (p.buyer_phone) postPayload.buyer_phone = p.buyer_phone;
+        if (p.buyer_address) postPayload.buyer_address = p.buyer_address;
+        if (p.buyer_gstin) postPayload.buyer_gstin = p.buyer_gstin;
+        if (p.buyer_state_code) postPayload.buyer_state_code = p.buyer_state_code;
+        if (p.narration) postPayload.narration = p.narration;
+        if (p.due_date) postPayload.due_date = p.due_date;
+        if (p.po_number) postPayload.po_number = p.po_number;
+        if (p.po_date) postPayload.po_date = p.po_date;
+        if (p.transport_details) postPayload.transport_details = p.transport_details;
+        if (p.bank_ledger_id) postPayload.bank_ledger_id = p.bank_ledger_id;
+        if (p.upi_id) postPayload.upi_id = p.upi_id;
+
+        const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/sales-invoice/`, postPayload, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-Company-ID": p.company_id,
+          },
+          timeout: 10000,
+        });
+
+        if (res.data?.success || res.data?.voucher_id || res.data?.voucher) {
+          const vData = res.data.voucher || {};
+          const serverId = String(res.data.voucher_id || vData.id || "");
+          const serverVNum = res.data.voucher_number || vData.voucher_number || p.voucher_number;
+
+          // Remove local unconfirmed record from syncedVouchers
+          const localIds = [
+            item.transactionId,
+            `offline_${item.transactionId}`,
+            op.transactionId,
+            `offline_${op.transactionId}`,
+          ].filter(Boolean);
+
+          for (const lid of localIds) {
+            await offlineDb.syncedVouchers.delete(lid).catch(() => {});
+          }
+
+          // Insert verified server voucher
+          if (serverId) {
+            await offlineDb.syncedVouchers.put({
+              id: serverId,
+              companyId: p.company_id,
+              voucherType: "SALES",
+              voucherNumber: serverVNum,
+              voucherDate: p.voucher_date,
+              dueDate: p.due_date || p.voucher_date,
+              partyLedgerId: p.party_ledger_id,
+              partyName: p.party_name || p.buyer_name || "Customer",
+              status: "POSTED",
+              totalAmount: Number(res.data.total_amount || vData.total_amount || p.total_amount || 0),
+              serverUpdatedAt: Date.now(),
+              isOffline: false,
+              syncStatus: "SYNCED",
+            });
+          }
+
+          if (item.id) await offlineDb.outboxQueue.delete(item.id);
+          await offlineDb.operationLog.update(item.operationId, { status: "SYNCED" });
+          uploadedCount++;
+        }
+      } catch (err: any) {
+        console.warn(`[Auto-Sync] Failed to post sales invoice ${item.operationId}:`, err);
+        const retryCount = (item.retryCount || 0) + 1;
+        const delay = BACKOFF_DELAYS[Math.min(retryCount, BACKOFF_DELAYS.length - 1)];
+        if (item.id) {
+          await offlineDb.outboxQueue.update(item.id, {
+            status: "FAILED",
+            retryCount,
+            nextRetryAt: Date.now() + delay,
+            lastError: err.response?.data?.error || err.message,
+          });
+        }
+      }
+    }
+  }
+
+  if (uploadedCount > 0 && typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("vouch:sync-complete", {
+        detail: { totalRecords: uploadedCount, timestamp: Date.now() },
+      })
+    );
+  }
+
+  return uploadedCount;
 }
 
 /**
@@ -716,6 +877,9 @@ export async function ingestVoucherLocally(
   const pAmt = Number(voucher.paidAmount ?? voucher.paid_amount ?? 0);
   const narr = voucher.narration || "";
   const sUpdated = Number(voucher.serverUpdatedAt || voucher.server_updated_at || Date.now());
+  const isOff = voucher.isOffline ?? (String(voucher.id).startsWith("offline_") || String(voucher.id).startsWith("cmd-") || sStatus === "PENDING_SYNC");
+  const synStatus = voucher.syncStatus || (isOff ? "OFFLINE_PENDING" : "SYNCED");
+  const finalStatus = isOff ? "PENDING_SYNC" : ((sStatus as SyncedVoucher["status"]) || "POSTED");
 
   const syncedV: SyncedVoucher = {
     id: String(voucher.id),
@@ -728,12 +892,14 @@ export async function ingestVoucherLocally(
     referenceNumber: refNum,
     partyLedgerId: pLedgerId,
     partyName: pName,
-    status: (sStatus as SyncedVoucher["status"]) || "POSTED",
+    status: finalStatus,
     totalAmount: totAmt,
     paymentStatus: (pStatus as SyncedVoucher["paymentStatus"]) || "UNPAID",
     paidAmount: pAmt,
     narration: narr,
     serverUpdatedAt: isNaN(sUpdated) ? Date.now() : sUpdated,
+    isOffline: isOff,
+    syncStatus: synStatus,
   };
 
   await offlineDb.syncedVouchers.put(syncedV);

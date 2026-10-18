@@ -320,13 +320,23 @@ class LedgerBridge:
             v_date = timezone.now().date()
 
         if not base_voucher:
+            manual_num = None
+            for op in converged_operations:
+                if op.payload and op.payload.get('voucher_number'):
+                    manual_num = str(op.payload.get('voucher_number')).strip()
+                    break
+
             if is_seller:
                 base_voucher = SalesInvoiceService.generate_sales_invoice(
                     company=company,
                     user=user,
                     party_ledger=party_ledger,
                     items_data=items_data,
+                    manual_voucher_number=manual_num,
                     manual_voucher_date=v_date,
+                    buyer_name=counterparty_entity.name if is_seller else None,
+                    buyer_gstin=counterparty_entity.identity_value if is_seller else None,
+                    buyer_state_code=counterparty_entity.state_code if is_seller else None,
                     cartage_amount=canonical_tx.totals.shipping_charges
                 )
             else:
@@ -505,6 +515,7 @@ class LedgerBridge:
             "company_id": str(company.id),
             "company_name": company.name,
             "role": "SELLER" if is_seller else "BUYER",
+            "base_voucher_id": str(base_voucher.id) if base_voucher else None,
             "base_voucher_number": base_voucher.voucher_number if base_voucher else None,
             "posted_vouchers": posted_numbers,
             "vouchers_count": len(posted_vouchers)

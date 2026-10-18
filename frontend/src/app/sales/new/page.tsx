@@ -40,6 +40,7 @@ import {
   ArrowUpDown,
 } from 'lucide-react';
 import { queueOfflineVoucher, ingestVoucherLocally } from '@/lib/sync/sync-worker';
+import { getOfflineNextSequence, advanceOfflineSequence } from '@/lib/sync/sequence-service';
 import { offlineDb } from '@/lib/db/offlineDb';
 import BarcodeScannerModal from '@/components/modals/BarcodeScannerModal';
 
@@ -252,11 +253,10 @@ export default function SalesPage() {
     const fetchSeq = async () => {
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         try {
-          const count = await offlineDb.vouchers.count();
-          const dateStr = (invoiceDate || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
-          setSeqPreview(`OFF-${dateStr}-${String(count + 1).padStart(4, '0')}`);
+          const offlineSeq = await getOfflineNextSequence(companyId, 'SALES', invoiceDate);
+          setSeqPreview(offlineSeq);
         } catch {
-          setSeqPreview(`OFF-${Date.now().toString().slice(-6)}`);
+          setSeqPreview('INV/26-27/0001');
         }
         return;
       }
@@ -267,14 +267,17 @@ export default function SalesPage() {
           { headers: { Authorization: `Bearer ${token}`, 'X-Company-ID': companyId }, timeout: 3500 }
         );
         if (res.data?.success && res.data.data?.preview_number) {
-          setSeqPreview(res.data.data.preview_number);
+          const pNum = res.data.data.preview_number;
+          setSeqPreview(pNum);
+          if (typeof localStorage !== 'undefined' && companyId) {
+            localStorage.setItem(`vouch_next_seq_${companyId}_SALES`, pNum);
+          }
         }
       } catch (err) {
         // Fallback offline preview
         try {
-          const count = await offlineDb.vouchers.count();
-          const dateStr = (invoiceDate || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
-          setSeqPreview(`OFF-${dateStr}-${String(count + 1).padStart(4, '0')}`);
+          const offlineSeq = await getOfflineNextSequence(companyId, 'SALES', invoiceDate);
+          setSeqPreview(offlineSeq);
         } catch {}
       }
     };
@@ -822,8 +825,14 @@ export default function SalesPage() {
       }
       
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        const resolvedVnum = enableManualInvoice && invoiceNumber.trim()
+          ? invoiceNumber.trim()
+          : (seqPreview || await getOfflineNextSequence(companyId, 'SALES', invoiceDate));
+
+        payload.voucher_number = resolvedVnum;
+        advanceOfflineSequence(companyId, resolvedVnum);
+
         const offlineRes = await queueOfflineVoucher('SALES', payload, invoiceDate);
-        const resolvedVnum = enableManualInvoice && invoiceNumber.trim() ? invoiceNumber.trim() : (seqPreview || offlineRes.localId);
         await ingestVoucherLocally(companyId || 'offline-company', {
           id: offlineRes.localId,
           voucherType: 'SALES',
@@ -833,7 +842,9 @@ export default function SalesPage() {
           totalAmount: grandTotal,
           partyName: selectedParty?.name || buyerName || 'Customer',
           partyLedgerId: selectedParty?.id || null,
-          status: 'POSTED',
+          status: 'PENDING_SYNC',
+          isOffline: true,
+          syncStatus: 'OFFLINE_PENDING',
         });
         toast.success(
           "Saved Offline",
@@ -841,7 +852,6 @@ export default function SalesPage() {
         );
         setSaving(false);
         router.push('/sales');
-        router.refresh();
         return;
       }
 
@@ -857,17 +867,25 @@ export default function SalesPage() {
             voucherType: 'SALES',
             partyName: selectedParty?.name || vData.party_name || vData.partyName,
             partyLedgerId: selectedParty?.id || vData.party_ledger_id || vData.partyLedgerId,
+            status: 'POSTED',
+            isOffline: false,
+            syncStatus: 'SYNCED',
           });
         }
         toast.success(`Sales Invoice generated!`, `Voucher: ${res.data.voucher_number}`);
         router.push('/sales');
-        router.refresh();
       } catch (postErr: any) {
         // If offline or network error, store in local IndexedDB outbox!
         const isNetworkErr = !navigator.onLine || postErr.code === 'ERR_NETWORK' || !postErr.response;
         if (isNetworkErr) {
+          const fallbackVnum = enableManualInvoice && invoiceNumber.trim()
+            ? invoiceNumber.trim()
+            : (seqPreview || await getOfflineNextSequence(companyId, 'SALES', invoiceDate));
+
+          payload.voucher_number = fallbackVnum;
+          advanceOfflineSequence(companyId, fallbackVnum);
+
           const offlineRes = await queueOfflineVoucher('SALES', payload, invoiceDate);
-          const fallbackVnum = enableManualInvoice && invoiceNumber.trim() ? invoiceNumber.trim() : (seqPreview || offlineRes.localId);
           await ingestVoucherLocally(companyId || 'offline-company', {
             id: offlineRes.localId,
             voucherType: 'SALES',
@@ -877,14 +895,16 @@ export default function SalesPage() {
             totalAmount: grandTotal,
             partyName: selectedParty?.name || buyerName || 'Customer',
             partyLedgerId: selectedParty?.id || null,
-            status: 'POSTED',
+            status: 'PENDING_SYNC',
+            isOffline: true,
+            syncStatus: 'OFFLINE_PENDING',
           });
           toast.success(
             "Saved Offline",
             `Invoice ${fallbackVnum} saved to your device. Will sync automatically when connected.`
           );
           router.push('/sales');
-          router.refresh();
+          return;
         } else {
           throw postErr;
         }

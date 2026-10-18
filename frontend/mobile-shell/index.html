@@ -3,1620 +3,200 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>SriLekh - Offline Sales &amp; Invoicing</title>
+  <title>SriLekh - Business Accounting & ERP</title>
   <meta name="theme-color" content="#0F172A" />
   <style>
-    :root {
-      --bg: #0F172A;
-      --card-bg: #1E293B;
-      --card-border: rgba(255, 255, 255, 0.08);
-      --input-bg: #0B132B;
-      --input-border: rgba(255, 255, 255, 0.15);
-      --text-main: #F8FAFC;
-      --text-muted: #94A3B8;
-      --primary: #2563EB;
-      --primary-hover: #1D4ED8;
-      --accent: #38BDF8;
-      --success: #10B981;
-      --warning: #F59E0B;
-      --danger: #EF4444;
-    }
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      -webkit-tap-highlight-color: transparent;
     }
     body {
-      background-color: var(--bg);
-      color: var(--text-main);
-      min-height: 100vh;
-      min-height: 100dvh;
-      padding: 0 0 80px 0;
-      overflow-x: hidden;
-    }
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 40;
-      background: rgba(15, 23, 42, 0.95);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--card-border);
-      padding: 12px 16px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .header-left {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .header-logo {
-      width: 36px;
-      height: 36px;
-      border-radius: 10px;
-      object-fit: contain;
-      box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
-    }
-    .header-title-box h1 {
-      font-size: 17px;
-      font-weight: 800;
-      letter-spacing: -0.02em;
-      line-height: 1.1;
-    }
-    .header-title-box span {
-      font-size: 11px;
-      color: var(--text-muted);
-      font-weight: 500;
-    }
-    .header-right {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 4px 10px;
-      border-radius: 20px;
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-    .status-badge.offline {
-      background: rgba(245, 158, 11, 0.15);
-      border: 1px solid rgba(245, 158, 11, 0.3);
-      color: var(--warning);
-    }
-    .status-badge.online {
-      background: rgba(16, 185, 129, 0.15);
-      border: 1px solid rgba(16, 185, 129, 0.3);
-      color: var(--success);
-    }
-    .cloud-btn {
-      background: linear-gradient(135deg, #2563EB, #1D4ED8);
-      color: white;
-      border: none;
-      border-radius: 8px;
-      padding: 6px 12px;
-      font-size: 11px;
-      font-weight: 700;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
-    }
-    .cloud-btn:active {
-      transform: scale(0.97);
-    }
-
-    /* Tabs */
-    .tab-bar {
-      display: flex;
-      background: rgba(30, 41, 59, 0.7);
-      border-bottom: 1px solid var(--card-border);
-      padding: 4px 8px;
-      gap: 6px;
-    }
-    .tab-btn {
-      flex: 1;
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      padding: 9px 8px;
-      font-size: 12px;
-      font-weight: 700;
-      border-radius: 8px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      transition: all 0.15s ease;
-    }
-    .tab-btn.active {
-      background: rgba(255, 255, 255, 0.1);
-      color: var(--text-main);
-      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-    }
-    .pill-count {
-      background: var(--primary);
-      color: white;
-      border-radius: 10px;
-      padding: 1px 6px;
-      font-size: 10px;
-      font-weight: 800;
-    }
-
-    /* Container */
-    .main-container {
-      padding: 14px;
-      max-width: 600px;
-      margin: 0 auto;
-    }
-
-    /* Card */
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 14px;
-      padding: 14px;
-      margin-bottom: 14px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-    }
-    .card-title {
-      font-size: 13px;
-      font-weight: 700;
-      color: var(--accent);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-bottom: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    /* Form Fields */
-    .field-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
-    .field-group {
-      margin-bottom: 10px;
-    }
-    .field-group:last-child {
-      margin-bottom: 0;
-    }
-    label {
-      display: block;
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--text-muted);
-      margin-bottom: 4px;
-    }
-    input, select, textarea {
-      width: 100%;
-      background: var(--input-bg);
-      border: 1px solid var(--input-border);
-      color: var(--text-main);
-      padding: 9px 11px;
-      border-radius: 8px;
-      font-size: 13px;
-      outline: none;
-      transition: border-color 0.15s ease;
-    }
-    input:focus, select:focus, textarea:focus {
-      border-color: var(--accent);
-    }
-    input[readonly] {
-      background: rgba(11, 19, 43, 0.5);
-      color: #94A3B8;
-      cursor: not-allowed;
-    }
-
-    /* Line Items */
-    .item-card {
-      background: rgba(11, 19, 43, 0.6);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 10px;
-      padding: 12px;
-      margin-bottom: 10px;
-      position: relative;
-    }
-    .item-card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
-    }
-    .item-number {
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--accent);
-    }
-    .del-btn {
-      background: rgba(239, 68, 68, 0.15);
-      border: 1px solid rgba(239, 68, 68, 0.3);
-      color: #F87171;
-      width: 26px;
-      height: 26px;
-      border-radius: 6px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 13px;
-      font-weight: bold;
-    }
-    .item-calc-preview {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 8px;
-      padding-top: 6px;
-      border-top: 1px dashed rgba(255, 255, 255, 0.08);
-      font-size: 11px;
-      color: var(--text-muted);
-    }
-    .item-calc-preview strong {
-      color: var(--text-main);
-    }
-
-    .add-item-btn {
-      width: 100%;
-      background: rgba(37, 99, 235, 0.15);
-      border: 1px dashed rgba(37, 99, 235, 0.4);
-      color: #60A5FA;
-      padding: 10px;
-      border-radius: 8px;
-      font-size: 12px;
-      font-weight: 700;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      transition: all 0.15s ease;
-    }
-    .add-item-btn:active {
-      background: rgba(37, 99, 235, 0.25);
-    }
-
-    /* Bill Summary Table */
-    .summary-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 5px 0;
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-    .summary-row.total {
-      padding-top: 10px;
-      margin-top: 6px;
-      border-top: 1px solid var(--card-border);
-      font-size: 16px;
-      font-weight: 800;
-      color: var(--text-main);
-    }
-    .grand-total-amount {
-      color: #34D399;
-      font-size: 20px;
-      font-weight: 900;
-    }
-
-    /* Actions */
-    .actions-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-top: 16px;
-    }
-    .btn-primary {
-      background: linear-gradient(135deg, #2563EB, #1D4ED8);
-      color: white;
-      border: none;
-      border-radius: 10px;
-      padding: 14px;
-      font-size: 13px;
-      font-weight: 800;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
-    .btn-primary:active {
-      transform: scale(0.98);
-    }
-    .btn-secondary {
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid var(--card-border);
-      color: var(--text-main);
-      border-radius: 10px;
-      padding: 14px;
-      font-size: 13px;
-      font-weight: 700;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
-    .btn-secondary:active {
-      background: rgba(255, 255, 255, 0.12);
-    }
-
-    /* Accordion */
-    details {
-      background: rgba(11, 19, 43, 0.5);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 10px;
-      padding: 10px 12px;
-      margin-top: 10px;
-    }
-    details summary {
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--accent);
-      user-select: none;
-      outline: none;
-    }
-    details .accordion-body {
-      padding-top: 10px;
-    }
-
-    /* History List */
-    .history-card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 12px 14px;
-      margin-bottom: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .hist-left h4 {
-      font-size: 14px;
-      font-weight: 800;
-      margin-bottom: 2px;
-    }
-    .hist-left p {
-      font-size: 11px;
-      color: var(--text-muted);
-    }
-    .hist-right {
-      text-align: right;
-    }
-    .hist-amount {
-      font-size: 15px;
-      font-weight: 800;
-      color: #34D399;
-      margin-bottom: 4px;
-    }
-    .hist-status {
-      display: inline-block;
-      font-size: 10px;
-      font-weight: 700;
-      padding: 2px 6px;
-      border-radius: 12px;
-      text-transform: uppercase;
-    }
-    .hist-status.pending {
-      background: rgba(245, 158, 11, 0.15);
-      color: #FBBF24;
-      border: 1px solid rgba(245, 158, 11, 0.3);
-    }
-    .hist-status.synced {
-      background: rgba(16, 185, 129, 0.15);
-      color: #34D399;
-      border: 1px solid rgba(16, 185, 129, 0.3);
-    }
-
-    /* Toast */
-    .toast-container {
-      position: fixed;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 100;
+      background-color: #0F172A;
+      color: #F8FAFC;
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      pointer-events: none;
-    }
-    .toast {
-      background: #1E293B;
-      color: white;
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      padding: 10px 18px;
-      border-radius: 10px;
-      font-size: 12px;
-      font-weight: 600;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.6);
-      animation: fadeIn 0.2s ease;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    /* Receipt Modal */
-    .modal-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      z-index: 90;
-      background: rgba(0, 0, 0, 0.8);
-      backdrop-filter: blur(6px);
       align-items: center;
       justify-content: center;
-      padding: 16px;
-    }
-    .modal-overlay.active {
-      display: flex;
-    }
-    .receipt-box {
-      background: #FFFFFF;
-      color: #0F172A;
-      width: 100%;
-      max-width: 480px;
-      max-height: 90vh;
-      overflow-y: auto;
-      border-radius: 14px;
-      padding: 20px;
-      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
-    }
-    .receipt-header {
+      min-height: 100vh;
+      min-height: 100dvh;
       text-align: center;
-      border-bottom: 2px solid #E2E8F0;
-      padding-bottom: 12px;
-      margin-bottom: 12px;
+      padding: 24px;
     }
-    .receipt-header h2 {
-      font-size: 18px;
-      font-weight: 900;
-      color: #0F172A;
-      margin-bottom: 2px;
+    .logo-container {
+      margin-bottom: 20px;
+      animation: pulse 2.5s infinite ease-in-out;
     }
-    .receipt-header p {
-      font-size: 11px;
-      color: #64748B;
+    .logo-img {
+      width: 104px;
+      height: 104px;
+      border-radius: 24px;
+      box-shadow: 0 12px 30px -5px rgba(37, 99, 235, 0.45);
+      object-fit: contain;
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      margin-bottom: 6px;
+    }
+    .subtitle {
+      color: #94A3B8;
+      font-size: 13px;
+      max-width: 320px;
+      line-height: 1.5;
+      margin-bottom: 28px;
+    }
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      border-radius: 50%;
+      border-top-color: #38BDF8;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+    .status-text {
+      font-size: 13px;
+      color: #94A3B8;
+      font-weight: 500;
+      margin-bottom: 20px;
+      max-width: 300px;
       line-height: 1.4;
     }
-    .receipt-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 12px 0;
+    .offline-card {
+      display: none;
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 20px;
+      max-width: 340px;
+      margin-top: 8px;
+    }
+    .offline-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      color: #FBBF24;
       font-size: 11px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
-    .receipt-table th {
-      background: #F1F5F9;
-      color: #334155;
-      padding: 6px 8px;
-      text-align: left;
-      border-bottom: 1px solid #CBD5E1;
+    .offline-desc {
+      font-size: 12px;
+      color: #CBD5E1;
+      line-height: 1.5;
+      margin-bottom: 16px;
     }
-    .receipt-table td {
-      padding: 6px 8px;
-      border-bottom: 1px solid #E2E8F0;
-      color: #1E293B;
-    }
-    .receipt-summary-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: 11px;
-      padding: 3px 0;
-      color: #475569;
-    }
-    .receipt-grand-total {
-      display: flex;
-      justify-content: space-between;
-      font-size: 15px;
-      font-weight: 900;
-      padding-top: 8px;
-      margin-top: 6px;
-      border-top: 2px solid #0F172A;
-      color: #0F172A;
-    }
-    .receipt-actions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-top: 16px;
-    }
-    .print-btn {
-      background: #2563EB;
+    .retry-btn {
+      background: linear-gradient(135deg, #2563EB, #1D4ED8);
       color: white;
       border: none;
-      padding: 10px;
-      border-radius: 8px;
-      font-size: 12px;
-      font-weight: 800;
-      cursor: pointer;
-    }
-    .close-modal-btn {
-      background: #F1F5F9;
-      color: #334155;
-      border: 1px solid #CBD5E1;
-      padding: 10px;
-      border-radius: 8px;
-      font-size: 12px;
+      border-radius: 10px;
+      padding: 10px 24px;
+      font-size: 13px;
       font-weight: 700;
       cursor: pointer;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+      transition: all 0.2s ease;
     }
-
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
+    .retry-btn:active {
+      transform: scale(0.97);
     }
-    @media print {
-      body * { visibility: hidden; }
-      #printable-receipt, #printable-receipt * { visibility: visible; }
-      #printable-receipt { position: absolute; left: 0; top: 0; width: 100%; }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.02); }
     }
   </style>
 </head>
 <body>
+  <div class="logo-container">
+    <img src="logo.png" alt="SriLekh Logo" class="logo-img" />
+  </div>
+  <h1>SriLekh</h1>
+  <p class="subtitle">Local-First Cloud Accounting &amp; Real-time ERP</p>
 
-  <!-- Header -->
-  <header>
-    <div class="header-left">
-      <img src="logo.png" alt="SriLekh" class="header-logo" onerror="this.style.display='none'" />
-      <div class="header-title-box">
-        <h1>SriLekh</h1>
-        <span id="header-company-name">Local Offline ERP</span>
-      </div>
-    </div>
-    <div class="header-right">
-      <div id="connection-pill" class="status-badge offline">⚡ Offline</div>
-      <button class="cloud-btn" id="launch-cloud-btn" onclick="launchCloudDashboard()">
-        🌐 Cloud
-      </button>
-    </div>
-  </header>
-
-  <!-- Navigation Tabs -->
-  <div class="tab-bar">
-    <button class="tab-btn active" id="tab-btn-new" onclick="switchTab('new')">
-      📝 New Invoice
-    </button>
-    <button class="tab-btn" id="tab-btn-history" onclick="switchTab('history')">
-      📋 Saved Invoices <span class="pill-count" id="pending-count-pill">0</span>
-    </button>
-    <button class="tab-btn" id="tab-btn-settings" onclick="switchTab('settings')">
-      ⚙️ Profile
-    </button>
+  <div id="loading-state">
+    <div class="spinner"></div>
+    <div class="status-text" id="status">Connecting to workspace...</div>
   </div>
 
-  <div class="main-container">
-
-    <!-- TAB 1: NEW SALES INVOICE -->
-    <div id="tab-new" class="tab-content">
-      
-      <!-- Invoice Details Card -->
-      <div class="card">
-        <div class="card-title">
-          <span>Invoice Meta</span>
-          <span style="font-size: 11px; color: var(--text-muted); font-weight: 500;" id="invoice-mode-text">Standard GST Bill</span>
-        </div>
-        <div class="field-row">
-          <div class="field-group">
-            <label>Invoice Number</label>
-            <input type="text" id="inv-number" value="OFF-INV-0001" />
-          </div>
-          <div class="field-group">
-            <label>Invoice Date</label>
-            <input type="date" id="inv-date" />
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field-group">
-            <label>Payment Mode</label>
-            <select id="inv-payment-mode">
-              <option value="CREDIT">Credit (Due Later)</option>
-              <option value="CASH">Cash in Hand</option>
-              <option value="BANK">Bank / UPI</option>
-            </select>
-          </div>
-          <div class="field-group">
-            <label>Due Date</label>
-            <input type="date" id="inv-due-date" />
-          </div>
-        </div>
-      </div>
-
-      <!-- Customer / Party Card -->
-      <div class="card">
-        <div class="card-title">
-          <span>Customer / Party</span>
-          <button style="background: none; border: none; color: var(--accent); font-size: 11px; font-weight: 700; cursor: pointer;" onclick="toggleAddPartyModal()">+ New Party</button>
-        </div>
-        <div class="field-group">
-          <label>Select Saved Customer</label>
-          <select id="party-select" onchange="onPartySelected(this.value)">
-            <option value="walkin">Cash Customer / Walk-in Buyer</option>
-          </select>
-        </div>
-        <div class="field-row" style="margin-top: 10px;">
-          <div class="field-group">
-            <label>Customer Name</label>
-            <input type="text" id="party-name" placeholder="Walk-in Customer" />
-          </div>
-          <div class="field-group">
-            <label>Customer Phone</label>
-            <input type="tel" id="party-phone" placeholder="9876543210" />
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field-group">
-            <label>GSTIN (Optional)</label>
-            <input type="text" id="party-gstin" placeholder="07AAAAA0000A1Z5" maxlength="15" oninput="onGstinInput(this.value)" />
-          </div>
-          <div class="field-group">
-            <label>Billing State Code</label>
-            <input type="text" id="party-state-code" placeholder="07" maxlength="2" oninput="recalculateTotals()" />
-          </div>
-        </div>
-        <div class="field-group">
-          <label>Billing Address</label>
-          <input type="text" id="party-address" placeholder="Address, City, Pincode" />
-        </div>
-      </div>
-
-      <!-- Line Items Card -->
-      <div class="card">
-        <div class="card-title">
-          <span>Line Items</span>
-          <span style="font-size: 11px; color: var(--text-muted);" id="items-count-text">1 Item</span>
-        </div>
-
-        <div id="items-container">
-          <!-- Dynamic Items Injected Here -->
-        </div>
-
-        <button class="add-item-btn" onclick="addNewItemRow()">
-          ➕ Add Another Item
-        </button>
-      </div>
-
-      <!-- Transport & Narration (Collapsible) -->
-      <details>
-        <summary>🚚 Transport &amp; Remarks (Optional)</summary>
-        <div class="accordion-body">
-          <div class="field-row">
-            <div class="field-group">
-              <label>Vehicle Number</label>
-              <input type="text" id="trans-vehicle" placeholder="DL 01 AB 1234" />
-            </div>
-            <div class="field-group">
-              <label>Transporter Name</label>
-              <input type="text" id="trans-name" placeholder="VRL / SafeExpress" />
-            </div>
-          </div>
-          <div class="field-group">
-            <label>E-Way Bill / LR Number</label>
-            <input type="text" id="trans-doc" placeholder="EWB-123456789" />
-          </div>
-          <div class="field-group">
-            <label>Narration / Terms</label>
-            <textarea id="inv-narration" rows="2" placeholder="Goods once sold will not be taken back."></textarea>
-          </div>
-        </div>
-      </details>
-
-      <!-- Bill Summary Card -->
-      <div class="card" style="margin-top: 14px;">
-        <div class="card-title">Bill Calculation</div>
-        
-        <div class="summary-row">
-          <span>Taxable Amount</span>
-          <span id="sum-taxable">₹0.00</span>
-        </div>
-        <div class="summary-row" id="sum-cgst-row">
-          <span id="sum-cgst-label">CGST</span>
-          <span id="sum-cgst">₹0.00</span>
-        </div>
-        <div class="summary-row" id="sum-sgst-row">
-          <span id="sum-sgst-label">SGST</span>
-          <span id="sum-sgst">₹0.00</span>
-        </div>
-        <div class="summary-row" id="sum-igst-row" style="display: none;">
-          <span id="sum-igst-label">IGST (Inter-state)</span>
-          <span id="sum-igst">₹0.00</span>
-        </div>
-        <div class="summary-row">
-          <span>Freight / Cartage (₹)</span>
-          <input type="number" id="sum-cartage" value="0" style="width: 90px; text-align: right; padding: 4px 8px;" oninput="recalculateTotals()" />
-        </div>
-        <div class="summary-row">
-          <span>Bill Discount (₹)</span>
-          <input type="number" id="sum-discount" value="0" style="width: 90px; text-align: right; padding: 4px 8px;" oninput="recalculateTotals()" />
-        </div>
-        <div class="summary-row">
-          <span>Round Off</span>
-          <span id="sum-roundoff">₹0.00</span>
-        </div>
-        <div class="summary-row total">
-          <span>Grand Total</span>
-          <span class="grand-total-amount" id="sum-grand-total">₹0.00</span>
-        </div>
-      </div>
-
-      <!-- Action Buttons -->
-      <div class="actions-grid">
-        <button class="btn-primary" onclick="saveInvoice(false)">
-          💾 Save Offline
-        </button>
-        <button class="btn-secondary" onclick="saveInvoice(true)">
-          🖨️ Save &amp; Print
-        </button>
-      </div>
-
-    </div>
-
-    <!-- TAB 2: SAVED INVOICES -->
-    <div id="tab-history" class="tab-content" style="display: none;">
-      <div class="card" style="background: rgba(30, 41, 59, 0.5);">
-        <p style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
-          All invoices created offline remain safely stored on this phone. As soon as an internet connection is established, pending invoices automatically sync to SriLekh Cloud.
-        </p>
-        <div style="margin-top: 10px; display: flex; gap: 8px;">
-          <button class="cloud-btn" style="flex: 1; padding: 8px;" onclick="syncNow()">
-            🔄 Sync Outbox Now
-          </button>
-        </div>
-      </div>
-
-      <div id="history-container">
-        <!-- Rendered dynamically -->
-      </div>
-    </div>
-
-    <!-- TAB 3: SETTINGS & PROFILE -->
-    <div id="tab-settings" class="tab-content" style="display: none;">
-      <div class="card">
-        <div class="card-title">Company Profile</div>
-        <div class="field-group">
-          <label>Business / Trade Name</label>
-          <input type="text" id="cfg-company-name" placeholder="My Enterprise" />
-        </div>
-        <div class="field-row">
-          <div class="field-group">
-            <label>GSTIN</label>
-            <input type="text" id="cfg-gstin" placeholder="07AAAAA0000A1Z5" maxlength="15" />
-          </div>
-          <div class="field-group">
-            <label>State Code</label>
-            <input type="text" id="cfg-state-code" placeholder="07" maxlength="2" />
-          </div>
-        </div>
-        <div class="field-group">
-          <label>Address</label>
-          <input type="text" id="cfg-address" placeholder="123 Market Road" />
-        </div>
-        <div class="field-row">
-          <div class="field-group">
-            <label>Phone</label>
-            <input type="tel" id="cfg-phone" placeholder="9876543210" />
-          </div>
-          <div class="field-group">
-            <label>UPI ID (QR on Bill)</label>
-            <input type="text" id="cfg-upi" placeholder="business@upi" />
-          </div>
-        </div>
-        <button class="btn-primary" style="width: 100%; margin-top: 12px;" onclick="saveCompanyProfile()">
-          Save Profile Locally
-        </button>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Local Storage Diagnostics</div>
-        <div class="summary-row">
-          <span>Engine</span>
-          <span style="color: var(--accent); font-weight: bold;">IndexedDB (VouchOfflineDB)</span>
-        </div>
-        <div class="summary-row">
-          <span>Pending Invoices</span>
-          <span id="diag-pending">0</span>
-        </div>
-        <div class="summary-row">
-          <span>Total Offline Invoices</span>
-          <span id="diag-total">0</span>
-        </div>
-      </div>
-    </div>
-
+  <div class="offline-card" id="offline-state">
+    <div class="offline-badge">Sign In Required</div>
+    <p class="offline-desc">
+      Please connect to the internet to sign in to your SriLekh account.
+      <br /><br />
+      <strong>Once you have signed in, you can operate the entire app offline in Airplane Mode.</strong>
+    </p>
+    <button class="retry-btn" onclick="retryNow()">Retry Connection</button>
   </div>
 
-  <!-- Toast Notification Container -->
-  <div class="toast-container" id="toasts"></div>
-
-  <!-- Receipt View Modal -->
-  <div class="modal-overlay" id="receipt-modal">
-    <div class="receipt-box" id="printable-receipt">
-      <div class="receipt-header">
-        <h2 id="rcpt-comp-name">BUSINESS NAME</h2>
-        <p id="rcpt-comp-details">GSTIN: 07XXXXX | Phone: 9876543210</p>
-        <p style="font-weight: 800; font-size: 12px; margin-top: 4px; color: #2563EB;">TAX INVOICE (OFFLINE ISSUED)</p>
-      </div>
-
-      <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 8px;">
-        <div>
-          <strong>Invoice No:</strong> <span id="rcpt-inv-no">OFF-001</span><br />
-          <strong>Date:</strong> <span id="rcpt-inv-date">2026-10-18</span>
-        </div>
-        <div style="text-align: right;">
-          <strong>Billed To:</strong> <span id="rcpt-party-name">Walk-in</span><br />
-          <span id="rcpt-party-gst"></span>
-        </div>
-      </div>
-
-      <table class="receipt-table">
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th style="text-align: right;">Qty</th>
-            <th style="text-align: right;">Rate</th>
-            <th style="text-align: right;">GST%</th>
-            <th style="text-align: right;">Total</th>
-          </tr>
-        </thead>
-        <tbody id="rcpt-items-body"></tbody>
-      </table>
-
-      <div class="receipt-summary-row">
-        <span>Taxable Subtotal:</span>
-        <strong id="rcpt-taxable">₹0.00</strong>
-      </div>
-      <div class="receipt-summary-row" id="rcpt-cgst-row">
-        <span>CGST:</span>
-        <span id="rcpt-cgst">₹0.00</span>
-      </div>
-      <div class="receipt-summary-row" id="rcpt-sgst-row">
-        <span>SGST:</span>
-        <span id="rcpt-sgst">₹0.00</span>
-      </div>
-      <div class="receipt-summary-row" id="rcpt-igst-row" style="display: none;">
-        <span>IGST:</span>
-        <span id="rcpt-igst">₹0.00</span>
-      </div>
-      <div class="receipt-summary-row">
-        <span>Round Off:</span>
-        <span id="rcpt-roundoff">₹0.00</span>
-      </div>
-      <div class="receipt-grand-total">
-        <span>Grand Total:</span>
-        <span id="rcpt-total">₹0.00</span>
-      </div>
-
-      <div class="receipt-actions">
-        <button class="print-btn" onclick="window.print()">🖨️ Print Receipt</button>
-        <button class="close-modal-btn" onclick="closeReceiptModal()">Close</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- IndexedDB & Logic Script -->
   <script>
-    const CLOUD_URL = "https://vouch-pi-one.vercel.app";
-    const API_URL = "https://api.srilekh.com";
-    const DB_NAME = "VouchOfflineDB";
-    const DB_VERSION = 4;
+    const baseUrl = "https://vouch-pi-one.vercel.app";
+    const statusEl = document.getElementById("status");
+    const loadingState = document.getElementById("loading-state");
+    const offlineState = document.getElementById("offline-state");
 
-    let dbInstance = null;
-    let companyProfile = {
-      name: "SriLekh Enterprise",
-      gstin: "07AAAAA0000A1Z5",
-      state_code: "07",
-      address: "Industrial Area, Phase 1",
-      phone: "9876543210",
-      upi: "srilekh@upi"
-    };
-
-    let savedParties = [
-      { id: "walkin", name: "Cash Customer / Walk-in Buyer", phone: "", gstin: "", state_code: "07", address: "" }
-    ];
-
-    let items = [];
-
-    // --- IndexedDB Initialization ---
-    function openDb() {
-      return new Promise((resolve, reject) => {
-        if (dbInstance) return resolve(dbInstance);
-        const req = indexedDB.open(DB_NAME, DB_VERSION);
-        req.onupgradeneeded = (e) => {
-          const db = e.target.result;
-          if (!db.objectStoreNames.contains("vouchers")) {
-            const store = db.createObjectStore("vouchers", { keyPath: "id", autoIncrement: true });
-            store.createIndex("status", "status", { unique: false });
-            store.createIndex("localId", "localId", { unique: false });
-          }
-          if (!db.objectStoreNames.contains("syncedVouchers")) {
-            db.createObjectStore("syncedVouchers", { keyPath: "id" });
-          }
-          if (!db.objectStoreNames.contains("masters")) {
-            db.createObjectStore("masters", { keyPath: "key" });
-          }
-        };
-        req.onsuccess = (e) => {
-          dbInstance = e.target.result;
-          resolve(dbInstance);
-        };
-        req.onerror = (e) => {
-          console.error("IndexedDB open error:", e);
-          resolve(null);
-        };
-      });
+    function showOfflineCard() {
+      loadingState.style.display = "none";
+      offlineState.style.display = "block";
     }
 
-    // --- Native Capacitor Bridge / LocalStorage Synchronizer ---
-    async function loadPreferences() {
-      // 1. Check Capacitor Native Preferences
-      if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences) {
-        try {
-          const compName = await window.Capacitor.Plugins.Preferences.get({ key: "vouch_active_company_name" });
-          if (compName && compName.value) companyProfile.name = compName.value;
-          const compState = await window.Capacitor.Plugins.Preferences.get({ key: "vouch_active_company_state_code" });
-          if (compState && compState.value) companyProfile.state_code = compState.value;
-          const compGstin = await window.Capacitor.Plugins.Preferences.get({ key: "vouch_active_company_gstin" });
-          if (compGstin && compGstin.value) companyProfile.gstin = compGstin.value;
-        } catch (e) {
-          console.warn("Preferences load error:", e);
-        }
-      }
-
-      // 2. Check localStorage
-      const localProfile = localStorage.getItem("srilekh_offline_profile");
-      if (localProfile) {
-        try { Object.assign(companyProfile, JSON.parse(localProfile)); } catch {}
-      }
-
-      const localParties = localStorage.getItem("srilekh_offline_parties");
-      if (localParties) {
-        try { savedParties = JSON.parse(localParties); } catch {}
-      }
-
-      // Update UI with company profile
-      document.getElementById("header-company-name").textContent = companyProfile.name || "SriLekh Local";
-      document.getElementById("cfg-company-name").value = companyProfile.name || "";
-      document.getElementById("cfg-gstin").value = companyProfile.gstin || "";
-      document.getElementById("cfg-state-code").value = companyProfile.state_code || "";
-      document.getElementById("cfg-address").value = companyProfile.address || "";
-      document.getElementById("cfg-phone").value = companyProfile.phone || "";
-      document.getElementById("cfg-upi").value = companyProfile.upi || "";
-
-      renderPartiesDropdown();
+    function showLoading(msg) {
+      loadingState.style.display = "block";
+      offlineState.style.display = "none";
+      if (msg) statusEl.textContent = msg;
     }
 
-    function saveCompanyProfile() {
-      companyProfile.name = document.getElementById("cfg-company-name").value.trim() || "SriLekh Enterprise";
-      companyProfile.gstin = document.getElementById("cfg-gstin").value.trim().toUpperCase();
-      companyProfile.state_code = document.getElementById("cfg-state-code").value.trim() || "07";
-      companyProfile.address = document.getElementById("cfg-address").value.trim();
-      companyProfile.phone = document.getElementById("cfg-phone").value.trim();
-      companyProfile.upi = document.getElementById("cfg-upi").value.trim();
+    function navigateToApp() {
+      const hasAuth = localStorage.getItem("vouch_access_token") || localStorage.getItem("access_token");
 
-      localStorage.setItem("srilekh_offline_profile", JSON.stringify(companyProfile));
-      document.getElementById("header-company-name").textContent = companyProfile.name;
-      showToast("Company profile saved locally!");
-      recalculateTotals();
-    }
-
-    // --- UI Tabs ---
-    function switchTab(tab) {
-      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
-      document.querySelectorAll(".tab-content").forEach(c => c.style.display = "none");
-      
-      document.getElementById("tab-btn-" + tab).classList.add("active");
-      document.getElementById("tab-" + tab).style.display = "block";
-
-      if (tab === "history") {
-        renderHistory();
-      }
-    }
-
-    // --- Party Logic ---
-    function renderPartiesDropdown() {
-      const select = document.getElementById("party-select");
-      select.innerHTML = "";
-      savedParties.forEach(p => {
-        const opt = document.createElement("option");
-        opt.value = p.id;
-        opt.textContent = p.name;
-        select.appendChild(opt);
-      });
-      onPartySelected(savedParties[0]?.id || "walkin");
-    }
-
-    function onPartySelected(pId) {
-      const p = savedParties.find(x => x.id === pId);
-      if (p) {
-        document.getElementById("party-name").value = p.name || "";
-        document.getElementById("party-phone").value = p.phone || "";
-        document.getElementById("party-gstin").value = p.gstin || "";
-        document.getElementById("party-state-code").value = p.state_code || companyProfile.state_code || "07";
-        document.getElementById("party-address").value = p.address || "";
-      }
-      recalculateTotals();
-    }
-
-    function onGstinInput(gstin) {
-      const clean = gstin.trim().toUpperCase();
-      if (clean.length >= 2) {
-        const code = clean.substring(0, 2);
-        if (!isNaN(code)) {
-          document.getElementById("party-state-code").value = code;
-        }
-      }
-      recalculateTotals();
-    }
-
-    function toggleAddPartyModal() {
-      const name = prompt("Enter New Customer / Business Name:");
-      if (!name || !name.trim()) return;
-      const phone = prompt("Enter Customer Phone Number (Optional):") || "";
-      const gstin = (prompt("Enter Customer GSTIN (Optional):") || "").toUpperCase();
-      const state = gstin.length >= 2 ? gstin.substring(0, 2) : (companyProfile.state_code || "07");
-
-      const newParty = {
-        id: "p_" + Date.now(),
-        name: name.trim(),
-        phone: phone.trim(),
-        gstin: gstin.trim(),
-        state_code: state,
-        address: ""
-      };
-      savedParties.push(newParty);
-      localStorage.setItem("srilekh_offline_parties", JSON.stringify(savedParties));
-      renderPartiesDropdown();
-      document.getElementById("party-select").value = newParty.id;
-      onPartySelected(newParty.id);
-      showToast("Customer added!");
-    }
-
-    // --- Line Items Engine ---
-    function addNewItemRow(data) {
-      const item = data || {
-        name: "",
-        hsn: "9999",
-        qty: 1,
-        unit: "PCS",
-        rate: 0,
-        discount: 0,
-        gstRate: 18
-      };
-      items.push(item);
-      renderItems();
-    }
-
-    function removeItemRow(index) {
-      if (items.length <= 1) {
-        showToast("At least one line item is required.");
-        return;
-      }
-      items.splice(index, 1);
-      renderItems();
-      recalculateTotals();
-    }
-
-    function updateItemField(index, field, value) {
-      if (!items[index]) return;
-      items[index][field] = value;
-      recalculateTotals();
-    }
-
-    function renderItems() {
-      const container = document.getElementById("items-container");
-      container.innerHTML = "";
-      document.getElementById("items-count-text").textContent = items.length + (items.length === 1 ? " Item" : " Items");
-
-      items.forEach((it, idx) => {
-        const row = document.createElement("div");
-        row.className = "item-card";
-        row.innerHTML = `
-          <div class="item-card-header">
-            <span class="item-number">Item #${idx + 1}</span>
-            <button class="del-btn" onclick="removeItemRow(${idx})">✕</button>
-          </div>
-          <div class="field-row">
-            <div class="field-group" style="grid-column: span 2;">
-              <label>Product / Service Name</label>
-              <input type="text" placeholder="e.g. Standard V-Belt, Consulting" value="${it.name || ""}" oninput="updateItemField(${idx}, 'name', this.value)" />
-            </div>
-          </div>
-          <div class="field-row">
-            <div class="field-group">
-              <label>HSN / SAC</label>
-              <input type="text" placeholder="8483" value="${it.hsn || ""}" oninput="updateItemField(${idx}, 'hsn', this.value)" />
-            </div>
-            <div class="field-group">
-              <label>Unit</label>
-              <select onchange="updateItemField(${idx}, 'unit', this.value)">
-                <option value="PCS" ${it.unit === "PCS" ? "selected" : ""}>PCS</option>
-                <option value="KGS" ${it.unit === "KGS" ? "selected" : ""}>KGS</option>
-                <option value="BOX" ${it.unit === "BOX" ? "selected" : ""}>BOX</option>
-                <option value="MTR" ${it.unit === "MTR" ? "selected" : ""}>MTR</option>
-                <option value="NOS" ${it.unit === "NOS" ? "selected" : ""}>NOS</option>
-              </select>
-            </div>
-          </div>
-          <div class="field-row">
-            <div class="field-group">
-              <label>Quantity</label>
-              <input type="number" min="1" step="any" value="${it.qty || 1}" oninput="updateItemField(${idx}, 'qty', parseFloat(this.value) || 0)" />
-            </div>
-            <div class="field-group">
-              <label>Rate / Price (₹)</label>
-              <input type="number" min="0" step="any" value="${it.rate || 0}" oninput="updateItemField(${idx}, 'rate', parseFloat(this.value) || 0)" />
-            </div>
-          </div>
-          <div class="field-row">
-            <div class="field-group">
-              <label>Discount %</label>
-              <input type="number" min="0" max="100" step="any" value="${it.discount || 0}" oninput="updateItemField(${idx}, 'discount', parseFloat(this.value) || 0)" />
-            </div>
-            <div class="field-group">
-              <label>GST %</label>
-              <select onchange="updateItemField(${idx}, 'gstRate', parseFloat(this.value))">
-                <option value="0" ${it.gstRate === 0 ? "selected" : ""}>0% (Exempt)</option>
-                <option value="5" ${it.gstRate === 5 ? "selected" : ""}>5%</option>
-                <option value="12" ${it.gstRate === 12 ? "selected" : ""}>12%</option>
-                <option value="18" ${it.gstRate === 18 ? "selected" : ""}>18%</option>
-                <option value="28" ${it.gstRate === 28 ? "selected" : ""}>28%</option>
-              </select>
-            </div>
-          </div>
-          <div class="item-calc-preview" id="item-calc-${idx}">
-            <span>Taxable: ₹0.00</span>
-            <strong>Total: ₹0.00</strong>
-          </div>
-        `;
-        container.appendChild(row);
-      });
-      recalculateTotals();
-    }
-
-    // --- Calculation Engine ---
-    function recalculateTotals() {
-      const compState = (companyProfile.state_code || "07").trim();
-      const buyerState = (document.getElementById("party-state-code").value || compState).trim();
-      const isInterState = compState !== buyerState && buyerState.length > 0;
-
-      let totalTaxable = 0;
-      let totalCgst = 0;
-      let totalSgst = 0;
-      let totalIgst = 0;
-
-      items.forEach((it, idx) => {
-        const qty = Number(it.qty) || 0;
-        const rate = Number(it.rate) || 0;
-        const disc = Number(it.discount) || 0;
-        const gstRate = Number(it.gstRate) || 0;
-
-        const base = qty * rate;
-        const discountAmt = base * (disc / 100);
-        const taxable = Math.max(0, base - discountAmt);
-        const taxAmt = taxable * (gstRate / 100);
-
-        totalTaxable += taxable;
-
-        if (isInterState) {
-          totalIgst += taxAmt;
-        } else {
-          totalCgst += taxAmt / 2;
-          totalSgst += taxAmt / 2;
-        }
-
-        const previewEl = document.getElementById("item-calc-" + idx);
-        if (previewEl) {
-          previewEl.innerHTML = `
-            <span>Taxable: ₹${taxable.toFixed(2)} (${gstRate}% GST)</span>
-            <strong>Total: ₹${(taxable + taxAmt).toFixed(2)}</strong>
-          `;
-        }
-      });
-
-      const cartage = parseFloat(document.getElementById("sum-cartage").value) || 0;
-      const additionalDisc = parseFloat(document.getElementById("sum-discount").value) || 0;
-
-      const subtotalWithTax = totalTaxable + totalCgst + totalSgst + totalIgst + cartage - additionalDisc;
-      const roundedTotal = Math.round(subtotalWithTax);
-      const roundOff = roundedTotal - subtotalWithTax;
-
-      // Update UI
-      document.getElementById("sum-taxable").textContent = "₹" + totalTaxable.toFixed(2);
-      document.getElementById("sum-roundoff").textContent = (roundOff >= 0 ? "+₹" : "-₹") + Math.abs(roundOff).toFixed(2);
-      document.getElementById("sum-grand-total").textContent = "₹" + roundedTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 });
-
-      if (isInterState) {
-        document.getElementById("sum-cgst-row").style.display = "none";
-        document.getElementById("sum-sgst-row").style.display = "none";
-        document.getElementById("sum-igst-row").style.display = "flex";
-        document.getElementById("sum-igst").textContent = "₹" + totalIgst.toFixed(2);
-      } else {
-        document.getElementById("sum-cgst-row").style.display = "flex";
-        document.getElementById("sum-sgst-row").style.display = "flex";
-        document.getElementById("sum-igst-row").style.display = "none";
-        document.getElementById("sum-cgst").textContent = "₹" + totalCgst.toFixed(2);
-        document.getElementById("sum-sgst").textContent = "₹" + totalSgst.toFixed(2);
-      }
-
-      return {
-        taxable: totalTaxable,
-        cgst: totalCgst,
-        sgst: totalSgst,
-        igst: totalIgst,
-        cartage,
-        discount: additionalDisc,
-        roundOff,
-        grandTotal: roundedTotal,
-        isInterState
-      };
-    }
-
-    // --- Invoice Persistence ---
-    async function saveInvoice(andPrint) {
-      const partyName = document.getElementById("party-name").value.trim();
-      if (!partyName) {
-        showToast("Please enter customer name");
-        return;
-      }
-      if (items.some(i => !i.name || !i.name.trim())) {
-        showToast("Please enter product name for all items");
+      // If user has already signed in once, proceed directly to Dashboard!
+      // Even in Airplane mode, Android WebView will load the cached dashboard and local IndexedDB data.
+      if (hasAuth) {
+        showLoading("Loading local workspace...");
+        window.location.replace(baseUrl + "/dashboard");
         return;
       }
 
-      const invNo = document.getElementById("inv-number").value.trim() || ("OFF-" + Date.now().toString().slice(-6));
-      const invDate = document.getElementById("inv-date").value || new Date().toISOString().slice(0, 10);
-      const totals = recalculateTotals();
-
-      const voucher = {
-        localId: invNo,
-        voucherType: "SALES",
-        voucherNumber: invNo,
-        voucherDate: invDate,
-        dueDate: document.getElementById("inv-due-date").value || invDate,
-        paymentMode: document.getElementById("inv-payment-mode").value,
-        party: {
-          name: partyName,
-          phone: document.getElementById("party-phone").value.trim(),
-          gstin: document.getElementById("party-gstin").value.trim().toUpperCase(),
-          state_code: document.getElementById("party-state-code").value.trim(),
-          address: document.getElementById("party-address").value.trim(),
-        },
-        items: items.map(it => ({
-          product_name: it.name,
-          hsn_code: it.hsn,
-          quantity: Number(it.qty) || 1,
-          unit: it.unit || "PCS",
-          rate: Number(it.rate) || 0,
-          discount_percent: Number(it.discount) || 0,
-          gst_rate: Number(it.gstRate) || 0
-        })),
-        transport: {
-          vehicle_number: document.getElementById("trans-vehicle").value.trim(),
-          transporter_name: document.getElementById("trans-name").value.trim(),
-          transport_doc_no: document.getElementById("trans-doc").value.trim()
-        },
-        narration: document.getElementById("inv-narration").value.trim(),
-        totals: totals,
-        status: "PENDING",
-        createdAt: Date.now()
-      };
-
-      // 1. Save to IndexedDB
-      const db = await openDb();
-      if (db) {
-        const tx = db.transaction(["vouchers"], "readwrite");
-        tx.objectStore("vouchers").add({
-          localId: invNo,
-          voucherType: "SALES",
-          voucherNumber: invNo,
-          voucherDate: invDate,
-          payload: voucher,
-          status: "PENDING",
-          createdAt: Date.now(),
-          retryCount: 0
-        });
-      }
-
-      // 2. Save to localStorage backup
-      const allInvoices = JSON.parse(localStorage.getItem("srilekh_offline_invoices") || "[]");
-      allInvoices.unshift(voucher);
-      localStorage.setItem("srilekh_offline_invoices", JSON.stringify(allInvoices));
-
-      // Advance sequence counter
-      advanceSequenceNumber();
-
-      showToast(`Invoice ${invNo} saved locally!`);
-
-      if (andPrint) {
-        openReceiptModal(voucher);
-      } else {
-        // Reset form for next invoice
-        resetInvoiceForm();
-      }
-
-      updatePendingCount();
-
-      // Trigger background sync if online
+      // If user is not signed in yet:
       if (navigator.onLine) {
-        setTimeout(syncNow, 500);
-      }
-    }
-
-    function advanceSequenceNumber() {
-      const cur = document.getElementById("inv-number").value.trim();
-      const match = cur.match(/^(.+?)(\d+)$/);
-      if (match) {
-        const prefix = match[1];
-        const num = parseInt(match[2], 10) + 1;
-        const padded = String(num).padStart(match[2].length, "0");
-        document.getElementById("inv-number").value = prefix + padded;
-        localStorage.setItem("srilekh_next_inv_seq", prefix + padded);
-      }
-    }
-
-    function resetInvoiceForm() {
-      items = [
-        { name: "", hsn: "9999", qty: 1, unit: "PCS", rate: 0, discount: 0, gstRate: 18 }
-      ];
-      renderItems();
-      document.getElementById("party-name").value = "Walk-in Customer";
-      document.getElementById("party-phone").value = "";
-      document.getElementById("party-gstin").value = "";
-      document.getElementById("party-address").value = "";
-      document.getElementById("inv-narration").value = "";
-      recalculateTotals();
-    }
-
-    // --- Saved Invoices History ---
-    function renderHistory() {
-      const container = document.getElementById("history-container");
-      const list = JSON.parse(localStorage.getItem("srilekh_offline_invoices") || "[]");
-      container.innerHTML = "";
-
-      if (list.length === 0) {
-        container.innerHTML = `
-          <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
-            <div style="font-size: 32px; margin-bottom: 8px;">📑</div>
-            <p style="font-size: 13px; font-weight: 600;">No offline invoices created yet</p>
-            <p style="font-size: 11px; margin-top: 4px;">Invoices you create in airplane mode will appear here.</p>
-          </div>
-        `;
-        return;
-      }
-
-      list.forEach((v, idx) => {
-        const card = document.createElement("div");
-        card.className = "history-card";
-        const isSynced = v.status === "SYNCED";
-        card.innerHTML = `
-          <div class="hist-left">
-            <h4>${v.voucherNumber || v.localId}</h4>
-            <p>${v.party?.name || "Customer"} &bull; ${v.voucherDate}</p>
-            <button style="background: none; border: none; color: var(--accent); font-size: 11px; font-weight: 700; cursor: pointer; padding: 4px 0 0 0;" onclick="viewHistoricReceipt(${idx})">🖨️ View Receipt</button>
-          </div>
-          <div class="hist-right">
-            <div class="hist-amount">₹${(v.totals?.grandTotal || 0).toLocaleString("en-IN")}</div>
-            <span class="hist-status ${isSynced ? "synced" : "pending"}">${isSynced ? "Synced" : "Pending Sync"}</span>
-          </div>
-        `;
-        container.appendChild(card);
-      });
-
-      document.getElementById("diag-total").textContent = list.length;
-      document.getElementById("diag-pending").textContent = list.filter(x => x.status !== "SYNCED").length;
-    }
-
-    function viewHistoricReceipt(index) {
-      const list = JSON.parse(localStorage.getItem("srilekh_offline_invoices") || "[]");
-      const v = list[index];
-      if (v) openReceiptModal(v);
-    }
-
-    // --- Receipt Modal ---
-    function openReceiptModal(v) {
-      document.getElementById("rcpt-comp-name").textContent = companyProfile.name;
-      document.getElementById("rcpt-comp-details").textContent = `GSTIN: ${companyProfile.gstin || "N/A"} | State: ${companyProfile.state_code || "07"} | Phone: ${companyProfile.phone || ""}`;
-      document.getElementById("rcpt-inv-no").textContent = v.voucherNumber || v.localId;
-      document.getElementById("rcpt-inv-date").textContent = v.voucherDate;
-      document.getElementById("rcpt-party-name").textContent = v.party?.name || "Walk-in";
-      document.getElementById("rcpt-party-gst").textContent = v.party?.gstin ? "GSTIN: " + v.party.gstin : "";
-
-      const tbody = document.getElementById("rcpt-items-body");
-      tbody.innerHTML = "";
-      (v.items || []).forEach(it => {
-        const tr = document.createElement("tr");
-        const taxable = it.quantity * it.rate * (1 - (it.discount_percent || 0)/100);
-        const tax = taxable * ((it.gst_rate || 0)/100);
-        tr.innerHTML = `
-          <td><strong>${it.product_name}</strong><br><small style="color:#64748B;">HSN: ${it.hsn_code || '9999'}</small></td>
-          <td style="text-align: right;">${it.quantity} ${it.unit || 'PCS'}</td>
-          <td style="text-align: right;">₹${it.rate.toFixed(2)}</td>
-          <td style="text-align: right;">${it.gst_rate}%</td>
-          <td style="text-align: right;">₹${(taxable + tax).toFixed(2)}</td>
-        `;
-        tbody.appendChild(tr);
-      });
-
-      const t = v.totals || {};
-      document.getElementById("rcpt-taxable").textContent = "₹" + (t.taxable || 0).toFixed(2);
-      document.getElementById("rcpt-roundoff").textContent = (t.roundOff >= 0 ? "+₹" : "-₹") + Math.abs(t.roundOff || 0).toFixed(2);
-      document.getElementById("rcpt-total").textContent = "₹" + (t.grandTotal || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 });
-
-      if (t.isInterState) {
-        document.getElementById("rcpt-cgst-row").style.display = "none";
-        document.getElementById("rcpt-sgst-row").style.display = "none";
-        document.getElementById("rcpt-igst-row").style.display = "flex";
-        document.getElementById("rcpt-igst").textContent = "₹" + (t.igst || 0).toFixed(2);
+        showLoading("Opening login...");
+        window.location.replace(baseUrl + "/login");
       } else {
-        document.getElementById("rcpt-cgst-row").style.display = "flex";
-        document.getElementById("rcpt-sgst-row").style.display = "flex";
-        document.getElementById("rcpt-igst-row").style.display = "none";
-        document.getElementById("rcpt-cgst").textContent = "₹" + (t.cgst || 0).toFixed(2);
-        document.getElementById("rcpt-sgst").textContent = "₹" + (t.sgst || 0).toFixed(2);
-      }
-
-      document.getElementById("receipt-modal").classList.add("active");
-    }
-
-    function closeReceiptModal() {
-      document.getElementById("receipt-modal").classList.remove("active");
-      resetInvoiceForm();
-    }
-
-    // --- Automatic Background Sync ---
-    async function syncNow() {
-      if (!navigator.onLine) {
-        showToast("Cannot sync: device is currently offline");
-        return;
-      }
-
-      const list = JSON.parse(localStorage.getItem("srilekh_offline_invoices") || "[]");
-      const pending = list.filter(x => x.status !== "SYNCED");
-
-      if (pending.length === 0) {
-        showToast("All invoices are already synced to cloud!");
-        return;
-      }
-
-      showToast(`Syncing ${pending.length} pending invoice(s)...`);
-
-      // Retrieve token from Capacitor Preferences or localStorage
-      let token = localStorage.getItem("vouch_access_token") || localStorage.getItem("access_token");
-      if (!token && window.Capacitor?.Plugins?.Preferences) {
-        try {
-          const res = await window.Capacitor.Plugins.Preferences.get({ key: "vouch_access_token" });
-          if (res && res.value) token = res.value;
-        } catch {}
-      }
-
-      let successCount = 0;
-      for (const inv of pending) {
-        try {
-          const payload = {
-            voucher_number: inv.voucherNumber,
-            voucher_date: inv.voucherDate,
-            due_date: inv.dueDate,
-            party_name: inv.party?.name,
-            party_gstin: inv.party?.gstin,
-            party_phone: inv.party?.phone,
-            items: inv.items,
-            post_immediately: true
-          };
-
-          const headers = { "Content-Type": "application/json" };
-          if (token) headers["Authorization"] = "Bearer " + token;
-
-          const response = await fetch(API_URL + "/api/v1/accounting/sales-invoice/", {
-            method: "POST",
-            headers: headers,
-            body: JSON.stringify(payload)
-          });
-
-          if (response.ok || response.status === 200 || response.status === 201) {
-            inv.status = "SYNCED";
-            successCount++;
-          }
-        } catch (syncErr) {
-          console.warn("Failed to sync invoice " + inv.voucherNumber, syncErr);
-        }
-      }
-
-      localStorage.setItem("srilekh_offline_invoices", JSON.stringify(list));
-      updatePendingCount();
-      renderHistory();
-
-      if (successCount > 0) {
-        showToast(`✅ Synced ${successCount} invoice(s) to cloud!`);
+        showOfflineCard();
       }
     }
 
-    function updatePendingCount() {
-      const list = JSON.parse(localStorage.getItem("srilekh_offline_invoices") || "[]");
-      const pending = list.filter(x => x.status !== "SYNCED").length;
-      document.getElementById("pending-count-pill").textContent = pending;
-      document.getElementById("diag-pending").textContent = pending;
-    }
-
-    // --- Cloud Dashboard Launch Bridge ---
-    function launchCloudDashboard() {
-      if (!navigator.onLine) {
-        showToast("⚡ You are currently offline. Full sales invoicing is available right here!");
-        return;
-      }
-      showToast("Connecting to cloud dashboard...");
-      window.location.href = CLOUD_URL + "/dashboard";
-    }
-
-    // --- Connectivity Observers ---
-    function updateNetworkStatus() {
-      const pill = document.getElementById("connection-pill");
+    function retryNow() {
       if (navigator.onLine) {
-        pill.className = "status-badge online";
-        pill.textContent = "🟢 Online";
+        navigateToApp();
       } else {
-        pill.className = "status-badge offline";
-        pill.textContent = "⚡ Offline";
+        statusEl.textContent = "Connecting to internet...";
+        loadingState.style.display = "block";
+        offlineState.style.display = "none";
+        setTimeout(navigateToApp, 1000);
       }
     }
 
+    // Auto-reconnect the millisecond connection is restored
     window.addEventListener("online", () => {
-      updateNetworkStatus();
-      showToast("Internet connected! Automatic sync initiated.");
-      syncNow();
+      console.log("[Mobile Shell] Network restored, navigating...");
+      navigateToApp();
     });
 
-    window.addEventListener("offline", () => {
-      updateNetworkStatus();
-      showToast("Switched to offline mode. All records remain safe locally.");
-    });
-
-    // --- Toast Helper ---
-    function showToast(msg) {
-      const container = document.getElementById("toasts");
-      const el = document.createElement("div");
-      el.className = "toast";
-      el.textContent = msg;
-      container.appendChild(el);
-      setTimeout(() => {
-        el.style.opacity = "0";
-        setTimeout(() => el.remove(), 300);
-      }, 3000);
-    }
-
-    // --- App Init ---
-    window.addEventListener("DOMContentLoaded", async () => {
-      updateNetworkStatus();
-      await openDb();
-      await loadPreferences();
-
-      // Set today's date
-      const today = new Date().toISOString().slice(0, 10);
-      document.getElementById("inv-date").value = today;
-      document.getElementById("inv-due-date").value = today;
-
-      // Restore saved sequence if present
-      const savedSeq = localStorage.getItem("srilekh_next_inv_seq");
-      if (savedSeq) {
-        document.getElementById("inv-number").value = savedSeq;
-      } else {
-        document.getElementById("inv-number").value = "OFF-INV-" + today.replace(/-/g, "") + "-0001";
-      }
-
-      // Start with 1 line item
-      addNewItemRow();
-      updatePendingCount();
+    window.addEventListener("DOMContentLoaded", () => {
+      navigateToApp();
     });
   </script>
 </body>
