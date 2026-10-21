@@ -83,10 +83,16 @@ import {
 } from "lucide-react";
 
 function formatCurrencyShort(val: number): string {
-  if (val >= 10000000) return `₹${(val / 10000000).toFixed(1)}Cr`;
-  if (val >= 100000) return `₹${(val / 100000).toFixed(1)}L`;
-  if (val >= 1000) return `₹${(val / 1000).toFixed(0)}k`;
-  return `₹${Math.round(val)}`;
+  const num = Number(val || 0);
+  const abs = Math.abs(num);
+  if (abs >= 10000000) return `${(num / 10000000).toFixed(1)}Cr`;
+  if (abs >= 100000) return `${(num / 100000).toFixed(1)}L`;
+  if (abs >= 1000) return `${(num / 1000).toFixed(0)}k`;
+  return `${Math.round(num)}`;
+}
+
+function formatChartAxisCurrency(val: number): string {
+  return `₹${formatCurrencyShort(val)}`;
 }
 
 function formatChartDate(dateStr: string): string {
@@ -1903,7 +1909,7 @@ function AnalyticsHubContent() {
                         fontSize={11}
                         tickLine={false}
                         axisLine={false}
-                        tickFormatter={formatCurrencyShort}
+                        tickFormatter={formatChartAxisCurrency}
                       />
                       <Tooltip
                         content={({ active, payload }: any) => {
@@ -2608,7 +2614,7 @@ function AnalyticsHubContent() {
                         fontSize={11}
                         tickLine={false}
                         axisLine={false}
-                        tickFormatter={formatCurrencyShort}
+                        tickFormatter={formatChartAxisCurrency}
                       />
                       <Tooltip
                         content={({ active, payload }: any) => {
@@ -2966,7 +2972,7 @@ function AnalyticsHubContent() {
                         fontSize={11}
                         tickLine={false}
                         axisLine={false}
-                        tickFormatter={formatCurrencyShort}
+                        tickFormatter={formatChartAxisCurrency}
                       />
                       <Tooltip
                         content={({ active, payload }: any) => {
