@@ -467,14 +467,24 @@ class AnalyticsEngine:
             last_order = cv['last_order']
             aov = float(cv['avg_order_val'] or 0.0)
 
-            party_dates = list(
+            party_dates = sorted(list(set(
                 Voucher.objects.filter(company=company, party_ledger_id=party_id, voucher_type='SALES', status='POSTED')
-                .order_by('voucher_date')
                 .values_list('voucher_date', flat=True)
-            )
+            )))
+            # Require at least 2 distinct buying dates (avoids same-day split invoices having 0-day intervals)
             if len(party_dates) >= 2:
                 intervals = [(party_dates[k] - party_dates[k-1]).days for k in range(1, len(party_dates))]
-                avg_interval = max(6, int(sum(intervals) / len(intervals)))
+                observed_interval = int(sum(intervals) / len(intervals))
+
+                # Empirical Bayes shrinkage for sparse order history:
+                # If only 2 distinct order dates (1 interval observed), a single short gap (e.g. 7 days)
+                # is almost always an ad-hoc supplement or split order, not a confirmed recurring consumption cycle.
+                # Established B2B repeat cycles are 20-35 days (median ~28d). Shrink sparse intervals towards 28 days.
+                if len(party_dates) == 2:
+                    avg_interval = max(21, int(0.25 * observed_interval + 0.75 * 28))
+                else:
+                    avg_interval = max(7, observed_interval)
+
                 days_since_last = (anchor_date - last_order).days
 
                 # Buy-Till-You-Die Churn Hazard Decay
@@ -537,7 +547,6 @@ class AnalyticsEngine:
         # -------------------------------------------------------------
         # Factor 6: Forward Pipeline (Open/Accepted Proforma Invoices)
         # -------------------------------------------------------------
-        pipeline_daily_boost = 0.0
         open_pipeline_val = 0.0
         try:
             from apps.accounting.models_proforma import ProformaInvoice
@@ -545,10 +554,28 @@ class AnalyticsEngine:
                 company=company,
                 status__in=['SENT', 'ACCEPTED']
             ).filter(created_at__date__gte=anchor_date - datetime.timedelta(days=45))
-            open_pipeline_val = float(open_proformas.aggregate(Sum('total_amount'))['total_amount__sum'] or 0.0)
-            if open_pipeline_val > 0:
-                # 60% conversion probability amortized across the next 14 business days
-                pipeline_daily_boost = (open_pipeline_val * 0.60) / 14.0
+
+            # Deduplicate & filter:
+            # 1. Proforma must not be expired (if valid_until is set)
+            # 2. Exclude proformas where the customer already made a purchase on or after the proforma date
+            #    (as that order fulfilled or superseded the quote, even if not explicitly converted in UI)
+            valid_open_val = 0.0
+            for pf in open_proformas:
+                if pf.valid_until and pf.valid_until < anchor_date:
+                    continue
+                if pf.party_ledger_id:
+                    has_subsequent_order = Voucher.objects.filter(
+                        company=company,
+                        party_ledger_id=pf.party_ledger_id,
+                        voucher_type='SALES',
+                        status='POSTED',
+                        voucher_date__gte=pf.date
+                    ).exists()
+                    if has_subsequent_order:
+                        continue
+                valid_open_val += float(pf.total_amount or 0.0)
+
+            open_pipeline_val = valid_open_val
         except Exception:
             pass
 
@@ -593,17 +620,12 @@ class AnalyticsEngine:
             reconciled_repeat = 0.50 * macro_repeat_target + 0.50 * min(day_cust_demand, macro_repeat_target * 2.2)
             raw_daily = spot_baseline_daily + reconciled_repeat + (slope * (i / 15.0))
 
-            # 2. Forward pipeline boost for first 14 days
-            if i <= 14 and pipeline_daily_boost > 0:
-                raw_daily += pipeline_daily_boost
-                day_catalysts.append(f"Proforma Pipeline Boost (+₹{round(pipeline_daily_boost):,})")
-
-            # 3. Apply Day-of-Week profile
+            # 2. Apply Day-of-Week profile
             dow_factor = dow_weights.get(f_weekday, 1.0)
             if f_weekday == 6:
                 day_catalysts.append("Sunday Mandi Closure")
 
-            # 4. Apply Indian Trading Calendar & Festive Surges
+            # 3. Apply Indian Trading Calendar & Festive Surges
             cal_mult = 1.0
             holiday_ev = get_calendar_event(future_date)
             holiday_info = None
@@ -616,7 +638,7 @@ class AnalyticsEngine:
                 }
                 day_catalysts.append(f"{holiday_ev['name']} ({holiday_ev['impact']})")
 
-            # 5. Month-End GST Rush Factor (25th to 31st)
+            # 4. Month-End GST Rush Factor (25th to 31st)
             gst_mult = 1.0
             if future_date.day >= 25:
                 gst_mult = month_end_surge_multiplier
@@ -624,11 +646,11 @@ class AnalyticsEngine:
             elif future_date.day <= 4:
                 gst_mult = 0.88 # Post-close reconciliation lull
 
-            # 6. B2B Industry Seasonal Factor (Normalized to anchor month)
+            # 5. B2B Industry Seasonal Factor (Normalized to anchor month)
             curr_month_seasonal = get_seasonal_factor(f_month, has_yoy_history, empirical_yoy_indices)
             relative_seasonal = curr_month_seasonal / max(0.5, anchor_seasonal_factor)
 
-            # 7. Physical Stock Fulfillment Ceiling
+            # 6. Physical Stock Fulfillment Ceiling
             daily_projected = raw_daily * dow_factor * cal_mult * gst_mult * relative_seasonal * stock_constraint_multiplier
             daily_projected = round(max(0.0, daily_projected), 2)
 
