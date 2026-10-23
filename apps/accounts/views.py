@@ -74,6 +74,15 @@ class RegisterView(APIView):
         proprietor_name = (request.data.get('proprietor_name') or '').strip()
         proprietor_phone = (request.data.get('proprietor_phone') or '').strip()
         signature_file = request.FILES.get('signature') or request.FILES.get('proprietor_signature')
+        if signature_file:
+            # Enforce max 5MB size limit
+            if signature_file.size > 5 * 1024 * 1024:
+                return Response({"success": False, "error": "Signature file size exceeds maximum 5MB limit."}, status=400)
+            # Enforce allowed image / document extensions
+            allowed_extensions = ('.png', '.jpg', '.jpeg', '.webp', '.pdf')
+            file_name_lower = (signature_file.name or '').lower()
+            if not any(file_name_lower.endswith(ext) for ext in allowed_extensions):
+                return Response({"success": False, "error": "Signature must be an image (PNG, JPG, WEBP) or PDF."}, status=400)
 
         # 1. Enforce password complexity via Django's configured AUTH_PASSWORD_VALIDATORS
         from django.contrib.auth.password_validation import validate_password

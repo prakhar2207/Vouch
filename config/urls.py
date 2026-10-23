@@ -51,7 +51,7 @@ def root_health_view(request):
         "status": "healthy",
         "service": "SriLekh ERP Backend API",
         "version": "1.0.2",
-        "commit": commit_sha,
+        "commit": commit_sha if settings.DEBUG else "protected",
         "environment": "production" if not settings.DEBUG else "development",
         "endpoints": {
             "auth": "/api/v1/auth/",

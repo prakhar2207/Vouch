@@ -56,10 +56,12 @@ def custom_exception_handler(exc, context):
     view = context.get('view')
     view_name = view.__class__.__name__ if view else 'UnknownView'
     logger.exception("Unhandled server error in %s: %s", view_name, exc)
+    from django.conf import settings
+    detail_msg = str(exc) if getattr(settings, 'DEBUG', False) else "Please contact support if the issue persists."
     return Response(
         {
             "error": "An internal server error occurred.",
-            "detail": str(exc),
+            "detail": detail_msg,
         },
         status=status.HTTP_500_INTERNAL_SERVER_ERROR
     )

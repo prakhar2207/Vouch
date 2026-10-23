@@ -13,6 +13,6 @@ class IsSuperAdminOrStaff(BasePermission):
         superadmin_emails = getattr(settings, 'SUPERADMIN_EMAILS', [])
         user_email = (request.user.email or '').strip().lower()
         if superadmin_emails and user_email in [e.strip().lower() for e in superadmin_emails]:
-            return True
+            return bool(request.user.is_staff or request.user.is_superuser)
         return bool(request.user.is_staff and getattr(request.user, 'role', '') == 'ADMIN')
 

@@ -87,6 +87,9 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
@@ -247,7 +250,7 @@ SUPERADMIN_EMAILS = env.list('SUPERADMIN_EMAILS', default=['prakharssa@gmail.com
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
 }
@@ -255,24 +258,24 @@ SIMPLE_JWT = {
 from corsheaders.defaults import default_headers, default_methods
 
 # Cross-Origin Resource Sharing (CORS) & CSRF
-CORS_ALLOW_ALL_ORIGINS = env.bool('CORS_ALLOW_ALL_ORIGINS', default=DEBUG)
-CORS_ALLOW_CREDENTIALS = True
-
-
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 
 # Parse and normalize CORS origins (strip whitespace and trailing slashes)
-_raw_cors_origins = env.list('CORS_ALLOWED_ORIGINS', default=[
+_default_cors_origins = [
     'https://vouch-pi-one.vercel.app',
     'https://vouchapp.in',
     'https://www.vouchapp.in',
     'https://srilekh.com',
     'https://www.srilekh.com',
     'https://app.srilekh.com',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-])
+]
+if DEBUG or env.bool('ALLOW_LOCAL_ORIGINS', default=False):
+    _default_cors_origins.extend([
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+    ])
+_raw_cors_origins = env.list('CORS_ALLOWED_ORIGINS', default=_default_cors_origins)
 CORS_ALLOWED_ORIGINS = [o.strip().rstrip('/') for o in _raw_cors_origins if o.strip()]
 # Guarantee the primary production Vercel origin is always authorized
 if 'https://vouch-pi-one.vercel.app' not in CORS_ALLOWED_ORIGINS:
@@ -314,11 +317,14 @@ CSRF_TRUSTED_ORIGINS = [
     'https://www.srilekh.com',
     'https://api.srilekh.com',
     'https://app.srilekh.com',
-    'http://localhost:3000',
-    'http://localhost:8000',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:8000',
 ]
+if DEBUG or env.bool('ALLOW_LOCAL_ORIGINS', default=False):
+    CSRF_TRUSTED_ORIGINS.extend([
+        'http://localhost:3000',
+        'http://localhost:8000',
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:8000',
+    ])
 render_hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 if render_hostname and f'https://{render_hostname}' not in CSRF_TRUSTED_ORIGINS:
     CSRF_TRUSTED_ORIGINS.append(f'https://{render_hostname}')
@@ -327,6 +333,8 @@ if render_hostname and f'https://{render_hostname}' not in CSRF_TRUSTED_ORIGINS:
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+SECURE_BROWSER_XSS_FILTER = True
+SESSION_COOKIE_HTTPONLY = True
 
 if not DEBUG:
     # Render / reverse proxy HTTPS termination header
