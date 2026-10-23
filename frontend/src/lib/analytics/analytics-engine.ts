@@ -1448,6 +1448,27 @@ export class LocalAnalyticsEngine {
     let p90Total = 0;
     const spreadPct = confidence === "HIGH" ? 0.12 : confidence === "MEDIUM" ? 0.22 : 0.35;
 
+    // Empirical month-end surge factor (25th to end of month vs mid-month)
+    let monthEndSalesSum = 0;
+    let monthEndSalesDays = 0;
+    let midMonthSalesSum = 0;
+    let midMonthSalesDays = 0;
+    for (const [dateStr, amt] of Object.entries(salesByDate)) {
+      const day = parseInt(dateStr.slice(8, 10), 10);
+      if (day >= 25) {
+        monthEndSalesSum += amt;
+        monthEndSalesDays++;
+      } else {
+        midMonthSalesSum += amt;
+        midMonthSalesDays++;
+      }
+    }
+    const monthEndMean = monthEndSalesDays >= 5 ? monthEndSalesSum / monthEndSalesDays : 0;
+    const midMonthMean = midMonthSalesDays >= 10 ? midMonthSalesSum / midMonthSalesDays : 0;
+    const dynamicMonthEndSurge = midMonthMean > 0 && monthEndMean > 0
+      ? Math.min(Math.max(monthEndMean / midMonthMean, 1.15), 1.45)
+      : 1.30;
+
     for (let i = 1; i <= days; i++) {
       const futureD = new Date(anchorDate.getTime() + i * 24 * 60 * 60 * 1000);
       const dStr = futureD.toISOString().slice(0, 10);
@@ -1482,8 +1503,8 @@ export class LocalAnalyticsEngine {
 
       // Month-end GST surge (25th to end of month)
       if (futureD.getDate() >= 25) {
-        baseProj *= 1.30;
-        dayCatalysts.push("Month-End GST Billing Rush (+30%)");
+        baseProj *= dynamicMonthEndSurge;
+        dayCatalysts.push(`Month-End GST Billing Rush (+${Math.round((dynamicMonthEndSurge - 1.0) * 100)}%)`);
       } else if (futureD.getDate() <= 4) {
         baseProj *= 0.88;
       }

@@ -291,7 +291,20 @@ export default function Dashboard() {
           setInsights(local);
           setVouchers(local.recent_vouchers || []);
           setCoverage(local.coverage);
-          if (local.forecast) {
+          let hasCloudForecast = false;
+          if (typeof localStorage !== "undefined") {
+            try {
+              const cachedStr = localStorage.getItem(`vouch_authoritative_forecast_${validCid}_30`);
+              if (cachedStr) {
+                const cached = JSON.parse(cachedStr);
+                if (cached && isMounted) {
+                  setForecast(cached);
+                  hasCloudForecast = true;
+                }
+              }
+            } catch (e) {}
+          }
+          if (local.forecast && !hasCloudForecast) {
             setForecast(local.forecast);
           }
           // Check pending outbox mutations
@@ -341,7 +354,13 @@ export default function Dashboard() {
                 headers: { Authorization: `Bearer ${token}`, "X-Company-ID": validCid }
               }).then((fRes) => {
                 if (isMounted && fRes.data?.success && fRes.data.data) {
-                  setForecast(fRes.data.data);
+                  const cloudForecast = { ...fRes.data.data, is_cloud_authoritative: true };
+                  setForecast(cloudForecast);
+                  if (typeof localStorage !== "undefined") {
+                    try {
+                      localStorage.setItem(`vouch_authoritative_forecast_${validCid}_30`, JSON.stringify(cloudForecast));
+                    } catch (e) {}
+                  }
                 }
               }).catch(() => {});
             }
@@ -356,7 +375,7 @@ export default function Dashboard() {
                 setVouchers(refreshed.recent_vouchers || []);
                 setCoverage(refreshed.coverage);
                 if (refreshed.forecast) {
-                  setForecast(refreshed.forecast);
+                  setForecast((prev: any) => (prev?.is_cloud_authoritative ? prev : refreshed.forecast));
                 }
                 setSyncStatus("IDLE");
                 setSyncMessage("");
@@ -425,7 +444,7 @@ export default function Dashboard() {
           setVouchers(updated.recent_vouchers || []);
           setCoverage(updated.coverage);
           if (updated.forecast) {
-            setForecast(updated.forecast);
+            setForecast((prev: any) => (prev?.is_cloud_authoritative ? prev : updated.forecast));
           }
           const cnt = await offlineDb.vouchers
             .where("status")
@@ -471,7 +490,7 @@ export default function Dashboard() {
     setVouchers(refreshed.recent_vouchers || []);
     setCoverage(refreshed.coverage);
     if (refreshed.forecast) {
-      setForecast(refreshed.forecast);
+      setForecast((prev: any) => (prev?.is_cloud_authoritative ? prev : refreshed.forecast));
     }
 
     const token = getAccessToken();

@@ -305,11 +305,28 @@ function AnalyticsHubContent() {
           forecastDays: forecastDays || 30,
         };
 
+        // 0. Check for cached authoritative Cloud AI forecast (<2ms)
+        let hasCachedCloudForecast = false;
+        if (typeof localStorage !== "undefined") {
+          try {
+            const cachedCloudStr = localStorage.getItem(`vouch_authoritative_forecast_${validCid}_${forecastDays || 30}`);
+            if (cachedCloudStr) {
+              const cachedCloud = JSON.parse(cachedCloudStr);
+              if (cachedCloud && isMounted) {
+                setForecast(cachedCloud);
+                hasCachedCloudForecast = true;
+              }
+            }
+          } catch (e) {
+            // ignore JSON parse error
+          }
+        }
+
         // 1. Instant local read from IndexedDB (<15ms)
         const local = await LocalAnalyticsEngine.getDashboardAnalytics(validCid, fyOptions);
         if (isMounted && local) {
           setInsights(local);
-          if (local.forecast) {
+          if (local.forecast && !hasCachedCloudForecast) {
             setForecast(local.forecast);
           }
           if (local.rfm_clusters && local.rfm_clusters.length > 0) {
@@ -331,7 +348,13 @@ function AnalyticsHubContent() {
 
           if (isMounted) {
             if (forecastRes.status === "fulfilled" && forecastRes.value.data?.success) {
-              setForecast(forecastRes.value.data.data);
+              const cloudForecast = { ...forecastRes.value.data.data, is_cloud_authoritative: true };
+              setForecast(cloudForecast);
+              if (typeof localStorage !== "undefined") {
+                try {
+                  localStorage.setItem(`vouch_authoritative_forecast_${validCid}_${forecastDays || 30}`, JSON.stringify(cloudForecast));
+                } catch (e) {}
+              }
             }
             if (rfmRes.status === "fulfilled" && rfmRes.value.data?.success) {
               setRfmData(rfmRes.value.data.data || []);
