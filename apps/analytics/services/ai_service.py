@@ -457,7 +457,7 @@ class AnalyticsEngine:
             .exclude(AnalyticsEngine.is_cash_voucher_filter())
             .values('party_ledger_id', 'party_ledger__name')
             .annotate(order_count=Count('id'), last_order=Max('voucher_date'), avg_order_val=Avg('total_amount'), total_val=Sum('total_amount'))
-            .filter(order_count__gte=2)
+            .filter(order_count__gte=3)
             .order_by('-total_val')
         )
 
@@ -471,20 +471,10 @@ class AnalyticsEngine:
                 Voucher.objects.filter(company=company, party_ledger_id=party_id, voucher_type='SALES', status='POSTED')
                 .values_list('voucher_date', flat=True)
             )))
-            # Require at least 2 distinct buying dates (avoids same-day split invoices having 0-day intervals)
-            if len(party_dates) >= 2:
+            # Consider customer restock time ONLY when there are 3 or more purchase instances on distinct days
+            if len(party_dates) >= 3:
                 intervals = [(party_dates[k] - party_dates[k-1]).days for k in range(1, len(party_dates))]
-                observed_interval = int(sum(intervals) / len(intervals))
-
-                # Empirical Bayes shrinkage for sparse order history:
-                # If only 2 distinct order dates (1 interval observed), a single short gap (e.g. 7 days)
-                # is almost always an ad-hoc supplement or split order, not a confirmed recurring consumption cycle.
-                # Established B2B repeat cycles are 20-35 days (median ~28d). Shrink sparse intervals towards 28 days.
-                if len(party_dates) == 2:
-                    avg_interval = max(21, int(0.25 * observed_interval + 0.75 * 28))
-                else:
-                    avg_interval = max(7, observed_interval)
-
+                avg_interval = max(7, int(sum(intervals) / len(intervals)))
                 days_since_last = (anchor_date - last_order).days
 
                 # Buy-Till-You-Die Churn Hazard Decay
