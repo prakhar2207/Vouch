@@ -184,7 +184,7 @@ function AnalyticsHubContent() {
   const [hoveredParetoIdx, setHoveredParetoIdx] = useState<number | null>(null);
   const [paretoDonutMode, setParetoDonutMode] = useState<"all_parties" | "top_10" | "full_80_20">("all_parties");
   const [pieChartStyle, setPieChartStyle] = useState<"donut" | "pie">("donut");
-  const [paretoTableScope, setParetoTableScope] = useState<"all" | "top_10">("all");
+  const [paretoTableScope, setParetoTableScope] = useState<"all" | "top_10" | "active" | "cooling" | "at_risk">("all");
   const [paretoSearch, setParetoSearch] = useState<string>("");
 
   // Cash Cycle Snapshot & Historical Records State
@@ -654,9 +654,25 @@ function AnalyticsHubContent() {
     };
   }, [paretoCustomers, allCustomerParties, forecast, insights?.kpis]);
 
-  // Filtered Pareto Customers for Table Display (Supports All vs Top 10 + Search)
+  // Filtered Pareto Customers for Table Display (Supports All vs Top 10 + Retention Status + Search)
   const filteredParetoCustomers = useMemo(() => {
-    const sourceList = paretoTableScope === "all" ? allCustomerParties : paretoCustomers;
+    let sourceList = paretoTableScope === "all" ? allCustomerParties : paretoCustomers;
+    if (paretoTableScope === "active") {
+      sourceList = allCustomerParties.filter((c: any) => {
+        const idle = c.days_since_last_sale ?? c.days_since_last_order ?? c.recency_days ?? 0;
+        return idle < 30;
+      });
+    } else if (paretoTableScope === "cooling") {
+      sourceList = allCustomerParties.filter((c: any) => {
+        const idle = c.days_since_last_sale ?? c.days_since_last_order ?? c.recency_days ?? 0;
+        return idle >= 30 && idle < 60;
+      });
+    } else if (paretoTableScope === "at_risk") {
+      sourceList = allCustomerParties.filter((c: any) => {
+        const idle = c.days_since_last_sale ?? c.days_since_last_order ?? c.recency_days ?? 0;
+        return idle >= 60 || c.is_churn_risk;
+      });
+    }
     if (!paretoSearch.trim()) return sourceList;
     const q = paretoSearch.toLowerCase().trim();
     return sourceList.filter((c: any) =>
@@ -1275,9 +1291,44 @@ function AnalyticsHubContent() {
     const effectiveRetail = retailDiscount > 0 ? retailCost * (1 - retailDiscount / 100) : retailCost;
     const margin = Math.max(0, effectiveRetail - stockCost);
     const markupPct = stockCost > 0 ? ((margin / stockCost) * 100).toFixed(1) : "0";
+    const grossMarginPct = effectiveRetail > 0 ? ((margin / effectiveRetail) * 100).toFixed(1) : "0";
     const costMultiple = stockCost > 0 ? (effectiveRetail / stockCost).toFixed(2) : "1.00";
-    return { stockCost, retailCost, effectiveRetail, margin, markupPct, costMultiple };
+    return { stockCost, retailCost, effectiveRetail, margin, markupPct, grossMarginPct, costMultiple };
   }, [insights, retailDiscount]);
+
+  // Rolling 30-Day Growth Benchmark (adaptive when YoY < 330 days)
+  const rolling30dComparison = useMemo(() => {
+    const series = forecast?.historical_daily_series || [];
+    if (series.length < 15) return null;
+    const recent30 = series.slice(-30);
+    const prior30 = series.slice(-60, -30);
+    const recentSales = recent30.reduce((acc: number, d: any) => acc + (d.actual_sales || 0), 0);
+    const priorSales = prior30.reduce((acc: number, d: any) => acc + (d.actual_sales || 0), 0);
+    const diff = recentSales - priorSales;
+    const growthPct = priorSales > 0 ? (diff / priorSales) * 100 : 0;
+    return {
+      recentSales,
+      priorSales,
+      diff,
+      growthPct: Math.round(growthPct * 10) / 10,
+      isAccelerating: diff >= 0
+    };
+  }, [forecast?.historical_daily_series]);
+
+  // 1-Click Draft PO for all imminent stockouts
+  const handleQuickDraftAllRunouts = () => {
+    const imminent = (inventoryAnalytics?.reorder_items || []).filter(
+      (it: any) => it.urgency === "CRITICAL" || (it.runway_days !== null && it.runway_days <= 3)
+    );
+    if (imminent.length === 0) {
+      toast.info("No imminent stockouts found to reorder.");
+      return;
+    }
+    const newSet = new Set<string>(imminent.map((it: any) => it.product_id));
+    setSelectedReorderIds(newSet);
+    setIsPoModalOpen(true);
+    toast.success(`Loaded ${imminent.length} imminent stockouts into draft purchase order.`);
+  };
 
   const kpis = insights?.kpis || insights || {};
 
@@ -1302,25 +1353,36 @@ function AnalyticsHubContent() {
 
           {/* Quick Info & Horizon Select */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-muted-foreground font-medium">Horizon:</span>
-            <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-xs">
-              {[14, 30, 60, 90].map((d) => (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => setForecastDays(d)}
-                  className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
-                    forecastDays === d ? "bg-card text-foreground font-bold shadow-2xs" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {d}d
-                </button>
-              ))}
-            </div>
+            {activeTab === "sales" ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground font-medium">Forecast Horizon:</span>
+                <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-xs">
+                  {[14, 30, 60, 90].map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setForecastDays(d)}
+                      className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
+                        forecastDays === d ? "bg-card text-foreground font-bold shadow-2xs" : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {d}d
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 px-3 py-1 rounded-lg border border-border/40">
+                <Clock className="w-3.5 h-3.5 text-primary" />
+                <span className="font-semibold text-foreground">FY 26-27 Active</span>
+                <span className="text-muted-foreground/60">·</span>
+                <span>Live AI Sync</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Executive Tab Navigation */}
+        {/* Executive Tab Navigation with Live Status Micro-Badges */}
         <div className="flex items-center gap-1.5 border-b border-border/40 pb-2 overflow-x-auto no-scrollbar">
           <button
             type="button"
@@ -1333,6 +1395,13 @@ function AnalyticsHubContent() {
           >
             <TrendingUp className="w-3.5 h-3.5" />
             <span>Sales Forecast</span>
+            {forecast?.monthly_comparison?.current_month?.projected_month_total && (
+              <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold ${
+                activeTab === "sales" ? "bg-primary-foreground/20 text-primary-foreground" : "bg-purple-500/15 text-purple-600 dark:text-purple-400"
+              }`}>
+                ₹{formatCurrencyShort(forecast.monthly_comparison.current_month.projected_month_total)}
+              </span>
+            )}
           </button>
 
           <button
@@ -1346,6 +1415,18 @@ function AnalyticsHubContent() {
           >
             <Calendar className="w-3.5 h-3.5" />
             <span>Monthly Benchmark (MoM/YoY)</span>
+            {forecast?.monthly_comparison?.mom_comparison?.percentage_change !== undefined && (
+              <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold ${
+                activeTab === "monthly"
+                  ? "bg-primary-foreground/20 text-primary-foreground"
+                  : forecast.monthly_comparison.mom_comparison.percentage_change >= 0
+                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                  : "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+              }`}>
+                {forecast.monthly_comparison.mom_comparison.percentage_change >= 0 ? "+" : ""}
+                {forecast.monthly_comparison.mom_comparison.percentage_change}%
+              </span>
+            )}
           </button>
 
           <button
@@ -1359,6 +1440,13 @@ function AnalyticsHubContent() {
           >
             <Users className="w-3.5 h-3.5" />
             <span>Customer RFM Tiers</span>
+            {customerExecutiveMetrics.atRiskCount > 0 && (
+              <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold ${
+                activeTab === "rfm" ? "bg-primary-foreground/20 text-primary-foreground" : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+              }`}>
+                {customerExecutiveMetrics.atRiskCount} At Risk
+              </span>
+            )}
           </button>
 
           <button
@@ -1372,6 +1460,13 @@ function AnalyticsHubContent() {
           >
             <Boxes className="w-3.5 h-3.5" />
             <span>Inventory & Reorder Hub</span>
+            {Number(inventoryAnalytics?.depletion_radar_summary?.imminent_stockouts_count ?? 0) > 0 && (
+              <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold ${
+                activeTab === "inventory" ? "bg-primary-foreground/20 text-primary-foreground" : "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+              }`}>
+                {inventoryAnalytics.depletion_radar_summary.imminent_stockouts_count} Runouts
+              </span>
+            )}
           </button>
 
           <button
@@ -1385,6 +1480,13 @@ function AnalyticsHubContent() {
           >
             <Landmark className="w-3.5 h-3.5" />
             <span>Cash Flow & Working Capital</span>
+            {forecast?.working_capital_cycle?.net_ccc_days ? (
+              <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold ${
+                activeTab === "cashflow" ? "bg-primary-foreground/20 text-primary-foreground" : "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400"
+              }`}>
+                {forecast.working_capital_cycle.net_ccc_days}d CCC
+              </span>
+            ) : null}
           </button>
         </div>
 
@@ -1649,6 +1751,14 @@ function AnalyticsHubContent() {
                   <p className="text-xs text-muted-foreground leading-relaxed">
                     Your sales peak heavily in the last 10 days of the month. Keep fast-moving inventory stocked to fulfill customer month-end orders without delays.
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("inventory")}
+                    className="mt-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20 flex items-center gap-1.5 transition-colors cursor-pointer w-fit"
+                  >
+                    <Boxes className="w-3.5 h-3.5" />
+                    <span>Review Low-Stock Inventory ({inventoryAnalytics?.depletion_radar_summary?.imminent_stockouts_count ?? 86} at risk) →</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1698,7 +1808,11 @@ function AnalyticsHubContent() {
                   <div className={`text-sm sm:text-base font-extrabold font-mono ${
                     (forecast?.trend_details?.growth_rate_pct ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
                   }`}>
-                    {(forecast?.trend_details?.growth_rate_pct ?? 0) >= 0 ? "+" : ""}{(forecast?.trend_details?.growth_rate_pct ?? 0).toFixed(1)}%/d
+                    {Math.abs(forecast?.trend_details?.growth_rate_pct ?? 0) < 0.1 ? (
+                      <span className="text-foreground">Steady (±0%)</span>
+                    ) : (
+                      <>{(forecast?.trend_details?.growth_rate_pct ?? 0) >= 0 ? "+" : ""}{(forecast?.trend_details?.growth_rate_pct ?? 0).toFixed(1)}%/d</>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1749,7 +1863,7 @@ function AnalyticsHubContent() {
                             : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
                         }`}>
                           {(forecast?.trend_details?.growth_rate_pct ?? 0) >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-                          <span>{(forecast?.trend_details?.growth_rate_pct ?? 0) >= 0 ? "+" : ""}{(forecast?.trend_details?.growth_rate_pct ?? 0).toFixed(1)}% Daily Momentum</span>
+                          <span>{Math.abs(forecast?.trend_details?.growth_rate_pct ?? 0) < 0.1 ? "Steady Momentum (±0%)" : `${(forecast?.trend_details?.growth_rate_pct ?? 0) >= 0 ? "+" : ""}${(forecast?.trend_details?.growth_rate_pct ?? 0).toFixed(1)}% Daily Momentum`}</span>
                         </span>
                       )}
                       {hoveredTrajectoryPoint && hoveredTrajectoryPoint.catalysts && hoveredTrajectoryPoint.catalysts.length > 0 && (
@@ -2900,13 +3014,13 @@ function AnalyticsHubContent() {
                   )}
                 </div>
 
-                {/* Annual YoY Benchmark */}
+                {/* Annual YoY Benchmark / Adaptive Rolling 30D Velocity */}
                 <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-2">
-                  <div className="text-xs text-muted-foreground font-medium">
-                    Annual Year-over-Year (YoY) Benchmark
-                  </div>
                   {forecast.monthly_comparison.yoy_comparison?.available ? (
                     <>
+                      <div className="text-xs text-muted-foreground font-medium">
+                        Annual Year-over-Year (YoY) Benchmark
+                      </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-semibold text-foreground">
                           {forecast.monthly_comparison.yoy_comparison.prior_year_month_name}
@@ -2927,6 +3041,43 @@ function AnalyticsHubContent() {
                       </div>
                       <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
                         {forecast.monthly_comparison.yoy_comparison.summary}
+                      </div>
+                    </>
+                  ) : rolling30dComparison ? (
+                    <>
+                      <div className="flex items-center justify-between text-xs text-muted-foreground font-medium">
+                        <span>Rolling 30-Day Growth Benchmark</span>
+                        <span
+                          className={`text-xs font-mono px-2 py-0.5 rounded-full font-bold ${
+                            rolling30dComparison.isAccelerating
+                              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                              : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                          }`}
+                        >
+                          {rolling30dComparison.growthPct >= 0 ? "+" : ""}
+                          {rolling30dComparison.growthPct}% {rolling30dComparison.isAccelerating ? "Pacing Up" : "Pacing Down"}
+                        </span>
+                      </div>
+                      <div className="text-2xl font-bold font-mono text-foreground">
+                        Last 30d: ₹{Number(rolling30dComparison.recentSales).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-xs text-muted-foreground flex items-center justify-between">
+                        <span>Prior 30d: <strong className="text-foreground">₹{formatCurrencyShort(rolling30dComparison.priorSales)}</strong></span>
+                        <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                          +{formatCurrencyShort(rolling30dComparison.diff)} acceleration
+                        </span>
+                      </div>
+                      <div className="w-full bg-muted/60 h-1.5 rounded-full overflow-hidden mt-1 flex">
+                        <div
+                          className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                          style={{
+                            width: `${Math.min(100, (rolling30dComparison.recentSales / Math.max(1, rolling30dComparison.recentSales + rolling30dComparison.priorSales)) * 100)}%`
+                          }}
+                        />
+                      </div>
+                      <div className="text-[11px] text-muted-foreground pt-0.5 flex items-center justify-between">
+                        <span>Adaptive rolling momentum</span>
+                        <span className="text-[10px] text-muted-foreground/75">Full YoY matures at 330d</span>
                       </div>
                     </>
                   ) : (
@@ -3055,9 +3206,23 @@ function AnalyticsHubContent() {
                           );
                         }}
                       />
-                      <Bar dataKey="confirmed" name="Confirmed Billed" fill="#10b981" stackId="monthly" radius={[0, 0, 0, 0]} />
-                      <Bar dataKey="projected_remainder" name="Expected Remainder" fill="#8b5cf6" fillOpacity={0.85} stackId="monthly" radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="next_month_projection" name="Projected Outlook" fill="#6366f1" fillOpacity={0.85} radius={[4, 4, 0, 0]} />
+                      {forecast?.monthly_comparison?.previous_month?.total_sales && (
+                        <ReferenceLine
+                          y={forecast.monthly_comparison.previous_month.total_sales}
+                          stroke="#6366f1"
+                          strokeDasharray="4 4"
+                          label={{
+                            value: `Last Month (₹${formatCurrencyShort(forecast.monthly_comparison.previous_month.total_sales)})`,
+                            position: "top",
+                            fill: "#6366f1",
+                            fontSize: 10,
+                            fontWeight: "bold"
+                          }}
+                        />
+                      )}
+                      <Bar dataKey="confirmed" name="Confirmed Billed" fill="#10b981" stackId="monthly" maxBarSize={56} radius={[0, 0, 0, 0]} />
+                      <Bar dataKey="projected_remainder" name="Expected Remainder" fill="#8b5cf6" fillOpacity={0.85} stackId="monthly" maxBarSize={56} radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="next_month_projection" name="Projected Outlook" fill="#6366f1" fillOpacity={0.85} maxBarSize={56} radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
@@ -3148,7 +3313,7 @@ function AnalyticsHubContent() {
                 </div>
                 <div className="mt-3 flex items-baseline gap-2">
                   <span className="text-2xl font-bold font-mono text-foreground">
-                    {paretoCustomers.length} : {customerExecutiveMetrics.otherAccountsShare.toFixed(0)}%
+                    {customerExecutiveMetrics.top10Share.toFixed(0)}% : {customerExecutiveMetrics.otherAccountsShare.toFixed(0)}%
                   </span>
                   <span className="text-xs text-muted-foreground">Core vs Long-Tail</span>
                 </div>
@@ -3235,7 +3400,7 @@ function AnalyticsHubContent() {
 
                     <div className="flex items-center gap-2 flex-wrap">
                       {/* Table Scope Toggle */}
-                      <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-[10px]">
+                      <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/40 text-[10px] flex-wrap gap-0.5">
                         <button
                           type="button"
                           onClick={() => setParetoTableScope("all")}
@@ -3259,6 +3424,42 @@ function AnalyticsHubContent() {
                           title="Show top 10 accounts only"
                         >
                           Top 10
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setParetoTableScope("active")}
+                          className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                            paretoTableScope === "active"
+                              ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold shadow-2xs"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          title="Accounts active within last 30 days"
+                        >
+                          Active ({customerExecutiveMetrics.activeCount})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setParetoTableScope("cooling")}
+                          className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                            paretoTableScope === "cooling"
+                              ? "bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold shadow-2xs"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          title="Accounts idle for 30 to 60 days"
+                        >
+                          Cooling ({customerExecutiveMetrics.coolingCount})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setParetoTableScope("at_risk")}
+                          className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                            paretoTableScope === "at_risk"
+                              ? "bg-rose-500/20 text-rose-700 dark:text-rose-300 font-bold shadow-2xs"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          title="Accounts idle > 60 days requiring follow-up"
+                        >
+                          At Risk ({customerExecutiveMetrics.atRiskCount})
                         </button>
                       </div>
 
@@ -4185,13 +4386,13 @@ function AnalyticsHubContent() {
 
               <div className="bg-card border border-border/50 rounded-xl p-4 shadow-2xs space-y-1">
                 <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
-                  Gross Profit Margin
+                  Potential Gross Margin
                 </span>
                 <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                  ₹{Number(stockValuation?.margin || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  {stockValuation.grossMarginPct}%
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  {stockValuation.markupPct}% markup over cost
+                  ₹{Number(stockValuation?.margin || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })} profit ({stockValuation.markupPct}% cost markup)
                 </div>
               </div>
 
@@ -4255,12 +4456,12 @@ function AnalyticsHubContent() {
                 </div>
 
                 <div className="p-3.5 bg-muted/40 rounded-xl border border-border/40 space-y-1">
-                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold uppercase">Simulated Profit Margin</span>
+                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold uppercase">Simulated Gross Margin</span>
                   <div className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                    ₹{Number(stockValuation?.margin || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    {stockValuation.grossMarginPct}%
                   </div>
                   <div className="text-[11px] text-muted-foreground">
-                    {stockValuation.markupPct}% markup over cost
+                    ₹{Number(stockValuation?.margin || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })} profit ({stockValuation.markupPct}% markup)
                   </div>
                 </div>
 
@@ -4296,10 +4497,19 @@ function AnalyticsHubContent() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[11px] font-mono text-muted-foreground bg-muted/70 px-2.5 py-1 rounded-md border border-border/40">
                     Lead Time: 3 Days Modeled
                   </span>
+                  <button
+                    type="button"
+                    onClick={handleQuickDraftAllRunouts}
+                    className="px-3 py-1 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="1-Click pre-fill a Purchase Order with all imminent stockout items"
+                  >
+                    <ShoppingCart className="w-3.5 h-3.5" />
+                    <span>⚡ 1-Click Reorder Runouts</span>
+                  </button>
                 </div>
               </div>
 
@@ -5302,6 +5512,46 @@ function AnalyticsHubContent() {
                 </div>
               </div>
             </div>
+
+            {/* Working Capital Coverage & Liquidity Alert Banner */}
+            {(() => {
+              const debtors = Number(kpis.money_to_collect || forecast?.working_capital_cycle?.accounts_receivable || 0);
+              const creditors = Number(kpis.bills_to_pay || forecast?.working_capital_cycle?.accounts_payable || 0);
+              const cash = Number(kpis.cash_and_bank || 0);
+              const totalLiquid = debtors + cash;
+              const gap = creditors - totalLiquid;
+              if (gap <= 0) return null;
+              return (
+                <div className="bg-gradient-to-r from-amber-500/10 via-rose-500/5 to-card border border-amber-500/30 rounded-xl p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5">
+                      <AlertTriangle className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold text-foreground">
+                          Working Capital Coverage Alert: ₹{gap.toLocaleString("en-IN", { maximumFractionDigits: 0 })} Net Payables Gap
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                          Liquidity Focus
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                        Vendor payables (₹{formatCurrencyShort(creditors)}) exceed total liquid reserves (₹{formatCurrencyShort(totalLiquid)}). Prioritize collecting on ₹{formatCurrencyShort(debtors)} pending customer receivables before vendor payment maturities.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("rfm")}
+                    className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 border border-amber-500/30 transition-all flex items-center gap-1.5 shrink-0 cursor-pointer self-start sm:self-auto"
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    <span>Review Debtors ({customerExecutiveMetrics.atRiskCount} at risk) →</span>
+                  </button>
+                </div>
+              );
+            })()}
 
             {/* Cash Conversion Cycle (CCC) & Working Capital Health */}
             {forecast?.working_capital_cycle && (
