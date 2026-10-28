@@ -147,7 +147,43 @@ class CreateSalesInvoiceAPIView(APIView):
                 # 2. Automatically post it if requested
                 if data.get('post_immediately', True):
                     VoucherService.post_voucher(voucher)
-                    
+
+                    # 3. Optional Counter Cash / Payment Settlement at billing
+                    settle_payment_ledger_id = data.get('payment_ledger_id')
+                    if not settle_payment_ledger_id and data.get('payment_mode') == 'CASH':
+                        cash_ledger = Ledger.objects.filter(company=company, ledger_type='CASH').first() or \
+                                      Ledger.objects.filter(company=company, name__iexact='Cash').first()
+                        if cash_ledger:
+                            settle_payment_ledger_id = cash_ledger.id
+
+                    from apps.accounting.services.allocation_service import PaymentAllocationService
+                    is_party_cash = PaymentAllocationService.is_cash_voucher(voucher)
+                    if settle_payment_ledger_id and not is_party_cash and voucher.status == 'POSTED':
+                        settle_ledger = Ledger.objects.filter(id=settle_payment_ledger_id, company=company).first()
+                        if settle_ledger:
+                            from apps.accounting.models import Voucher, LedgerEntry
+                            from apps.accounting.services.sequence_service import InvoiceSequenceService
+                            rcpt_num, r_fy = InvoiceSequenceService.get_next_number(company, 'RECEIPT', voucher.voucher_date)
+                            rcpt_voucher = Voucher.objects.create(
+                                company=company,
+                                financial_year=r_fy,
+                                voucher_type='RECEIPT',
+                                voucher_number=rcpt_num,
+                                voucher_date=voucher.voucher_date,
+                                party_ledger=party_ledger,
+                                total_amount=voucher.total_amount,
+                                reference_number=voucher.voucher_number,
+                                narration=f"Instant settlement for Inv #{voucher.voucher_number} via {settle_ledger.name}",
+                                created_by=request.user
+                            )
+                            LedgerEntry.objects.create(voucher=rcpt_voucher, company=company, ledger=settle_ledger, debit_amount=voucher.total_amount, credit_amount=Decimal('0.00'), narration=f"Receipt from {party_ledger.name}")
+                            LedgerEntry.objects.create(voucher=rcpt_voucher, company=company, ledger=party_ledger, debit_amount=Decimal('0.00'), credit_amount=voucher.total_amount, narration=f"Receipt for Inv #{voucher.voucher_number}")
+                            VoucherService.post_voucher(rcpt_voucher)
+                            PaymentAllocationService.auto_allocate_voucher(rcpt_voucher, preferred_invoice_id=str(voucher.id))
+
+                from apps.accounting.services.allocation_service import PaymentAllocationService
+                p_status, paid_amt = PaymentAllocationService.get_voucher_payment_status(voucher)
+
             return Response({
                 "success": True,
                 "message": "Sales Invoice Generated Successfully.",
@@ -155,6 +191,8 @@ class CreateSalesInvoiceAPIView(APIView):
                 "voucher_number": voucher.voucher_number,
                 "status": voucher.status,
                 "total_amount": voucher.total_amount,
+                "paid_amount": paid_amt,
+                "payment_status": p_status,
                 "voucher": {
                     "id": str(voucher.id),
                     "voucher_type": voucher.voucher_type,
@@ -165,6 +203,10 @@ class CreateSalesInvoiceAPIView(APIView):
                     "party_name": voucher.party_ledger.name if voucher.party_ledger else (voucher.buyer_name or ''),
                     "status": voucher.status,
                     "total_amount": str(voucher.total_amount or '0.00'),
+                    "paid_amount": paid_amt,
+                    "paidAmount": paid_amt,
+                    "payment_status": p_status,
+                    "paymentStatus": p_status,
                     "narration": voucher.narration or '',
                     "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
                     # CamelCase aliases for frontend IndexedDB / offlineDb compatibility
@@ -291,13 +333,51 @@ class CreatePurchaseInvoiceAPIView(APIView):
                 
                 if data.get('post_immediately', True):
                     VoucherService.post_voucher(voucher)
-                    
+
+                    # 3. Optional Counter Cash / Payment Settlement at billing
+                    settle_payment_ledger_id = data.get('payment_ledger_id')
+                    if not settle_payment_ledger_id and data.get('payment_mode') == 'CASH':
+                        cash_ledger = Ledger.objects.filter(company=company, ledger_type='CASH').first() or \
+                                      Ledger.objects.filter(company=company, name__iexact='Cash').first()
+                        if cash_ledger:
+                            settle_payment_ledger_id = cash_ledger.id
+
+                    from apps.accounting.services.allocation_service import PaymentAllocationService
+                    is_party_cash = PaymentAllocationService.is_cash_voucher(voucher)
+                    if settle_payment_ledger_id and not is_party_cash and voucher.status == 'POSTED':
+                        settle_ledger = Ledger.objects.filter(id=settle_payment_ledger_id, company=company).first()
+                        if settle_ledger:
+                            from apps.accounting.models import Voucher, LedgerEntry
+                            from apps.accounting.services.sequence_service import InvoiceSequenceService
+                            pmt_num, p_fy = InvoiceSequenceService.get_next_number(company, 'PAYMENT', voucher.voucher_date)
+                            pmt_voucher = Voucher.objects.create(
+                                company=company,
+                                financial_year=p_fy,
+                                voucher_type='PAYMENT',
+                                voucher_number=pmt_num,
+                                voucher_date=voucher.voucher_date,
+                                party_ledger=party_ledger,
+                                total_amount=voucher.total_amount,
+                                reference_number=voucher.reference_number or voucher.voucher_number,
+                                narration=f"Instant payment for Bill #{voucher.reference_number or voucher.voucher_number} via {settle_ledger.name}",
+                                created_by=request.user
+                            )
+                            LedgerEntry.objects.create(voucher=pmt_voucher, company=company, ledger=party_ledger, debit_amount=voucher.total_amount, credit_amount=Decimal('0.00'), narration=f"Payment via {settle_ledger.name}")
+                            LedgerEntry.objects.create(voucher=pmt_voucher, company=company, ledger=settle_ledger, debit_amount=Decimal('0.00'), credit_amount=voucher.total_amount, narration=f"Payment to {party_ledger.name}")
+                            VoucherService.post_voucher(pmt_voucher)
+                            PaymentAllocationService.auto_allocate_voucher(pmt_voucher, preferred_invoice_id=str(voucher.id))
+
+                from apps.accounting.services.allocation_service import PaymentAllocationService
+                p_status, paid_amt = PaymentAllocationService.get_voucher_payment_status(voucher)
+
             return Response({
                 "success": True,
                 "voucher_id": str(voucher.id),
                 "voucher_number": voucher.voucher_number,
                 "status": voucher.status,
                 "total_amount": voucher.total_amount,
+                "paid_amount": paid_amt,
+                "payment_status": p_status,
                 "voucher": {
                     "id": str(voucher.id),
                     "voucher_type": voucher.voucher_type,
@@ -308,6 +388,10 @@ class CreatePurchaseInvoiceAPIView(APIView):
                     "party_name": voucher.party_ledger.name if voucher.party_ledger else '',
                     "status": voucher.status,
                     "total_amount": str(voucher.total_amount or '0.00'),
+                    "paid_amount": paid_amt,
+                    "paidAmount": paid_amt,
+                    "payment_status": p_status,
+                    "paymentStatus": p_status,
                     "narration": voucher.narration or '',
                     "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
                 }
@@ -425,6 +509,7 @@ class ListVouchersAPIView(APIView):
             page_vouchers = list(vouchers[offset:offset+limit])
 
             from apps.accounting.models import PaymentAllocation
+            from apps.accounting.services.allocation_service import PaymentAllocationService
             from django.db.models import Sum
             page_v_ids = [v.id for v in page_vouchers]
             alloc_by_inv = {row['invoice_voucher_id']: row['paid'] for row in PaymentAllocation.objects.filter(invoice_voucher_id__in=page_v_ids).values('invoice_voucher_id').annotate(paid=Sum('allocated_amount'))}
@@ -432,25 +517,10 @@ class ListVouchersAPIView(APIView):
 
             data = []
             for v in page_vouchers:
-                tot = v.total_amount or Decimal('0.00')
                 if v.voucher_type in ['SALES', 'PURCHASE']:
-                    paid = alloc_by_inv.get(v.id, Decimal('0.00'))
-                    if paid >= tot and tot > 0:
-                        p_status = 'PAID'
-                    elif paid > 0:
-                        p_status = 'PARTIAL'
-                    else:
-                        p_status = 'UNPAID'
-                    paid_amt = float(paid)
+                    p_status, paid_amt = PaymentAllocationService.get_voucher_payment_status(v, alloc_by_inv)
                 elif v.voucher_type in ['PAYMENT', 'RECEIPT']:
-                    allocated = alloc_by_pmt.get(v.id, Decimal('0.00'))
-                    if allocated >= tot and tot > 0:
-                        p_status = 'ALLOCATED'
-                    elif allocated > 0:
-                        p_status = 'PARTIAL'
-                    else:
-                        p_status = 'UNALLOCATED'
-                    paid_amt = float(allocated)
+                    p_status, paid_amt = PaymentAllocationService.get_voucher_payment_status(v, alloc_by_pmt)
                 else:
                     p_status = 'N/A'
                     paid_amt = 0.0
@@ -1495,8 +1565,9 @@ class VoucherDetailAPIView(APIView):
                     # 5. Re-post voucher
                     VoucherService.post_voucher(voucher)
 
-                    # 6. Auto-allocate against unpaid invoices FIFO
-                    PaymentAllocationService.auto_allocate_voucher(voucher)
+                    # 6. Auto-allocate against unpaid invoices FIFO or preferred invoice
+                    preferred_inv_id = data.get('invoice_id') or data.get('allocated_invoice_id') or data.get('preferred_invoice_id')
+                    PaymentAllocationService.auto_allocate_voucher(voucher, preferred_invoice_id=preferred_inv_id)
 
                     # 7. Recalculate balances for all affected ledgers (old and new)
                     for lid in affected_ledger_ids:
@@ -2061,9 +2132,9 @@ class CreatePaymentReceiptAPIView(APIView):
 
             # Smart Deduplication Gatekeeper
             force_create = bool(data.get('force_create') or data.get('allow_duplicate'))
+            invoice_id = data.get('invoice_id') or data.get('allocated_invoice_id') or data.get('preferred_invoice_id')
             if not force_create:
                 from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
-                invoice_id = data.get('invoice_id') or data.get('allocated_invoice_id')
                 dup_result = TransactionDeduplicationEngine.check_duplicate_candidate(
                     company=company,
                     voucher_type=voucher_type,
@@ -2080,6 +2151,48 @@ class CreatePaymentReceiptAPIView(APIView):
                         "rule": dup_result.get('rule'),
                         "matching_voucher": dup_result.get('matching_voucher')
                     }, status=status.HTTP_409_CONFLICT)
+
+            is_cash_payment = (payment_ledger.ledger_type == 'CASH' or 'CASH' in (payment_ledger.name or '').upper())
+            force_statutory = bool(data.get('force_create') or data.get('allow_statutory_override') or data.get('allow_duplicate'))
+
+            # 1. Statutory Limit: Section 269ST (Receipts >= ₹2,00,000 in cash)
+            if voucher_type == 'RECEIPT' and is_cash_payment and amount >= Decimal('200000.00') and not force_statutory:
+                return Response({
+                    "success": False,
+                    "error": f"Section 269ST Violation: Under Section 269ST of the Income Tax Act, accepting cash receipts of ₹2,00,000 or more in aggregate from a person in a single day is strictly prohibited (Penalty under Section 271DA is 100% of the cash received: ₹{amount:,.2f}). Please receive this via Bank/UPI/Cheque or confirm override.",
+                    "statutory_code": "SECTION_269ST_VIOLATION",
+                    "threshold": "200000.00",
+                    "amount": str(amount),
+                    "requires_confirmation": True
+                }, status=400)
+
+            # 2. Statutory Limit: Section 40A(3) (Cash expenses/payments > ₹10,000)
+            if voucher_type == 'PAYMENT' and is_cash_payment and amount > Decimal('10000.00') and not force_statutory:
+                is_transport = any(k in (party_ledger.name or '').lower() for k in ['transport', 'freight', 'cartage', 'cargo', 'logistics'])
+                tax_limit = Decimal('35000.00') if is_transport else Decimal('10000.00')
+                if amount > tax_limit:
+                    return Response({
+                        "success": False,
+                        "error": f"Section 40A(3) Disallowance Warning: Cash payments exceeding ₹{tax_limit:,.0f} in a single day to a supplier/person are completely disallowed as business expenditure under Section 40A(3) of the Income Tax Act. Please pay via Bank/UPI/Cheque or confirm override.",
+                        "statutory_code": "SECTION_40A3_DISALLOWANCE",
+                        "threshold": str(tax_limit),
+                        "amount": str(amount),
+                        "requires_confirmation": True
+                    }, status=400)
+
+            # 3. Cash in Hand Deficit Guard (Negative Cash Protection)
+            if voucher_type == 'PAYMENT' and is_cash_payment and not bool(data.get('allow_negative_cash') or data.get('force_create')):
+                avail_cash = quantize_money(payment_ledger.current_balance or Decimal('0.00'))
+                if avail_cash < amount:
+                    deficit = quantize_money(amount - avail_cash)
+                    return Response({
+                        "success": False,
+                        "error": f"Insufficient Cash in Hand! Available balance in '{payment_ledger.name}' is ₹{avail_cash:,.2f}, but payment is ₹{amount:,.2f}. Recording this outflow would cause a negative cash balance (-₹{deficit:,.2f}), which violates Indian accounting standards. Please record incoming cash receipts or cash withdrawal from bank first.",
+                        "cash_code": "NEGATIVE_CASH_DEFICIT",
+                        "available_cash": str(avail_cash),
+                        "deficit": str(deficit),
+                        "requires_confirmation": True
+                    }, status=400)
 
             with transaction.atomic():
                 # Sequential number generator with select_for_update
@@ -2111,8 +2224,8 @@ class CreatePaymentReceiptAPIView(APIView):
                 # Auto-post voucher atomically
                 VoucherService.post_voucher(voucher)
 
-                # Auto-allocate against unpaid invoices FIFO
-                allocations = PaymentAllocationService.auto_allocate_voucher(voucher)
+                # Auto-allocate against unpaid invoices FIFO or preferred invoice
+                allocations = PaymentAllocationService.auto_allocate_voucher(voucher, preferred_invoice_id=invoice_id)
 
             return Response({
                 "success": True,
@@ -2363,27 +2476,13 @@ class UniversalVoucherAPIView(APIView):
             for e in LedgerEntry.objects.filter(voucher_id__in=page_v_ids, ledger__name__iexact='round off'):
                 ro_entries[e.voucher_id] = float(e.debit_amount - e.credit_amount)
 
+            from apps.accounting.services.allocation_service import PaymentAllocationService
             data = []
             for v in page_vouchers:
-                tot = v.total_amount or Decimal('0.00')
                 if v.voucher_type in ['SALES', 'PURCHASE']:
-                    paid = alloc_by_inv.get(v.id, Decimal('0.00'))
-                    if paid >= tot and tot > 0:
-                        p_status = 'PAID'
-                    elif paid > 0:
-                        p_status = 'PARTIAL'
-                    else:
-                        p_status = 'UNPAID'
-                    paid_amt = float(paid)
+                    p_status, paid_amt = PaymentAllocationService.get_voucher_payment_status(v, alloc_by_inv)
                 elif v.voucher_type in ['PAYMENT', 'RECEIPT']:
-                    allocated = alloc_by_pmt.get(v.id, Decimal('0.00'))
-                    if allocated >= tot and tot > 0:
-                        p_status = 'ALLOCATED'
-                    elif allocated > 0:
-                        p_status = 'PARTIAL'
-                    else:
-                        p_status = 'UNALLOCATED'
-                    paid_amt = float(allocated)
+                    p_status, paid_amt = PaymentAllocationService.get_voucher_payment_status(v, alloc_by_pmt)
                 else:
                     p_status = 'N/A'
                     paid_amt = 0.0

@@ -308,6 +308,12 @@ export default function PurchasePage() {
       } catch (postErr: any) {
         const isNetworkErr = !navigator.onLine || postErr.code === 'ERR_NETWORK' || !postErr.response;
         if (isNetworkErr) {
+          const isCash = selectedParty && (
+            selectedParty.ledger_type === 'CASH' ||
+            (selectedParty.group && selectedParty.group.toLowerCase().includes('cash')) ||
+            selectedParty.name?.toLowerCase().includes('cash')
+          );
+
           const offlineRes = await queueOfflineVoucher('PURCHASE', payload, invoiceDate);
           await ingestVoucherLocally(companyId, {
             id: offlineRes.localId,
@@ -316,6 +322,8 @@ export default function PurchasePage() {
             voucherDate: invoiceDate,
             dueDate: (payload as any).due_date || invoiceDate,
             totalAmount: grandTotal,
+            paidAmount: isCash ? grandTotal : 0,
+            paymentStatus: isCash ? 'PAID' : 'UNPAID',
             partyName: selectedParty?.name || 'Supplier',
             partyLedgerId: selectedParty?.id || null,
             status: 'POSTED',

@@ -48,6 +48,98 @@ class PaymentAllocationService:
     get_voucher_allocated_amount = get_invoice_allocated_amount
 
     @classmethod
+    def is_cash_voucher(cls, voucher: Voucher) -> bool:
+        """
+        Detects whether a voucher is a spot cash sale/purchase where cash was settled
+        immediately at the point of transaction without creating a trade credit debt.
+        """
+        if not voucher:
+            return False
+
+        # 1. Inspect Party Ledger
+        party = getattr(voucher, 'party_ledger', None)
+        if party:
+            lt = (getattr(party, 'ledger_type', None) or '').upper()
+            if lt == 'CASH':
+                return True
+            p_name = (getattr(party, 'name', '') or '').strip().lower()
+            if p_name in ('cash', 'cash sale', 'cash sales', 'cash-in-hand', 'cash a/c', 'cash account', 'counter cash', 'counter sale', 'counter sales', 'cash customer / walk-in'):
+                return True
+            grp = getattr(party, 'group', None)
+            if grp and 'cash' in (getattr(grp, 'name', '') or '').lower():
+                return True
+
+        # 2. Inspect Buyer Name
+        b_name = (getattr(voucher, 'buyer_name', '') or '').strip().lower()
+        if not party and b_name in ('cash', 'cash sale', 'cash sales', 'counter sale', 'counter sales', 'cash customer'):
+            return True
+
+        # 3. Inspect preloaded or existing ledger entries if accessible
+        v_type = getattr(voucher, 'voucher_type', '')
+        tot = quantize_money(getattr(voucher, 'total_amount', Decimal('0.00')))
+        if tot > Decimal('0.00'):
+            entries = None
+            if hasattr(voucher, '_prefetched_objects_cache') and 'ledger_entries' in voucher._prefetched_objects_cache:
+                entries = voucher.ledger_entries.all()
+            if entries is not None:
+                if v_type == 'SALES':
+                    cash_dr = sum(e.debit_amount for e in entries if getattr(e.ledger, 'ledger_type', None) == 'CASH' or 'cash' in (getattr(e.ledger, 'name', '') or '').lower())
+                    if cash_dr >= tot:
+                        return True
+                elif v_type == 'PURCHASE':
+                    cash_cr = sum(e.credit_amount for e in entries if getattr(e.ledger, 'ledger_type', None) == 'CASH' or 'cash' in (getattr(e.ledger, 'name', '') or '').lower())
+                    if cash_cr >= tot:
+                        return True
+
+        return False
+
+    @classmethod
+    def get_voucher_payment_status(cls, voucher: Voucher, allocated_map: dict = None) -> tuple:
+        """
+        Calculates (payment_status, paid_amount) for any voucher.
+        Returns:
+            (status: str, paid_amt: float)
+            Status is one of: 'PAID', 'PARTIAL', 'UNPAID', 'ALLOCATED', 'UNALLOCATED', 'N/A'
+        """
+        tot = quantize_money(getattr(voucher, 'total_amount', Decimal('0.00')))
+        v_type = getattr(voucher, 'voucher_type', '')
+
+        if v_type in ('SALES', 'PURCHASE', 'OPENING_INVOICE', 'OPENING_BILL'):
+            if cls.is_cash_voucher(voucher):
+                return ('PAID', float(tot))
+
+            if allocated_map is not None:
+                paid = quantize_money(allocated_map.get(voucher.id, Decimal('0.00')))
+            else:
+                paid = cls.get_invoice_allocated_amount(voucher)
+
+            if paid >= tot and tot > Decimal('0.00'):
+                return ('PAID', float(paid))
+            elif paid > Decimal('0.00'):
+                return ('PARTIAL', float(paid))
+            else:
+                return ('UNPAID', float(paid))
+
+        elif v_type in ('PAYMENT', 'RECEIPT'):
+            if allocated_map is not None:
+                allocated = quantize_money(allocated_map.get(voucher.id, Decimal('0.00')))
+            else:
+                from apps.accounting.models import PaymentAllocation
+                alloc = PaymentAllocation.objects.filter(payment_voucher=voucher).aggregate(
+                    total=Sum('allocated_amount')
+                )['total']
+                allocated = quantize_money(alloc or Decimal('0.00'))
+
+            if allocated >= tot and tot > Decimal('0.00'):
+                return ('ALLOCATED', float(allocated))
+            elif allocated > Decimal('0.00'):
+                return ('PARTIAL', float(allocated))
+            else:
+                return ('UNALLOCATED', float(allocated))
+
+        return ('N/A', 0.0)
+
+    @classmethod
     def get_unpaid_invoices_for_party(cls, company: Company, party_ledger: Ledger) -> list:
         """
         Returns all posted invoices for a party that have remaining unpaid balances,
@@ -428,13 +520,8 @@ class PaymentAllocationService:
 
         for inv in invoices:
             # P0: Skip spot cash / counter sales. Cash sales are settled at point-of-sale and are not credit debts
-            if is_customer:
-                p_ledger = inv.party_ledger
-                p_name_lower = (p_ledger.name if p_ledger else (inv.buyer_name or '')).lower().strip()
-                if p_ledger and getattr(p_ledger, 'ledger_type', None) == 'CASH':
-                    continue
-                if p_name_lower in ['cash', 'cash sale', 'cash sales', 'counter sale', 'counter sales', 'cash-in-hand', 'cash a/c', 'cash account']:
-                    continue
+            if is_customer and cls.is_cash_voucher(inv):
+                continue
 
             tot = quantize_money(inv.total_amount)
             paid = quantize_money(allocations_map.get(inv.id, Decimal('0.00')))

@@ -832,6 +832,12 @@ export default function SalesPage() {
         payload.voucher_number = resolvedVnum;
         advanceOfflineSequence(companyId, resolvedVnum);
 
+        const isCash = selectedParty && (
+          selectedParty.ledger_type === 'CASH' ||
+          (selectedParty.group && selectedParty.group.toLowerCase().includes('cash')) ||
+          selectedParty.name?.toLowerCase().includes('cash')
+        );
+
         const offlineRes = await queueOfflineVoucher('SALES', payload, invoiceDate);
         await ingestVoucherLocally(companyId || 'offline-company', {
           id: offlineRes.localId,
@@ -840,6 +846,8 @@ export default function SalesPage() {
           voucherDate: invoiceDate,
           dueDate: (payload as any).due_date || invoiceDate,
           totalAmount: grandTotal,
+          paidAmount: isCash ? grandTotal : 0,
+          paymentStatus: isCash ? 'PAID' : 'UNPAID',
           partyName: selectedParty?.name || buyerName || 'Customer',
           partyLedgerId: selectedParty?.id || null,
           status: 'PENDING_SYNC',
@@ -885,6 +893,12 @@ export default function SalesPage() {
           payload.voucher_number = fallbackVnum;
           advanceOfflineSequence(companyId, fallbackVnum);
 
+          const isCash = selectedParty && (
+            selectedParty.ledger_type === 'CASH' ||
+            (selectedParty.group && selectedParty.group.toLowerCase().includes('cash')) ||
+            selectedParty.name?.toLowerCase().includes('cash')
+          );
+
           const offlineRes = await queueOfflineVoucher('SALES', payload, invoiceDate);
           await ingestVoucherLocally(companyId || 'offline-company', {
             id: offlineRes.localId,
@@ -893,6 +907,8 @@ export default function SalesPage() {
             voucherDate: invoiceDate,
             dueDate: (payload as any).due_date || invoiceDate,
             totalAmount: grandTotal,
+            paidAmount: isCash ? grandTotal : 0,
+            paymentStatus: isCash ? 'PAID' : 'UNPAID',
             partyName: selectedParty?.name || buyerName || 'Customer',
             partyLedgerId: selectedParty?.id || null,
             status: 'PENDING_SYNC',

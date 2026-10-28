@@ -249,6 +249,8 @@ export class VouchersRepository {
       })
       .map((o) => {
         const p = o.payload || {};
+        const pPartyName = String(p.party_name || p.buyer_name || "").toLowerCase();
+        const isOfflineCash = pPartyName.includes("cash") || p.payment_mode === "CASH" || Boolean(p.payment_ledger_id);
         return {
           id: `offline_${o.localId}`,
           localId: o.localId,
@@ -270,8 +272,10 @@ export class VouchersRepository {
           round_off: Number(p.round_off || 0),
           roundOff: Number(p.round_off || 0),
           status: o.status === "FAILED" ? "FAILED" : "PENDING",
-          payment_status: "UNPAID",
-          paid_amount: 0,
+          payment_status: isOfflineCash ? "PAID" : "UNPAID",
+          paymentStatus: isOfflineCash ? "PAID" : "UNPAID",
+          paid_amount: isOfflineCash ? Number(p.total_amount || p.round_off_total || 0) : 0,
+          paidAmount: isOfflineCash ? Number(p.total_amount || p.round_off_total || 0) : 0,
           errorMessage: o.errorMessage,
           items: p.items || [],
           serverUpdatedAt: o.createdAt,
@@ -309,7 +313,13 @@ export class VouchersRepository {
       const totAmt = Number(v.totalAmount ?? (v as any).total_amount ?? 0);
 
       if (vType === "SALES" || vType === "PURCHASE") {
-        if (allocByInv[v.id] !== undefined) {
+        const isCash = pName.toLowerCase().includes("cash") ||
+                       pStatus === "PAID" ||
+                       Boolean((v as any).is_cash_voucher);
+        if (isCash && allocByInv[v.id] === undefined) {
+          pStatus = "PAID";
+          paidAmt = totAmt;
+        } else if (allocByInv[v.id] !== undefined) {
           paidAmt = Math.min(Number(allocByInv[v.id] || 0), totAmt);
           if (paidAmt >= totAmt && totAmt > 0) {
             pStatus = "PAID";
