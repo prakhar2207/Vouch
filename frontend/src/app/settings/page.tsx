@@ -133,6 +133,7 @@ export default function SettingsPage() {
   const [logoPosition, setLogoPosition] = useState<'left' | 'center'>('left');
   const [logoHeight, setLogoHeight] = useState<number>(52);
   const [showLogo, setShowLogo] = useState(true);
+  const [showItemDescription, setShowItemDescription] = useState(true);
   const [watermarkEnabled, setWatermarkEnabled] = useState(true);
   const [showBankDetails, setShowBankDetails] = useState(true);
   const [showUpiQr, setShowUpiQr] = useState(true);
@@ -292,6 +293,7 @@ export default function SettingsPage() {
     setLogoPosition(branding.logo_position || 'left');
     setLogoHeight(branding.logo_height || 52);
     setShowLogo(branding.show_logo !== false);
+    setShowItemDescription(branding.show_item_description !== false);
     setWatermarkEnabled(branding.watermark_enabled !== false);
     setShowBankDetails(branding.show_bank_details !== false);
     setShowUpiQr(branding.show_upi_qr !== false);
@@ -471,6 +473,7 @@ export default function SettingsPage() {
           logo_position: logoPosition,
           logo_height: Number(logoHeight),
           show_logo: showLogo,
+                                show_item_description: showItemDescription,
           watermark_enabled: watermarkEnabled,
           show_bank_details: showBankDetails,
           show_upi_qr: showUpiQr,
@@ -1633,6 +1636,7 @@ export default function SettingsPage() {
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 text-xs">
                       {[
                         { label: 'Show Brand Logo', val: showLogo, set: setShowLogo },
+                        { label: 'Item Descriptions', val: showItemDescription, set: setShowItemDescription },
                         { label: 'Watermark Background', val: watermarkEnabled, set: setWatermarkEnabled },
                         { label: 'Bank Settlement Box', val: showBankDetails, set: setShowBankDetails },
                         { label: 'UPI Payment QR', val: showUpiQr, set: setShowUpiQr },
@@ -1765,6 +1769,7 @@ export default function SettingsPage() {
                                 logo_position: logoPosition,
                                 logo_height: logoHeight,
                                 show_logo: showLogo,
+                                show_item_description: showItemDescription,
                                 watermark_enabled: watermarkEnabled,
                                 show_bank_details: showBankDetails,
                                 show_upi_qr: showUpiQr,
@@ -1963,6 +1968,24 @@ export default function SettingsPage() {
                         <div>
                           <div className="font-semibold text-xs text-foreground">Advanced Item Options</div>
                           <div className="text-[11px] text-muted-foreground">Enable custom product attributes, batch tracking, and multi-warehouse selection</div>
+                        </div>
+                      </label>
+
+                      <label className="flex items-start gap-3 p-3 rounded-xl bg-muted/20 border border-border/40 cursor-pointer hover:bg-muted/40">
+                        <input
+                          type="checkbox"
+                          checked={showItemDescription}
+                          onChange={(e) => setShowItemDescription(e.target.checked)}
+                          className="mt-0.5 rounded text-primary focus:ring-primary w-4 h-4"
+                        />
+                        <div>
+                          <div className="font-semibold text-xs text-foreground flex items-center gap-1.5">
+                            <span>Show Item Description on Invoices</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-bold border border-emerald-500/20">Print PDF</span>
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            Print item category specifications and descriptions below product names on invoices. Keep off for compact 1-line billing.
+                          </div>
                         </div>
                       </label>
 

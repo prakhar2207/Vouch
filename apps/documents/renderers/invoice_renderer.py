@@ -122,6 +122,9 @@ class InvoicePDFRenderer:
         seller = dto.get('seller', {})
         buyer = dto.get('buyer', {})
         items = dto.get('items', [])
+        show_item_description = dto.get('show_item_description', True)
+        if dto.get('branding') and isinstance(dto['branding'], dict):
+            show_item_description = dto['branding'].get('show_item_description', show_item_description)
         subtotals = dto.get('subtotals', {})
         tax_breakdown = dto.get('tax_breakdown', [])
         is_inter_state = subtotals.get('is_inter_state', False)
@@ -196,7 +199,7 @@ class InvoicePDFRenderer:
 
         # Check if invoice can fit on 1 single page via adaptive density
         # Invoices with <= 15 items and short product descriptions fit easily on 1 page!
-        has_long_desc = any(bool(it.get('description') and it.get('description') != it.get('name')) for it in items)
+        has_long_desc = any(bool(it.get('description') and it.get('description') != it.get('name')) for it in items) if show_item_description else False
         can_fit_single_page = (num_item_rows <= 8) or (num_item_rows <= 15 and not has_long_desc)
         is_compact_density = can_fit_single_page and (num_item_rows >= 9)
 
@@ -232,6 +235,8 @@ class InvoicePDFRenderer:
 
             s_td_c = ParagraphStyle('TDC', fontName=f_norm, fontSize=8.0, leading=10.0, alignment=TA_CENTER, textColor=colors.black)
             s_td_l = ParagraphStyle('TDL', fontName=f_semi, fontSize=8.0, leading=10.0, alignment=TA_LEFT, textColor=colors.black)
+            s_td_brand = ParagraphStyle('TDBrand', fontName=f_bold, fontSize=6.5, leading=7.5, alignment=TA_LEFT, textColor=colors.HexColor('#475569'))
+            s_td_desc = ParagraphStyle('TDDesc', fontName=f_norm, fontSize=6.5, leading=7.5, alignment=TA_LEFT, textColor=colors.HexColor('#64748b'))
             s_td_r = ParagraphStyle('TDR', fontName=f_norm, fontSize=8.0, leading=10.0, alignment=TA_RIGHT, textColor=colors.black)
             s_td_amt = ParagraphStyle('TDAmt', fontName=f_semi, fontSize=8.0, leading=10.0, alignment=TA_RIGHT, textColor=colors.black)
 
@@ -269,6 +274,8 @@ class InvoicePDFRenderer:
 
             s_td_c = ParagraphStyle('TDC', fontName=f_norm, fontSize=9.0, leading=11.5, alignment=TA_CENTER, textColor=colors.black)
             s_td_l = ParagraphStyle('TDL', fontName=f_semi, fontSize=9.0, leading=11.5, alignment=TA_LEFT, textColor=colors.black)
+            s_td_brand = ParagraphStyle('TDBrand', fontName=f_bold, fontSize=7.0, leading=8.5, alignment=TA_LEFT, textColor=colors.HexColor('#475569'))
+            s_td_desc = ParagraphStyle('TDDesc', fontName=f_norm, fontSize=7.0, leading=8.5, alignment=TA_LEFT, textColor=colors.HexColor('#64748b'))
             s_td_r = ParagraphStyle('TDR', fontName=f_norm, fontSize=9.0, leading=11.5, alignment=TA_RIGHT, textColor=colors.black)
             s_td_amt = ParagraphStyle('TDAmt', fontName=f_semi, fontSize=9.0, leading=11.5, alignment=TA_RIGHT, textColor=colors.black)
 
@@ -485,13 +492,13 @@ class InvoicePDFRenderer:
             desc_elements = [Paragraph(p_name, s_td_l)]
             if show_brand and brand:
                 desc_elements.append(Paragraph(
-                    f"<font size='6.5' color='#475569'><b>BRAND:</b> {brand}</font>",
-                    s_td_l
+                    f"<b>BRAND:</b> {brand}",
+                    s_td_brand
                 ))
-            if desc and desc != p_name and not is_compact_density:
+            if show_item_description and desc and desc != p_name:
                 desc_elements.append(Paragraph(
-                    f"<font size='6' color='#64748b'>{desc}</font>",
-                    s_td_l
+                    desc,
+                    s_td_desc
                 ))
 
             res = [
@@ -506,6 +513,19 @@ class InvoicePDFRenderer:
                 res.append(Paragraph(f"{disc_pct:.2f}%" if disc_pct > 0 else "0.00%", s_td_c))
             res.append(Paragraph(f"{taxable:,.2f}", s_td_amt))
             return res
+
+        def calc_item_row_height(itm, base_h):
+            p_name = itm.get('name', 'Item')
+            brand = (itm.get('brand') or '').strip() if show_brand else ''
+            desc = (itm.get('description') or '').strip() if show_item_description else ''
+
+            desc_w = col_w[1] - 8.0
+            h_name = Paragraph(p_name, s_td_l).wrap(desc_w, 2000)[1]
+            h_brand = Paragraph(f"<b>BRAND:</b> {brand}", s_td_brand).wrap(desc_w, 2000)[1] if brand else 0.0
+            h_desc = Paragraph(desc, s_td_desc).wrap(desc_w, 2000)[1] if (desc and desc != p_name) else 0.0
+
+            needed = h_name + h_brand + h_desc + 4.0
+            return max(base_h, needed)
 
         # ================= 5. TAX SUMMARY SUBTABLE =================
         s_tax_th_l = ParagraphStyle('TaxTHL', fontName=f_bold, fontSize=7.0, leading=8.5, alignment=TA_LEFT, textColor=colors.black)
@@ -776,11 +796,13 @@ class InvoicePDFRenderer:
         # ==============================================================
         if can_fit_single_page:
             items_data = [th_row]
+            item_row_heights = []
             for itm in items:
                 items_data.append(build_item_row(itm))
+                item_row_heights.append(calc_item_row_height(itm, item_row_h))
 
             # Calculate remaining space for filler row
-            used_h = h_top + th_h + (num_item_rows * item_row_h) + sub_tax_rows_h + h_summary
+            used_h = h_top + th_h + sum(item_row_heights) + sub_tax_rows_h + h_summary
             filler_h = max(2.0, FRAME_HEIGHT - used_h)
 
             filler_idx = len(items_data)
@@ -836,7 +858,7 @@ class InvoicePDFRenderer:
             gt_r[-1] = Paragraph(f"{final_grand_total:,.2f}", s_gt_amt)
             items_data.append(gt_r)
 
-            row_heights = [th_h] + [item_row_h] * num_item_rows + [filler_h] + [14.0] + [14.0] * num_tax_rows + [18.0]
+            row_heights = [th_h] + item_row_heights + [filler_h] + [14.0] + [14.0] * num_tax_rows + [18.0]
             items_table = Table(items_data, colWidths=col_w, rowHeights=row_heights)
 
             it_style = [
@@ -851,10 +873,11 @@ class InvoicePDFRenderer:
                 it_style.extend([
                     ('LINEAFTER', (0, r_idx), (-2, r_idx), 0.8, colors.black),
                     ('LINEBELOW', (0, r_idx), (-1, r_idx), 0.8, colors.black),
-                    ('TOPPADDING', (0, r_idx), (-1, r_idx), 1.5),
-                    ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 1.5),
+                    ('TOPPADDING', (0, r_idx), (-1, r_idx), 2.0),
+                    ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 2.0),
                     ('LEFTPADDING', (1, r_idx), (1, r_idx), 4),
                     ('RIGHTPADDING', (-1, r_idx), (-1, r_idx), 4),
+                    ('VALIGN', (1, r_idx), (1, r_idx), 'TOP'),
                 ])
 
             # Filler row styling: continues vertical lines down to subtotal
@@ -947,7 +970,8 @@ class InvoicePDFRenderer:
                 if is_first:
                     # Page 1 top height: h_top
                     # P1 Items: th_h + (chunk_len * item_row_h) + Carried Over (16 pt)
-                    p1_used = h_top + th_h + (chunk_len * item_row_h) + 16.0
+                    p1_chunk_r_heights = [calc_item_row_height(itm, item_row_h) for itm in chunk_items]
+                    p1_used = h_top + th_h + sum(p1_chunk_r_heights) + 16.0
                     p1_filler_h = max(4.0, FRAME_HEIGHT - p1_used)
 
                     p1_filler_idx = len(p_data)
@@ -959,7 +983,7 @@ class InvoicePDFRenderer:
                     co_r[-1] = Paragraph(f"<b>{running_taxable:,.2f}</b>", s_sub_amt)
                     p_data.append(co_r)
 
-                    p1_r_heights = [th_h] + [item_row_h] * chunk_len + [p1_filler_h, 16.0]
+                    p1_r_heights = [th_h] + p1_chunk_r_heights + [p1_filler_h, 16.0]
                     p1_table = Table(p_data, colWidths=col_w, rowHeights=p1_r_heights)
 
                     p1_s = [
@@ -972,10 +996,11 @@ class InvoicePDFRenderer:
                         p1_s.extend([
                             ('LINEAFTER', (0, r_idx), (-2, r_idx), 0.8, colors.black),
                             ('LINEBELOW', (0, r_idx), (-1, r_idx), 0.8, colors.black),
-                            ('TOPPADDING', (0, r_idx), (-1, r_idx), 1.5),
-                            ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 1.5),
+                            ('TOPPADDING', (0, r_idx), (-1, r_idx), 2.0),
+                            ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 2.0),
                             ('LEFTPADDING', (1, r_idx), (1, r_idx), 4),
                             ('RIGHTPADDING', (-1, r_idx), (-1, r_idx), 4),
+                            ('VALIGN', (1, r_idx), (1, r_idx), 'TOP'),
                         ])
                     p1_s.extend([
                         ('LINEAFTER', (0, p1_filler_idx), (-2, p1_filler_idx), 0.8, colors.black),
@@ -1010,7 +1035,8 @@ class InvoicePDFRenderer:
                         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F1F5F9')),
                     ]))
 
-                    mid_used = 18.0 + th_h + 16.0 + (chunk_len * item_row_h) + 16.0
+                    mid_chunk_r_heights = [calc_item_row_height(itm, item_row_h) for itm in chunk_items]
+                    mid_used = 18.0 + th_h + 16.0 + sum(mid_chunk_r_heights) + 16.0
                     mid_filler_h = max(4.0, FRAME_HEIGHT - mid_used)
 
                     mid_filler_idx = len(p_data)
@@ -1021,7 +1047,7 @@ class InvoicePDFRenderer:
                     co_r[-1] = Paragraph(f"<b>{running_taxable:,.2f}</b>", s_sub_amt)
                     p_data.append(co_r)
 
-                    mid_r_heights = [th_h, 16.0] + [item_row_h] * chunk_len + [mid_filler_h, 16.0]
+                    mid_r_heights = [th_h, 16.0] + mid_chunk_r_heights + [mid_filler_h, 16.0]
                     mid_table = Table(p_data, colWidths=col_w, rowHeights=mid_r_heights)
 
                     mid_s = [
@@ -1038,10 +1064,11 @@ class InvoicePDFRenderer:
                         mid_s.extend([
                             ('LINEAFTER', (0, r_idx), (-2, r_idx), 0.8, colors.black),
                             ('LINEBELOW', (0, r_idx), (-1, r_idx), 0.8, colors.black),
-                            ('TOPPADDING', (0, r_idx), (-1, r_idx), 1.5),
-                            ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 1.5),
+                            ('TOPPADDING', (0, r_idx), (-1, r_idx), 2.0),
+                            ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 2.0),
                             ('LEFTPADDING', (1, r_idx), (1, r_idx), 4),
                             ('RIGHTPADDING', (-1, r_idx), (-1, r_idx), 4),
+                            ('VALIGN', (1, r_idx), (1, r_idx), 'TOP'),
                         ])
                     mid_s.extend([
                         ('LINEAFTER', (0, mid_filler_idx), (-2, mid_filler_idx), 0.8, colors.black),
@@ -1073,7 +1100,8 @@ class InvoicePDFRenderer:
                     ]))
 
                     # Calculate filler height for final page so subtotal and grand total sit right above summary
-                    last_used = 18.0 + th_h + 16.0 + (chunk_len * item_row_h) + sub_tax_rows_h + h_summary
+                    last_chunk_r_heights = [calc_item_row_height(itm, item_row_h) for itm in chunk_items]
+                    last_used = 18.0 + th_h + 16.0 + sum(last_chunk_r_heights) + sub_tax_rows_h + h_summary
                     last_filler_h = max(4.0, FRAME_HEIGHT - last_used)
 
                     last_filler_idx = len(p_data)
@@ -1129,7 +1157,7 @@ class InvoicePDFRenderer:
                     gt_r[-1] = Paragraph(f"{final_grand_total:,.2f}", s_gt_amt)
                     p_data.append(gt_r)
 
-                    last_r_heights = [th_h, 16.0] + [item_row_h] * chunk_len + [last_filler_h, 14.0] + [14.0] * num_tax_rows + [18.0]
+                    last_r_heights = [th_h, 16.0] + last_chunk_r_heights + [last_filler_h, 14.0] + [14.0] * num_tax_rows + [18.0]
                     last_table = Table(p_data, colWidths=col_w, rowHeights=last_r_heights)
 
                     last_s = [
@@ -1146,10 +1174,11 @@ class InvoicePDFRenderer:
                         last_s.extend([
                             ('LINEAFTER', (0, r_idx), (-2, r_idx), 0.8, colors.black),
                             ('LINEBELOW', (0, r_idx), (-1, r_idx), 0.8, colors.black),
-                            ('TOPPADDING', (0, r_idx), (-1, r_idx), 1.5),
-                            ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 1.5),
+                            ('TOPPADDING', (0, r_idx), (-1, r_idx), 2.0),
+                            ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 2.0),
                             ('LEFTPADDING', (1, r_idx), (1, r_idx), 4),
                             ('RIGHTPADDING', (-1, r_idx), (-1, r_idx), 4),
+                            ('VALIGN', (1, r_idx), (1, r_idx), 'TOP'),
                         ])
 
                     last_s.extend([

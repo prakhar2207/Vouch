@@ -182,12 +182,19 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
         if bank_ledger_upi and bank_ledger_upi.upi_id:
             upi_id = bank_ledger_upi.upi_id.strip()
 
+    doc_brand = {}
+    try:
+        c_settings = getattr(company, 'settings', None)
+        if c_settings and hasattr(c_settings, 'document_branding'):
+            doc_brand = getattr(c_settings, 'document_branding', {}) or {}
+    except Exception:
+        pass
+
+    show_item_description = doc_brand.get('show_item_description', True)
+
     if not upi_id:
         try:
-            branding = getattr(company, 'settings', None)
-            if branding and hasattr(branding, 'document_branding'):
-                doc_brand = getattr(branding, 'document_branding', {}) or {}
-                upi_id = (doc_brand.get('upi_id') or '').strip()
+            upi_id = (doc_brand.get('upi_id') or '').strip()
         except Exception:
             pass
 
@@ -288,6 +295,8 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
         'amount_in_words': number_to_words(final_grand_total),
         'customer_notes': cust_notes,
         'upi_url': upi_url,
+        'show_item_description': show_item_description,
+        'branding': doc_brand,
         'terms': [
             "Goods once sold will not be taken back.",
             "Interest @ 18% p.a. will be charged if the payment is not made within 45 days.",
