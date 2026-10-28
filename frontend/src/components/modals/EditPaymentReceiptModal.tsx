@@ -74,10 +74,14 @@ export default function EditPaymentReceiptModal({
     setDownloadingSlip(true);
     try {
       const token = getAccessToken();
+      const activeCo = (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') || '' : '') || voucher.companyId || voucher.company_id || '';
       const res = await axios.get(
-        `${API_BASE_URL}/api/v1/documents/vouchers/${voucher.id}/pdf/?download=1&fresh=1&brand=1`,
+        `${API_BASE_URL}/api/v1/documents/vouchers/${voucher.id}/pdf/?download=1&fresh=1&brand=1&company_id=${encodeURIComponent(activeCo)}`,
         {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'X-Company-ID': activeCo,
+          },
           responseType: 'blob',
         }
       );
@@ -89,7 +93,9 @@ export default function EditPaymentReceiptModal({
       link.download = `${cleanNum}_Slip.pdf`;
       document.body.appendChild(link);
       link.click();
-      document.body.removeChild(link);
+      if (link.parentNode) {
+        link.parentNode.removeChild(link);
+      }
       window.URL.revokeObjectURL(blobUrl);
       toast.success('Slip Downloaded', `${cleanNum}_Slip.pdf saved`);
     } catch (err: any) {

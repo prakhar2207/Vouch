@@ -31,12 +31,45 @@ def _get_active_company(request):
     return Company.objects.filter(users__user=request.user).first()
 
 
+def _get_voucher_for_request(request, voucher_id):
+    """
+    Resolves voucher ensuring multi-tenant authorization for request.user.
+    If X-Company-ID or company_id param is provided, scopes to that company first.
+    Otherwise, checks if the voucher belongs to ANY company request.user is an authorized member of.
+    """
+    cid = request.headers.get('X-Company-ID') or request.query_params.get('company_id')
+    qs = Voucher.objects.filter(id=voucher_id)
+    if not getattr(request.user, 'is_superuser', False):
+        qs = qs.filter(company__users__user=request.user)
+    if cid:
+        matched = qs.filter(company_id=cid).defer('attachment_data', 'attachment_mime').select_related('company').first()
+        if matched:
+            return matched
+    return qs.defer('attachment_data', 'attachment_mime').select_related('company').first()
+
+
+def _get_ledger_for_request(request, ledger_id):
+    """
+    Resolves ledger ensuring multi-tenant authorization for request.user.
+    If X-Company-ID or company_id param is provided, scopes to that company first.
+    Otherwise, checks if the ledger belongs to ANY company request.user is an authorized member of.
+    """
+    cid = request.headers.get('X-Company-ID') or request.query_params.get('company_id')
+    qs = Ledger.objects.filter(id=ledger_id)
+    if not getattr(request.user, 'is_superuser', False):
+        qs = qs.filter(company__users__user=request.user)
+    if cid:
+        matched = qs.filter(company_id=cid).select_related('company').first()
+        if matched:
+            return matched
+    return qs.select_related('company').first()
+
+
 class VoucherSnapshotAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, voucher_id):
-        company = _get_active_company(request)
-        voucher = Voucher.objects.filter(id=voucher_id, company=company).defer('attachment_data', 'attachment_mime').first()
+        voucher = _get_voucher_for_request(request, voucher_id)
         if not voucher:
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -65,8 +98,7 @@ class VoucherPDFStreamAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, voucher_id):
-        company = _get_active_company(request)
-        voucher = Voucher.objects.filter(id=voucher_id, company=company).defer('attachment_data', 'attachment_mime').first()
+        voucher = _get_voucher_for_request(request, voucher_id)
         if not voucher:
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -110,8 +142,7 @@ class VoucherShareAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def post(self, request, voucher_id):
-        company = _get_active_company(request)
-        voucher = Voucher.objects.filter(id=voucher_id, company=company).defer('attachment_data', 'attachment_mime').first()
+        voucher = _get_voucher_for_request(request, voucher_id)
         if not voucher:
             return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -143,10 +174,10 @@ class StatementShareAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def post(self, request, ledger_id):
-        company = _get_active_company(request)
-        ledger = Ledger.objects.filter(id=ledger_id, company=company).first()
+        ledger = _get_ledger_for_request(request, ledger_id)
         if not ledger:
             return Response({'error': 'Ledger account not found'}, status=status.HTTP_404_NOT_FOUND)
+        company = ledger.company
 
         from_date_str = request.data.get('from_date') or request.query_params.get('from_date')
         to_date_str = request.data.get('to_date') or request.query_params.get('to_date')
@@ -393,10 +424,10 @@ class LedgerStatementPDFExportAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request, ledger_id):
-        company = _get_active_company(request)
-        ledger = Ledger.objects.filter(id=ledger_id, company=company).first()
+        ledger = _get_ledger_for_request(request, ledger_id)
         if not ledger:
             return Response({'error': 'Ledger not found'}, status=status.HTTP_404_NOT_FOUND)
+        company = ledger.company
 
         from_d = request.query_params.get('from_date')
         to_d = request.query_params.get('to_date')

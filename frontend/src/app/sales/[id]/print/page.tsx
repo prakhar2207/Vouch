@@ -922,7 +922,7 @@ export default function PrintInvoicePage() {
           width: targetWidthPx,
         });
       } finally {
-        document.body.removeChild(sandbox);
+        if (sandbox.parentNode) sandbox.parentNode.removeChild(sandbox);
       }
 
       // Copy canvas image of first sheet to clipboard for instant Ctrl+V pasting in WhatsApp Web or Desktop App
@@ -969,7 +969,7 @@ export default function PrintInvoicePage() {
     downloadLink.download = filename;
     document.body.appendChild(downloadLink);
     downloadLink.click();
-    document.body.removeChild(downloadLink);
+    if (downloadLink.parentNode) downloadLink.parentNode.removeChild(downloadLink);
   };
 
   const buildWhatsAppTextMessage = () => {

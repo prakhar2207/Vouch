@@ -365,3 +365,42 @@ class DocumentArchitectureTests(TestCase):
         self.assertEqual(resolve_resp.status_code, 200)
         self.assertEqual(Decimal(str(resolve_resp.data['total_amount'])), Decimal('3006.00'))
         self.assertEqual(resolve_resp.data['dto']['buyer']['name'], 'Bhagwanti Footwear Products')
+
+    def test_multi_company_user_pdf_download_without_active_company_header(self):
+        """
+        Verify that a user who belongs to multiple companies can view snapshots,
+        stream PDFs, and create share links for a voucher in company B even when
+        the frontend does NOT pass the X-Company-ID header.
+        """
+        from rest_framework.test import APIClient
+        # Create a second company for seller_user
+        company_demo = Company.objects.create(
+            name='Demo Company (First Created)',
+            legal_name='Demo Company LLP',
+            gstin='09AAGPD0000P1ZZ',
+            state_code='09',
+        )
+        # Register seller_user into demo company as well
+        UserCompany.objects.create(
+            user=self.seller_user,
+            company=company_demo,
+            role='OWNER'
+        )
+
+        client = APIClient()
+        client.force_authenticate(user=self.seller_user)
+
+        # Download PDF of self.voucher (which belongs to self.seller_company) WITHOUT any X-Company-ID header
+        resp = client.get(f"/api/v1/documents/vouchers/{self.voucher.id}/pdf/?download=1&fresh=1&copy=ORIGINAL&brand=1")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp['Content-Type'], 'application/pdf')
+
+        # Snapshot API must also succeed without X-Company-ID header
+        snap_resp = client.get(f"/api/v1/documents/vouchers/{self.voucher.id}/snapshot/")
+        self.assertEqual(snap_resp.status_code, 200)
+
+        # Share API must also succeed without X-Company-ID header
+        share_resp = client.post(f"/api/v1/documents/vouchers/{self.voucher.id}/share/", {'expires_in_days': 15})
+        self.assertEqual(share_resp.status_code, 200)
+        self.assertTrue(share_resp.data.get('success'))
+

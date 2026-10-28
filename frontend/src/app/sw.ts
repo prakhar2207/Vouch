@@ -150,16 +150,6 @@ installSerwist({
   clientsClaim: true,
   navigationPreload: false,
   runtimeCaching: [...accountingCustomCaching, ...safeDefaultCache],
-  fallbacks: {
-    entries: [
-      {
-        url: "/~offline",
-        matcher({ request }: any) {
-          return request.destination === "document" || request.mode === "navigate";
-        },
-      } as any,
-    ],
-  },
 });
 
 // Precache offline page on install

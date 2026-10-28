@@ -11,8 +11,10 @@ import { useFinancialYear } from '@/context/FinancialYearContext';
 import { 
   ArrowLeft, 
   Download, 
-  Printer, 
-  Share2,
+  Printer, 
+
+  Share2,
+
   Loader2,
   Calendar, 
   SlidersHorizontal, 
@@ -152,7 +154,7 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
     link.setAttribute('download', `statement_${statementData.ledger?.name || 'account'}_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
+    if (link.parentNode) link.parentNode.removeChild(link);
   };
 
   const [downloadingPdf, setDownloadingPdf] = useState(false);
@@ -167,10 +169,14 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
       if (fromDate) params.append('from_date', fromDate);
       if (toDate) params.append('to_date', toDate);
 
+      const activeCo = (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') || '' : '');
       const res = await axios.get(
-        `${API_BASE_URL}/api/v1/documents/statements/${ledgerId}/pdf/?${params.toString()}`,
+        `${API_BASE_URL}/api/v1/documents/statements/${ledgerId}/pdf/?${params.toString()}&company_id=${encodeURIComponent(activeCo)}`,
         {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'X-Company-ID': activeCo,
+          },
           responseType: 'blob',
         }
       );
@@ -182,7 +188,7 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
       link.download = `${cleanName}_Statement_${fromDate || 'start'}_to_${toDate || 'present'}.pdf`;
       document.body.appendChild(link);
       link.click();
-      document.body.removeChild(link);
+      if (link.parentNode) link.parentNode.removeChild(link);
       window.URL.revokeObjectURL(blobUrl);
     } catch (err: any) {
       console.error('Failed to download ledger statement PDF:', err);

@@ -554,9 +554,11 @@ function SalesInvoiceListContent() {
     try {
       toast.info('Downloading Tax Invoice PDF...');
       const token = getAccessToken();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/documents/vouchers/${inv.id}/pdf/?download=1&fresh=1&copy=ORIGINAL&brand=1&t=${Date.now()}`, {
+      const activeCo = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') || '' : '') || inv.companyId || inv.company_id || '';
+      const res = await axios.get(`${API_BASE_URL}/api/v1/documents/vouchers/${inv.id}/pdf/?download=1&fresh=1&copy=ORIGINAL&brand=1&company_id=${encodeURIComponent(activeCo)}&t=${Date.now()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
+          'X-Company-ID': activeCo,
         },
         responseType: 'blob',
       });
@@ -568,7 +570,9 @@ function SalesInvoiceListContent() {
       link.download = `Tax_Invoice_${cleanNum}.pdf`;
       document.body.appendChild(link);
       link.click();
-      document.body.removeChild(link);
+      if (link.parentNode) {
+        link.parentNode.removeChild(link);
+      }
       window.URL.revokeObjectURL(blobUrl);
       toast.success('Invoice PDF downloaded!');
     } catch (err: any) {
@@ -709,7 +713,7 @@ function SalesInvoiceListContent() {
           dlLink.download = filename;
           document.body.appendChild(dlLink);
           dlLink.click();
-          document.body.removeChild(dlLink);
+          if (dlLink.parentNode) dlLink.parentNode.removeChild(dlLink);
         }
 
         // Universal WhatsApp link safe for Android WebViews, PWAs and mobile browsers
@@ -729,7 +733,7 @@ function SalesInvoiceListContent() {
         dlLink.download = filename;
         document.body.appendChild(dlLink);
         dlLink.click();
-        document.body.removeChild(dlLink);
+        if (dlLink.parentNode) dlLink.parentNode.removeChild(dlLink);
         window.URL.revokeObjectURL(pdfBlobUrl);
       }
 
