@@ -185,12 +185,28 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
     doc_brand = {}
     try:
         c_settings = getattr(company, 'settings', None)
-        if c_settings and hasattr(c_settings, 'document_branding'):
-            doc_brand = getattr(c_settings, 'document_branding', {}) or {}
+        if c_settings:
+            if isinstance(c_settings, dict):
+                doc_brand = c_settings.get('document_branding', {}) or {}
+            elif hasattr(c_settings, 'document_branding'):
+                doc_brand = getattr(c_settings, 'document_branding', {}) or {}
     except Exception:
         pass
 
+    show_brand = doc_brand.get('show_brand', True)
     show_item_description = doc_brand.get('show_item_description', True)
+    firm_header_size = doc_brand.get('firm_header_size', 'DEFAULT')
+    item_sort_order = doc_brand.get('item_sort_order', 'ORIGINAL')
+    default_qr_mode = doc_brand.get('default_qr_mode', 'SMART')
+
+    if item_sort_order == 'ASC':
+        dto_items.sort(key=lambda x: str(x.get('name') or '').strip().lower())
+        for i, itm_d in enumerate(dto_items, 1):
+            itm_d['sn'] = i
+    elif item_sort_order == 'DESC':
+        dto_items.sort(key=lambda x: str(x.get('name') or '').strip().lower(), reverse=True)
+        for i, itm_d in enumerate(dto_items, 1):
+            itm_d['sn'] = i
 
     if not upi_id:
         try:
@@ -295,7 +311,11 @@ def build_invoice_dto(voucher: Voucher) -> Dict[str, Any]:
         'amount_in_words': number_to_words(final_grand_total),
         'customer_notes': cust_notes,
         'upi_url': upi_url,
+        'show_brand': show_brand,
         'show_item_description': show_item_description,
+        'firm_header_size': firm_header_size,
+        'item_sort_order': item_sort_order,
+        'default_qr_mode': default_qr_mode,
         'branding': doc_brand,
         'terms': [
             "Goods once sold will not be taken back.",

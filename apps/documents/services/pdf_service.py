@@ -35,6 +35,8 @@ class DocumentPDFService:
         show_logo: bool = True,
         copy_type: str = 'ORIGINAL',
         show_brand: bool = True,
+        show_desc: bool = None,
+        **kwargs,
     ) -> str:
         version = getattr(snapshot, 'source_version', 1) or 1
         updated_ts = ''
@@ -42,7 +44,8 @@ class DocumentPDFService:
             updated_ts = snapshot.snapshot_json.get('_voucher_updated_at') or snapshot.snapshot_json.get('_proforma_updated_at') or ''
         ts_clean = ''.join(c for c in str(updated_ts) if c.isalnum())
         cp_clean = ''.join(c for c in str(copy_type or 'ORIGINAL').upper() if c.isalnum())
-        return f"vouch_pdf_{snapshot.id}_v{version}_{ts_clean}_{snapshot.template_version}_wm{int(watermark)}_lg{int(show_logo)}_br{int(show_brand)}_cp{cp_clean}"
+        desc_clean = f"_ds{int(show_desc)}" if show_desc is not None else ""
+        return f"vouch_pdf_{snapshot.id}_v{version}_{ts_clean}_{snapshot.template_version}_wm{int(watermark)}_lg{int(show_logo)}_br{int(show_brand)}_cp{cp_clean}{desc_clean}"
 
     @classmethod
     def invalidate_cache_for_snapshot(cls, snapshot: DocumentSnapshot):
@@ -61,15 +64,22 @@ class DocumentPDFService:
         show_logo: bool = True,
         copy_type: str = 'ORIGINAL',
         show_brand: bool = True,
+        show_desc: bool = None,
     ) -> bytes:
-        cache_key = cls.get_cache_key(snapshot, watermark=watermark, show_logo=show_logo, copy_type=copy_type, show_brand=show_brand)
+        cache_key = cls.get_cache_key(snapshot, watermark=watermark, show_logo=show_logo, copy_type=copy_type, show_brand=show_brand, show_desc=show_desc)
 
         if not bypass_cache:
             cached_data = cache.get(cache_key)
             if cached_data:
                 return cached_data
 
-        dto = snapshot.snapshot_json
+        dto = dict(snapshot.snapshot_json) if isinstance(snapshot.snapshot_json, dict) else snapshot.snapshot_json
+        if show_desc is not None and isinstance(dto, dict):
+            dto = dict(dto)
+            dto['show_item_description'] = show_desc
+            if dto.get('branding') and isinstance(dto['branding'], dict):
+                dto['branding'] = dict(dto['branding'])
+                dto['branding']['show_item_description'] = show_desc
         doc_type = snapshot.document_type
 
         # Check document-level branding preference for logo if default True
@@ -111,6 +121,7 @@ class DocumentPDFService:
         watermark: bool = False,
         show_logo: bool = True,
         show_brand: bool = True,
+        show_desc: bool = None,
     ) -> bytes:
         """
         Convenience method to render any Voucher (Sales, Purchase, Payment, etc.).
@@ -126,6 +137,7 @@ class DocumentPDFService:
             watermark=watermark,
             show_logo=show_logo,
             show_brand=show_brand,
+            show_desc=show_desc,
         )
 
     @classmethod

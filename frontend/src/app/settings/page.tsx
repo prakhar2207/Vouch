@@ -133,7 +133,11 @@ export default function SettingsPage() {
   const [logoPosition, setLogoPosition] = useState<'left' | 'center'>('left');
   const [logoHeight, setLogoHeight] = useState<number>(52);
   const [showLogo, setShowLogo] = useState(true);
+  const [showBrand, setShowBrand] = useState(true);
   const [showItemDescription, setShowItemDescription] = useState(true);
+  const [firmHeaderSize, setFirmHeaderSize] = useState<'DEFAULT' | 'XL' | 'COMPACT'>('DEFAULT');
+  const [itemSortOrder, setItemSortOrder] = useState<'ORIGINAL' | 'ASC' | 'DESC'>('ORIGINAL');
+  const [defaultQrMode, setDefaultQrMode] = useState<'SMART' | 'UPI'>('SMART');
   const [watermarkEnabled, setWatermarkEnabled] = useState(true);
   const [showBankDetails, setShowBankDetails] = useState(true);
   const [showUpiQr, setShowUpiQr] = useState(true);
@@ -293,7 +297,11 @@ export default function SettingsPage() {
     setLogoPosition(branding.logo_position || 'left');
     setLogoHeight(branding.logo_height || 52);
     setShowLogo(branding.show_logo !== false);
+    setShowBrand(branding.show_brand !== false);
     setShowItemDescription(branding.show_item_description !== false);
+    setFirmHeaderSize(branding.firm_header_size || 'DEFAULT');
+    setItemSortOrder(branding.item_sort_order || 'ORIGINAL');
+    setDefaultQrMode(branding.default_qr_mode || 'SMART');
     setWatermarkEnabled(branding.watermark_enabled !== false);
     setShowBankDetails(branding.show_bank_details !== false);
     setShowUpiQr(branding.show_upi_qr !== false);
@@ -473,7 +481,11 @@ export default function SettingsPage() {
           logo_position: logoPosition,
           logo_height: Number(logoHeight),
           show_logo: showLogo,
-                                show_item_description: showItemDescription,
+          show_brand: showBrand,
+          show_item_description: showItemDescription,
+          firm_header_size: firmHeaderSize,
+          item_sort_order: itemSortOrder,
+          default_qr_mode: defaultQrMode,
           watermark_enabled: watermarkEnabled,
           show_bank_details: showBankDetails,
           show_upi_qr: showUpiQr,
@@ -1636,6 +1648,7 @@ export default function SettingsPage() {
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 text-xs">
                       {[
                         { label: 'Show Brand Logo', val: showLogo, set: setShowLogo },
+                        { label: 'Product Brand Name', val: showBrand, set: setShowBrand },
                         { label: 'Item Descriptions', val: showItemDescription, set: setShowItemDescription },
                         { label: 'Watermark Background', val: watermarkEnabled, set: setWatermarkEnabled },
                         { label: 'Bank Settlement Box', val: showBankDetails, set: setShowBankDetails },
@@ -1655,6 +1668,72 @@ export default function SettingsPage() {
                           <span className="font-medium text-foreground">{item.label}</span>
                         </label>
                       ))}
+                    </div>
+                  </div>
+
+                  {/* Default Document Layout, Header & QR Preferences */}
+                  <div className="pt-4 border-t border-border/40 space-y-4">
+                    <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Default Layout, Header & QR Controls</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      {/* Firm Name Header Size */}
+                      <div className="space-y-1.5 p-3 rounded-xl bg-muted/20 border border-border/40">
+                        <label className="block text-xs font-semibold text-foreground">Firm Legal Header Size</label>
+                        <p className="text-[11px] text-muted-foreground mb-2">Size of company legal name on printed and downloaded A4 bills</p>
+                        <div className="grid grid-cols-3 gap-1 p-1 bg-muted/40 rounded-lg border border-border/40 text-xs font-semibold">
+                          {(['COMPACT', 'DEFAULT', 'XL'] as const).map((sz) => (
+                            <button
+                              key={sz}
+                              type="button"
+                              onClick={() => setFirmHeaderSize(sz)}
+                              className={`py-1 rounded-md transition-all text-center cursor-pointer ${
+                                firmHeaderSize === sz ? 'bg-primary text-primary-foreground shadow-xs font-bold' : 'text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              {sz === 'COMPACT' ? 'Compact' : sz === 'DEFAULT' ? 'Large' : 'XL Banner'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Default Item Sort Order */}
+                      <div className="space-y-1.5 p-3 rounded-xl bg-muted/20 border border-border/40">
+                        <label className="block text-xs font-semibold text-foreground">Default Item Sort Order</label>
+                        <p className="text-[11px] text-muted-foreground mb-2">Sorting order of goods on PDF downloads and share links</p>
+                        <div className="grid grid-cols-3 gap-1 p-1 bg-muted/40 rounded-lg border border-border/40 text-xs font-semibold">
+                          {(['ORIGINAL', 'ASC', 'DESC'] as const).map((ord) => (
+                            <button
+                              key={ord}
+                              type="button"
+                              onClick={() => setItemSortOrder(ord)}
+                              className={`py-1 rounded-md transition-all text-center cursor-pointer ${
+                                itemSortOrder === ord ? 'bg-primary text-primary-foreground shadow-xs font-bold' : 'text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              {ord === 'ORIGINAL' ? 'Original' : ord === 'ASC' ? 'A → Z' : 'Z → A'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Default Document QR Code */}
+                      <div className="space-y-1.5 p-3 rounded-xl bg-muted/20 border border-border/40">
+                        <label className="block text-xs font-semibold text-foreground">Default Document QR Code</label>
+                        <p className="text-[11px] text-muted-foreground mb-2">QR rendered on bills for 1-click customer interaction</p>
+                        <div className="grid grid-cols-2 gap-1 p-1 bg-muted/40 rounded-lg border border-border/40 text-xs font-semibold">
+                          {(['SMART', 'UPI'] as const).map((qMode) => (
+                            <button
+                              key={qMode}
+                              type="button"
+                              onClick={() => setDefaultQrMode(qMode)}
+                              className={`py-1 rounded-md transition-all text-center cursor-pointer ${
+                                defaultQrMode === qMode ? 'bg-primary text-primary-foreground shadow-xs font-bold' : 'text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              {qMode === 'SMART' ? 'Smart Link QR' : 'UPI Payment QR'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -1769,7 +1848,11 @@ export default function SettingsPage() {
                                 logo_position: logoPosition,
                                 logo_height: logoHeight,
                                 show_logo: showLogo,
+                                show_brand: showBrand,
                                 show_item_description: showItemDescription,
+                                firm_header_size: firmHeaderSize,
+                                item_sort_order: itemSortOrder,
+                                default_qr_mode: defaultQrMode,
                                 watermark_enabled: watermarkEnabled,
                                 show_bank_details: showBankDetails,
                                 show_upi_qr: showUpiQr,
@@ -1968,6 +2051,24 @@ export default function SettingsPage() {
                         <div>
                           <div className="font-semibold text-xs text-foreground">Advanced Item Options</div>
                           <div className="text-[11px] text-muted-foreground">Enable custom product attributes, batch tracking, and multi-warehouse selection</div>
+                        </div>
+                      </label>
+
+                      <label className="flex items-start gap-3 p-3 rounded-xl bg-muted/20 border border-border/40 cursor-pointer hover:bg-muted/40">
+                        <input
+                          type="checkbox"
+                          checked={showBrand}
+                          onChange={(e) => setShowBrand(e.target.checked)}
+                          className="mt-0.5 rounded text-primary focus:ring-primary w-4 h-4"
+                        />
+                        <div>
+                          <div className="font-semibold text-xs text-foreground flex items-center gap-1.5">
+                            <span>Show Product Brand on Invoices</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 font-bold border border-blue-500/20">Brand ON/OFF</span>
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            Print manufacturer brand names (e.g. FENNER, PIX, GATES) below item lines on sales bills and PDFs.
+                          </div>
                         </div>
                       </label>
 

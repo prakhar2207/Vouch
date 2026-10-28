@@ -269,6 +269,22 @@ export default function PrintInvoicePage() {
     }
   };
 
+  const [showItemDescription, setShowItemDescription] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const val = localStorage.getItem('vouch_show_item_desc_in_sales_invoice');
+      return val !== null ? val === 'true' : true;
+    }
+    return true;
+  });
+
+  const toggleShowItemDescription = () => {
+    const next = !showItemDescription;
+    setShowItemDescription(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('vouch_show_item_desc_in_sales_invoice', String(next));
+    }
+  };
+
   // Fit to page mode (stretch invoice height to fill A4 page with zero leftover bottom space)
   const [fitToPage, setFitToPage] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -488,6 +504,24 @@ export default function PrintInvoicePage() {
       if (res?.data?.data) {
         const invData = res.data.data;
         setInvoice(invData);
+        if (invData?.company?.settings?.document_branding) {
+          const docBrand = invData.company.settings.document_branding;
+          if (docBrand.show_brand !== undefined && typeof window !== 'undefined' && localStorage.getItem('vouch_show_brand_in_sales_invoice') === null) {
+            setShowBrand(Boolean(docBrand.show_brand));
+          }
+          if (docBrand.show_item_description !== undefined && typeof window !== 'undefined' && localStorage.getItem('vouch_show_item_desc_in_sales_invoice') === null) {
+            setShowItemDescription(Boolean(docBrand.show_item_description));
+          }
+          if (docBrand.firm_header_size && typeof window !== 'undefined' && localStorage.getItem('vouch_firm_header_size') === null) {
+            setFirmHeaderSize(docBrand.firm_header_size);
+          }
+          if (docBrand.item_sort_order && typeof window !== 'undefined' && localStorage.getItem('vouch_item_sort_order') === null) {
+            setItemSortOrder(docBrand.item_sort_order);
+          }
+          if (docBrand.default_qr_mode && typeof window !== 'undefined' && localStorage.getItem('vouch_qr_mode') === null) {
+            setQrMode(docBrand.default_qr_mode);
+          }
+        }
 
         if (token) {
           try {
@@ -1079,7 +1113,7 @@ export default function PrintInvoicePage() {
 
       try {
         const pdfResp = await api.get(
-          `/api/v1/documents/vouchers/${invoiceId}/pdf/?fresh=1&copy=${copyMode}&brand=${showBrand ? '1' : '0'}&t=${Date.now()}`,
+          `/api/v1/documents/vouchers/${invoiceId}/pdf/?fresh=1&copy=${copyMode}&brand=${showBrand ? '1' : '0'}&desc=${showItemDescription ? '1' : '0'}&t=${Date.now()}`,
           { responseType: 'blob' }
         );
         pdfBlobUrl = window.URL.createObjectURL(pdfResp.data);
@@ -1158,7 +1192,7 @@ export default function PrintInvoicePage() {
 
       try {
         const pdfResp = await api.get(
-          `/api/v1/documents/vouchers/${invoiceId}/pdf/?fresh=1&copy=${copyMode}&brand=${showBrand ? '1' : '0'}&t=${Date.now()}`,
+          `/api/v1/documents/vouchers/${invoiceId}/pdf/?fresh=1&copy=${copyMode}&brand=${showBrand ? '1' : '0'}&desc=${showItemDescription ? '1' : '0'}&t=${Date.now()}`,
           { responseType: 'blob' }
         );
         pdfFile = new File([pdfResp.data], filename, { type: 'application/pdf' });
@@ -1264,7 +1298,7 @@ export default function PrintInvoicePage() {
       // 1. Direct high-performance vector PDF stream from backend (Crisp vector, ~50-80 KB, Instant)
       try {
         const response = await api.get(
-          `/api/v1/documents/vouchers/${invoiceId}/pdf/?download=1&fresh=1&copy=${copyMode}&brand=${showBrand ? '1' : '0'}&t=${Date.now()}`,
+          `/api/v1/documents/vouchers/${invoiceId}/pdf/?download=1&fresh=1&copy=${copyMode}&brand=${showBrand ? '1' : '0'}&desc=${showItemDescription ? '1' : '0'}&t=${Date.now()}`,
           { responseType: 'blob' }
         );
         const blobUrl = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
@@ -2020,6 +2054,20 @@ export default function PrintInvoicePage() {
               <span>Brand: {showBrand ? 'ON' : 'OFF'}</span>
             </button>
 
+            <button
+              type="button"
+              onClick={toggleShowItemDescription}
+              className={`px-2 py-1 rounded-md border font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+                showItemDescription
+                  ? 'bg-blue-600/20 text-blue-300 border-blue-500/40'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}
+              title="Toggle item description visibility on invoice"
+            >
+              <FileText className="w-3 h-3" />
+              <span>Desc: {showItemDescription ? 'ON' : 'OFF'}</span>
+            </button>
+
             {invoice?.company?.upi_id && (
               <div className="flex items-center p-0.5 bg-slate-800 rounded-lg border border-slate-700 font-semibold">
                 <button
@@ -2215,6 +2263,21 @@ export default function PrintInvoicePage() {
             >
               <Tag className="w-3.5 h-3.5" />
               <span>Brand: {showBrand ? 'Visible' : 'Hidden'}</span>
+            </button>
+
+            {/* Item Description Toggle on Bill */}
+            <button
+              type="button"
+              onClick={toggleShowItemDescription}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                showItemDescription
+                  ? 'bg-blue-600/20 text-blue-300 border-blue-500/40 hover:bg-blue-600/30'
+                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+              }`}
+              title="Toggle item description visibility on printed invoice"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Desc: {showItemDescription ? 'Visible' : 'Hidden'}</span>
             </button>
 
             {/* Firm Name Size Selector (A4) */}

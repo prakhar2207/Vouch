@@ -107,6 +107,8 @@ class VoucherPDFStreamAPIView(APIView):
         watermark = request.query_params.get('watermark') == '1'
         show_logo = request.query_params.get('logo') != '0'
         show_brand = request.query_params.get('brand') != '0'
+        show_desc_param = request.query_params.get('desc')
+        show_desc = (show_desc_param != '0') if show_desc_param is not None else None
         pdf_bytes = DocumentPDFService.generate_pdf_for_voucher(
             voucher,
             bypass_cache=bypass_cache,
@@ -114,6 +116,7 @@ class VoucherPDFStreamAPIView(APIView):
             watermark=watermark,
             show_logo=show_logo,
             show_brand=show_brand,
+            show_desc=show_desc,
         )
 
         disposition = 'attachment' if request.query_params.get('download') == '1' else 'inline'

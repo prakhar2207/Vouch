@@ -122,9 +122,19 @@ class InvoicePDFRenderer:
         seller = dto.get('seller', {})
         buyer = dto.get('buyer', {})
         items = dto.get('items', [])
+        branding = dto.get('branding') if isinstance(dto.get('branding'), dict) else {}
         show_item_description = dto.get('show_item_description', True)
-        if dto.get('branding') and isinstance(dto['branding'], dict):
-            show_item_description = dto['branding'].get('show_item_description', show_item_description)
+        if 'show_item_description' in branding:
+            show_item_description = branding.get('show_item_description')
+
+        if show_brand is None or show_brand is True:
+            if 'show_brand' in dto:
+                show_brand = bool(dto.get('show_brand'))
+            elif 'show_brand' in branding:
+                show_brand = bool(branding.get('show_brand'))
+
+        firm_header_size = str(dto.get('firm_header_size') or branding.get('firm_header_size') or 'DEFAULT').upper()
+        default_qr_mode = str(dto.get('default_qr_mode') or branding.get('default_qr_mode') or 'SMART').upper()
         subtotals = dto.get('subtotals', {})
         tax_breakdown = dto.get('tax_breakdown', [])
         is_inter_state = subtotals.get('is_inter_state', False)
@@ -215,7 +225,13 @@ class InvoicePDFRenderer:
             s_gstin = ParagraphStyle('GSTIN', fontName=f_bold, fontSize=8.5, leading=10, textColor=colors.black)
             s_orig = ParagraphStyle('Orig', fontName=f_bold_italic, fontSize=8.5, leading=10, alignment=TA_RIGHT, textColor=colors.black)
             s_inv_title = ParagraphStyle('InvTitle', fontName=f_bold, fontSize=12.0, leading=14, alignment=TA_CENTER, textColor=colors.black)
-            s_comp_name = ParagraphStyle('CompName', fontName=f_black, fontSize=18.0, leading=21, alignment=TA_CENTER, textColor=colors.black)
+            if firm_header_size == 'XL':
+                comp_fs, comp_ld = 22.0, 25.0
+            elif firm_header_size == 'COMPACT':
+                comp_fs, comp_ld = 14.0, 16.5
+            else:
+                comp_fs, comp_ld = 18.0, 21.0
+            s_comp_name = ParagraphStyle('CompName', fontName=f_black, fontSize=comp_fs, leading=comp_ld, alignment=TA_CENTER, textColor=colors.black)
             s_comp_addr = ParagraphStyle('CompAddr', fontName=f_norm, fontSize=9.0, leading=11, alignment=TA_CENTER, textColor=colors.black)
             s_comp_contact = ParagraphStyle('CompContact', fontName=f_norm, fontSize=9.0, leading=11, alignment=TA_CENTER, textColor=colors.black)
             s_comp_tagline = ParagraphStyle('CompTagline', fontName=f_bold, fontSize=9.0, leading=11, alignment=TA_CENTER, textColor=colors.black)
@@ -254,7 +270,13 @@ class InvoicePDFRenderer:
             s_gstin = ParagraphStyle('GSTIN', fontName=f_bold, fontSize=9.0, leading=11, textColor=colors.black)
             s_orig = ParagraphStyle('Orig', fontName=f_bold_italic, fontSize=9.0, leading=11, alignment=TA_RIGHT, textColor=colors.black)
             s_inv_title = ParagraphStyle('InvTitle', fontName=f_bold, fontSize=13.5, leading=16, alignment=TA_CENTER, textColor=colors.black)
-            s_comp_name = ParagraphStyle('CompName', fontName=f_black, fontSize=21.0, leading=25, alignment=TA_CENTER, textColor=colors.black)
+            if firm_header_size == 'XL':
+                comp_fs, comp_ld = 26.0, 30.0
+            elif firm_header_size == 'COMPACT':
+                comp_fs, comp_ld = 16.0, 19.0
+            else:
+                comp_fs, comp_ld = 21.0, 25.0
+            s_comp_name = ParagraphStyle('CompName', fontName=f_black, fontSize=comp_fs, leading=comp_ld, alignment=TA_CENTER, textColor=colors.black)
             s_comp_addr = ParagraphStyle('CompAddr', fontName=f_norm, fontSize=10.0, leading=12.5, alignment=TA_CENTER, textColor=colors.black)
             s_comp_contact = ParagraphStyle('CompContact', fontName=f_norm, fontSize=10.0, leading=12.5, alignment=TA_CENTER, textColor=colors.black)
             s_comp_tagline = ParagraphStyle('CompTagline', fontName=f_bold, fontSize=10.0, leading=12.5, alignment=TA_CENTER, textColor=colors.black)
@@ -674,10 +696,19 @@ class InvoicePDFRenderer:
         # QR Code
         qr_img = None
         upi_url = dto.get('upi_url') or seller.get('bank', {}).get('upi_url') or ''
+        share_url = dto.get('share_url') or dto.get('smart_qr_url') or ''
+        qr_target_data = ''
+        if default_qr_mode == 'SMART' and share_url:
+            qr_target_data = share_url
+        elif upi_url:
+            qr_target_data = upi_url
+        elif share_url:
+            qr_target_data = share_url
+
         try:
-            if upi_url:
+            if qr_target_data:
                 qr = qrcode.QRCode(version=1, box_size=3, border=0)
-                qr.add_data(upi_url)
+                qr.add_data(qr_target_data)
                 qr.make(fit=True)
                 pil_qr = qr.make_image(fill_color="black", back_color="white")
                 qr_buf = io.BytesIO()
@@ -691,16 +722,22 @@ class InvoicePDFRenderer:
         s_qr_upi = ParagraphStyle('QRUpi', fontName=f_semi, fontSize=6.0, leading=7.2, alignment=TA_CENTER, textColor=colors.black)
 
         if qr_img:
-            qr_title = "UPI Payment QR" if upi_url else "E-Invoice QR Code"
+            is_upi = qr_target_data == upi_url and bool(upi_url)
+            qr_title = "UPI Payment QR" if is_upi else "Verify Invoice"
             qr_cell = [
                 Paragraph(qr_title, s_qr_lbl),
                 Spacer(1, 2),
                 qr_img,
             ]
-            if upi_id:
+            if is_upi and upi_id:
                 qr_cell.extend([
                     Spacer(1, 2),
                     Paragraph(f"UPI: {upi_id}", s_qr_upi)
+                ])
+            elif not is_upi:
+                qr_cell.extend([
+                    Spacer(1, 2),
+                    Paragraph("Scan to Inspect & Claim", s_qr_upi)
                 ])
         else:
             qr_cell = [Paragraph("", s_terms_item)]
