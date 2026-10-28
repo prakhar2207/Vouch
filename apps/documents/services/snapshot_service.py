@@ -35,6 +35,9 @@ class DocumentSnapshotService:
     Ensures canonical DTO is persisted in PostgreSQL as JSON (zero PDF BLOBs).
     """
 
+    CURRENT_TEMPLATE_VERSION = '2.1'
+    CURRENT_PROFORMA_TEMPLATE_VERSION = '3.0'
+
     @classmethod
     def get_or_create_voucher_snapshot(
         cls,

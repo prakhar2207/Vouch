@@ -7,7 +7,7 @@ import Link from 'next/link';
 import { getAccessToken, isAuthenticated } from '@/utils/auth';
 import DashboardLayout from '@/components/DashboardLayout';
 
-import { ChevronLeft, ChevronRight, Edit2, Trash2, Scale, AlertCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Edit2, Trash2, Scale, AlertCircle, Download, Printer, Loader2 } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
 import { useCompany } from '@/context/CompanyContext';
 import { useFinancialYear } from '@/context/FinancialYearContext';
@@ -126,6 +126,39 @@ export default function VouchersPage() {
   const handleFilter = (f: 'ALL' | 'PAYMENT' | 'RECEIPT') => {
     setFilter(f);
     fetchVouchers(f, 1);
+  };
+
+  const [downloadingSlipId, setDownloadingSlipId] = useState<string | null>(null);
+
+  const handleDownloadSlip = async (voucher: any) => {
+    if (!voucher?.id) return;
+    setDownloadingSlipId(voucher.id);
+    try {
+      const token = getAccessToken();
+      const res = await axios.get(
+        `${API_BASE_URL}/api/v1/documents/vouchers/${voucher.id}/pdf/?download=1&fresh=1&brand=1`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob',
+        }
+      );
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      const cleanNum = (voucher.voucher_number || 'VOUCHER').replace(/[/\\:*?"<>|]/g, '-').trim();
+      link.download = `${cleanNum}_Slip.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+      toast.success('Slip Downloaded', `${cleanNum}_Slip.pdf saved`);
+    } catch (err: any) {
+      console.error('Failed to download voucher slip:', err);
+      toast.error('Download Failed', 'Could not generate voucher slip PDF.');
+    } finally {
+      setDownloadingSlipId(null);
+    }
   };
 
   const handleStartEdit = (voucher: any) => {
@@ -306,6 +339,19 @@ export default function VouchersPage() {
                       </span>
                       <div className="flex items-center gap-2">
                         <button
+                          onClick={() => handleDownloadSlip(v)}
+                          disabled={downloadingSlipId === v.id}
+                          className="px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px] disabled:opacity-50"
+                          title="Download Official Slip PDF"
+                        >
+                          {downloadingSlipId === v.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Download className="w-3.5 h-3.5" />
+                          )}
+                          <span>Slip</span>
+                        </button>
+                        <button
                           onClick={() => handleStartEdit(v)}
                           className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 dark:bg-blue-600/15 dark:hover:bg-blue-600/25 dark:text-blue-400 dark:border-blue-500/30 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
                           title="Edit Voucher"
@@ -372,6 +418,19 @@ export default function VouchersPage() {
                         </td>
                         <td className="p-4 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => handleDownloadSlip(v)}
+                              disabled={downloadingSlipId === v.id}
+                              className="px-2.5 py-1.5 bg-muted/60 hover:bg-muted text-foreground border border-border/70 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer min-h-[32px] disabled:opacity-50"
+                              title="Download Official PDF Slip"
+                            >
+                              {downloadingSlipId === v.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Download className="w-3.5 h-3.5" />
+                              )}
+                              <span>Slip</span>
+                            </button>
                             <button
                               onClick={() => handleStartEdit(v)}
                               className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 dark:bg-blue-600/15 dark:hover:bg-blue-600/25 dark:text-blue-400 dark:border-blue-500/30 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"

@@ -11,7 +11,9 @@ import { useFinancialYear } from '@/context/FinancialYearContext';
 import { 
   ArrowLeft, 
   Download, 
-  Printer, 
+  Printer, 
+  Share2,
+  Loader2,
   Calendar, 
   SlidersHorizontal, 
   Eye, 
@@ -153,6 +155,84 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
     document.body.removeChild(link);
   };
 
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [sharingStatement, setSharingStatement] = useState(false);
+
+  const handleDownloadPdf = async () => {
+    if (!ledgerId) return;
+    setDownloadingPdf(true);
+    try {
+      const token = getAccessToken();
+      const params = new URLSearchParams();
+      if (fromDate) params.append('from_date', fromDate);
+      if (toDate) params.append('to_date', toDate);
+
+      const res = await axios.get(
+        `${API_BASE_URL}/api/v1/documents/statements/${ledgerId}/pdf/?${params.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob',
+        }
+      );
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      const cleanName = (statementData?.ledger?.name || 'Statement').replace(/[/\\:*?"<>|]/g, '-').trim();
+      link.download = `${cleanName}_Statement_${fromDate || 'start'}_to_${toDate || 'present'}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err: any) {
+      console.error('Failed to download ledger statement PDF:', err);
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
+  const handleShareStatement = async () => {
+    if (!ledgerId) return;
+    setSharingStatement(true);
+    try {
+      const token = getAccessToken();
+      const payload: any = { expires_in_days: 30 };
+      if (fromDate) payload.from_date = fromDate;
+      if (toDate) payload.to_date = toDate;
+
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/documents/statements/${ledgerId}/share/`,
+        payload,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const waMsg = res.data?.whatsapp_message || `Statement of Account for ${statementData?.ledger?.name}: ${res.data?.share_url}`;
+      const phone = statementData?.ledger?.phone || '';
+      const encoded = encodeURIComponent(waMsg);
+
+      if (typeof navigator !== 'undefined' && navigator.share) {
+        try {
+          await navigator.share({
+            title: `Statement - ${statementData?.ledger?.name}`,
+            text: waMsg,
+            url: res.data?.share_url,
+          });
+          return;
+        } catch (e: any) {
+          if (e?.name === 'AbortError') return;
+        }
+      }
+
+      const waUrl = phone
+        ? `https://api.whatsapp.com/send?phone=${phone}&text=${encoded}`
+        : `https://api.whatsapp.com/send?text=${encoded}`;
+      window.open(waUrl, '_blank') || (window.location.href = waUrl);
+    } catch (err: any) {
+      console.error('Failed to share statement:', err);
+    } finally {
+      setSharingStatement(false);
+    }
+  };
+
   const handlePrint = () => {
     window.print();
   };
@@ -280,7 +360,7 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
         <div className="flex items-center gap-3">
           <button
             onClick={() => router.back()}
-            className="p-2 rounded-xl bg-card border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            className="p-2 rounded-xl bg-card border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer print:hidden"
             title="Go Back"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -307,7 +387,7 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap print:hidden">
           <button
             onClick={() => setShowAccountingDetails(!showAccountingDetails)}
             className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
@@ -322,6 +402,26 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
           </button>
 
           <button
+            onClick={handleDownloadPdf}
+            disabled={downloadingPdf || !statementData?.entries?.length}
+            className="px-3 py-1.5 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+            title="Download crisp official PDF statement"
+          >
+            {downloadingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            <span>Download PDF</span>
+          </button>
+
+          <button
+            onClick={handleShareStatement}
+            disabled={sharingStatement}
+            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+            title="Share statement link and details via WhatsApp"
+          >
+            {sharingStatement ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">Share</span>
+          </button>
+
+          <button
             onClick={handleExportCsv}
             disabled={!statementData?.entries?.length}
             className="px-3 py-1.5 rounded-xl bg-card border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
@@ -332,7 +432,7 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
 
           <button
             onClick={handlePrint}
-            className="px-3 py-1.5 rounded-xl bg-card border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl bg-card border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer print:hidden"
           >
             <Printer className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Print</span>
@@ -368,7 +468,7 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
           </div>
 
           {/* Date Filter Controls */}
-          <div className="flex items-center gap-2 bg-muted/40 border border-border/40 p-2 rounded-xl text-xs flex-wrap sm:flex-nowrap w-full sm:w-auto">
+          <div className="flex items-center gap-2 bg-muted/40 border border-border/40 p-2 rounded-xl text-xs flex-wrap sm:flex-nowrap w-full sm:w-auto print:hidden">
             {activeFY && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-primary/10 text-primary border border-primary/20 whitespace-nowrap">
                 FY {activeFY.code}
@@ -796,7 +896,7 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
 
         {/* Pagination Footer */}
         {totalPages > 1 && (
-          <div className="p-4 border-t border-border/40 bg-muted/10 flex items-center justify-between text-xs">
+          <div className="p-4 border-t border-border/40 bg-muted/10 flex items-center justify-between text-xs print:hidden">
             <button
               onClick={() => setOffset(Math.max(0, offset - limit))}
               disabled={offset === 0}

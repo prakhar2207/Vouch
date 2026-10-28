@@ -20,7 +20,9 @@ import {
   Zap, 
   Send,
   Plus,
-  Hash
+  Hash,
+  Download,
+  Loader2
 } from "lucide-react";
 
 type PaymentMode = 'CASH' | 'CHEQUE' | 'NEFT' | 'RTGS' | 'IMPS' | 'UPI' | 'BANK_TRANSFER';
@@ -64,6 +66,39 @@ export default function EditPaymentReceiptModal({
       loadDetailsAndLedgers();
     }
   }, [isOpen, voucher?.id]);
+
+  const [downloadingSlip, setDownloadingSlip] = useState(false);
+
+  const handleDownloadSlip = async () => {
+    if (!voucher?.id) return;
+    setDownloadingSlip(true);
+    try {
+      const token = getAccessToken();
+      const res = await axios.get(
+        `${API_BASE_URL}/api/v1/documents/vouchers/${voucher.id}/pdf/?download=1&fresh=1&brand=1`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob',
+        }
+      );
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      const cleanNum = (voucher.voucher_number || 'VOUCHER').replace(/[/\\:*?"<>|]/g, '-').trim();
+      link.download = `${cleanNum}_Slip.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+      toast.success('Slip Downloaded', `${cleanNum}_Slip.pdf saved`);
+    } catch (err: any) {
+      console.error('Failed to download voucher slip:', err);
+      toast.error('Download Failed', 'Could not generate voucher slip PDF.');
+    } finally {
+      setDownloadingSlip(false);
+    }
+  };
 
   const loadDetailsAndLedgers = async () => {
     setLoading(true);
@@ -523,6 +558,20 @@ export default function EditPaymentReceiptModal({
 
             {/* Footer Buttons */}
             <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+              <button
+                type="button"
+                onClick={handleDownloadSlip}
+                disabled={downloadingSlip || !voucher?.id}
+                className="px-4 py-2 text-sm font-semibold rounded-xl bg-card border border-border/80 hover:bg-muted text-foreground flex items-center gap-2 transition-colors cursor-pointer min-h-[38px] mr-auto disabled:opacity-50"
+                title="Download official PDF voucher slip"
+              >
+                {downloadingSlip ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4 text-primary" />
+                )}
+                <span>Slip PDF</span>
+              </button>
               <button
                 type="button"
                 onClick={onClose}

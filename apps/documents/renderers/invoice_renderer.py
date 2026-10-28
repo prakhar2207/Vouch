@@ -2,7 +2,7 @@ import io
 import logging
 import os
 import qrcode
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -14,13 +14,14 @@ from reportlab.platypus import (
     Spacer,
     Table,
     TableStyle,
+    PageBreak,
     Image as RLImage,
 )
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.pdfgen import canvas
 
-from apps.documents.renderers.base import SEGOE_LOADED, ROBOTO_LOADED, FONTS_LOADED
+from apps.documents.renderers.base import SEGOE_LOADED, ROBOTO_LOADED, FONTS_LOADED, STATE_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,6 @@ class NumberedCanvas(canvas.Canvas):
         fnt = 'SegoeUI' if SEGOE_LOADED else ('Roboto' if ROBOTO_LOADED else 'Helvetica')
         self.setFont(fnt, 7.5)
         self.setFillColor(colors.HexColor('#64748b'))
-        # Margin X = 18.8, Width = 558.0 -> Right X = 576.8
         footer_msg = getattr(self, 'footer_text', self.__class__.footer_text)
         self.drawString(18.8, 18, footer_msg)
         self.drawRightString(576.8, 18, f"Page {self._pageNumber} of {total_pages}")
@@ -65,19 +65,19 @@ class InvoicePDFRenderer:
     Renders deterministic, pixel-perfect GST Tax Invoices strictly from Canonical DTO.
     Faithfully reproduces the exact standard Indian B2B boxed document geometry
     matching golden reference INVOICE-108.pdf.
-    Guarantees:
+    Features:
       - Continuous 1.5 pt outer rectangular border.
-      - Strictly 1 single A4 page for normal invoices (<= ~7 items).
-      - Seamless multi-page flow for large invoices with the complete footer
-        and 'Page X of Y' present on EVERY page.
-      - Zero PDF BLOBs in PostgreSQL (pure DTO snapshot).
+      - Dynamic Single-Page Auto-Fit for up to 15 items (eliminates orphan 2-page splits).
+      - Proportional Multi-Page Balancing with Carried Over and Brought Forward subtotal rows.
+      - Vertical grid filler rows that seamlessly extend column lines down to subtotal (NO empty voids).
+      - Dynamic omission of 0% discount column to widen product descriptions.
+      - Recipient State & State Code display (Rule 46(e) compliant).
     """
 
     @classmethod
     def render(cls, dto: Dict[str, Any], watermark: bool = False, copy_type: str = 'ORIGINAL', show_brand: bool = True) -> bytes:
         copy_upper = str(copy_type or 'ORIGINAL').upper()
 
-        # Multi-copy bundle handling via pypdf merging
         if copy_upper in ['BUNDLE_LOCAL', 'BUNDLE_2']:
             pdf_rec = cls.render_single(dto, watermark=watermark, copy_type='ORIGINAL', show_brand=show_brand)
             pdf_sup = cls.render_single(dto, watermark=watermark, copy_type='SUPPLIER_LOCAL', show_brand=show_brand)
@@ -106,19 +106,18 @@ class InvoicePDFRenderer:
     def render_single(cls, dto: Dict[str, Any], watermark: bool = False, copy_type: str = 'ORIGINAL', show_brand: bool = True) -> bytes:
         buffer = io.BytesIO()
 
-        PAGE_WIDTH, PAGE_HEIGHT = A4  # 595.275 x 841.89 pt
+        PAGE_WIDTH, PAGE_HEIGHT = A4
         LEFT_X = 18.8
         WIDTH = 558.0
-        RIGHT_X = LEFT_X + WIDTH  # 576.8
-        OUTER_TOP = 841.89 - 30.8  # 811.09 pt
-        OUTER_BOTTOM = 841.89 - 798.8  # 43.09 pt
-        OUTER_HEIGHT = OUTER_TOP - OUTER_BOTTOM  # 768.0 pt
+        RIGHT_X = LEFT_X + WIDTH
+        OUTER_TOP = 841.89 - 30.8
+        OUTER_BOTTOM = 841.89 - 798.8
+        OUTER_HEIGHT = OUTER_TOP - OUTER_BOTTOM
 
         FOOTER_HEIGHT = 132.8
-        FRAME_BOTTOM = OUTER_BOTTOM + FOOTER_HEIGHT  # 175.89 pt
-        FRAME_HEIGHT = OUTER_TOP - FRAME_BOTTOM  # 635.2 pt
+        FRAME_BOTTOM = OUTER_BOTTOM + FOOTER_HEIGHT
+        FRAME_HEIGHT = OUTER_TOP - FRAME_BOTTOM
 
-        # Extract DTO fields
         doc_meta = dto.get('document', {})
         seller = dto.get('seller', {})
         buyer = dto.get('buyer', {})
@@ -126,6 +125,7 @@ class InvoicePDFRenderer:
         subtotals = dto.get('subtotals', {})
         tax_breakdown = dto.get('tax_breakdown', [])
         is_inter_state = subtotals.get('is_inter_state', False)
+        num_item_rows = len(items)
 
         # Fonts configuration
         if SEGOE_LOADED:
@@ -152,7 +152,16 @@ class InvoicePDFRenderer:
 
         # Document Type & Mode Detection
         is_proforma = bool(dto.get('is_proforma') or dto.get('document_type') == 'PROFORMA_INVOICE' or doc_meta.get('document_type') in ['PROFORMA INVOICE', 'QUOTATION'])
-        doc_type_label = dto.get('document_type_label') or doc_meta.get('document_type') or ('PROFORMA INVOICE' if is_proforma else 'TAX INVOICE')
+        raw_doc_type = doc_meta.get('voucher_type') or dto.get('document_type') or ''
+        is_credit_note = raw_doc_type == 'CREDIT_NOTE'
+        is_debit_note = raw_doc_type == 'DEBIT_NOTE'
+
+        if is_credit_note:
+            doc_type_label = "CREDIT NOTE"
+        elif is_debit_note:
+            doc_type_label = "DEBIT NOTE"
+        else:
+            doc_type_label = dto.get('document_type_label') or doc_meta.get('document_type') or ('PROFORMA INVOICE' if is_proforma else 'TAX INVOICE')
 
         if is_proforma:
             header_title_text = f"<u>{doc_type_label.upper()}</u>"
@@ -160,6 +169,12 @@ class InvoicePDFRenderer:
             inv_no_label = "Quotation No." if 'QUOT' in doc_type_label.upper() else "Proforma No."
             canvas_footer_text = f"This is a {doc_type_label} — Not a GST Tax Invoice"
             rcvr_sig_text = "Customer Acceptance :"
+        elif is_credit_note or is_debit_note:
+            header_title_text = f"<u>{doc_type_label.upper()}</u>"
+            sub_copy_text = "Original For Recipient"
+            inv_no_label = f"{doc_type_label.title()} No."
+            canvas_footer_text = f"This is a Computer Generated {doc_type_label.title()}"
+            rcvr_sig_text = "Receiver's Signature :"
         else:
             header_title_text = "<u>TAX INVOICE</u>"
             copy_upper = str(copy_type or 'ORIGINAL').upper()
@@ -179,14 +194,94 @@ class InvoicePDFRenderer:
             inv_no_label = "Invoice No."
             canvas_footer_text = f"This is a Computer Generated Invoice — {sub_copy_text}"
 
-        # Typography Styles
-        s_gstin = ParagraphStyle('GSTIN', fontName=f_bold, fontSize=9.0, leading=11, textColor=colors.black)
-        s_orig = ParagraphStyle('Orig', fontName=f_bold_italic, fontSize=9.0, leading=11, alignment=TA_RIGHT, textColor=colors.black)
-        s_inv_title = ParagraphStyle('InvTitle', fontName=f_bold, fontSize=13.5, leading=16, alignment=TA_CENTER, textColor=colors.black)
-        s_comp_name = ParagraphStyle('CompName', fontName=f_black, fontSize=22.5, leading=26, alignment=TA_CENTER, textColor=colors.black)
-        s_comp_addr = ParagraphStyle('CompAddr', fontName=f_norm, fontSize=10.5, leading=13, alignment=TA_CENTER, textColor=colors.black)
-        s_comp_contact = ParagraphStyle('CompContact', fontName=f_norm, fontSize=10.5, leading=13, alignment=TA_CENTER, textColor=colors.black)
-        s_comp_tagline = ParagraphStyle('CompTagline', fontName=f_bold, fontSize=10.5, leading=13, alignment=TA_CENTER, textColor=colors.black)
+        # Check if invoice can fit on 1 single page via adaptive density
+        # Invoices with <= 15 items and short product descriptions fit easily on 1 page!
+        has_long_desc = any(bool(it.get('description') and it.get('description') != it.get('name')) for it in items)
+        can_fit_single_page = (num_item_rows <= 8) or (num_item_rows <= 15 and not has_long_desc)
+        is_compact_density = can_fit_single_page and (num_item_rows >= 9)
+
+        # Dynamic Discount Column Check
+        has_discounts = any(float(it.get('discount_percent', 0.0) or 0.0) > 0.001 for it in items)
+        if has_discounts:
+            col_w = [34.0, 174.8, 55.0, 45.0, 34.0, 55.0, 55.0, 105.2]
+        else:
+            col_w = [34.0, 229.8, 55.0, 45.0, 34.0, 55.0, 105.2]
+
+        # Typography Styles based on density
+        if is_compact_density:
+            s_gstin = ParagraphStyle('GSTIN', fontName=f_bold, fontSize=8.5, leading=10, textColor=colors.black)
+            s_orig = ParagraphStyle('Orig', fontName=f_bold_italic, fontSize=8.5, leading=10, alignment=TA_RIGHT, textColor=colors.black)
+            s_inv_title = ParagraphStyle('InvTitle', fontName=f_bold, fontSize=12.0, leading=14, alignment=TA_CENTER, textColor=colors.black)
+            s_comp_name = ParagraphStyle('CompName', fontName=f_black, fontSize=18.0, leading=21, alignment=TA_CENTER, textColor=colors.black)
+            s_comp_addr = ParagraphStyle('CompAddr', fontName=f_norm, fontSize=9.0, leading=11, alignment=TA_CENTER, textColor=colors.black)
+            s_comp_contact = ParagraphStyle('CompContact', fontName=f_norm, fontSize=9.0, leading=11, alignment=TA_CENTER, textColor=colors.black)
+            s_comp_tagline = ParagraphStyle('CompTagline', fontName=f_bold, fontSize=9.0, leading=11, alignment=TA_CENTER, textColor=colors.black)
+
+            s_meta_lbl = ParagraphStyle('MetaLbl', fontName=f_norm, fontSize=8.5, leading=10.5, textColor=colors.black)
+            s_meta_val = ParagraphStyle('MetaVal', fontName=f_norm, fontSize=8.5, leading=10.5, textColor=colors.black)
+            s_meta_val_b = ParagraphStyle('MetaValB', fontName=f_bold, fontSize=8.5, leading=10.5, textColor=colors.black)
+
+            s_party_title = ParagraphStyle('PartyTitle', fontName=f_italic, fontSize=8.5, leading=10.5, textColor=colors.black)
+            s_party_name = ParagraphStyle('PartyName', fontName=f_bold, fontSize=10.0, leading=12, textColor=colors.black)
+            s_party_addr = ParagraphStyle('PartyAddr', fontName=f_norm, fontSize=8.5, leading=10.5, textColor=colors.black)
+            s_party_gstin = ParagraphStyle('PartyGST', fontName=f_norm, fontSize=8.5, leading=10.5, textColor=colors.black)
+
+            s_th_c = ParagraphStyle('THC', fontName=f_bold, fontSize=8.5, leading=10.5, alignment=TA_CENTER, textColor=colors.black)
+            s_th_l = ParagraphStyle('THL', fontName=f_bold, fontSize=8.5, leading=10.5, alignment=TA_LEFT, textColor=colors.black)
+            s_th_r = ParagraphStyle('THR', fontName=f_bold, fontSize=8.5, leading=10.5, alignment=TA_RIGHT, textColor=colors.black)
+
+            s_td_c = ParagraphStyle('TDC', fontName=f_norm, fontSize=8.0, leading=10.0, alignment=TA_CENTER, textColor=colors.black)
+            s_td_l = ParagraphStyle('TDL', fontName=f_semi, fontSize=8.0, leading=10.0, alignment=TA_LEFT, textColor=colors.black)
+            s_td_r = ParagraphStyle('TDR', fontName=f_norm, fontSize=8.0, leading=10.0, alignment=TA_RIGHT, textColor=colors.black)
+            s_td_amt = ParagraphStyle('TDAmt', fontName=f_semi, fontSize=8.0, leading=10.0, alignment=TA_RIGHT, textColor=colors.black)
+
+            s_sub_label = ParagraphStyle('SubLbl', fontName=f_italic, fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
+            s_sub_rate = ParagraphStyle('SubRate', fontName=f_italic, fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
+            s_sub_amt = ParagraphStyle('SubAmt', fontName=f_semi, fontSize=8.0, leading=10.0, alignment=TA_RIGHT, textColor=colors.black)
+
+            s_gt_lbl = ParagraphStyle('GTLbl', fontName=f_bold, fontSize=8.5, leading=11, alignment=TA_RIGHT, textColor=colors.black)
+            s_gt_qty = ParagraphStyle('GTQty', fontName=f_bold, fontSize=8.5, leading=11, alignment=TA_CENTER, textColor=colors.black)
+            s_gt_amt = ParagraphStyle('GTAmt', fontName=f_bold, fontSize=8.5, leading=11, alignment=TA_RIGHT, textColor=colors.black)
+
+            item_row_h = 18.0
+            th_h = 18.0
+        else:
+            s_gstin = ParagraphStyle('GSTIN', fontName=f_bold, fontSize=9.0, leading=11, textColor=colors.black)
+            s_orig = ParagraphStyle('Orig', fontName=f_bold_italic, fontSize=9.0, leading=11, alignment=TA_RIGHT, textColor=colors.black)
+            s_inv_title = ParagraphStyle('InvTitle', fontName=f_bold, fontSize=13.5, leading=16, alignment=TA_CENTER, textColor=colors.black)
+            s_comp_name = ParagraphStyle('CompName', fontName=f_black, fontSize=21.0, leading=25, alignment=TA_CENTER, textColor=colors.black)
+            s_comp_addr = ParagraphStyle('CompAddr', fontName=f_norm, fontSize=10.0, leading=12.5, alignment=TA_CENTER, textColor=colors.black)
+            s_comp_contact = ParagraphStyle('CompContact', fontName=f_norm, fontSize=10.0, leading=12.5, alignment=TA_CENTER, textColor=colors.black)
+            s_comp_tagline = ParagraphStyle('CompTagline', fontName=f_bold, fontSize=10.0, leading=12.5, alignment=TA_CENTER, textColor=colors.black)
+
+            s_meta_lbl = ParagraphStyle('MetaLbl', fontName=f_norm, fontSize=9.5, leading=12, textColor=colors.black)
+            s_meta_val = ParagraphStyle('MetaVal', fontName=f_norm, fontSize=9.5, leading=12, textColor=colors.black)
+            s_meta_val_b = ParagraphStyle('MetaValB', fontName=f_bold, fontSize=9.5, leading=12, textColor=colors.black)
+
+            s_party_title = ParagraphStyle('PartyTitle', fontName=f_italic, fontSize=9.5, leading=12, textColor=colors.black)
+            s_party_name = ParagraphStyle('PartyName', fontName=f_bold, fontSize=11.0, leading=14, textColor=colors.black)
+            s_party_addr = ParagraphStyle('PartyAddr', fontName=f_norm, fontSize=9.5, leading=12, textColor=colors.black)
+            s_party_gstin = ParagraphStyle('PartyGST', fontName=f_norm, fontSize=9.5, leading=12, textColor=colors.black)
+
+            s_th_c = ParagraphStyle('THC', fontName=f_bold, fontSize=9.5, leading=12, alignment=TA_CENTER, textColor=colors.black)
+            s_th_l = ParagraphStyle('THL', fontName=f_bold, fontSize=9.5, leading=12, alignment=TA_LEFT, textColor=colors.black)
+            s_th_r = ParagraphStyle('THR', fontName=f_bold, fontSize=9.5, leading=12, alignment=TA_RIGHT, textColor=colors.black)
+
+            s_td_c = ParagraphStyle('TDC', fontName=f_norm, fontSize=9.0, leading=11.5, alignment=TA_CENTER, textColor=colors.black)
+            s_td_l = ParagraphStyle('TDL', fontName=f_semi, fontSize=9.0, leading=11.5, alignment=TA_LEFT, textColor=colors.black)
+            s_td_r = ParagraphStyle('TDR', fontName=f_norm, fontSize=9.0, leading=11.5, alignment=TA_RIGHT, textColor=colors.black)
+            s_td_amt = ParagraphStyle('TDAmt', fontName=f_semi, fontSize=9.0, leading=11.5, alignment=TA_RIGHT, textColor=colors.black)
+
+            s_sub_label = ParagraphStyle('SubLbl', fontName=f_italic, fontSize=8.0, leading=10, alignment=TA_RIGHT, textColor=colors.black)
+            s_sub_rate = ParagraphStyle('SubRate', fontName=f_italic, fontSize=8.0, leading=10, alignment=TA_RIGHT, textColor=colors.black)
+            s_sub_amt = ParagraphStyle('SubAmt', fontName=f_semi, fontSize=8.5, leading=11, alignment=TA_RIGHT, textColor=colors.black)
+
+            s_gt_lbl = ParagraphStyle('GTLbl', fontName=f_bold, fontSize=9.0, leading=12, alignment=TA_RIGHT, textColor=colors.black)
+            s_gt_qty = ParagraphStyle('GTQty', fontName=f_bold, fontSize=9.0, leading=12, alignment=TA_CENTER, textColor=colors.black)
+            s_gt_amt = ParagraphStyle('GTAmt', fontName=f_bold, fontSize=9.0, leading=12, alignment=TA_RIGHT, textColor=colors.black)
+
+            item_row_h = 24.0
+            th_h = 20.0
 
         # ================= 1. HEADER =================
         gstin_str = seller.get('gstin', 'Unregistered')
@@ -210,12 +305,12 @@ class InvoicePDFRenderer:
             ('SPAN', (0, 3), (1, 3)),
             ('SPAN', (0, 4), (1, 4)),
             ('PADDING', (0, 0), (-1, -1), 0),
-            ('LEFTPADDING', (0, 0), (0, 0), 6),
-            ('RIGHTPADDING', (1, 0), (1, 0), 6),
-            ('TOPPADDING', (0, 0), (-1, 0), 4),
-            ('TOPPADDING', (0, 1), (-1, 1), 3),
-            ('TOPPADDING', (0, 2), (-1, 2), 2),
-            ('BOTTOMPADDING', (0, -1), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (0, 0), 4),
+            ('RIGHTPADDING', (1, 0), (1, 0), 4),
+            ('TOPPADDING', (0, 0), (-1, 0), 1.5 if is_compact_density else 3),
+            ('TOPPADDING', (0, 1), (-1, 1), 1.5 if is_compact_density else 2),
+            ('TOPPADDING', (0, 2), (-1, 2), 1),
+            ('BOTTOMPADDING', (0, -1), (-1, -1), 2 if is_compact_density else 3),
             ('LINEBELOW', (0, -1), (-1, -1), 1.5, colors.black),
         ]
         if seller.get('tagline'):
@@ -223,10 +318,6 @@ class InvoicePDFRenderer:
         header_table.setStyle(TableStyle(h_style))
 
         # ================= 2. META GRID =================
-        s_meta_lbl = ParagraphStyle('MetaLbl', fontName=f_norm, fontSize=10.5, leading=13, textColor=colors.black)
-        s_meta_val = ParagraphStyle('MetaVal', fontName=f_norm, fontSize=10.5, leading=13, textColor=colors.black)
-        s_meta_val_b = ParagraphStyle('MetaValB', fontName=f_bold, fontSize=10.5, leading=13, textColor=colors.black)
-
         inv_no = doc_meta.get('document_number', '')
         inv_date = doc_meta.get('document_date', '')
         pos = doc_meta.get('place_of_supply', 'N/A')
@@ -235,55 +326,87 @@ class InvoicePDFRenderer:
         vehicle_no = doc_meta.get('vehicle_no', 'N/A')
         ewb_no = doc_meta.get('eway_bill_no', 'N/A')
         valid_until = doc_meta.get('valid_until')
+        orig_inv_no = doc_meta.get('original_invoice_number') or doc_meta.get('reference_number') or 'N/A'
 
-        meta_rows = [
-            [
-                Paragraph(inv_no_label, s_meta_lbl),
-                Paragraph(f": <b>{inv_no}</b>", s_meta_val_b),
-                Paragraph("GR/RR No.", s_meta_lbl),
-                Paragraph(f": {gr_rr}", s_meta_val),
-            ],
-            [
-                Paragraph("Dated", s_meta_lbl),
-                Paragraph(f": <b>{inv_date}</b>", s_meta_val_b),
-                Paragraph("Transport", s_meta_lbl),
-                Paragraph(f": {transport}", s_meta_val),
-            ],
-            [
-                Paragraph("Place of Supply", s_meta_lbl),
-                Paragraph(f": {pos}", s_meta_val),
-                Paragraph("Vehicle No.", s_meta_lbl),
-                Paragraph(f": <b>{vehicle_no}</b>", s_meta_val_b),
-            ],
-            [
-                Paragraph("Valid Until" if (is_proforma and valid_until) else "Reverse Charge", s_meta_lbl),
-                Paragraph(f": <b>{valid_until}</b>" if (is_proforma and valid_until) else ": N", s_meta_val_b if (is_proforma and valid_until) else s_meta_val),
-                Paragraph("E-Way Bill No.", s_meta_lbl),
-                Paragraph(f": <b>{ewb_no}</b>", s_meta_val_b),
-            ],
-        ]
+        if is_credit_note or is_debit_note:
+            meta_rows = [
+                [
+                    Paragraph(inv_no_label, s_meta_lbl),
+                    Paragraph(f": <b>{inv_no}</b>", s_meta_val_b),
+                    Paragraph("Original Inv No.", s_meta_lbl),
+                    Paragraph(f": <b>{orig_inv_no}</b>", s_meta_val_b),
+                ],
+                [
+                    Paragraph("Dated", s_meta_lbl),
+                    Paragraph(f": <b>{inv_date}</b>", s_meta_val_b),
+                    Paragraph("Transport", s_meta_lbl),
+                    Paragraph(f": {transport}", s_meta_val),
+                ],
+                [
+                    Paragraph("Place of Supply", s_meta_lbl),
+                    Paragraph(f": {pos}", s_meta_val),
+                    Paragraph("Vehicle No.", s_meta_lbl),
+                    Paragraph(f": <b>{vehicle_no}</b>", s_meta_val_b),
+                ],
+                [
+                    Paragraph("Reverse Charge", s_meta_lbl),
+                    Paragraph(": N", s_meta_val),
+                    Paragraph("E-Way Bill No.", s_meta_lbl),
+                    Paragraph(f": <b>{ewb_no}</b>", s_meta_val_b),
+                ],
+            ]
+        else:
+            meta_rows = [
+                [
+                    Paragraph(inv_no_label, s_meta_lbl),
+                    Paragraph(f": <b>{inv_no}</b>", s_meta_val_b),
+                    Paragraph("GR/RR No.", s_meta_lbl),
+                    Paragraph(f": {gr_rr}", s_meta_val),
+                ],
+                [
+                    Paragraph("Dated", s_meta_lbl),
+                    Paragraph(f": <b>{inv_date}</b>", s_meta_val_b),
+                    Paragraph("Transport", s_meta_lbl),
+                    Paragraph(f": {transport}", s_meta_val),
+                ],
+                [
+                    Paragraph("Place of Supply", s_meta_lbl),
+                    Paragraph(f": {pos}", s_meta_val),
+                    Paragraph("Vehicle No.", s_meta_lbl),
+                    Paragraph(f": <b>{vehicle_no}</b>", s_meta_val_b),
+                ],
+                [
+                    Paragraph("Valid Until" if (is_proforma and valid_until) else "Reverse Charge", s_meta_lbl),
+                    Paragraph(f": <b>{valid_until}</b>" if (is_proforma and valid_until) else ": N", s_meta_val_b if (is_proforma and valid_until) else s_meta_val),
+                    Paragraph("E-Way Bill No.", s_meta_lbl),
+                    Paragraph(f": <b>{ewb_no}</b>", s_meta_val_b),
+                ],
+            ]
         meta_table = Table(meta_rows, colWidths=[96, 181.4, 96, 184.6])
         meta_table.setStyle(TableStyle([
             ('LINEAFTER', (1, 0), (1, -1), 1.5, colors.black),
             ('LINEBELOW', (0, -1), (-1, -1), 1.5, colors.black),
             ('PADDING', (0, 0), (-1, -1), 0),
-            ('LEFTPADDING', (0, 0), (0, -1), 6),
-            ('LEFTPADDING', (2, 0), (2, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 1.5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 1.5),
+            ('LEFTPADDING', (0, 0), (0, -1), 4),
+            ('LEFTPADDING', (2, 0), (2, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 0.5 if is_compact_density else 1.5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 0.5 if is_compact_density else 1.5),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
 
         # ================= 3. BILLED TO / SHIPPED TO GRID =================
-        s_party_title = ParagraphStyle('PartyTitle', fontName=f_italic, fontSize=10.5, leading=13, textColor=colors.black)
-        s_party_name = ParagraphStyle('PartyName', fontName=f_bold, fontSize=12.0, leading=15, textColor=colors.black)
-        s_party_addr = ParagraphStyle('PartyAddr', fontName=f_norm, fontSize=10.5, leading=13, textColor=colors.black)
-        s_party_gstin = ParagraphStyle('PartyGST', fontName=f_norm, fontSize=10.5, leading=13, textColor=colors.black)
-
         buyer_name = buyer.get('name', 'Customer')
         raw_addr = buyer.get('address', '')
         clean_addr = raw_addr.replace('\r\n', '\n').replace('\n', '<br/>').strip()
         buyer_gstin = buyer.get('gstin', 'Unregistered')
+        buyer_state_code = buyer.get('state_code', '')
+        buyer_state_name = STATE_NAMES.get(buyer_state_code, '')
+
+        state_suffix = ""
+        if buyer_state_name and buyer_state_code:
+            state_suffix = f" | State: {buyer_state_name} ({buyer_state_code})"
+        elif buyer_state_code:
+            state_suffix = f" | State Code: {buyer_state_code}"
 
         billed_elements = [
             Paragraph("<i>Billed to :</i>", s_party_title),
@@ -299,10 +422,9 @@ class InvoicePDFRenderer:
         if clean_addr:
             shipped_elements.append(Paragraph(clean_addr, s_party_addr))
 
-        billed_gstin = Paragraph(f"GSTIN / UIN &nbsp;&nbsp;: <b>{buyer_gstin}</b>", s_party_gstin)
-        shipped_gstin = Paragraph(f"GSTIN / UIN &nbsp;&nbsp;: <b>{buyer_gstin}</b>", s_party_gstin)
+        billed_gstin = Paragraph(f"GSTIN / UIN : <b>{buyer_gstin}</b>{state_suffix}", s_party_gstin)
+        shipped_gstin = Paragraph(f"GSTIN / UIN : <b>{buyer_gstin}</b>{state_suffix}", s_party_gstin)
 
-        # Dynamic 2-row party table: Row 0 has Billed/Shipped Details; Row 1 has GSTIN/UIN
         party_table = Table([
             [billed_elements, shipped_elements],
             [billed_gstin, shipped_gstin]
@@ -311,42 +433,44 @@ class InvoicePDFRenderer:
             ('LINEAFTER', (0, 0), (0, -1), 1.5, colors.black),
             ('LINEBELOW', (0, -1), (-1, -1), 1.5, colors.black),
             ('PADDING', (0, 0), (-1, -1), 0),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
             ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (-1, 0), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 4),
-            ('TOPPADDING', (0, 1), (-1, 1), 2),
-            ('BOTTOMPADDING', (0, 1), (-1, 1), 4),
+            ('TOPPADDING', (0, 0), (-1, 0), 1 if is_compact_density else 3),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 1 if is_compact_density else 3),
+            ('TOPPADDING', (0, 1), (-1, 1), 0.5 if is_compact_density else 2),
+            ('BOTTOMPADDING', (0, 1), (-1, 1), 1 if is_compact_density else 3),
             ('VALIGN', (0, 0), (-1, 0), 'TOP'),
             ('VALIGN', (0, 1), (-1, 1), 'MIDDLE'),
         ]))
 
-        # ================= 4. ITEMS TABLE =================
-        col_w = [37.0, 171.8, 60.0, 48.0, 36.0, 60.0, 60.0, 85.2]
+        # Subtotals and calculations
+        tot_taxable = subtotals.get('total_taxable', 0.0)
+        first_item_gst = items[0].get('gst_rate', 18.0) if items else 18.0
+        tot_igst = subtotals.get('total_igst', 0.0)
+        tot_cgst = subtotals.get('total_cgst', 0.0)
+        tot_sgst = subtotals.get('total_sgst', 0.0)
+        cartage = subtotals.get('cartage', 0.0)
+        round_off = subtotals.get('round_off', 0.0)
+        final_grand_total = subtotals.get('grand_total', 0.0)
+        tot_qty = subtotals.get('total_quantity', 0.0)
+        unit_label = subtotals.get('unit_label', 'PCS')
 
-        s_th_c = ParagraphStyle('THC', fontName=f_bold, fontSize=10.5, leading=13, alignment=TA_CENTER, textColor=colors.black)
-        s_th_l = ParagraphStyle('THL', fontName=f_bold, fontSize=10.5, leading=13, alignment=TA_LEFT, textColor=colors.black)
-        s_th_r = ParagraphStyle('THR', fontName=f_bold, fontSize=10.5, leading=13, alignment=TA_RIGHT, textColor=colors.black)
-
-        s_td_c = ParagraphStyle('TDC', fontName=f_norm, fontSize=10.5, leading=13, alignment=TA_CENTER, textColor=colors.black)
-        s_td_l = ParagraphStyle('TDL', fontName=f_semi, fontSize=10.5, leading=13, alignment=TA_LEFT, textColor=colors.black)
-        s_td_r = ParagraphStyle('TDR', fontName=f_norm, fontSize=10.5, leading=13, alignment=TA_RIGHT, textColor=colors.black)
-        s_td_amt = ParagraphStyle('TDAmt', fontName=f_semi, fontSize=10.5, leading=13, alignment=TA_RIGHT, textColor=colors.black)
-
-        items_data = [
-            [
-                Paragraph("S.N.", s_th_c),
-                Paragraph("Description of Goods", s_th_l),
-                Paragraph("HSN", s_th_c),
-                Paragraph("Qty.", s_th_c),
-                Paragraph("Unit", s_th_c),
-                Paragraph("Price", s_th_c),
-                Paragraph("Disc%", s_th_c),
-                Paragraph("Amount(Rs.)", s_th_r),
-            ]
+        # Items Table Column Header
+        th_row = [
+            Paragraph("S.N.", s_th_c),
+            Paragraph("Description of Goods", s_th_l),
+            Paragraph("HSN", s_th_c),
+            Paragraph("Qty.", s_th_c),
+            Paragraph("Unit", s_th_c),
+            Paragraph("Price", s_th_c),
         ]
+        if has_discounts:
+            th_row.append(Paragraph("Disc%", s_th_c))
+        th_row.append(Paragraph("Amount(Rs.)", s_th_r))
 
-        for itm in items:
+        row_len = len(th_row)
+
+        def build_item_row(itm):
             sn = str(itm.get('sn', ''))
             p_name = itm.get('name', 'Item')
             hsn = str(itm.get('hsn_code', ''))
@@ -364,203 +488,32 @@ class InvoicePDFRenderer:
                     f"<font size='6.5' color='#475569'><b>BRAND:</b> {brand}</font>",
                     s_td_l
                 ))
-            if desc and desc != p_name:
+            if desc and desc != p_name and not is_compact_density:
                 desc_elements.append(Paragraph(
                     f"<font size='6' color='#64748b'>{desc}</font>",
                     s_td_l
                 ))
 
-            items_data.append([
+            res = [
                 Paragraph(sn, s_td_c),
                 desc_elements if len(desc_elements) > 1 else desc_elements[0],
                 Paragraph(hsn, s_td_c),
                 Paragraph(f"{qty:.2f}", s_td_r),
                 Paragraph(unit, s_td_c),
                 Paragraph(f"{rate:.2f}", s_td_r),
-                Paragraph(f"{disc_pct:.2f}%" if disc_pct > 0 else "0.00%", s_td_c),
-                Paragraph(f"{taxable:,.2f}", s_td_amt),
-            ])
+            ]
+            if has_discounts:
+                res.append(Paragraph(f"{disc_pct:.2f}%" if disc_pct > 0 else "0.00%", s_td_c))
+            res.append(Paragraph(f"{taxable:,.2f}", s_td_amt))
+            return res
 
-        num_item_rows = len(items)
-        tot_taxable = subtotals.get('total_taxable', 0.0)
-        first_item_gst = items[0].get('gst_rate', 18.0) if items else 18.0
-        tot_igst = subtotals.get('total_igst', 0.0)
-        tot_cgst = subtotals.get('total_cgst', 0.0)
-        tot_sgst = subtotals.get('total_sgst', 0.0)
-        cartage = subtotals.get('cartage', 0.0)
-        round_off = subtotals.get('round_off', 0.0)
-        final_grand_total = subtotals.get('grand_total', 0.0)
-        tot_qty = subtotals.get('total_quantity', 0.0)
-        unit_label = subtotals.get('unit_label', 'PCS')
+        # ================= 5. TAX SUMMARY SUBTABLE =================
+        s_tax_th_l = ParagraphStyle('TaxTHL', fontName=f_bold, fontSize=7.0, leading=8.5, alignment=TA_LEFT, textColor=colors.black)
+        s_tax_th_r = ParagraphStyle('TaxTHR', fontName=f_bold, fontSize=7.0, leading=8.5, alignment=TA_RIGHT, textColor=colors.black)
+        s_tax_td_l = ParagraphStyle('TaxTDL', fontName=f_norm, fontSize=7.0, leading=8.5, alignment=TA_LEFT, textColor=colors.black)
+        s_tax_td_r = ParagraphStyle('TaxTDR', fontName=f_norm, fontSize=7.0, leading=8.5, alignment=TA_RIGHT, textColor=colors.black)
 
-        # Subtotals and Tax rows styles
-        s_sub_label = ParagraphStyle('SubLbl', fontName=f_italic, fontSize=8.2, leading=11, alignment=TA_RIGHT, textColor=colors.black)
-        s_sub_rate = ParagraphStyle('SubRate', fontName=f_italic, fontSize=8.2, leading=11, alignment=TA_RIGHT, textColor=colors.black)
-        s_sub_amt = ParagraphStyle('SubAmt', fontName=f_semi, fontSize=9.0, leading=11, alignment=TA_RIGHT, textColor=colors.black)
-
-        # Dynamic filler row calculation
-        h_header = header_table.wrap(WIDTH, 2000)[1]
-        h_meta = meta_table.wrap(WIDTH, 2000)[1]
-        h_party = party_table.wrap(WIDTH, 2000)[1]
-        h_top = h_header + h_meta + h_party
-
-        num_tax_rows = 1 if (is_inter_state or tot_igst > 0.0) else 2
-        if cartage > 0.0:
-            num_tax_rows += 1
-        if abs(round_off) >= 0.005:
-            num_tax_rows += 1
-
-        items_content_h = 24.0 + (num_item_rows * 27.0) + 17.0 + (num_tax_rows * 17.0) + 21.0
-        h_tax_est = 33.2
-        h_words_est = 27.0
-        h_bank_est = 38.3
-        total_needed = h_top + items_content_h + h_tax_est + h_words_est + h_bank_est
-
-        is_single_page = total_needed <= FRAME_HEIGHT
-
-        filler_idx = -1
-        filler_height = 0
-        if is_single_page:
-            filler_height = max(0.0, FRAME_HEIGHT - total_needed)
-            if filler_height > 2.0:
-                filler_idx = len(items_data)
-                items_data.append(["", "", "", "", "", "", "", ""])
-
-        # Subtotal row
-        subtotal_idx = len(items_data)
-        items_data.append([
-            "", "", "", "", "", "", "",
-            Paragraph(f"{tot_taxable:,.2f}", s_sub_amt)
-        ])
-
-        # Taxes rows
-        if is_inter_state or tot_igst > 0.0:
-            rate_disp = f"@ {first_item_gst:.2f} %"
-            items_data.append([
-                "", "", "", "",
-                Paragraph("Add : IGST", s_sub_label),
-                "",
-                Paragraph(rate_disp, s_sub_rate),
-                Paragraph(f"{tot_igst:,.2f}", s_sub_amt)
-            ])
-        else:
-            half_rate = f"@ {(first_item_gst / 2.0):.2f} %"
-            items_data.append([
-                "", "", "", "",
-                Paragraph("Add : CGST", s_sub_label),
-                "",
-                Paragraph(half_rate, s_sub_rate),
-                Paragraph(f"{tot_cgst:,.2f}", s_sub_amt)
-            ])
-            items_data.append([
-                "", "", "", "",
-                Paragraph("Add : SGST", s_sub_label),
-                "",
-                Paragraph(half_rate, s_sub_rate),
-                Paragraph(f"{tot_sgst:,.2f}", s_sub_amt)
-            ])
-
-        if cartage > 0.0:
-            items_data.append([
-                "", "", "", "",
-                Paragraph("Add : Cartage", s_sub_label),
-                "", "",
-                Paragraph(f"{cartage:,.2f}", s_sub_amt)
-            ])
-
-        if abs(round_off) >= 0.005:
-            lbl = "Add : Round Off" if round_off > 0.0 else "Less : Round Off"
-            sign_str = f"+{round_off:.2f}" if round_off > 0.0 else f"{round_off:.2f}"
-            items_data.append([
-                "", "", "", "",
-                Paragraph(lbl, s_sub_label),
-                "", "",
-                Paragraph(sign_str, s_sub_amt)
-            ])
-
-        # Grand Total row
-        grand_total_idx = len(items_data)
-        s_gt_lbl = ParagraphStyle('GTLbl', fontName=f_bold, fontSize=9.0, leading=12, alignment=TA_RIGHT, textColor=colors.black)
-        s_gt_qty = ParagraphStyle('GTQty', fontName=f_bold, fontSize=9.0, leading=12, alignment=TA_CENTER, textColor=colors.black)
-        s_gt_amt = ParagraphStyle('GTAmt', fontName=f_bold, fontSize=9.0, leading=12, alignment=TA_RIGHT, textColor=colors.black)
-
-        items_data.append([
-            Paragraph("Grand Total", s_gt_lbl),
-            "", "", "", "",
-            Paragraph(f"<u>&nbsp;&nbsp;{tot_qty:.2f} {unit_label}&nbsp;&nbsp;</u>", s_gt_qty),
-            "",
-            Paragraph(f"{final_grand_total:,.2f}", s_gt_amt)
-        ])
-
-        # Row heights configuration
-        if filler_idx > 0:
-            row_heights = [24.0] + [27.0] * num_item_rows + [filler_height] + [17.0] + [17.0] * num_tax_rows + [21.0]
-        else:
-            row_heights = [24.0] + [27.0] * num_item_rows + [17.0] + [17.0] * num_tax_rows + [21.0]
-
-        items_table = Table(items_data, colWidths=col_w, rowHeights=row_heights, repeatRows=1)
-
-        it_style = [
-            ('LINEBELOW', (0, 0), (-1, 0), 1.5, colors.black),
-            ('LINEAFTER', (0, 0), (-2, 0), 0.8, colors.black),
-            ('PADDING', (0, 0), (-1, -1), 0),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('VALIGN', (1, 1), (1, num_item_rows), 'TOP'),
-            ('TOPPADDING', (0, 0), (-1, 0), 3),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 3),
-        ]
-
-        # Item rows: vertical lines after each column AND horizontal line below each item!
-        for r in range(1, num_item_rows + 1):
-            it_style.extend([
-                ('LINEAFTER', (0, r), (-2, r), 0.8, colors.black),
-                ('LINEBELOW', (0, r), (-1, r), 0.8, colors.black),
-                ('TOPPADDING', (0, r), (-1, r), 4),
-                ('BOTTOMPADDING', (0, r), (-1, r), 4),
-                ('LEFTPADDING', (1, r), (1, r), 6),
-                ('RIGHTPADDING', (-1, r), (-1, r), 6),
-                ('RIGHTPADDING', (3, r), (3, r), 4),
-                ('RIGHTPADDING', (5, r), (5, r), 4),
-            ])
-
-        # If filler row exists: vertical lines continuing through filler space, plus bottom line!
-        if filler_idx > 0:
-            it_style.extend([
-                ('LINEAFTER', (0, filler_idx), (-2, filler_idx), 0.8, colors.black),
-                ('LINEBELOW', (0, filler_idx), (-1, filler_idx), 0.8, colors.black),
-            ])
-
-        for r in range(subtotal_idx, grand_total_idx):
-            it_style.extend([
-                ('LINEAFTER', (6, r), (6, r), 0.8, colors.black),
-                ('RIGHTPADDING', (-1, r), (-1, r), 6),
-                ('SPAN', (0, r), (3, r)),
-                ('SPAN', (4, r), (5, r)),
-                ('TOPPADDING', (0, r), (-1, r), 2),
-                ('BOTTOMPADDING', (0, r), (-1, r), 2),
-            ])
-
-        it_style.extend([
-            ('LINEABOVE', (0, grand_total_idx), (-1, grand_total_idx), 0.8, colors.black),
-            ('LINEBELOW', (0, grand_total_idx), (-1, grand_total_idx), 0.8, colors.black),
-            ('LINEAFTER', (6, grand_total_idx), (6, grand_total_idx), 0.8, colors.black),
-            ('SPAN', (0, grand_total_idx), (4, grand_total_idx)),
-            ('SPAN', (5, grand_total_idx), (6, grand_total_idx)),
-            ('RIGHTPADDING', (-1, grand_total_idx), (-1, grand_total_idx), 6),
-            ('RIGHTPADDING', (0, grand_total_idx), (0, grand_total_idx), 20),
-            ('TOPPADDING', (0, grand_total_idx), (-1, grand_total_idx), 3),
-            ('BOTTOMPADDING', (0, grand_total_idx), (-1, grand_total_idx), 3),
-        ])
-
-        items_table.setStyle(TableStyle(it_style))
-
-        # ================= 5. TAX SUMMARY TABLE =================
-        s_tax_th_l = ParagraphStyle('TaxTHL', fontName=f_bold, fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
-        s_tax_th_r = ParagraphStyle('TaxTHR', fontName=f_bold, fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
-        s_tax_td_l = ParagraphStyle('TaxTDL', fontName=f_norm, fontSize=7.5, leading=9.5, alignment=TA_LEFT, textColor=colors.black)
-        s_tax_td_r = ParagraphStyle('TaxTDR', fontName=f_norm, fontSize=7.5, leading=9.5, alignment=TA_RIGHT, textColor=colors.black)
-
-        tax_col_w = [48.0, 64.0, 56.0, 56.0, 56.0] if not is_inter_state else [65.0, 75.0, 70.0, 70.0]
+        tax_col_w = [45.0, 60.0, 52.0, 52.0, 52.0] if not is_inter_state else [65.0, 75.0, 60.0, 60.0]
         tax_rows = []
         if not is_inter_state:
             tax_rows.append([
@@ -596,31 +549,29 @@ class InvoicePDFRenderer:
         tax_subtable = Table(tax_rows, colWidths=tax_col_w)
         tax_subtable.setStyle(TableStyle([
             ('PADDING', (0, 0), (-1, -1), 0),
-            ('LEFTPADDING', (0, 0), (-1, -1), 1),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 1),
-            ('TOPPADDING', (0, 0), (-1, -1), 1.5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 1.5),
+            ('TOPPADDING', (0, 0), (-1, -1), 1),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
         ]))
 
-        tax_table = Table([[tax_subtable, ""]], colWidths=[280.0, WIDTH - 280.0])
+        tax_table = Table([[tax_subtable, ""]], colWidths=[265.0, WIDTH - 265.0])
         tax_table.setStyle(TableStyle([
             ('PADDING', (0, 0), (-1, -1), 0),
-            ('LEFTPADDING', (0, 0), (0, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 3),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+            ('LEFTPADDING', (0, 0), (0, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 1.5 if is_compact_density else 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1.5 if is_compact_density else 3),
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
         ]))
 
         # ================= 6. AMOUNT IN WORDS =================
-        s_words = ParagraphStyle('Words', fontName=f_semi, fontSize=9.0, leading=12, textColor=colors.black)
-        curr_sym = '\u20B9' if FONTS_LOADED else 'Rs.'
+        s_words = ParagraphStyle('Words', fontName=f_semi, fontSize=8.5, leading=11, textColor=colors.black)
+        curr_sym = '\\u20B9' if FONTS_LOADED else 'Rs.'
         words_text = f"Total Amount in Words : <b>{curr_sym} {dto.get('amount_in_words', '')}</b>"
         words_table = Table([[Paragraph(words_text, s_words)]], colWidths=[WIDTH])
         words_table.setStyle(TableStyle([
             ('PADDING', (0, 0), (-1, -1), 0),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 2.5 if is_compact_density else 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5 if is_compact_density else 4),
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
         ]))
 
@@ -631,8 +582,8 @@ class InvoicePDFRenderer:
         b_ifsc = (seller.get('bank_ifsc') or seller.get('bank', {}).get('ifsc') or '').strip()
         upi_id = (seller.get('upi_id') or seller.get('bank_upi_id') or seller.get('bank', {}).get('upi_id') or '').strip()
 
-        s_bank_title = ParagraphStyle('BankT', fontName=f_bold, fontSize=9.8, leading=12, alignment=TA_CENTER, textColor=colors.black)
-        s_bank_body = ParagraphStyle('BankB', fontName=f_semi, fontSize=8.5, leading=11, alignment=TA_CENTER, textColor=colors.black)
+        s_bank_title = ParagraphStyle('BankT', fontName=f_bold, fontSize=9.0, leading=11, alignment=TA_CENTER, textColor=colors.black)
+        s_bank_body = ParagraphStyle('BankB', fontName=f_semi, fontSize=8.0, leading=10, alignment=TA_CENTER, textColor=colors.black)
 
         if b_name or b_acc or upi_id:
             bank_parts = []
@@ -651,7 +602,7 @@ class InvoicePDFRenderer:
             bank_detail_text = ", ".join(bank_parts)
             bank_cell = [
                 Paragraph("<u>BANK DETAILS</u>", s_bank_title),
-                Spacer(1, 2),
+                Spacer(1, 1),
                 Paragraph(bank_detail_text, s_bank_body)
             ]
         else:
@@ -660,11 +611,11 @@ class InvoicePDFRenderer:
         bank_table = Table([[bank_cell]], colWidths=[WIDTH])
         bank_table.setStyle(TableStyle([
             ('PADDING', (0, 0), (-1, -1), 0),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 2 if is_compact_density else 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 2 if is_compact_density else 3),
         ]))
 
-        # ================= 8. 3-COLUMN FOOTER (Rendered on EVERY Page) =================
+        # ================= 8. 3-COLUMN FOOTER =================
         city = seller.get('city', 'Kanpur')
         terms_list = dto.get('terms', [
             "Goods once sold will not be taken back.",
@@ -675,7 +626,7 @@ class InvoicePDFRenderer:
         if is_proforma:
             custom_terms = doc_meta.get('terms_and_conditions') or dto.get('terms_and_conditions') or doc_meta.get('narration')
             if custom_terms and isinstance(custom_terms, str) and custom_terms.strip():
-                terms_list = [t.strip() for t in custom_terms.split('\n') if t.strip()][:4]
+                terms_list = [t.strip() for t in custom_terms.split('\\n') if t.strip()][:4]
             else:
                 terms_list = [
                     "Prices valid for 15 days from date of issue.",
@@ -683,9 +634,9 @@ class InvoicePDFRenderer:
                     f"Subject to '{city}' Jurisdiction only."
                 ]
 
-        s_terms_title = ParagraphStyle('TermsT', fontName=f_bold, fontSize=8.2, leading=10.5, textColor=colors.black)
-        s_terms_eoe = ParagraphStyle('TermsEOE', fontName=f_bold, fontSize=9.0, leading=11.5, textColor=colors.black)
-        s_terms_item = ParagraphStyle('TermsItem', fontName=f_norm, fontSize=9.0, leading=12.0, textColor=colors.black)
+        s_terms_title = ParagraphStyle('TermsT', fontName=f_bold, fontSize=8.0, leading=10, textColor=colors.black)
+        s_terms_eoe = ParagraphStyle('TermsEOE', fontName=f_bold, fontSize=8.5, leading=10.5, textColor=colors.black)
+        s_terms_item = ParagraphStyle('TermsItem', fontName=f_norm, fontSize=8.0, leading=10.5, textColor=colors.black)
 
         terms_elements = [
             Paragraph("Terms &amp; Conditions", s_terms_title),
@@ -712,18 +663,18 @@ class InvoicePDFRenderer:
                 qr_buf = io.BytesIO()
                 pil_qr.save(qr_buf, format='PNG')
                 qr_buf.seek(0)
-                qr_img = RLImage(qr_buf, width=72.0, height=72.0)
+                qr_img = RLImage(qr_buf, width=68.0, height=68.0)
         except Exception as e:
             logger.warning(f"Could not generate QR code: {e}")
 
-        s_qr_lbl = ParagraphStyle('QRLbl', fontName=f_bold, fontSize=7.5, leading=9.5, alignment=TA_CENTER, textColor=colors.black)
-        s_qr_upi = ParagraphStyle('QRUpi', fontName=f_semi, fontSize=6.2, leading=7.5, alignment=TA_CENTER, textColor=colors.black)
+        s_qr_lbl = ParagraphStyle('QRLbl', fontName=f_bold, fontSize=7.0, leading=9.0, alignment=TA_CENTER, textColor=colors.black)
+        s_qr_upi = ParagraphStyle('QRUpi', fontName=f_semi, fontSize=6.0, leading=7.2, alignment=TA_CENTER, textColor=colors.black)
 
         if qr_img:
             qr_title = "UPI Payment QR" if upi_url else "E-Invoice QR Code"
             qr_cell = [
                 Paragraph(qr_title, s_qr_lbl),
-                Spacer(1, 3),
+                Spacer(1, 2),
                 qr_img,
             ]
             if upi_id:
@@ -735,9 +686,9 @@ class InvoicePDFRenderer:
             qr_cell = [Paragraph("", s_terms_item)]
 
         # Signatures Cell
-        s_rcvr = ParagraphStyle('Rcvr', fontName=f_bold, fontSize=8.2, leading=10.5, alignment=TA_LEFT, textColor=colors.black)
-        s_auth_top = ParagraphStyle('AuthTop', fontName=f_bold, fontSize=10.5, leading=13, alignment=TA_RIGHT, textColor=colors.black)
-        s_auth_bot = ParagraphStyle('AuthBot', fontName=f_bold, fontSize=10.5, leading=13, alignment=TA_RIGHT, textColor=colors.black)
+        s_rcvr = ParagraphStyle('Rcvr', fontName=f_bold, fontSize=8.0, leading=10, alignment=TA_LEFT, textColor=colors.black)
+        s_auth_top = ParagraphStyle('AuthTop', fontName=f_bold, fontSize=9.5, leading=12, alignment=TA_RIGHT, textColor=colors.black)
+        s_auth_bot = ParagraphStyle('AuthBot', fontName=f_bold, fontSize=9.5, leading=12, alignment=TA_RIGHT, textColor=colors.black)
 
         sig_img = None
         sig_url = seller.get('signature_url')
@@ -765,21 +716,21 @@ class InvoicePDFRenderer:
             sig_inner.append(sig_img)
             sig_inner.append(Spacer(1, 4))
         else:
-            sig_inner.append(Spacer(1, 45))
+            sig_inner.append(Spacer(1, 38))
         sig_inner.append(Paragraph("Authorised Signatory", s_auth_bot))
 
         sig_subtable = Table([
             [Paragraph(rcvr_sig_text, s_rcvr)],
             [sig_inner]
-        ], colWidths=[196.6], rowHeights=[34.5, 98.3])
+        ], colWidths=[196.6], rowHeights=[30.0, 102.8])
         sig_subtable.setStyle(TableStyle([
             ('LINEBELOW', (0, 0), (-1, 0), 1.5, colors.black),
             ('PADDING', (0, 0), (-1, -1), 0),
-            ('LEFTPADDING', (0, 0), (0, 0), 6),
-            ('TOPPADDING', (0, 0), (0, 0), 4),
-            ('RIGHTPADDING', (0, 1), (0, 1), 12),
-            ('TOPPADDING', (0, 1), (0, 1), 6),
-            ('BOTTOMPADDING', (0, 1), (0, 1), 6),
+            ('LEFTPADDING', (0, 0), (0, 0), 4),
+            ('TOPPADDING', (0, 0), (0, 0), 2),
+            ('RIGHTPADDING', (0, 1), (0, 1), 8),
+            ('TOPPADDING', (0, 1), (0, 1), 4),
+            ('BOTTOMPADDING', (0, 1), (0, 1), 4),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ]))
 
@@ -792,14 +743,449 @@ class InvoicePDFRenderer:
             ('LINEAFTER', (0, 0), (0, -1), 1.5, colors.black),
             ('LINEAFTER', (1, 0), (1, -1), 1.5, colors.black),
             ('PADDING', (0, 0), (-1, -1), 0),
-            ('LEFTPADDING', (0, 0), (0, 0), 6),
+            ('LEFTPADDING', (0, 0), (0, 0), 4),
             ('RIGHTPADDING', (0, 0), (0, 0), 4),
-            ('TOPPADDING', (0, 0), (0, 0), 4),
-            ('BOTTOMPADDING', (0, 0), (0, 0), 4),
+            ('TOPPADDING', (0, 0), (0, 0), 2),
+            ('BOTTOMPADDING', (0, 0), (0, 0), 2),
             ('ALIGN', (1, 0), (1, 0), 'CENTER'),
-            ('TOPPADDING', (1, 0), (1, 0), 4),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ]))
+
+        # Measure top sections and summary tables directly
+        h_h = header_table.wrap(WIDTH, 2000)[1]
+        h_m = meta_table.wrap(WIDTH, 2000)[1]
+        h_p = party_table.wrap(WIDTH, 2000)[1]
+        h_top = h_h + h_m + h_p
+
+        h_tax = tax_table.wrap(WIDTH, 2000)[1]
+        h_words = words_table.wrap(WIDTH, 2000)[1]
+        h_bank = bank_table.wrap(WIDTH, 2000)[1]
+        h_summary = h_tax + h_words + h_bank
+
+        # Number of tax rows in totals
+        num_tax_rows = 1 if (is_inter_state or tot_igst > 0.0) else 2
+        if cartage > 0.0:
+            num_tax_rows += 1
+        if abs(round_off) >= 0.005:
+            num_tax_rows += 1
+
+        sub_tax_rows_h = 14.0 + (num_tax_rows * 14.0) + 18.0
+
+        # ==============================================================
+        # SCENARIO A: SINGLE PAGE FIT
+        # ==============================================================
+        if can_fit_single_page:
+            items_data = [th_row]
+            for itm in items:
+                items_data.append(build_item_row(itm))
+
+            # Calculate remaining space for filler row
+            used_h = h_top + th_h + (num_item_rows * item_row_h) + sub_tax_rows_h + h_summary
+            filler_h = max(2.0, FRAME_HEIGHT - used_h)
+
+            filler_idx = len(items_data)
+            items_data.append([""] * row_len)
+
+            # Subtotal row
+            subtotal_idx = len(items_data)
+            sub_r = [""] * row_len
+            sub_r[-1] = Paragraph(f"{tot_taxable:,.2f}", s_sub_amt)
+            items_data.append(sub_r)
+
+            # Taxes
+            if is_inter_state or tot_igst > 0.0:
+                rate_disp = f"@ {first_item_gst:.2f} %"
+                r_tax = [""] * row_len
+                r_tax[-4] = Paragraph("Add : IGST", s_sub_label)
+                r_tax[-2] = Paragraph(rate_disp, s_sub_rate)
+                r_tax[-1] = Paragraph(f"{tot_igst:,.2f}", s_sub_amt)
+                items_data.append(r_tax)
+            else:
+                half_rate = f"@ {(first_item_gst / 2.0):.2f} %"
+                r_cgst = [""] * row_len
+                r_cgst[-4] = Paragraph("Add : CGST", s_sub_label)
+                r_cgst[-2] = Paragraph(half_rate, s_sub_rate)
+                r_cgst[-1] = Paragraph(f"{tot_cgst:,.2f}", s_sub_amt)
+                items_data.append(r_cgst)
+
+                r_sgst = [""] * row_len
+                r_sgst[-4] = Paragraph("Add : SGST", s_sub_label)
+                r_sgst[-2] = Paragraph(half_rate, s_sub_rate)
+                r_sgst[-1] = Paragraph(f"{tot_sgst:,.2f}", s_sub_amt)
+                items_data.append(r_sgst)
+
+            if cartage > 0.0:
+                r_cart = [""] * row_len
+                r_cart[-4] = Paragraph("Add : Cartage", s_sub_label)
+                r_cart[-1] = Paragraph(f"{cartage:,.2f}", s_sub_amt)
+                items_data.append(r_cart)
+
+            if abs(round_off) >= 0.005:
+                lbl = "Add : Round Off" if round_off > 0 else "Less : Round Off"
+                sign_str = f"+{round_off:.2f}" if round_off > 0 else f"{round_off:.2f}"
+                r_ro = [""] * row_len
+                r_ro[-4] = Paragraph(lbl, s_sub_label)
+                r_ro[-1] = Paragraph(sign_str, s_sub_amt)
+                items_data.append(r_ro)
+
+            # Grand Total
+            grand_total_idx = len(items_data)
+            gt_r = [""] * row_len
+            gt_r[0] = Paragraph("Grand Total", s_gt_lbl)
+            gt_r[-3] = Paragraph(f"<u>&nbsp;&nbsp;{tot_qty:.2f} {unit_label}&nbsp;&nbsp;</u>", s_gt_qty)
+            gt_r[-1] = Paragraph(f"{final_grand_total:,.2f}", s_gt_amt)
+            items_data.append(gt_r)
+
+            row_heights = [th_h] + [item_row_h] * num_item_rows + [filler_h] + [14.0] + [14.0] * num_tax_rows + [18.0]
+            items_table = Table(items_data, colWidths=col_w, rowHeights=row_heights)
+
+            it_style = [
+                ('LINEBELOW', (0, 0), (-1, 0), 1.5, colors.black),
+                ('LINEAFTER', (0, 0), (-2, 0), 0.8, colors.black),
+                ('PADDING', (0, 0), (-1, -1), 0),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('TOPPADDING', (0, 0), (-1, 0), 2),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 2),
+            ]
+            for r_idx in range(1, num_item_rows + 1):
+                it_style.extend([
+                    ('LINEAFTER', (0, r_idx), (-2, r_idx), 0.8, colors.black),
+                    ('LINEBELOW', (0, r_idx), (-1, r_idx), 0.8, colors.black),
+                    ('TOPPADDING', (0, r_idx), (-1, r_idx), 1.5),
+                    ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 1.5),
+                    ('LEFTPADDING', (1, r_idx), (1, r_idx), 4),
+                    ('RIGHTPADDING', (-1, r_idx), (-1, r_idx), 4),
+                ])
+
+            # Filler row styling: continues vertical lines down to subtotal
+            it_style.extend([
+                ('LINEAFTER', (0, filler_idx), (-2, filler_idx), 0.8, colors.black),
+                ('LINEBELOW', (0, filler_idx), (-1, filler_idx), 0.8, colors.black),
+            ])
+
+            for r_idx in range(subtotal_idx, grand_total_idx):
+                it_style.extend([
+                    ('LINEAFTER', (-2, r_idx), (-2, r_idx), 0.8, colors.black),
+                    ('RIGHTPADDING', (-1, r_idx), (-1, r_idx), 4),
+                    ('SPAN', (0, r_idx), (-5, r_idx)),
+                    ('SPAN', (-4, r_idx), (-3, r_idx)),
+                    ('TOPPADDING', (0, r_idx), (-1, r_idx), 1),
+                    ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 1),
+                ])
+
+            it_style.extend([
+                ('LINEABOVE', (0, grand_total_idx), (-1, grand_total_idx), 0.8, colors.black),
+                ('LINEBELOW', (0, grand_total_idx), (-1, grand_total_idx), 0.8, colors.black),
+                ('LINEAFTER', (-2, grand_total_idx), (-2, grand_total_idx), 0.8, colors.black),
+                ('SPAN', (0, grand_total_idx), (-4, grand_total_idx)),
+                ('SPAN', (-3, grand_total_idx), (-2, grand_total_idx)),
+                ('RIGHTPADDING', (-1, grand_total_idx), (-1, grand_total_idx), 4),
+                ('TOPPADDING', (0, grand_total_idx), (-1, grand_total_idx), 2),
+                ('BOTTOMPADDING', (0, grand_total_idx), (-1, grand_total_idx), 2),
+            ])
+            items_table.setStyle(TableStyle(it_style))
+
+            elements = [
+                header_table,
+                meta_table,
+                party_table,
+                items_table,
+                tax_table,
+                words_table,
+                bank_table,
+            ]
+
+        # ==============================================================
+        # SCENARIO B: MULTI-PAGE BALANCED FIT (16+ items or multi-line)
+        # ==============================================================
+        else:
+            # Proportional distribution:
+            if num_item_rows <= 24:
+                p1_count = max(8, min(14, int(num_item_rows * 0.58)))
+                chunks = [items[:p1_count], items[p1_count:]]
+            else:
+                chunks = []
+                rem = list(items)
+                chunks.append(rem[:12])
+                rem = rem[12:]
+                while rem:
+                    if len(rem) <= 10:
+                        chunks.append(rem)
+                        break
+                    else:
+                        take = min(15, len(rem) - 5)
+                        chunks.append(rem[:take])
+                        rem = rem[take:]
+
+            total_pages = len(chunks)
+            elements = []
+            running_taxable = 0.0
+
+            for p_idx, chunk_items in enumerate(chunks):
+                p_num = p_idx + 1
+                is_first = (p_num == 1)
+                is_last = (p_num == total_pages)
+                chunk_len = len(chunk_items)
+
+                p_data = [th_row]
+
+                # If not first page, add Brought Forward row
+                if not is_first:
+                    bf_r = [""] * row_len
+                    bf_r[0] = Paragraph(f"<b>Brought Forward from Page {p_num - 1}</b>", s_sub_label)
+                    bf_r[-1] = Paragraph(f"<b>{running_taxable:,.2f}</b>", s_sub_amt)
+                    p_data.append(bf_r)
+
+                chunk_taxable = 0.0
+                for itm in chunk_items:
+                    amt = float(itm.get('taxable_amount') or 0.0)
+                    chunk_taxable += amt
+                    p_data.append(build_item_row(itm))
+
+                running_taxable += chunk_taxable
+
+                if is_first:
+                    # Page 1 top height: h_top
+                    # P1 Items: th_h + (chunk_len * item_row_h) + Carried Over (16 pt)
+                    p1_used = h_top + th_h + (chunk_len * item_row_h) + 16.0
+                    p1_filler_h = max(4.0, FRAME_HEIGHT - p1_used)
+
+                    p1_filler_idx = len(p_data)
+                    p_data.append([""] * row_len)
+
+                    # Carried Over row
+                    co_r = [""] * row_len
+                    co_r[0] = Paragraph(f"<b>Carried Over to Page {p_num + 1}</b>", s_sub_label)
+                    co_r[-1] = Paragraph(f"<b>{running_taxable:,.2f}</b>", s_sub_amt)
+                    p_data.append(co_r)
+
+                    p1_r_heights = [th_h] + [item_row_h] * chunk_len + [p1_filler_h, 16.0]
+                    p1_table = Table(p_data, colWidths=col_w, rowHeights=p1_r_heights)
+
+                    p1_s = [
+                        ('LINEBELOW', (0, 0), (-1, 0), 1.5, colors.black),
+                        ('LINEAFTER', (0, 0), (-2, 0), 0.8, colors.black),
+                        ('PADDING', (0, 0), (-1, -1), 0),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ]
+                    for r_idx in range(1, chunk_len + 1):
+                        p1_s.extend([
+                            ('LINEAFTER', (0, r_idx), (-2, r_idx), 0.8, colors.black),
+                            ('LINEBELOW', (0, r_idx), (-1, r_idx), 0.8, colors.black),
+                            ('TOPPADDING', (0, r_idx), (-1, r_idx), 1.5),
+                            ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 1.5),
+                            ('LEFTPADDING', (1, r_idx), (1, r_idx), 4),
+                            ('RIGHTPADDING', (-1, r_idx), (-1, r_idx), 4),
+                        ])
+                    p1_s.extend([
+                        ('LINEAFTER', (0, p1_filler_idx), (-2, p1_filler_idx), 0.8, colors.black),
+                        ('LINEBELOW', (0, p1_filler_idx), (-1, p1_filler_idx), 0.8, colors.black),
+                        ('LINEBELOW', (0, -1), (-1, -1), 1.5, colors.black),
+                        ('SPAN', (0, -1), (-2, -1)),
+                        ('RIGHTPADDING', (-1, -1), (-1, -1), 4),
+                        ('TOPPADDING', (0, -1), (-1, -1), 2),
+                        ('BOTTOMPADDING', (0, -1), (-1, -1), 2),
+                        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#F8FAFC')),
+                    ])
+                    p1_table.setStyle(TableStyle(p1_s))
+
+                    elements.extend([
+                        header_table,
+                        meta_table,
+                        party_table,
+                        p1_table,
+                        PageBreak(),
+                    ])
+                elif not is_last:
+                    # Intermediate Page
+                    s_cont = ParagraphStyle('Cont', fontName=f_bold, fontSize=8.5, leading=11, textColor=colors.black)
+                    cont_text = f"{doc_type_label} (Page {p_num} of {total_pages}) &nbsp;&bull;&nbsp; {inv_no} &nbsp;&bull;&nbsp; Dated: {inv_date} &nbsp;&bull;&nbsp; Buyer: {buyer_name}"
+                    cont_hdr = Table([[Paragraph(cont_text, s_cont)]], colWidths=[WIDTH], rowHeights=[18.0])
+                    cont_hdr.setStyle(TableStyle([
+                        ('PADDING', (0, 0), (-1, -1), 0),
+                        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+                        ('TOPPADDING', (0, 0), (-1, -1), 3),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                        ('LINEBELOW', (0, -1), (-1, -1), 1.5, colors.black),
+                        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F1F5F9')),
+                    ]))
+
+                    mid_used = 18.0 + th_h + 16.0 + (chunk_len * item_row_h) + 16.0
+                    mid_filler_h = max(4.0, FRAME_HEIGHT - mid_used)
+
+                    mid_filler_idx = len(p_data)
+                    p_data.append([""] * row_len)
+
+                    co_r = [""] * row_len
+                    co_r[0] = Paragraph(f"<b>Carried Over to Page {p_num + 1}</b>", s_sub_label)
+                    co_r[-1] = Paragraph(f"<b>{running_taxable:,.2f}</b>", s_sub_amt)
+                    p_data.append(co_r)
+
+                    mid_r_heights = [th_h, 16.0] + [item_row_h] * chunk_len + [mid_filler_h, 16.0]
+                    mid_table = Table(p_data, colWidths=col_w, rowHeights=mid_r_heights)
+
+                    mid_s = [
+                        ('LINEBELOW', (0, 0), (-1, 0), 1.5, colors.black),
+                        ('LINEAFTER', (0, 0), (-2, 0), 0.8, colors.black),
+                        ('PADDING', (0, 0), (-1, -1), 0),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                        ('LINEBELOW', (0, 1), (-1, 1), 0.8, colors.black),
+                        ('SPAN', (0, 1), (-2, 1)),
+                        ('RIGHTPADDING', (-1, 1), (-1, 1), 4),
+                        ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#F8FAFC')),
+                    ]
+                    for r_idx in range(2, 2 + chunk_len):
+                        mid_s.extend([
+                            ('LINEAFTER', (0, r_idx), (-2, r_idx), 0.8, colors.black),
+                            ('LINEBELOW', (0, r_idx), (-1, r_idx), 0.8, colors.black),
+                            ('TOPPADDING', (0, r_idx), (-1, r_idx), 1.5),
+                            ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 1.5),
+                            ('LEFTPADDING', (1, r_idx), (1, r_idx), 4),
+                            ('RIGHTPADDING', (-1, r_idx), (-1, r_idx), 4),
+                        ])
+                    mid_s.extend([
+                        ('LINEAFTER', (0, mid_filler_idx), (-2, mid_filler_idx), 0.8, colors.black),
+                        ('LINEBELOW', (0, mid_filler_idx), (-1, mid_filler_idx), 0.8, colors.black),
+                        ('LINEBELOW', (0, -1), (-1, -1), 1.5, colors.black),
+                        ('SPAN', (0, -1), (-2, -1)),
+                        ('RIGHTPADDING', (-1, -1), (-1, -1), 4),
+                        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#F8FAFC')),
+                    ])
+                    mid_table.setStyle(TableStyle(mid_s))
+
+                    elements.extend([
+                        cont_hdr,
+                        mid_table,
+                        PageBreak(),
+                    ])
+                else:
+                    # Final Page
+                    s_cont = ParagraphStyle('Cont', fontName=f_bold, fontSize=8.5, leading=11, textColor=colors.black)
+                    cont_text = f"{doc_type_label} (Page {p_num} of {total_pages}) &nbsp;&bull;&nbsp; {inv_no} &nbsp;&bull;&nbsp; Dated: {inv_date} &nbsp;&bull;&nbsp; Buyer: {buyer_name}"
+                    cont_hdr = Table([[Paragraph(cont_text, s_cont)]], colWidths=[WIDTH], rowHeights=[18.0])
+                    cont_hdr.setStyle(TableStyle([
+                        ('PADDING', (0, 0), (-1, -1), 0),
+                        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+                        ('TOPPADDING', (0, 0), (-1, -1), 3),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                        ('LINEBELOW', (0, -1), (-1, -1), 1.5, colors.black),
+                        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F1F5F9')),
+                    ]))
+
+                    # Calculate filler height for final page so subtotal and grand total sit right above summary
+                    last_used = 18.0 + th_h + 16.0 + (chunk_len * item_row_h) + sub_tax_rows_h + h_summary
+                    last_filler_h = max(4.0, FRAME_HEIGHT - last_used)
+
+                    last_filler_idx = len(p_data)
+                    p_data.append([""] * row_len)
+
+                    # Subtotal
+                    last_sub_idx = len(p_data)
+                    sub_r = [""] * row_len
+                    sub_r[-1] = Paragraph(f"{tot_taxable:,.2f}", s_sub_amt)
+                    p_data.append(sub_r)
+
+                    # Taxes
+                    if is_inter_state or tot_igst > 0.0:
+                        rate_disp = f"@ {first_item_gst:.2f} %"
+                        r_tax = [""] * row_len
+                        r_tax[-4] = Paragraph("Add : IGST", s_sub_label)
+                        r_tax[-2] = Paragraph(rate_disp, s_sub_rate)
+                        r_tax[-1] = Paragraph(f"{tot_igst:,.2f}", s_sub_amt)
+                        p_data.append(r_tax)
+                    else:
+                        half_rate = f"@ {(first_item_gst / 2.0):.2f} %"
+                        r_cgst = [""] * row_len
+                        r_cgst[-4] = Paragraph("Add : CGST", s_sub_label)
+                        r_cgst[-2] = Paragraph(half_rate, s_sub_rate)
+                        r_cgst[-1] = Paragraph(f"{tot_cgst:,.2f}", s_sub_amt)
+                        p_data.append(r_cgst)
+
+                        r_sgst = [""] * row_len
+                        r_sgst[-4] = Paragraph("Add : SGST", s_sub_label)
+                        r_sgst[-2] = Paragraph(half_rate, s_sub_rate)
+                        r_sgst[-1] = Paragraph(f"{tot_sgst:,.2f}", s_sub_amt)
+                        p_data.append(r_sgst)
+
+                    if cartage > 0.0:
+                        r_cart = [""] * row_len
+                        r_cart[-4] = Paragraph("Add : Cartage", s_sub_label)
+                        r_cart[-1] = Paragraph(f"{cartage:,.2f}", s_sub_amt)
+                        p_data.append(r_cart)
+
+                    if abs(round_off) >= 0.005:
+                        lbl = "Add : Round Off" if round_off > 0 else "Less : Round Off"
+                        sign_str = f"+{round_off:.2f}" if round_off > 0 else f"{round_off:.2f}"
+                        r_ro = [""] * row_len
+                        r_ro[-4] = Paragraph(lbl, s_sub_label)
+                        r_ro[-1] = Paragraph(sign_str, s_sub_amt)
+                        p_data.append(r_ro)
+
+                    # Grand Total
+                    last_gt_idx = len(p_data)
+                    gt_r = [""] * row_len
+                    gt_r[0] = Paragraph("Grand Total", s_gt_lbl)
+                    gt_r[-3] = Paragraph(f"<u>&nbsp;&nbsp;{tot_qty:.2f} {unit_label}&nbsp;&nbsp;</u>", s_gt_qty)
+                    gt_r[-1] = Paragraph(f"{final_grand_total:,.2f}", s_gt_amt)
+                    p_data.append(gt_r)
+
+                    last_r_heights = [th_h, 16.0] + [item_row_h] * chunk_len + [last_filler_h, 14.0] + [14.0] * num_tax_rows + [18.0]
+                    last_table = Table(p_data, colWidths=col_w, rowHeights=last_r_heights)
+
+                    last_s = [
+                        ('LINEBELOW', (0, 0), (-1, 0), 1.5, colors.black),
+                        ('LINEAFTER', (0, 0), (-2, 0), 0.8, colors.black),
+                        ('PADDING', (0, 0), (-1, -1), 0),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                        ('LINEBELOW', (0, 1), (-1, 1), 0.8, colors.black),
+                        ('SPAN', (0, 1), (-2, 1)),
+                        ('RIGHTPADDING', (-1, 1), (-1, 1), 4),
+                        ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#F8FAFC')),
+                    ]
+                    for r_idx in range(2, 2 + chunk_len):
+                        last_s.extend([
+                            ('LINEAFTER', (0, r_idx), (-2, r_idx), 0.8, colors.black),
+                            ('LINEBELOW', (0, r_idx), (-1, r_idx), 0.8, colors.black),
+                            ('TOPPADDING', (0, r_idx), (-1, r_idx), 1.5),
+                            ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 1.5),
+                            ('LEFTPADDING', (1, r_idx), (1, r_idx), 4),
+                            ('RIGHTPADDING', (-1, r_idx), (-1, r_idx), 4),
+                        ])
+
+                    last_s.extend([
+                        ('LINEAFTER', (0, last_filler_idx), (-2, last_filler_idx), 0.8, colors.black),
+                        ('LINEBELOW', (0, last_filler_idx), (-1, last_filler_idx), 0.8, colors.black),
+                    ])
+
+                    for r_idx in range(last_sub_idx, last_gt_idx):
+                        last_s.extend([
+                            ('LINEAFTER', (-2, r_idx), (-2, r_idx), 0.8, colors.black),
+                            ('RIGHTPADDING', (-1, r_idx), (-1, r_idx), 4),
+                            ('SPAN', (0, r_idx), (-5, r_idx)),
+                            ('SPAN', (-4, r_idx), (-3, r_idx)),
+                            ('TOPPADDING', (0, r_idx), (-1, r_idx), 1),
+                            ('BOTTOMPADDING', (0, r_idx), (-1, r_idx), 1),
+                        ])
+
+                    last_s.extend([
+                        ('LINEABOVE', (0, last_gt_idx), (-1, last_gt_idx), 0.8, colors.black),
+                        ('LINEBELOW', (0, last_gt_idx), (-1, last_gt_idx), 0.8, colors.black),
+                        ('LINEAFTER', (-2, last_gt_idx), (-2, last_gt_idx), 0.8, colors.black),
+                        ('SPAN', (0, last_gt_idx), (-4, last_gt_idx)),
+                        ('SPAN', (-3, last_gt_idx), (-2, last_gt_idx)),
+                        ('RIGHTPADDING', (-1, last_gt_idx), (-1, last_gt_idx), 4),
+                        ('TOPPADDING', (0, last_gt_idx), (-1, last_gt_idx), 2),
+                        ('BOTTOMPADDING', (0, last_gt_idx), (-1, last_gt_idx), 2),
+                    ])
+                    last_table.setStyle(TableStyle(last_s))
+
+                    elements.extend([
+                        cont_hdr,
+                        last_table,
+                        tax_table,
+                        words_table,
+                        bank_table,
+                    ])
 
         # Watermark & Logo assets
         logo_data = seller.get('logo_url') or seller.get('logo_data')
@@ -885,16 +1271,6 @@ class InvoicePDFRenderer:
             id='normal',
         )
         doc.addPageTemplates([PageTemplate(id='All', frames=frame, pagesize=A4, onPage=draw_decorations)])
-
-        elements = [
-            header_table,
-            meta_table,
-            party_table,
-            items_table,
-            tax_table,
-            words_table,
-            bank_table,
-        ]
 
         class DocumentNumberedCanvas(NumberedCanvas):
             footer_text = canvas_footer_text

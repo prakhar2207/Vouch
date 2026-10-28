@@ -24,7 +24,8 @@ import {
   Package,
   Layers,
   ChevronRight,
-  Info
+  Info,
+  Loader2
 } from "lucide-react";
 
 interface ReportRow {
@@ -133,6 +134,42 @@ export default function ProfitAndLossPage() {
     });
   };
 
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+
+  const handleDownloadPdf = async () => {
+    setDownloadingPdf(true);
+    try {
+      const token = getAccessToken();
+      const params = new URLSearchParams();
+      if (fromDate) params.append('from_date', fromDate);
+      if (toDate) params.append('to_date', toDate);
+      params.append('download', '1');
+
+      const res = await axios.get(
+        `${API_BASE_URL}/api/v1/documents/reports/profit_and_loss/pdf/?${params.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob',
+        }
+      );
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `Profit_and_Loss_${fromDate || 'start'}_to_${toDate || 'present'}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+      toast.success('Profit & Loss PDF downloaded successfully');
+    } catch (err: any) {
+      console.error('Failed to download Profit & Loss PDF:', err);
+      toast.error('Download Failed', 'Could not generate Profit & Loss PDF');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
   const exportCSV = () => {
     if (!data) return;
 
@@ -221,7 +258,7 @@ export default function ProfitAndLossPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap print:hidden">
             <button
               onClick={() => setIsPeriodModalOpen(true)}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-border/60 bg-muted/40 hover:bg-muted text-xs font-semibold text-foreground transition-colors cursor-pointer"
@@ -243,20 +280,30 @@ export default function ProfitAndLossPage() {
             </button>
 
             <button
-              onClick={() => window.print()}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border/60 bg-muted/40 hover:bg-muted text-xs font-semibold text-foreground transition-colors cursor-pointer"
+              onClick={handleDownloadPdf}
+              disabled={downloadingPdf || !data}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold shadow-md shadow-primary/20 transition-colors cursor-pointer disabled:opacity-50"
+              title="Download crisp official PDF report"
             >
-              <Printer className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="hidden sm:inline">Print</span>
+              {downloadingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              <span>Download PDF</span>
             </button>
 
             <button
               onClick={exportCSV}
               disabled={!data}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold shadow-md shadow-primary/20 transition-colors cursor-pointer disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border/60 bg-muted/40 hover:bg-muted text-xs font-semibold text-foreground transition-colors cursor-pointer disabled:opacity-50"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export CSV</span>
+              <Download className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="hidden sm:inline">Export CSV</span>
+            </button>
+
+            <button
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border/60 bg-muted/40 hover:bg-muted text-xs font-semibold text-foreground transition-colors cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="hidden sm:inline">Print</span>
             </button>
           </div>
         </div>

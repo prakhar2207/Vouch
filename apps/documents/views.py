@@ -321,8 +321,9 @@ class PublicShareDownloadPDFAPIView(APIView):
             suffix = '_Triplicate_3Copies'
 
         filename = f"{(snapshot.document_number or 'document').replace('/', '_')}{suffix}.pdf"
+        disposition = 'attachment' if request.query_params.get('download') == '1' else 'inline'
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
-        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        response['Content-Disposition'] = f'{disposition}; filename="{filename}"'
         response['Content-Length'] = len(pdf_bytes)
         response['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
         response['Pragma'] = 'no-cache'
@@ -404,8 +405,9 @@ class LedgerStatementPDFExportAPIView(APIView):
 
         pdf_bytes = DocumentPDFService.generate_pdf_for_statement(company, ledger, from_date=d_from, to_date=d_to)
         filename = f"{ledger.name.replace(' ', '_')}_Statement.pdf"
+        disposition = 'attachment' if request.query_params.get('download') == '1' else 'inline'
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
-        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        response['Content-Disposition'] = f'{disposition}; filename="{filename}"'
         response['Content-Length'] = len(pdf_bytes)
         return response
 

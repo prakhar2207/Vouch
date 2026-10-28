@@ -554,7 +554,7 @@ function SalesInvoiceListContent() {
     try {
       toast.info('Downloading Tax Invoice PDF...');
       const token = getAccessToken();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/pdf/?download=true&fresh=1&t=${Date.now()}`, {
+      const res = await axios.get(`${API_BASE_URL}/api/v1/documents/vouchers/${inv.id}/pdf/?download=1&fresh=1&copy=ORIGINAL&brand=1&t=${Date.now()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -702,10 +702,22 @@ function SalesInvoiceListContent() {
           }
         }
 
-        // Direct WhatsApp deep link on mobile without downloading file to device
+        // Also trigger PDF download on mobile so the user has the offline file
+        if (pdfBlobUrl) {
+          const dlLink = document.createElement('a');
+          dlLink.href = pdfBlobUrl;
+          dlLink.download = filename;
+          document.body.appendChild(dlLink);
+          dlLink.click();
+          document.body.removeChild(dlLink);
+        }
+
+        // Universal WhatsApp link safe for Android WebViews, PWAs and mobile browsers
         const encoded = encodeURIComponent(waMessage);
-        const appUrl = phone ? `whatsapp://send?phone=${phone}&text=${encoded}` : `whatsapp://send?text=${encoded}`;
-        window.location.href = appUrl;
+        const waUrl = phone
+          ? `https://api.whatsapp.com/send?phone=${phone}&text=${encoded}`
+          : `https://api.whatsapp.com/send?text=${encoded}`;
+        window.open(waUrl, '_blank') || (window.location.href = waUrl);
         return;
       }
 

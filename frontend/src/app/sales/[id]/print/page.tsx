@@ -1088,7 +1088,7 @@ export default function PrintInvoicePage() {
         if (pdfResult) pdfBlobUrl = pdfResult.blobUrl;
       }
 
-      if (!isMobile && pdfBlobUrl) {
+      if (pdfBlobUrl) {
         triggerPdfDownload(pdfBlobUrl, filename);
       }
       const { appUrl, webUrl } = getWhatsAppUrls();
@@ -1178,6 +1178,11 @@ export default function PrintInvoicePage() {
 
       // ================= 1. MOBILE / PWA MODE =================
       if (isMobile) {
+        // Also download / save the PDF to device so the user has the offline file!
+        if (pdfBlobUrl) {
+          triggerPdfDownload(pdfBlobUrl, filename);
+        }
+
         // Copy message to clipboard so user can also paste anywhere
         if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
           try {
@@ -1185,17 +1190,31 @@ export default function PrintInvoicePage() {
           } catch (clipErr) {}
         }
 
-        // Directly launch WhatsApp with complete pre-filled message
-        // containing document details, PDF link, and 1-Click Import link
-        const encoded = encodeURIComponent(waMessage);
-        const appUrl = phone ? `whatsapp://send?phone=${phone}&text=${encoded}` : `whatsapp://send?text=${encoded}`;
-        const fallbackUrl = phone ? `https://api.whatsapp.com/send?phone=${phone}&text=${encoded}` : `https://api.whatsapp.com/send?text=${encoded}`;
-
-        try {
-          window.location.href = appUrl;
-        } catch (e) {
-          window.open(fallbackUrl, '_blank');
+        // 1. Try native Web Share API first (supported by modern Android Chrome, PWA, Safari)
+        if (typeof navigator !== 'undefined' && navigator.share) {
+          const shareData: any = {
+            title: filename,
+            text: waMessage,
+          };
+          if (pdfFile && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+            shareData.files = [pdfFile];
+          }
+          try {
+            await navigator.share(shareData);
+            return;
+          } catch (shareErr: any) {
+            if (shareErr?.name === 'AbortError') return;
+            console.warn('Native Web Share API failed, falling back to direct WhatsApp:', shareErr);
+          }
         }
+
+        // 2. Universal WhatsApp link safe for Android WebViews, PWAs and mobile browsers
+        const encoded = encodeURIComponent(waMessage);
+        const waUrl = phone
+          ? `https://api.whatsapp.com/send?phone=${phone}&text=${encoded}`
+          : `https://api.whatsapp.com/send?text=${encoded}`;
+
+        window.open(waUrl, '_blank') || (window.location.href = waUrl);
         return;
       }
 
