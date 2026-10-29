@@ -1,10 +1,19 @@
 import base64
+import os
+import uuid
+import logging
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
+
+logger = logging.getLogger(__name__)
+
+MAX_STATEMENT_FILE_SIZE = 15 * 1024 * 1024  # 15 MB
+ALLOWED_STATEMENT_EXTENSIONS = {'.csv', '.xlsx', '.xls', '.pdf', '.ofx', '.qif'}
 
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
@@ -20,6 +29,7 @@ class BankStatementUploadAPIView(APIView):
         """
         Uploads and parses a bank statement (CSV, XLSX, XLS, PDF, Image).
         Accepts multipart/form-data 'file' or JSON 'file_base64' + 'filename'.
+        Enforces strict file size and format validation with sanitized error reporting.
         """
         company = get_authorized_company(request)
 
@@ -39,10 +49,29 @@ class BankStatementUploadAPIView(APIView):
             b64_str = request.data['file_base64']
             if ',' in b64_str:
                 b64_str = b64_str.split(',', 1)[1]
-            file_bytes = base64.b64decode(b64_str)
+            try:
+                file_bytes = base64.b64decode(b64_str)
+            except Exception:
+                return Response({"error": "Invalid base64 encoding for 'file_base64'."}, status=status.HTTP_400_BAD_REQUEST)
             filename = request.data.get('filename', 'statement.csv')
         else:
             return Response({"error": "No file uploaded. Provide 'file' multipart or 'file_base64'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1. Enforce strict file size limits (15 MB)
+        if len(file_bytes) > MAX_STATEMENT_FILE_SIZE:
+            mb_size = len(file_bytes) / (1024 * 1024)
+            return Response(
+                {"error": f"File size exceeds the 15MB limit ({mb_size:.1f}MB uploaded)."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 2. Enforce allowed file extensions
+        _, ext = os.path.splitext(filename.lower())
+        if ext not in ALLOWED_STATEMENT_EXTENSIONS:
+            return Response(
+                {"error": f"Unsupported file format '{ext}'. Allowed formats: CSV, Excel (.xlsx, .xls), PDF, OFX, and QIF."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             summary = BankStatementService.parse_statement(
@@ -54,10 +83,16 @@ class BankStatementUploadAPIView(APIView):
             )
             res_status = status.HTTP_200_OK if summary.get("is_duplicate_file") else status.HTTP_201_CREATED
             return Response(summary, status=res_status)
-        except ValidationError as e:
-            return Response({"error": str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
+        except (ValidationError, DRFValidationError) as e:
+            msg = e.message if hasattr(e, 'message') else (e.detail if hasattr(e, 'detail') else str(e))
+            return Response({"error": str(msg)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": f"Statement parsing failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+            correlation_id = str(uuid.uuid4())[:8]
+            logger.exception("Bank statement parsing failed [ref=%s]: %s", correlation_id, e)
+            return Response({
+                "error": "An internal error occurred while parsing the bank statement.",
+                "correlation_id": correlation_id
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 from decimal import Decimal
@@ -259,10 +294,13 @@ class BankTransactionResolveAPIView(APIView):
                 user=request.user
             )
             return Response(res, status=status.HTTP_200_OK)
-        except ValidationError as e:
-            return Response({"error": str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
+        except (ValidationError, DRFValidationError) as e:
+            msg = e.message if hasattr(e, 'message') else (e.detail if hasattr(e, 'detail') else str(e))
+            return Response({"error": str(msg)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": f"Resolution failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            correlation_id = str(uuid.uuid4())[:8]
+            logger.exception("Bank transaction resolution failed [ref=%s]: %s", correlation_id, e)
+            return Response({"error": "Failed to resolve transaction.", "correlation_id": correlation_id}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class BankTransactionBulkResolveAPIView(APIView):
@@ -426,8 +464,13 @@ class BankTransactionDetailAPIView(APIView):
         try:
             res = BankReconciliationService.exclude_transaction(tx, reason=reason, user=request.user)
             return Response(res, status=status.HTTP_200_OK)
+        except (ValidationError, DRFValidationError) as e:
+            msg = e.message if hasattr(e, 'message') else str(e)
+            return Response({"error": str(msg)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": f"Failed to exclude transaction: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+            correlation_id = str(uuid.uuid4())[:8]
+            logger.exception("Failed to exclude transaction [ref=%s]: %s", correlation_id, e)
+            return Response({"error": "Failed to exclude transaction.", "correlation_id": correlation_id}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete(self, request, pk, *args, **kwargs):
         """
@@ -439,8 +482,13 @@ class BankTransactionDetailAPIView(APIView):
         try:
             res = BankReconciliationService.exclude_transaction(tx, reason=reason, user=request.user)
             return Response(res, status=status.HTTP_200_OK)
+        except (ValidationError, DRFValidationError) as e:
+            msg = e.message if hasattr(e, 'message') else str(e)
+            return Response({"error": str(msg)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": f"Failed to exclude transaction: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+            correlation_id = str(uuid.uuid4())[:8]
+            logger.exception("Failed to exclude transaction [ref=%s]: %s", correlation_id, e)
+            return Response({"error": "Failed to exclude transaction.", "correlation_id": correlation_id}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class BankStatementImportListAPIView(APIView):
@@ -509,8 +557,13 @@ class BankStatementImportDetailAPIView(APIView):
                 "message": f"Statement '{statement_import.source_file_name}' and {count} transactions excluded.",
                 "excluded_count": count
             }, status=status.HTTP_200_OK)
+        except (ValidationError, DRFValidationError) as e:
+            msg = e.message if hasattr(e, 'message') else str(e)
+            return Response({"error": str(msg)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": f"Failed to exclude statement: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+            correlation_id = str(uuid.uuid4())[:8]
+            logger.exception("Failed to exclude statement import [ref=%s]: %s", correlation_id, e)
+            return Response({"error": "Failed to exclude statement.", "correlation_id": correlation_id}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete(self, request, pk, *args, **kwargs):
         """
@@ -526,8 +579,13 @@ class BankStatementImportDetailAPIView(APIView):
                 "message": f"Statement '{statement_import.source_file_name}' and {count} transactions excluded.",
                 "excluded_count": count
             }, status=status.HTTP_200_OK)
+        except (ValidationError, DRFValidationError) as e:
+            msg = e.message if hasattr(e, 'message') else str(e)
+            return Response({"error": str(msg)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": f"Failed to exclude statement: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+            correlation_id = str(uuid.uuid4())[:8]
+            logger.exception("Failed to exclude statement import [ref=%s]: %s", correlation_id, e)
+            return Response({"error": "Failed to exclude statement.", "correlation_id": correlation_id}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class BankTransactionToggleDirectionAPIView(APIView):
@@ -683,5 +741,14 @@ class BankReconciliationStatementAPIView(APIView):
             return Response({"success": True, "data": brs_data}, status=status.HTTP_200_OK)
         except Ledger.DoesNotExist:
             return Response({"success": False, "error": "Bank ledger not found."}, status=status.HTTP_404_NOT_FOUND)
+        except (ValidationError, DRFValidationError) as e:
+            msg = e.message if hasattr(e, 'message') else str(e)
+            return Response({"success": False, "error": str(msg)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            correlation_id = str(uuid.uuid4())[:8]
+            logger.exception("Failed to generate statutory BRS [ref=%s]: %s", correlation_id, e)
+            return Response({
+                "success": False,
+                "error": "Failed to generate statutory BRS report.",
+                "correlation_id": correlation_id
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

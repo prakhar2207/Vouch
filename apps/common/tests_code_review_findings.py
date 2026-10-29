@@ -283,3 +283,214 @@ class CodeReviewAuditFindingsTests(TestCase):
         # 3. Ledger current_balance must be self-healed back to ₹25,000
         debtor.refresh_from_db()
         self.assertEqual(debtor.current_balance, Decimal('25000.00'))
+
+    def test_06_gst_calculator_missing_state_fail_closed(self):
+        """
+        V-02: Verifies that GST calculation fails closed when seller or buyer state is missing,
+        preventing silent fallback to intra-state CGST/SGST.
+        """
+        from apps.gst.services.gst_calculator import GSTCalculator
+        from rest_framework.exceptions import ValidationError
+
+        # 1. Missing buyer state for taxable supply -> must raise ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            GSTCalculator.calculate_taxes(
+                company_state_code="09",
+                party_state_code="",
+                taxable_amount=Decimal("1000.00"),
+                gst_rate=Decimal("18.00")
+            )
+        self.assertIn("Buyer state code / Place of Supply", str(ctx.exception))
+
+        # 2. Missing seller state for taxable supply -> must raise ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            GSTCalculator.calculate_taxes(
+                company_state_code="",
+                party_state_code="27",
+                taxable_amount=Decimal("1000.00"),
+                gst_rate=Decimal("18.00")
+            )
+        self.assertIn("Seller/Company state code is missing", str(ctx.exception))
+
+        # 3. Both missing for taxable supply -> must raise ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            GSTCalculator.calculate_taxes(
+                company_state_code="",
+                party_state_code="",
+                taxable_amount=Decimal("1000.00"),
+                gst_rate=Decimal("18.00")
+            )
+        self.assertIn("Both seller and buyer state codes are missing", str(ctx.exception))
+
+        # 4. Correct interstate calculation with verified states
+        inter = GSTCalculator.calculate_taxes(
+            company_state_code="09",
+            party_state_code="27",
+            taxable_amount=Decimal("1000.00"),
+            gst_rate=Decimal("18.00")
+        )
+        self.assertEqual(inter['treatment'], 'INTERSTATE')
+        self.assertEqual(inter['igst'], Decimal("180.00"))
+        self.assertEqual(inter['cgst'], Decimal("0.00"))
+        self.assertEqual(inter['sgst'], Decimal("0.00"))
+
+        # 5. Correct intrastate calculation with verified states
+        intra = GSTCalculator.calculate_taxes(
+            company_state_code="09",
+            party_state_code="09",
+            taxable_amount=Decimal("1000.00"),
+            gst_rate=Decimal("18.00")
+        )
+        self.assertEqual(intra['treatment'], 'INTRASTATE')
+        self.assertEqual(intra['cgst'], Decimal("90.00"))
+        self.assertEqual(intra['sgst'], Decimal("90.00"))
+        self.assertEqual(intra['igst'], Decimal("0.00"))
+
+        # 6. 0% / Non-taxable supply with missing states does NOT fail
+        zero_rated = GSTCalculator.calculate_taxes(
+            company_state_code="",
+            party_state_code="",
+            taxable_amount=Decimal("1000.00"),
+            gst_rate=Decimal("0.00")
+        )
+        self.assertEqual(zero_rated['total_tax'], Decimal("0.00"))
+
+    def test_07_banking_statement_upload_file_limits_and_sanitized_errors(self):
+        """
+        V-03: Verifies bank statement upload limits (size, format) and sanitized error reporting
+        without leaking server internals.
+        """
+        from apps.accounting.banking_views import BankStatementUploadAPIView, MAX_STATEMENT_FILE_SIZE
+        from apps.ledgers.models import Ledger
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from unittest.mock import patch
+        from apps.companies.models import UserCompany
+
+        api_factory = APIRequestFactory()
+        UserCompany.objects.get_or_create(company=self.company1, user=self.user1, defaults={"role": "OWNER"})
+
+        bank_ledger = Ledger.objects.create(
+            company=self.company1,
+            group=self.asset_grp,
+            name="HDFC Current Account",
+            ledger_type="BANK",
+            current_balance=Decimal("50000.00")
+        )
+
+        view = BankStatementUploadAPIView.as_view()
+
+        # 1. Reject unsupported file format (.exe)
+        bad_file = SimpleUploadedFile("malware.exe", b"malicious binary payload", content_type="application/octet-stream")
+        req_bad = api_factory.post(
+            "/api/v1/accounting/bank-statements/upload/",
+            {"file": bad_file, "bank_ledger_id": str(bank_ledger.id)},
+            format="multipart",
+            HTTP_X_COMPANY_ID=str(self.company1.id)
+        )
+        force_authenticate(req_bad, user=self.user1)
+
+        res_bad = view(req_bad)
+        self.assertEqual(res_bad.status_code, 400)
+        self.assertIn("Unsupported file format", res_bad.data["error"])
+
+        # 2. Reject file exceeding size limit
+        huge_bytes = b"x" * (MAX_STATEMENT_FILE_SIZE + 1024)
+        huge_file = SimpleUploadedFile("statement.csv", huge_bytes, content_type="text/csv")
+        req_huge = api_factory.post(
+            "/api/v1/accounting/bank-statements/upload/",
+            {"file": huge_file, "bank_ledger_id": str(bank_ledger.id)},
+            format="multipart",
+            HTTP_X_COMPANY_ID=str(self.company1.id)
+        )
+        force_authenticate(req_huge, user=self.user1)
+
+        res_huge = view(req_huge)
+        self.assertEqual(res_huge.status_code, 400)
+        self.assertIn("exceeds the 15MB limit", res_huge.data["error"])
+
+        # 3. Unhandled internal error returns HTTP 500 with correlation_id and NO internal path leak
+        csv_file = SimpleUploadedFile("statement.csv", b"Date,Narration,Amount\n2026-05-01,Test,100", content_type="text/csv")
+        with patch("apps.accounting.services.bank_statement_service.BankStatementService.parse_statement", side_effect=RuntimeError("/var/secret/db_credentials.txt: Connection refused")):
+            req_err = api_factory.post(
+                "/api/v1/accounting/bank-statements/upload/",
+                {"file": csv_file, "bank_ledger_id": str(bank_ledger.id)},
+                format="multipart",
+                HTTP_X_COMPANY_ID=str(self.company1.id)
+            )
+            force_authenticate(req_err, user=self.user1)
+
+            res_err = view(req_err)
+            self.assertEqual(res_err.status_code, 500)
+            self.assertIn("correlation_id", res_err.data)
+            self.assertNotIn("/var/secret", res_err.data["error"])
+            self.assertEqual(res_err.data["error"], "An internal error occurred while parsing the bank statement.")
+
+    def test_08_credit_debit_note_cumulative_reversal_lock(self):
+        """
+        V-07: Verifies row-locking and cumulative reversal boundaries for credit notes
+        preventing over-reversals.
+        """
+        from apps.accounting.services.credit_debit_note_service import CreditDebitNoteService
+        from apps.inventory.models import Product, ProductCategory
+        from django.core.exceptions import ValidationError
+
+        cat = ProductCategory.objects.create(company=self.company1, name="Standard Goods")
+        prod = Product.objects.create(
+            company=self.company1,
+            category=cat,
+            name="V-Belt B-52",
+            selling_price=Decimal("1000.00"),
+            gst_rate=Decimal("18.00")
+        )
+        customer = Ledger.objects.create(
+            company=self.company1,
+            group=self.asset_grp,
+            name="Beta Distributors",
+            ledger_type="CUSTOMER",
+            state_code="09"
+        )
+
+        # Create original sales invoice of ₹1,180 (₹1,000 taxable + ₹180 GST)
+        sales_inv = Voucher.objects.create(
+            company=self.company1,
+            financial_year=self.fy,
+            voucher_type="SALES",
+            voucher_number="INV/26-27/0001",
+            voucher_date=datetime.date(2026, 5, 1),
+            party_ledger=customer,
+            total_amount=Decimal("1180.00"),
+            status="POSTED",
+            created_by=self.user1
+        )
+
+        items_data = [{
+            "product_id": str(prod.id),
+            "quantity": 1,
+            "rate": Decimal("1000.00"),
+            "discount_percent": Decimal("0.00"),
+            "gst_rate": Decimal("18.00")
+        }]
+
+        # 1. First credit note for ₹1,180 succeeds
+        cn1 = CreditDebitNoteService.generate_credit_note(
+            company=self.company1,
+            user=self.user1,
+            party_ledger=customer,
+            items_data=items_data,
+            original_invoice=sales_inv,
+            voucher_date=datetime.date(2026, 5, 2)
+        )
+        self.assertEqual(cn1.total_amount, Decimal("1180.00"))
+
+        # 2. Second credit note against the same invoice would exceed original invoice total -> raises ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            CreditDebitNoteService.generate_credit_note(
+                company=self.company1,
+                user=self.user1,
+                party_ledger=customer,
+                items_data=items_data,
+                original_invoice=sales_inv,
+                voucher_date=datetime.date(2026, 5, 3)
+            )
+        self.assertIn("exceeds original sales invoice", str(ctx.exception))
