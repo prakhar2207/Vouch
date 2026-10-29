@@ -159,8 +159,9 @@ class VoucherService:
             )
 
         # Credit Note / Debit Note safeguard against original invoice
-        if voucher.voucher_type in ('CREDIT_NOTE', 'DEBIT_NOTE') and voucher.original_invoice:
-            orig = voucher.original_invoice
+        # VSA-03: Acquire select_for_update() row lock on original invoice to serialize concurrent posting
+        if voucher.voucher_type in ('CREDIT_NOTE', 'DEBIT_NOTE') and voucher.original_invoice_id:
+            orig = Voucher.objects.select_for_update().get(id=voucher.original_invoice_id)
             from django.db.models import Sum
             prior_reversals = Voucher.objects.filter(
                 company=voucher.company,

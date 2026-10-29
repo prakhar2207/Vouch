@@ -823,15 +823,23 @@ class SyncStreamAPIView(APIView):
         ticket_company_id = None
 
         if ticket:
+            consumed_key = f"sse_ticket_consumed:{ticket}"
+            # VSA-10: Atomically claim redemption via SETNX (cache.add returns True ONLY if key did not exist)
+            if not cache.add(consumed_key, True, timeout=60):
+                return Response(
+                    {"error": "Stream ticket has already been consumed or is being processed."},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+
             cache_key = f"sse_ticket:{ticket}"
             ticket_data = cache.get(cache_key)
+            # SINGLE-USE: Burn immediately upon consumption
+            cache.delete(cache_key)
             if not ticket_data:
                 return Response(
                     {"error": "Invalid or expired stream ticket. Please request a new ticket via /api/v1/sync/stream-ticket/."},
                     status=status.HTTP_401_UNAUTHORIZED
                 )
-            # SINGLE-USE: Burn immediately upon consumption
-            cache.delete(cache_key)
             try:
                 user = User.objects.get(id=ticket_data['user_id'])
                 request.user = user

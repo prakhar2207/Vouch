@@ -138,49 +138,52 @@ class CompanyViewSet(viewsets.ModelViewSet):
         return Company.objects.filter(users__user=self.request.user, is_active=True).select_related('settings')
 
     def perform_create(self, serializer):
-        import base64
-        # Create the company
-        company = serializer.save()
+        from django.db import transaction
 
-        # Handle Logo compression and storage
-        logo_file = self.request.FILES.get('logo')
-        if logo_file:
-            try:
-                company.logo_data = process_and_compress_image(logo_file, max_width=600, max_height=300)
-                company.save(update_fields=['logo_data'])
-            except Exception as e:
-                print(f"Error compressing company logo: {e}")
-        elif 'logo_data' in self.request.data and self.request.data['logo_data']:
-            company.logo_data = self.request.data['logo_data']
-            company.save(update_fields=['logo_data'])
-
-        # Handle Signature
-        sig_file = self.request.FILES.get('proprietor_signature')
-        if sig_file:
-            try:
-                company.signature_data = process_and_compress_image(sig_file, max_width=400, max_height=180)
-                company.save(update_fields=['signature_data'])
-            except Exception as e:
-                print(f"Error encoding signature: {e}")
-        elif 'signature_data' in self.request.data and self.request.data['signature_data']:
-            company.signature_data = self.request.data['signature_data']
-            company.save(update_fields=['signature_data'])
-
+        # Pre-check: Platform administrators cannot create or own tenant business companies
         if getattr(self.request.user, 'is_superuser', False) or self.request.user.email.strip().lower() == 'prakharssa@gmail.com':
             raise PermissionDenied("Platform administrators cannot create or own tenant business companies.")
 
-        # Automatically map the user as the OWNER of the newly created company
-        UserCompany.objects.create(
-            user=self.request.user,
-            company=company,
-            role='OWNER'
-        )
-        if self.request.user.role != 'OWNER':
-            self.request.user.role = 'OWNER'
-            self.request.user.save(update_fields=['role'])
+        with transaction.atomic():
+            # Create the company within atomic boundary
+            company = serializer.save()
 
-        # Auto-provision complete chart of accounts, warehouse, and financial year
-        provision_company_defaults(company)
+            # Handle Logo compression and storage
+            logo_file = self.request.FILES.get('logo')
+            if logo_file:
+                try:
+                    company.logo_data = process_and_compress_image(logo_file, max_width=600, max_height=300)
+                    company.save(update_fields=['logo_data'])
+                except Exception as e:
+                    print(f"Error compressing company logo: {e}")
+            elif 'logo_data' in self.request.data and self.request.data['logo_data']:
+                company.logo_data = self.request.data['logo_data']
+                company.save(update_fields=['logo_data'])
+
+            # Handle Signature
+            sig_file = self.request.FILES.get('proprietor_signature')
+            if sig_file:
+                try:
+                    company.signature_data = process_and_compress_image(sig_file, max_width=400, max_height=180)
+                    company.save(update_fields=['signature_data'])
+                except Exception as e:
+                    print(f"Error encoding signature: {e}")
+            elif 'signature_data' in self.request.data and self.request.data['signature_data']:
+                company.signature_data = self.request.data['signature_data']
+                company.save(update_fields=['signature_data'])
+
+            # Automatically map the user as the OWNER of the newly created company
+            UserCompany.objects.create(
+                user=self.request.user,
+                company=company,
+                role='OWNER'
+            )
+            if self.request.user.role != 'OWNER':
+                self.request.user.role = 'OWNER'
+                self.request.user.save(update_fields=['role'])
+
+            # Auto-provision complete chart of accounts, warehouse, and financial year
+            provision_company_defaults(company)
 
     def perform_update(self, serializer):
         company = self.get_object()
@@ -388,6 +391,14 @@ class CompanyViewSet(viewsets.ModelViewSet):
         if role not in allowed_roles:
             return Response({"success": False, "error": f"Invalid role. Allowed roles: {', '.join(allowed_roles)}"}, status=status.HTTP_400_BAD_REQUEST)
 
+        requester_role = get_user_company_role(request.user, company)
+        # VSA-01: An Administrator cannot invite or grant the Owner role; only existing Owners can assign Owner.
+        if role == 'OWNER' and requester_role != 'OWNER':
+            return Response(
+                {"success": False, "error": "Permission denied: Only Company Owners can assign or invite members with the Owner role."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         user = User.objects.filter(email__iexact=email).first()
         if not user:
             import secrets
@@ -438,6 +449,13 @@ class CompanyViewSet(viewsets.ModelViewSet):
         allowed_roles = ['ADMIN', 'OWNER', 'CA', 'EMPLOYEE', 'VIEWER']
         if new_role not in allowed_roles:
             return Response({"success": False, "error": f"Invalid role: {new_role}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # VSA-01: An Administrator cannot promote a member to the Owner role; only existing Owners can grant Owner.
+        if new_role == 'OWNER' and requester_role != 'OWNER':
+            return Response(
+                {"success": False, "error": "Permission denied: Only Company Owners can promote a member to the Owner role."},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         uc.role = new_role
         uc.save(update_fields=['role'])

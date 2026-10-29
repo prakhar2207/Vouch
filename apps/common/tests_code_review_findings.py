@@ -494,3 +494,188 @@ class CodeReviewAuditFindingsTests(TestCase):
                 voucher_date=datetime.date(2026, 5, 3)
             )
         self.assertIn("exceeds original sales invoice", str(ctx.exception))
+
+    def test_09_company_admin_cannot_grant_owner_privileges(self):
+        """
+        VSA-01: Verifies that a Company Administrator cannot invite or promote a member
+        to the OWNER role; only existing Owners can grant or transfer the Owner role.
+        """
+        from apps.companies.views import CompanyViewSet
+        from apps.companies.models import UserCompany
+        from rest_framework.test import APIRequestFactory, force_authenticate
+
+        api_factory = APIRequestFactory()
+        admin_user = User.objects.create_user(email="admin@auditcorp.com", password="AdminPassword123!")
+        target_user = User.objects.create_user(email="member@auditcorp.com", password="MemberPassword123!")
+
+        # Set up requester as ADMIN and user1 as OWNER
+        UserCompany.objects.get_or_create(company=self.company1, user=self.user1, defaults={"role": "OWNER"})
+        UserCompany.objects.create(company=self.company1, user=admin_user, role="ADMIN")
+        target_uc = UserCompany.objects.create(company=self.company1, user=target_user, role="EMPLOYEE")
+
+        view_members = CompanyViewSet.as_view({"post": "members"})
+        view_member_detail = CompanyViewSet.as_view({"patch": "member_detail"})
+
+        # 1. Admin attempts to invite new member as OWNER -> must receive HTTP 403
+        req_invite = api_factory.post(
+            f"/api/v1/companies/{self.company1.id}/members/",
+            {"email": "new_candidate@auditcorp.com", "role": "OWNER"},
+            format="json"
+        )
+        force_authenticate(req_invite, user=admin_user)
+        res_invite = view_members(req_invite, pk=str(self.company1.id))
+        self.assertEqual(res_invite.status_code, 403)
+        self.assertIn("Only Company Owners can assign or invite", res_invite.data["error"])
+
+        # 2. Admin attempts to promote an existing member to OWNER -> must receive HTTP 403
+        req_promote = api_factory.patch(
+            f"/api/v1/companies/{self.company1.id}/members/{target_uc.id}/",
+            {"role": "OWNER"},
+            format="json"
+        )
+        force_authenticate(req_promote, user=admin_user)
+        res_promote = view_member_detail(req_promote, pk=str(self.company1.id), member_id=str(target_uc.id))
+        self.assertEqual(res_promote.status_code, 403)
+        self.assertIn("Only Company Owners can promote a member to the Owner role", res_promote.data["error"])
+
+        # 3. Owner promotes member to OWNER -> succeeds (HTTP 200)
+        req_owner_promote = api_factory.patch(
+            f"/api/v1/companies/{self.company1.id}/members/{target_uc.id}/",
+            {"role": "OWNER"},
+            format="json"
+        )
+        force_authenticate(req_owner_promote, user=self.user1)
+        res_owner_promote = view_member_detail(req_owner_promote, pk=str(self.company1.id), member_id=str(target_uc.id))
+        self.assertEqual(res_owner_promote.status_code, 200)
+        target_uc.refresh_from_db()
+        self.assertEqual(target_uc.role, "OWNER")
+
+    def test_10_company_creation_precheck_atomic(self):
+        """
+        VSA-05: Verifies that platform administrators are denied company creation
+        before any database records or media are persisted (preventing orphaned records).
+        """
+        from apps.companies.views import CompanyViewSet
+        from apps.companies.models import Company
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from rest_framework.exceptions import PermissionDenied
+
+        api_factory = APIRequestFactory()
+        super_user = User.objects.create_superuser(email="platform_admin@srilekh.com", password="SuperPassword123!")
+
+        count_before = Company.objects.count()
+
+        view = CompanyViewSet.as_view({"post": "create"})
+        req = api_factory.post(
+            "/api/v1/companies/",
+            {"name": "Illicit Tenant Inc", "gstin": "09ABCDE1234F1Z5"},
+            format="json"
+        )
+        force_authenticate(req, user=super_user)
+
+        res = view(req)
+        self.assertEqual(res.status_code, 403)
+
+        # Invariant: No orphaned company was created
+        self.assertEqual(Company.objects.count(), count_before)
+
+    def test_11_ocr_company_authorization_and_sanitization(self):
+        """
+        VSA-06 / SEC-02 & VSA-09 / SEC-05: Verifies that OCR enforces company membership,
+        rejects cross-company access, validates file signatures, and sanitizes errors.
+        """
+        import base64
+        from apps.accounting.ocr_views import OCRExtractAPIView
+        from apps.companies.models import UserCompany
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from unittest.mock import patch
+
+        api_factory = APIRequestFactory()
+        # user1 is member of company1, user2 is NOT member of company1
+        UserCompany.objects.get_or_create(company=self.company1, user=self.user1, defaults={"role": "OWNER"})
+
+        view = OCRExtractAPIView.as_view()
+
+        valid_pdf_bytes = b"%PDF-1.4 dummy valid pdf content"
+        b64_pdf = base64.b64encode(valid_pdf_bytes).decode("utf-8")
+
+        # 1. Cross-company access: user2 trying to run OCR against company1 -> HTTP 403
+        req_unauth = api_factory.post(
+            "/api/v1/accounting/ocr/extract/",
+            {"file_base64": b64_pdf, "mime_type": "application/pdf"},
+            format="json",
+            HTTP_X_COMPANY_ID=str(self.company1.id)
+        )
+        force_authenticate(req_unauth, user=self.user2)
+        res_unauth = view(req_unauth)
+        self.assertEqual(res_unauth.status_code, 403)
+
+        # 2. Signature mismatch: MIME application/pdf but bytes are PNG -> HTTP 400
+        fake_pdf_b64 = base64.b64encode(b"NOT_A_PDF_STRING").decode("utf-8")
+        req_sig_mismatch = api_factory.post(
+            "/api/v1/accounting/ocr/extract/",
+            {"file_base64": fake_pdf_b64, "mime_type": "application/pdf"},
+            format="json",
+            HTTP_X_COMPANY_ID=str(self.company1.id)
+        )
+        force_authenticate(req_sig_mismatch, user=self.user1)
+        res_sig_mismatch = view(req_sig_mismatch)
+        self.assertEqual(res_sig_mismatch.status_code, 400)
+        self.assertIn("File signature mismatch", res_sig_mismatch.data["error"])
+
+        # 3. Internal error sanitization: hides server paths and returns correlation_id
+        with patch("apps.accounting.services.ocr_service.InvoiceOCRService.extract_from_base64", side_effect=RuntimeError("/etc/ssl/certs/internal_api.pem: handshake failed")):
+            req_err = api_factory.post(
+                "/api/v1/accounting/ocr/extract/",
+                {"file_base64": b64_pdf, "mime_type": "application/pdf"},
+                format="json",
+                HTTP_X_COMPANY_ID=str(self.company1.id)
+            )
+            force_authenticate(req_err, user=self.user1)
+            res_err = view(req_err)
+            self.assertEqual(res_err.status_code, 500)
+            self.assertIn("correlation_id", res_err.data)
+            self.assertNotIn("/etc/ssl", res_err.data["error"])
+            self.assertEqual(res_err.data["error"], "An internal error occurred while processing document OCR.")
+
+    def test_12_sse_stream_ticket_atomic_single_use_redemption(self):
+        """
+        VSA-10: Verifies that SSE stream tickets are redeemed atomically, preventing
+        concurrent replay attacks.
+        """
+        from apps.accounting.sync_views import SyncStreamTicketAPIView, SyncStreamAPIView
+        from apps.companies.models import UserCompany
+        from rest_framework.test import APIRequestFactory, force_authenticate
+
+        api_factory = APIRequestFactory()
+        UserCompany.objects.get_or_create(company=self.company1, user=self.user1, defaults={"role": "OWNER"})
+
+        # 1. Issue a stream ticket
+        view_ticket = SyncStreamTicketAPIView.as_view()
+        req_ticket = api_factory.post(
+            "/api/v1/sync/stream-ticket/",
+            {"company_id": str(self.company1.id)},
+            format="json",
+            HTTP_X_COMPANY_ID=str(self.company1.id)
+        )
+        force_authenticate(req_ticket, user=self.user1)
+        res_ticket = view_ticket(req_ticket)
+        self.assertEqual(res_ticket.status_code, 200)
+        ticket = res_ticket.data["ticket"]
+
+        # 2. First redemption of the ticket succeeds
+        view_stream = SyncStreamAPIView.as_view()
+        req_stream1 = api_factory.get(
+            f"/api/v1/sync/stream/?ticket={ticket}&company_id={self.company1.id}"
+        )
+        res_stream1 = view_stream(req_stream1)
+        # Should return 200 streaming response
+        self.assertEqual(res_stream1.status_code, 200)
+
+        # 3. Second redemption with the exact same ticket must be rejected atomically -> HTTP 401
+        req_stream2 = api_factory.get(
+            f"/api/v1/sync/stream/?ticket={ticket}&company_id={self.company1.id}"
+        )
+        res_stream2 = view_stream(req_stream2)
+        self.assertEqual(res_stream2.status_code, 401)
+        self.assertIn("already been consumed", res_stream2.data["error"])

@@ -168,6 +168,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, []);
 
   const handleLogout = () => {
+    try {
+      if (typeof window !== "undefined" && "caches" in window) {
+        caches.delete("srilekh-pages-cache").catch(() => {});
+      }
+      if (typeof navigator !== "undefined" && "serviceWorker" in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: "CLEAR_SESSION_CACHES" });
+      }
+    } catch {}
     removeTokens();
     router.push("/login");
   };

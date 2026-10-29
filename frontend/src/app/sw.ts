@@ -42,8 +42,8 @@ const accountingCustomCaching: RuntimeCaching[] = [
       networkTimeoutSeconds: 2,
       plugins: [
         new ExpirationPlugin({
-          maxEntries: 60,
-          maxAgeSeconds: 14 * 24 * 60 * 60, // 14 days
+          maxEntries: 20,
+          maxAgeSeconds: 24 * 60 * 60, // 24 hours (prevents stale HTML shells on shared devices)
         }),
         {
           handlerDidError: async ({ request }: any) => {
@@ -174,6 +174,17 @@ self.addEventListener("activate", (event: any) => {
       );
     })
   );
+});
+
+// VSA-12: Session cache purge listener on user logout (shared-device protection)
+self.addEventListener("message", (event: any) => {
+  if (event.data && event.data.type === "CLEAR_SESSION_CACHES") {
+    event.waitUntil(
+      caches.delete("srilekh-pages-cache").then(() => {
+        console.log("[SW] Cleared navigation page cache upon user logout.");
+      })
+    );
+  }
 });
 
 // Service Worker Background Sync Event Listener
