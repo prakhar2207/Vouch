@@ -325,6 +325,7 @@ class PartyIntelligenceService:
         # Check if amount matches an outstanding invoice of best party or any candidate
         if best_party and amount > Decimal('0.00'):
             unpaid_invoices = PaymentAllocationService.get_unpaid_invoices_for_party(company, best_party)
+            # 1-to-1 exact amount match
             for inv in unpaid_invoices:
                 rem_amt = Decimal(inv['remaining_amount'])
                 if rem_amt == amount:
@@ -335,6 +336,27 @@ class PartyIntelligenceService:
                     except Voucher.DoesNotExist:
                         pass
                     break
+
+            # 1-to-Many Multi-Invoice Settlement Detection:
+            # If no single invoice matched, check if payment settles multiple open invoices exactly
+            if not best_invoice and len(unpaid_invoices) > 1:
+                # Check running prefix sum (FIFO cumulative settlement)
+                cum_sum = Decimal('0.00')
+                matched_combo = []
+                for inv in unpaid_invoices:
+                    cum_sum += Decimal(inv['remaining_amount'])
+                    matched_combo.append(inv)
+                    if cum_sum == amount:
+                        best_score = min(1.0, best_score + 0.15)
+                        v_nums = ', '.join(f"#{x['voucher_number']}" for x in matched_combo)
+                        signals_triggered.append(f"Multi-invoice lump-sum settlement match ({len(matched_combo)} invoices: {v_nums} sum to ₹{amount})")
+                        try:
+                            best_invoice = Voucher.objects.get(id=matched_combo[0]['voucher_id'])
+                        except Voucher.DoesNotExist:
+                            pass
+                        break
+                    elif cum_sum > amount:
+                        break
 
         # If no party found yet, attempt amount match across all parties with unpaid invoices
         if not best_party and amount > Decimal('0.00'):

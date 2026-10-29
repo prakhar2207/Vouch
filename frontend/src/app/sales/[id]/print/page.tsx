@@ -1506,8 +1506,8 @@ export default function PrintInvoicePage() {
                                               Brand: {item.brand}
                                           </div>
                                       )}
-                                      {item.description && (
-                                          <div className={`${isCompactDensity ? 'text-[8.5px]' : 'text-[9.5px]'} text-slate-600 font-mono mt-0.5 whitespace-pre-wrap`}>
+                                      {showItemDescription && item.description && (
+                                          <div className={`${isCompactDensity ? 'text-[8.5px]' : 'text-[9.5px]'} text-slate-600 font-mono mt-0.5 whitespace-pre-wrap break-words leading-tight max-w-[280px]`}>
                                               {item.description}
                                           </div>
                                       )}
@@ -2594,8 +2594,8 @@ export default function PrintInvoicePage() {
                       </span>
                     )}
                   </div>
-                  {item.description && (
-                    <div className="text-[9.5px] font-mono text-slate-600 leading-tight mt-0.5 whitespace-pre-wrap">
+                  {showItemDescription && item.description && (
+                    <div className="text-[9.5px] font-mono text-slate-600 leading-tight mt-0.5 whitespace-pre-wrap break-words">
                       {item.description}
                     </div>
                   )}

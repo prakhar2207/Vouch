@@ -568,6 +568,11 @@ export default function SettingsPage() {
         if (salesInvoicePrefix) {
           localStorage.setItem(`vouch_company_prefix_${company.id}`, salesInvoicePrefix.trim());
         }
+        localStorage.setItem('vouch_show_brand_in_sales_invoice', String(showBrand));
+        localStorage.setItem('vouch_show_item_desc_in_sales_invoice', String(showItemDescription));
+        localStorage.setItem('vouch_print_firm_header_size', firmHeaderSize);
+        localStorage.setItem('vouch_print_item_sort_order', itemSortOrder);
+        localStorage.setItem('vouch_print_qr_mode', defaultQrMode);
       }
 
       toast.success('Settings Saved Successfully', `Changes saved for ${name || company.name}.`);

@@ -81,23 +81,11 @@ class BankReconciliationService:
             explicit_intent = payload.get('intent') or action_type
             is_supplier = (party.canonical_role == 'SUPPLIER') or (party.ledger_type == 'SUPPLIER') or ('SUPPLIER' in explicit_intent)
             
-            # Defensive double-entry guardrail:
-            # If transaction is linked to a Customer, ensure it is treated as a RECEIPT (money in)
-            # unless explicitly marked as a refund. If debit/credit amounts were previously flipped, fix them.
-            import re
-            if party.ledger_type == 'CUSTOMER' and not is_money_in:
-                if not re.search(r'\bREFUND\b', bank_tx.description, re.IGNORECASE) and explicit_intent != 'CONFIRM_CUSTOMER_REFUND':
-                    is_money_in = True
-                    bank_tx.credit_amount = amount
-                    bank_tx.debit_amount = Decimal('0.00')
-                    bank_tx.save(update_fields=['credit_amount', 'debit_amount'])
-            elif party.ledger_type == 'SUPPLIER' and is_money_in:
-                if not re.search(r'\bREFUND\b', bank_tx.description, re.IGNORECASE) and explicit_intent != 'CONFIRM_SUPPLIER_REFUND':
-                    is_money_in = False
-                    bank_tx.debit_amount = amount
-                    bank_tx.credit_amount = Decimal('0.00')
-                    bank_tx.save(update_fields=['credit_amount', 'debit_amount'])
-
+            # Statutory Audit Invariant:
+            # Raw bank statement records are strictly immutable. A bank withdrawal (debit) or deposit (credit)
+            # must never be altered or direction-flipped.
+            # - Customer money-out (debit): Payout/Refund/Rebate -> generates PAYMENT voucher (Dr. Customer, Cr. Bank)
+            # - Supplier money-in (credit): Recovery/Rebate/Refund -> generates RECEIPT voucher (Dr. Bank, Cr. Supplier)
             # Canonical voucher type based on direction
             v_type = 'RECEIPT' if is_money_in else 'PAYMENT'
 

@@ -555,14 +555,28 @@ function SalesInvoiceListContent() {
       toast.info('Downloading Tax Invoice PDF...');
       const token = getAccessToken();
       const activeCo = activeCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') || '' : '') || inv.companyId || inv.company_id || '';
-      const res = await axios.get(`${API_BASE_URL}/api/v1/documents/vouchers/${inv.id}/pdf/?download=1&fresh=1&copy=ORIGINAL&brand=1&company_id=${encodeURIComponent(activeCo)}&t=${Date.now()}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'X-Company-ID': activeCo,
-        },
-        responseType: 'blob',
-      });
-      const blob = new Blob([res.data], { type: 'application/pdf' });
+      let pdfData: any = null;
+      try {
+        const res = await axios.get(`${API_BASE_URL}/api/v1/documents/vouchers/${inv.id}/pdf/?download=1&fresh=1&copy=ORIGINAL&brand=1&company_id=${encodeURIComponent(activeCo)}&t=${Date.now()}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'X-Company-ID': activeCo,
+          },
+          responseType: 'blob',
+        });
+        pdfData = res.data;
+      } catch (docErr) {
+        // Fallback to direct accounting invoice pdf endpoint if documents endpoint is unavailable
+        const fallbackRes = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/pdf/?download=1&company_id=${encodeURIComponent(activeCo)}&t=${Date.now()}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'X-Company-ID': activeCo,
+          },
+          responseType: 'blob',
+        });
+        pdfData = fallbackRes.data;
+      }
+      const blob = new Blob([pdfData], { type: 'application/pdf' });
       const blobUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = blobUrl;

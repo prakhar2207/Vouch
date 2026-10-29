@@ -122,10 +122,20 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
       ? ['Date', 'Voucher #', 'Type', 'Particulars', 'Narration', 'Debit', 'Credit', 'Running Balance', 'Dr/Cr']
       : ['Date', 'Transaction', 'Voucher #', 'Amount', 'Effect', 'Balance'];
 
+    const formatIndianDate = (dStr: string) => {
+      if (!dStr) return '';
+      const parts = String(dStr).split('T')[0].split('-');
+      if (parts.length === 3 && parts[0].length === 4) {
+        return `${parts[2]}-${parts[1]}-${parts[0]}`;
+      }
+      return dStr;
+    };
+
     const rows = statementData.entries.map((e: any) => {
+      const formattedDate = formatIndianDate(e.date);
       if (showAccountingDetails) {
         return [
-          e.date || '',
+          formattedDate || '',
           e.voucher_number || '',
           e.voucher_type || '',
           `"${(e.particulars || '').replace(/"/g, '""')}"`,
@@ -137,7 +147,7 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
         ];
       } else {
         return [
-          e.date || '',
+          formattedDate || '',
           e.voucher_type || '',
           e.voucher_number || '',
           e.amount || '0.00',

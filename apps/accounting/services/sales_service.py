@@ -29,6 +29,8 @@ class SalesInvoiceService:
         buyer_phone=None,
         cartage_amount: Decimal = Decimal('0.00'),
         cartage_ledger: Ledger = None,
+        discount_amount: Decimal = Decimal('0.00'),
+        discount_ledger: Ledger = None,
         due_date=None,
         is_reverse_charge: bool = False
     ):
@@ -329,9 +331,15 @@ class SalesInvoiceService:
         except Exception:
             cartage_amt = Decimal('0.00')
 
+        # Add Bill-Level Discount (Discount Allowed) if specified
+        try:
+            bill_discount_amt = Decimal(str(discount_amount or '0.00')).quantize(Decimal('0.01'))
+        except Exception:
+            bill_discount_amt = Decimal('0.00')
+
         # Round Off calculation:
         # If decimal value < 0.5 then floor, if >= 0.5 then ceiling
-        unrounded_total = total_invoice_value + cartage_amt
+        unrounded_total = max(Decimal('0.00'), total_invoice_value + cartage_amt - bill_discount_amt)
         integer_part = Decimal(int(unrounded_total))
         decimal_part = unrounded_total - integer_part
         if decimal_part < Decimal('0.50'):
@@ -435,6 +443,17 @@ class SalesInvoiceService:
                 credit_amount=cartage_amt
             )
 
+        # Discount Allowed entry (Debit Discount Allowed on Sales Invoice)
+        if bill_discount_amt > Decimal('0.00'):
+            if not discount_ledger:
+                discount_ledger = SalesInvoiceService._get_or_create_discount_allowed_ledger(company)
+            LedgerEntry.objects.create(
+                voucher=voucher,
+                ledger=discount_ledger,
+                debit_amount=bill_discount_amt,
+                credit_amount=Decimal('0.00')
+            )
+
         # Trigger B2B Network EDI Handshake if buyer is a registered Company
         try:
             from apps.accounting.services.edi_service import EDIService
@@ -475,6 +494,33 @@ class SalesInvoiceService:
                 ledger_type="EXPENSE"
             )
         return cartage
+
+    @staticmethod
+    def _get_or_create_discount_allowed_ledger(company: Company) -> Ledger:
+        from apps.ledgers.models import LedgerGroup
+        existing = Ledger.objects.filter(company=company, name__iexact="Discount Allowed").first() or \
+                   Ledger.objects.filter(company=company, name__icontains="Discount Allowed").first()
+        if existing:
+            return existing
+
+        indirect_grp = LedgerGroup.objects.filter(company=company, name__iexact="Indirect Expenses").first() or \
+                       LedgerGroup.objects.filter(company=company, name__icontains="Indirect Expense").first()
+        if not indirect_grp:
+            indirect_grp, _ = LedgerGroup.objects.get_or_create(
+                company=company,
+                name="Indirect Expenses",
+                defaults={"nature": "EXPENSE"}
+            )
+        ledger, _ = Ledger.objects.get_or_create(
+            company=company,
+            name="Discount Allowed",
+            defaults={
+                "group": indirect_grp,
+                "ledger_type": "EXPENSE",
+                "opening_balance_type": "DEBIT"
+            }
+        )
+        return ledger
 
     @staticmethod
     def _get_or_create_round_off_ledger(company: Company) -> Ledger:

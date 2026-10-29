@@ -57,15 +57,34 @@ export default function QuickCreateModal() {
   const [price, setPrice] = useState(0);
 
   const firstInputRef = useRef<HTMLInputElement>(null);
+  const productInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isAltCOpen) {
       setActiveTab(altCEntityType);
       setError(null);
       fetchCompany();
-      setTimeout(() => firstInputRef.current?.focus(), 50);
+      setTimeout(() => {
+        if (altCEntityType === "PRODUCT") {
+          productInputRef.current?.focus();
+        } else {
+          firstInputRef.current?.focus();
+        }
+      }, 60);
     }
   }, [isAltCOpen, altCEntityType]);
+
+  useEffect(() => {
+    if (isAltCOpen) {
+      setTimeout(() => {
+        if (activeTab === "PRODUCT") {
+          productInputRef.current?.focus();
+        } else {
+          firstInputRef.current?.focus();
+        }
+      }, 60);
+    }
+  }, [activeTab]);
 
   const fetchCompany = async () => {
     try {
@@ -311,7 +330,7 @@ export default function QuickCreateModal() {
             <div>
               <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">Product / Item Name</label>
               <input
-                ref={firstInputRef}
+                ref={productInputRef}
                 type="text"
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}

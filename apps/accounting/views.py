@@ -141,6 +141,8 @@ class CreateSalesInvoiceAPIView(APIView):
                     buyer_phone=data.get('buyer_phone'),
                     cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
                     cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None,
+                    discount_amount=Decimal(str(data.get('discount_amount', 0) or 0)),
+                    discount_ledger=Ledger.objects.filter(id=data.get('discount_ledger_id'), company=company).first() if data.get('discount_ledger_id') else None,
                     is_reverse_charge=bool(data.get('is_reverse_charge', False))
                 )
                 

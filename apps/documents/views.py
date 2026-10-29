@@ -33,14 +33,37 @@ def _get_active_company(request):
 
 def _get_voucher_for_request(request, voucher_id):
     """
-    Resolves voucher ensuring multi-tenant authorization for request.user.
+    Resolves voucher ensuring multi-tenant authorization for request.user or token.
     If X-Company-ID or company_id param is provided, scopes to that company first.
     Otherwise, checks if the voucher belongs to ANY company request.user is an authorized member of.
     """
     cid = request.headers.get('X-Company-ID') or request.query_params.get('company_id')
     qs = Voucher.objects.filter(id=voucher_id)
+
+    # 1. Check share token authorization if provided
+    token = request.query_params.get('token', '').strip() if hasattr(request, 'query_params') else ''
+    if token:
+        try:
+            from apps.documents.services.share_service import DocumentShareService
+            share = DocumentShareService.resolve_share(token, request=request, record_event='DOWNLOADED')
+            if str(share.document_snapshot.source_id) == str(voucher_id):
+                return qs.defer('attachment_data', 'attachment_mime').select_related('company').first()
+        except Exception:
+            pass
+
+    # 2. Check user authorization
     if not getattr(request.user, 'is_superuser', False):
-        qs = qs.filter(company__users__user=request.user)
+        if hasattr(request, 'user') and request.user and request.user.is_authenticated:
+            from django.db.models import Q
+            user_filter = (
+                Q(company__users__user=request.user) |
+                Q(created_by=request.user) |
+                Q(inward_requests__recipient_company__users__user=request.user)
+            )
+            qs = qs.filter(user_filter).distinct()
+        else:
+            return None
+
     if cid:
         matched = qs.filter(company_id=cid).defer('attachment_data', 'attachment_mime').select_related('company').first()
         if matched:
@@ -95,7 +118,7 @@ class VoucherSnapshotAPIView(APIView):
 
 
 class VoucherPDFStreamAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    permission_classes = [AllowAny]
 
     def get(self, request, voucher_id):
         voucher = _get_voucher_for_request(request, voucher_id)

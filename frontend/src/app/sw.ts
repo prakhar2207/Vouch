@@ -144,13 +144,17 @@ const accountingCustomCaching: RuntimeCaching[] = [
   },
 ];
 
-installSerwist({
-  precacheEntries: self.__SW_MANIFEST,
-  skipWaiting: true,
-  clientsClaim: true,
-  navigationPreload: false,
-  runtimeCaching: [...accountingCustomCaching, ...safeDefaultCache],
-});
+try {
+  installSerwist({
+    precacheEntries: self.__SW_MANIFEST,
+    skipWaiting: true,
+    clientsClaim: true,
+    navigationPreload: false,
+    runtimeCaching: [...accountingCustomCaching, ...safeDefaultCache],
+  });
+} catch (swInitErr) {
+  console.warn('[SW] Serwist registration fallback triggered:', swInitErr);
+}
 
 // Precache offline page on install
 self.addEventListener("install", (event: any) => {

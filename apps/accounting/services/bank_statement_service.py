@@ -1491,8 +1491,9 @@ class BankStatementService:
             duplicate_count = 0
             auto_matched_count = 0
             suggested_count = 0
+            discrepancy_row_indices = {dr.get('row_index') for dr in chain_report.get('discrepancy_rows', []) if dr.get('row_index')}
 
-            for row in valid_rows:
+            for idx, row in enumerate(valid_rows):
                 raw_desc = str(row.get('description', '') or '')
                 norm_desc = cls.normalize_narration(raw_desc, max_length=500)[:500]
                 ref_no = cls.extract_reference_number(raw_desc, row.get('reference'))
@@ -1593,7 +1594,8 @@ class BankStatementService:
                         "is_duplicate": False,
                         "signals": match_res.get('signals', []),
                         "suggested_matches": match_res.get('suggested_matches', []),
-                        "is_bank_expense": match_res.get('is_bank_expense', False)
+                        "is_bank_expense": match_res.get('is_bank_expense', False),
+                        "balance_chain_discrepancy": ((idx + 1) in discrepancy_row_indices)
                     }
                 )
 
