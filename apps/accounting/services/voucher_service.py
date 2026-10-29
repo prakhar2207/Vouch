@@ -2,7 +2,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from decimal import Decimal
-from apps.accounting.models import Voucher, LedgerEntry
+from apps.accounting.models import Voucher, VoucherItem, LedgerEntry
 from apps.ledgers.models import Ledger, LedgerGroup
 
 class VoucherService:
@@ -176,6 +176,32 @@ class VoucherService:
                     f"Cumulative {voucher.get_voucher_type_display()} amount (₹{prior_reversals + voucher.total_amount}) "
                     f"exceeds original invoice #{orig.voucher_number} total (₹{orig.total_amount})."
                 )
+
+            # P1-FIX: Validate per-product cumulative returned quantity against original invoice
+            if not getattr(voucher, '_allow_excess_reversal', False):
+                for v_item in voucher.items.all():
+                    orig_items = orig.items.filter(product_id=v_item.product_id)
+                    orig_qty = sum(oi.quantity for oi in orig_items)
+                    if orig_qty <= Decimal('0.00'):
+                        voucher.status = 'DRAFT'
+                        voucher.save(update_fields=['status'])
+                        raise ValidationError(
+                            f"Product '{v_item.product.name}' was not part of original invoice #{orig.voucher_number}."
+                        )
+                    prior_returned_qty = VoucherItem.objects.filter(
+                        voucher__company=voucher.company,
+                        voucher__original_invoice=orig,
+                        voucher__voucher_type=voucher.voucher_type,
+                        voucher__status='POSTED',
+                        product_id=v_item.product_id
+                    ).exclude(voucher_id=voucher.id).aggregate(tot=Sum('quantity'))['tot'] or Decimal('0.00')
+                    if (prior_returned_qty + v_item.quantity) > orig_qty:
+                        voucher.status = 'DRAFT'
+                        voucher.save(update_fields=['status'])
+                        raise ValidationError(
+                            f"Cumulative returned quantity ({prior_returned_qty + v_item.quantity}) for '{v_item.product.name}' "
+                            f"exceeds original quantity ({orig_qty}) on invoice #{orig.voucher_number}."
+                        )
             
         # Ensure company is populated on all ledger entries
         for entry in entries:
@@ -459,7 +485,7 @@ class VoucherService:
         reverts stock movements, and transitions original voucher to 'REVERSED'.
         Original voucher, items, and ledger entries remain permanently intact and auditable.
         """
-        from apps.accounting.models import Voucher, LedgerEntry
+        from apps.accounting.models import Voucher, VoucherItem, LedgerEntry
         from apps.inventory.services.stock_service import StockService
         from apps.audit.services.audit_service import AuditService
 

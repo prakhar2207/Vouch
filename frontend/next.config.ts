@@ -41,23 +41,6 @@ const nextConfig: NextConfig = {
             key: 'Permissions-Policy',
             value: 'camera=(self), microphone=(), geolocation=(), browsing-topics=()',
           },
-          {
-            key: 'Content-Security-Policy',
-            value: [
-              "default-src 'self'",
-              process.env.NODE_ENV === 'development'
-                ? "script-src 'self' 'unsafe-eval' 'unsafe-inline'"
-                : "script-src 'self' 'unsafe-inline'",
-              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-              "font-src 'self' data: https://fonts.gstatic.com",
-              "img-src 'self' data: blob: https:",
-              process.env.NODE_ENV === 'development'
-                ? "connect-src 'self' https://api.srilekh.com https://*.srilekh.com https://vouch-api-752s.onrender.com https://*.onrender.com http://localhost:8000 http://127.0.0.1:8000 ws: wss:"
-                : "connect-src 'self' https://api.srilekh.com https://*.srilekh.com https://vouch-api-752s.onrender.com https://*.onrender.com ws: wss:",
-              "worker-src 'self' blob:",
-              "frame-ancestors 'none'",
-            ].join('; '),
-          },
         ],
       },
     ];

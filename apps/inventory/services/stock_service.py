@@ -59,24 +59,71 @@ class StockService:
                     )
                 product.stock_quantity -= qty
 
-                # Compute mathematically sound COGS based on configured costing method
-                line_cogs, unit_cost = cls.calculate_cogs_valuation(product, qty, exclude_voucher_id=voucher.id)
+                if voucher.voucher_type == 'DEBIT_NOTE':
+                    # Purchase return to supplier: return at original purchase cost or item invoice rate
+                    entry_rate = None
+                    if voucher.original_invoice_id:
+                        orig_in_entries = InventoryEntry.objects.filter(
+                            voucher_id=voucher.original_invoice_id,
+                            product=product,
+                            movement_type='IN'
+                        )
+                        if orig_in_entries.exists():
+                            orig_tot = sum(e.total_value for e in orig_in_entries)
+                            orig_q = sum(e.quantity for e in orig_in_entries)
+                            if orig_q > Decimal('0.00'):
+                                entry_rate = (orig_tot / orig_q).quantize(Decimal('0.01'))
+                    if entry_rate is None:
+                        taxable_amt = Decimal(str(getattr(item, 'taxable_amount', 0) or 0))
+                        if taxable_amt > Decimal('0.00') and qty > Decimal('0.00'):
+                            entry_rate = (taxable_amt / qty).quantize(Decimal('0.01'))
+                        else:
+                            _, entry_rate = cls.calculate_cogs_valuation(product, qty, exclude_voucher_id=voucher.id)
+                    entry_total = (entry_rate * qty).quantize(Decimal('0.01'))
+                    line_cogs = entry_total
+                else:
+                    # SALES: Compute mathematically sound COGS based on configured costing method
+                    line_cogs, unit_cost = cls.calculate_cogs_valuation(product, qty, exclude_voucher_id=voucher.id)
+                    entry_rate = unit_cost
+                    entry_total = line_cogs
+
                 total_cogs += line_cogs
-                entry_rate = unit_cost
-                entry_total = line_cogs
             else:
                 product.stock_quantity += qty
-                # P0-9: Separate Recoverable GST from Inventory Cost
-                # Recoverable GST (Input CGST, SGST, IGST) is recorded in balance sheet tax asset ledgers.
-                # Only the taxable value (net of item discounts) represents inventory acquisition cost.
-                taxable_amt = Decimal(str(getattr(item, 'taxable_amount', 0) or 0))
-                if taxable_amt <= Decimal('0.00'):
-                    rate_val = Decimal(str(item.rate))
-                    disc_pct = Decimal(str(getattr(item, 'discount_percent', 0) or 0))
-                    taxable_amt = (qty * rate_val * (Decimal('100') - disc_pct) / Decimal('100')).quantize(Decimal('0.01'))
-                
-                entry_total = taxable_amt
-                entry_rate = (entry_total / qty).quantize(Decimal('0.01')) if qty > Decimal('0.00') else Decimal('0.00')
+                if voucher.voucher_type == 'CREDIT_NOTE':
+                    # P1-FIX: Customer sales return: returned inventory MUST be valued at original cost basis, NOT retail selling price
+                    entry_rate = None
+                    if voucher.original_invoice_id:
+                        orig_out_entries = InventoryEntry.objects.filter(
+                            voucher_id=voucher.original_invoice_id,
+                            product=product,
+                            movement_type='OUT'
+                        )
+                        if orig_out_entries.exists():
+                            orig_tot = sum(e.total_value for e in orig_out_entries)
+                            orig_q = sum(e.quantity for e in orig_out_entries)
+                            if orig_q > Decimal('0.00'):
+                                entry_rate = (orig_tot / orig_q).quantize(Decimal('0.01'))
+                    if entry_rate is None:
+                        # Fall back to configured costing policy (e.g. moving average of available stock)
+                        cost_rate = cls.calculate_cost_rate(product)
+                        if cost_rate > Decimal('0.00'):
+                            entry_rate = cost_rate
+                        else:
+                            entry_rate = product.purchase_price if (product.purchase_price and product.purchase_price > Decimal('0.00')) else Decimal('0.00')
+                    entry_total = (entry_rate * qty).quantize(Decimal('0.01'))
+                else:
+                    # PURCHASE: Separate Recoverable GST from Inventory Cost
+                    # Recoverable GST (Input CGST, SGST, IGST) is recorded in balance sheet tax asset ledgers.
+                    # Only the taxable value (net of item discounts) represents inventory acquisition cost.
+                    taxable_amt = Decimal(str(getattr(item, 'taxable_amount', 0) or 0))
+                    if taxable_amt <= Decimal('0.00'):
+                        rate_val = Decimal(str(item.rate))
+                        disc_pct = Decimal(str(getattr(item, 'discount_percent', 0) or 0))
+                        taxable_amt = (qty * rate_val * (Decimal('100') - disc_pct) / Decimal('100')).quantize(Decimal('0.01'))
+                    
+                    entry_total = taxable_amt
+                    entry_rate = (entry_total / qty).quantize(Decimal('0.01')) if qty > Decimal('0.00') else Decimal('0.00')
                 
             product.save(update_fields=['stock_quantity', 'updated_at'])
             

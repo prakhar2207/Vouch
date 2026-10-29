@@ -319,6 +319,11 @@ export async function pushPendingSalesInvoices(): Promise<number> {
 
   if (queued.length === 0) return 0;
 
+  // Resolve current active authenticated company context
+  const activeCompanyId = typeof localStorage !== "undefined"
+    ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company"))
+    : null;
+
   let uploadedCount = 0;
 
   for (const item of queued) {
@@ -332,6 +337,13 @@ export async function pushPendingSalesInvoices(): Promise<number> {
     }
 
     const p = op.payload;
+
+    // STRICT TENANT GUARD: Never sync outbox mutations belonging to a different tenant under current credentials
+    if (p.company_id && activeCompanyId && String(p.company_id).trim() !== String(activeCompanyId).trim()) {
+      console.warn(`[Tenant Guard] Skipping outbox item ${item.operationId}: mutation company (${p.company_id}) does not match active company (${activeCompanyId}).`);
+      continue;
+    }
+
     const vType = String(p.voucher_type || "SALES").toUpperCase();
 
     if (vType === "SALES") {

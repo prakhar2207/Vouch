@@ -171,6 +171,30 @@ class CreditDebitNoteService:
                     f"Set allow_excess=True if this is an approved special commercial adjustment."
                 )
 
+            # P1-FIX: Validate per-product cumulative returned quantity against original invoice
+            if not allow_excess:
+                from django.core.exceptions import ValidationError
+                from django.db.models import Sum
+                for item_dict in items_data:
+                    pid = item_dict.get('product_id') or item_dict.get('id')
+                    q = Decimal(str(item_dict.get('quantity', 1)))
+                    orig_sold_qty = sum(
+                        oi.quantity for oi in locked_orig.items.filter(product_id=pid)
+                    )
+                    if orig_sold_qty <= Decimal('0.00'):
+                        raise ValidationError(
+                            f"Product ID '{pid}' was not part of original sales invoice #{locked_orig.voucher_number}."
+                        )
+                    prior_ret_qty = VoucherItem.objects.filter(
+                        voucher__in=existing_cns,
+                        product_id=pid
+                    ).aggregate(tot=Sum('quantity'))['tot'] or Decimal('0.00')
+                    if (prior_ret_qty + q) > orig_sold_qty:
+                        raise ValidationError(
+                            f"Cumulative returned quantity ({prior_ret_qty + q}) for product ID '{pid}' "
+                            f"exceeds original sold quantity ({orig_sold_qty}) on sales invoice #{locked_orig.voucher_number}."
+                        )
+
         # Double-entry Accounting
         sales_ret_ledger = cls._resolve_sales_return_ledger(company)
         cgst_ledger = SalesInvoiceService._get_or_create_output_tax_ledger(company, 'CGST')
@@ -366,6 +390,30 @@ class CreditDebitNoteService:
                     f"exceeds original purchase bill #{locked_orig.voucher_number} total of ₹{locked_orig.total_amount}. "
                     f"Set allow_excess=True if this is an approved special commercial adjustment."
                 )
+
+            # P1-FIX: Validate per-product cumulative returned quantity against original bill
+            if not allow_excess:
+                from django.core.exceptions import ValidationError
+                from django.db.models import Sum
+                for item_dict in items_data:
+                    pid = item_dict.get('product_id') or item_dict.get('id')
+                    q = Decimal(str(item_dict.get('quantity', 1)))
+                    orig_purchased_qty = sum(
+                        oi.quantity for oi in locked_orig.items.filter(product_id=pid)
+                    )
+                    if orig_purchased_qty <= Decimal('0.00'):
+                        raise ValidationError(
+                            f"Product ID '{pid}' was not part of original purchase bill #{locked_orig.voucher_number}."
+                        )
+                    prior_ret_qty = VoucherItem.objects.filter(
+                        voucher__in=existing_dns,
+                        product_id=pid
+                    ).aggregate(tot=Sum('quantity'))['tot'] or Decimal('0.00')
+                    if (prior_ret_qty + q) > orig_purchased_qty:
+                        raise ValidationError(
+                            f"Cumulative returned quantity ({prior_ret_qty + q}) for product ID '{pid}' "
+                            f"exceeds original purchased quantity ({orig_purchased_qty}) on purchase bill #{locked_orig.voucher_number}."
+                        )
 
         # Double-entry Accounting
         pur_ret_ledger = cls._resolve_purchase_return_ledger(company)

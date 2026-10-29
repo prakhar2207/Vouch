@@ -323,3 +323,147 @@ export class VouchOfflineDB extends Dexie {
 }
 
 export const offlineDb = new VouchOfflineDB();
+
+/**
+ * Tab coordination channel to notify all open browser tabs to release
+ * IndexedDB locks and flush memory buffers when a tenant switches or logs out.
+ */
+let coordinationChannel: BroadcastChannel | null = null;
+if (typeof window !== "undefined" && "BroadcastChannel" in window) {
+  try {
+    coordinationChannel = new BroadcastChannel("vouch_offline_coordination");
+    coordinationChannel.onmessage = (event) => {
+      const data = event.data;
+      if (data?.type === "CLOSE_DB_CONNECTION") {
+        try {
+          offlineDb.close();
+        } catch {}
+      }
+    };
+  } catch {}
+}
+
+/**
+ * Safely purges offline IndexedDB and cache storage data.
+ * - If targetCompanyId is supplied (company switch): purges all records belonging to that company.
+ * - If targetCompanyId is omitted (logout): performs complete purge across all tables, closes connections,
+ *   coordinates with open tabs, and attempts resilient database reset without blocking if another tab is active.
+ */
+export async function safePurgeTenantData(targetCompanyId?: string | null): Promise<void> {
+  if (typeof window === "undefined") return;
+
+  try {
+    // 1. Notify other open tabs to close their Dexie connections
+    if (coordinationChannel) {
+      try {
+        coordinationChannel.postMessage({ type: "CLOSE_DB_CONNECTION", targetCompanyId });
+      } catch {}
+    }
+
+    // 2. Ensure db is open before clearing tables
+    if (!offlineDb.isOpen()) {
+      await offlineDb.open().catch(() => {});
+    }
+
+    if (targetCompanyId) {
+      // Scoped purge for a specific tenant during company switch
+      await Promise.allSettled([
+        offlineDb.syncedVouchers.where("companyId").equals(targetCompanyId).delete(),
+        offlineDb.syncedLedgers.where("companyId").equals(targetCompanyId).delete(),
+        offlineDb.syncedProducts.where("companyId").equals(targetCompanyId).delete(),
+        offlineDb.syncedBankTransactions.where("companyId").equals(targetCompanyId).delete(),
+        offlineDb.syncedPaymentAllocations.where("companyId").equals(targetCompanyId).delete(),
+        offlineDb.analyticsDaily.where("companyId").equals(targetCompanyId).delete(),
+        offlineDb.analyticsParty.where("companyId").equals(targetCompanyId).delete(),
+        offlineDb.syncMeta.where("companyId").equals(targetCompanyId).delete(),
+        offlineDb.masters.where("key").startsWith(`company_${targetCompanyId}`).delete(),
+      ]);
+
+      // Remove operations and outbox items for this company
+      const allOps = await offlineDb.operationLog.toArray().catch(() => []);
+      const opIdsToDelete = allOps
+        .filter((op) => op.payload?.company_id === targetCompanyId || op.payload?.company === targetCompanyId)
+        .map((op) => op.operationId);
+
+      if (opIdsToDelete.length > 0) {
+        await Promise.allSettled([
+          offlineDb.operationLog.bulkDelete(opIdsToDelete),
+          offlineDb.outboxQueue.where("operationId").anyOf(opIdsToDelete).delete(),
+        ]);
+      }
+    } else {
+      // Complete global purge on logout: clear all tables immediately
+      // This is 100% resilient and NEVER hangs even if other tabs are holding db locks
+      await Promise.allSettled(offlineDb.tables.map((table) => table.clear().catch(() => {})));
+
+      // Close Dexie and attempt clean deleteDatabase with a strict 2-second fallback timeout
+      try {
+        offlineDb.close();
+      } catch {}
+
+      await new Promise<void>((resolve) => {
+        let finished = false;
+        const timer = setTimeout(() => {
+          if (!finished) {
+            finished = true;
+            resolve();
+          }
+        }, 2000);
+
+        try {
+          const req = indexedDB.deleteDatabase("VouchOfflineDB");
+          req.onsuccess = () => {
+            if (!finished) {
+              finished = true;
+              clearTimeout(timer);
+              resolve();
+            }
+          };
+          req.onerror = () => {
+            if (!finished) {
+              finished = true;
+              clearTimeout(timer);
+              resolve();
+            }
+          };
+          req.onblocked = () => {
+            // Another tab has not closed yet; fallback to resolve without blocking UI
+            console.warn("[IndexedDB] Database deletion blocked by another tab; tables were already cleared.");
+            if (!finished) {
+              finished = true;
+              clearTimeout(timer);
+              resolve();
+            }
+          };
+        } catch {
+          if (!finished) {
+            finished = true;
+            clearTimeout(timer);
+            resolve();
+          }
+        }
+      });
+    }
+
+    // 3. Purge Service Worker and CacheStorage caches
+    if ("caches" in window) {
+      try {
+        const cacheNames = await caches.keys().catch(() => []);
+        for (const name of cacheNames) {
+          if (name.includes("srilekh") || name.includes("vouch") || name.includes("pages")) {
+            await caches.delete(name).catch(() => {});
+          }
+        }
+      } catch {}
+    }
+
+    // 4. Notify coordination channel that purge completed
+    if (coordinationChannel) {
+      try {
+        coordinationChannel.postMessage({ type: "PURGE_COMPLETE", targetCompanyId });
+      } catch {}
+    }
+  } catch (err) {
+    console.error("[safePurgeTenantData] Error purging offline tenant data:", err);
+  }
+}

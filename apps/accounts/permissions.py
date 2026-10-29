@@ -163,24 +163,33 @@ class BaseCompanyPermission(BasePermission):
         # 4. From related explicit IDs in view kwargs
         voucher_id = view.kwargs.get('voucher_id')
         if voucher_id:
-            from apps.accounting.models import Voucher
-            cid = Voucher.objects.filter(id=voucher_id).values_list('company_id', flat=True).first()
-            if cid:
-                return get_company_by_id(cid)
+            try:
+                from apps.accounting.models import Voucher
+                cid = Voucher.objects.filter(id=voucher_id).values_list('company_id', flat=True).first()
+                if cid:
+                    return get_company_by_id(cid)
+            except Exception:
+                pass
 
         product_id = view.kwargs.get('product_id')
         if product_id:
-            from apps.inventory.models import Product
-            cid = Product.objects.filter(id=product_id).values_list('company_id', flat=True).first()
-            if cid:
-                return get_company_by_id(cid)
+            try:
+                from apps.inventory.models import Product
+                cid = Product.objects.filter(id=product_id).values_list('company_id', flat=True).first()
+                if cid:
+                    return get_company_by_id(cid)
+            except Exception:
+                pass
 
         ledger_id = view.kwargs.get('ledger_id')
         if ledger_id:
-            from apps.ledgers.models import Ledger
-            cid = Ledger.objects.filter(id=ledger_id).values_list('company_id', flat=True).first()
-            if cid:
-                return get_company_by_id(cid)
+            try:
+                from apps.ledgers.models import Ledger
+                cid = Ledger.objects.filter(id=ledger_id).values_list('company_id', flat=True).first()
+                if cid:
+                    return get_company_by_id(cid)
+            except Exception:
+                pass
 
         # 5. From request data or query params
         if hasattr(request, 'data') and isinstance(request.data, dict):

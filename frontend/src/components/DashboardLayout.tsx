@@ -1,3 +1,4 @@
+import { safePurgeTenantData } from '@/lib/db/offlineDb';
 "use client";
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
@@ -167,8 +168,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     };
   }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     try {
+      await safePurgeTenantData();
       if (typeof window !== "undefined" && "caches" in window) {
         caches.delete("srilekh-pages-cache").catch(() => {});
       }

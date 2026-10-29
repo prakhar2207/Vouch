@@ -3,6 +3,7 @@ from rest_framework.views import exception_handler
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import Throttled, ValidationError
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,17 @@ def custom_exception_handler(exc, context):
     ValidationError, and 429 Throttled exceptions, return a structured DRF Response
     with a consistent JSON format: {"error": "...", "detail": "..."}.
     """
+    if isinstance(exc, DjangoValidationError):
+        msg = exc.message if hasattr(exc, 'message') else (exc.messages[0] if hasattr(exc, 'messages') and exc.messages else str(exc))
+        return Response(
+            {
+                "success": False,
+                "error": msg,
+                "detail": str(exc),
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
     response = exception_handler(exc, context)
 
     if response is not None:
@@ -65,4 +77,3 @@ def custom_exception_handler(exc, context):
         },
         status=status.HTTP_500_INTERNAL_SERVER_ERROR
     )
-

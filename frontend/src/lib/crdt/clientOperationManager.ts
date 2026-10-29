@@ -376,6 +376,15 @@ export class ClientOperationManager {
         console.warn(`[Sync skipped] Missing company_id on outbox transaction ${txId}. Cannot sync without company context.`);
         continue;
       }
+
+      // STRICT TENANT GUARD: Never sync outbox mutations belonging to a different tenant under current credentials
+      const activeCompanyId = typeof window !== "undefined"
+        ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company"))
+        : null;
+      if (activeCompanyId && companyId !== activeCompanyId) {
+        console.warn(`[Tenant Guard] Refusing to push transaction ${txId} for company ${companyId} under active session ${activeCompanyId}`);
+        continue;
+      }
       const canonicalTx = firstOp.payload?.canonical_transaction;
       const canonicalTxHash = firstOp.payload?.canonical_tx_hash;
 

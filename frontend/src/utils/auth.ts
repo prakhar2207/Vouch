@@ -1,3 +1,4 @@
+import { safePurgeTenantData } from '@/lib/db/offlineDb';
 import Cookies from 'js-cookie';
 import { jwtDecode } from 'jwt-decode';
 
@@ -65,6 +66,9 @@ export const getRefreshToken = (): string | undefined => {
 };
 
 export const removeTokens = () => {
+  try {
+    safePurgeTenantData().catch(() => {});
+  } catch {}
   Cookies.remove('access_token', { path: '/' });
   Cookies.remove('refresh_token', { path: '/' });
   Cookies.remove('access_token');

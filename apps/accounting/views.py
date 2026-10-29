@@ -2707,6 +2707,9 @@ class UniversalVoucherAPIView(APIView):
                         )
                     elif voucher_type == 'CREDIT_NOTE':
                         from apps.accounting.services.credit_debit_note_service import CreditDebitNoteService
+                        orig_inv = None
+                        if data.get('original_invoice_id'):
+                            orig_inv = Voucher.objects.filter(id=data.get('original_invoice_id'), company=company).first()
                         voucher = CreditDebitNoteService.generate_credit_note(
                             company=company,
                             user=request.user,
@@ -2715,10 +2718,14 @@ class UniversalVoucherAPIView(APIView):
                             reason=data.get('reason', 'Sales Return'),
                             original_invoice_number=data.get('reference_number') or data.get('original_invoice_number'),
                             voucher_date=voucher_date,
-                            narration=narration
+                            narration=narration,
+                            original_invoice=orig_inv
                         )
                     elif voucher_type == 'DEBIT_NOTE':
                         from apps.accounting.services.credit_debit_note_service import CreditDebitNoteService
+                        orig_inv = None
+                        if data.get('original_invoice_id'):
+                            orig_inv = Voucher.objects.filter(id=data.get('original_invoice_id'), company=company).first()
                         voucher = CreditDebitNoteService.generate_debit_note(
                             company=company,
                             user=request.user,
@@ -2727,7 +2734,8 @@ class UniversalVoucherAPIView(APIView):
                             reason=data.get('reason', 'Purchase Return'),
                             original_invoice_number=data.get('reference_number') or data.get('original_invoice_number'),
                             voucher_date=voucher_date,
-                            narration=narration
+                            narration=narration,
+                            original_invoice=orig_inv
                         )
 
                     # Save attachment if provided (auto-compressed under 2MB)
