@@ -328,6 +328,25 @@ export class ClientOperationManager {
       return { syncedCount: 0, receivedCount: 0, status: "OFFLINE" };
     }
 
+    // Cross-tab synchronization lock: Prevents duplicate sync loops in separate browser tabs
+    if (typeof navigator !== "undefined" && "locks" in navigator) {
+      return await (navigator as any).locks.request("vouch_outbox_sync_mutex", { ifAvailable: true }, async (lock: any) => {
+        if (!lock) {
+          return { syncedCount: 0, receivedCount: 0, status: "LOCKED_BY_OTHER_TAB" };
+        }
+        return await this._doSyncOutboxWithServer(apiBaseUrl);
+      });
+    }
+
+    return await this._doSyncOutboxWithServer(apiBaseUrl);
+  }
+
+  private static async _doSyncOutboxWithServer(apiBaseUrl?: string): Promise<{
+    syncedCount: number;
+    receivedCount: number;
+    status: string;
+  }> {
+
     const baseUrl = apiBaseUrl || API_BASE_URL || "";
     const queuedOps = await offlineDb.outboxQueue
       .where("status")

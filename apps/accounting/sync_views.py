@@ -14,9 +14,12 @@ from rest_framework import status
 from rest_framework_simplejwt.tokens import AccessToken
 from django.db import transaction
 
+from django.core.exceptions import ValidationError
+
 from apps.companies.models import Company
-from apps.ledgers.models import Ledger
+from apps.ledgers.models import Ledger, LedgerGroup
 from apps.inventory.models import Product
+from apps.accounting.services.credit_debit_note_service import CreditDebitNoteService
 from apps.accounting.models import Voucher, VoucherItem, LedgerEntry, FinancialYear, OfflineCommand, SyncEvent
 from apps.common.tenant import get_company_product, get_company_ledger
 from apps.common.money import to_decimal, quantize_money
@@ -450,18 +453,98 @@ class SyncPushAPIView(APIView):
 
             try:
                 with transaction.atomic():
+                    # Concurrency Lock: lock command row to serialize and prevent double processing
+                    cmd_obj = OfflineCommand.objects.select_for_update().get(id=cmd_obj.id)
+                    if cmd_obj.status == 'PROCESSED' and cmd_obj.result_voucher:
+                        cached_v = cmd_obj.result_voucher
+                        v_data = {
+                            'id': str(cached_v.id),
+                            'companyId': str(cached_v.company_id),
+                            'voucherType': cached_v.voucher_type,
+                            'voucherNumber': cached_v.voucher_number,
+                            'voucherDate': str(cached_v.voucher_date),
+                            'totalAmount': str(cached_v.total_amount),
+                            'status': cached_v.status,
+                            'partyLedgerId': str(cached_v.party_ledger_id) if cached_v.party_ledger_id else None,
+                            'partyName': cached_v.party_ledger.name if cached_v.party_ledger else (cached_v.buyer_name or ''),
+                        }
+                        processed_commands.append({
+                            'command_id': cmd_id,
+                            'status': 'PROCESSED',
+                            'voucher_id': str(cached_v.id),
+                            'voucher_number': cached_v.voucher_number,
+                            'idempotent_cached': True,
+                            'voucher_data': v_data
+                        })
+                        continue
+
                     voucher = None
 
-                    if 'SALE' in cmd_type:
+                    if 'CREDIT_NOTE' in cmd_type:
                         party_ledger_id = payload.get('party_ledger_id')
                         party_ledger = get_company_ledger(company, party_ledger_id, "Party Ledger") if party_ledger_id else None
                         if not party_ledger:
-                            cash_grp, _ = Ledger.objects.get_or_create(company=company, name="Cash", defaults={"ledger_type": "CASH"})
-                            party_ledger = cash_grp
+                            cash_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Cash-in-Hand", defaults={"nature": "ASSET"})
+                            party_ledger, _ = Ledger.objects.get_or_create(company=company, name="Cash", defaults={"ledger_type": "CASH", "group": cash_grp})
+
+                        orig_inv = None
+                        orig_inv_id = payload.get('original_invoice_id')
+                        if orig_inv_id:
+                            orig_inv = Voucher.objects.filter(company=company, id=orig_inv_id).first()
+                            if not orig_inv:
+                                raise ValidationError(f"Original sales invoice '{orig_inv_id}' not found for credit note.")
+
+                        voucher = CreditDebitNoteService.generate_credit_note(
+                            company=company,
+                            user=request.user,
+                            party_ledger=party_ledger,
+                            items_data=payload.get('items', []),
+                            reason=payload.get('reason', 'Sales Return'),
+                            original_invoice_number=payload.get('original_invoice_number') or (orig_inv.voucher_number if orig_inv else None),
+                            voucher_date=payload.get('voucher_date'),
+                            narration=payload.get('narration', ''),
+                            original_invoice=orig_inv,
+                            allow_excess=payload.get('allow_excess', False)
+                        )
+
+                    elif 'DEBIT_NOTE' in cmd_type:
+                        party_ledger_id = payload.get('party_ledger_id')
+                        party_ledger = get_company_ledger(company, party_ledger_id, "Party Ledger") if party_ledger_id else None
+                        if not party_ledger:
+                            cash_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Cash-in-Hand", defaults={"nature": "ASSET"})
+                            party_ledger, _ = Ledger.objects.get_or_create(company=company, name="Cash", defaults={"ledger_type": "CASH", "group": cash_grp})
+
+                        orig_inv = None
+                        orig_inv_id = payload.get('original_invoice_id')
+                        if orig_inv_id:
+                            orig_inv = Voucher.objects.filter(company=company, id=orig_inv_id).first()
+                            if not orig_inv:
+                                raise ValidationError(f"Original purchase invoice '{orig_inv_id}' not found for debit note.")
+
+                        voucher = CreditDebitNoteService.generate_debit_note(
+                            company=company,
+                            user=request.user,
+                            party_ledger=party_ledger,
+                            items_data=payload.get('items', []),
+                            reason=payload.get('reason', 'Purchase Return'),
+                            original_invoice_number=payload.get('original_invoice_number') or (orig_inv.voucher_number if orig_inv else None),
+                            voucher_date=payload.get('voucher_date'),
+                            narration=payload.get('narration', ''),
+                            original_invoice=orig_inv,
+                            allow_excess=payload.get('allow_excess', False)
+                        )
+
+                    elif 'SALE' in cmd_type:
+                        party_ledger_id = payload.get('party_ledger_id')
+                        party_ledger = get_company_ledger(company, party_ledger_id, "Party Ledger") if party_ledger_id else None
+                        if not party_ledger:
+                            cash_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Cash-in-Hand", defaults={"nature": "ASSET"})
+                            party_ledger, _ = Ledger.objects.get_or_create(company=company, name="Cash", defaults={"ledger_type": "CASH", "group": cash_grp})
 
                         sales_ledger = Ledger.objects.filter(company=company, ledger_type='SALES').first()
                         if not sales_ledger:
-                            sales_ledger, _ = Ledger.objects.get_or_create(company=company, name="Sales Account", defaults={"ledger_type": "SALES"})
+                            sales_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Sales Accounts", defaults={"nature": "INCOME"})
+                            sales_ledger, _ = Ledger.objects.get_or_create(company=company, name="Sales Account", defaults={"ledger_type": "SALES", "group": sales_grp})
 
                         voucher = SalesInvoiceService.generate_sales_invoice(
                             company=company,
@@ -487,7 +570,8 @@ class SyncPushAPIView(APIView):
                         party_ledger = get_company_ledger(company, party_ledger_id, "Party Ledger")
                         purchase_ledger = Ledger.objects.filter(company=company, ledger_type='PURCHASE').first()
                         if not purchase_ledger:
-                            purchase_ledger, _ = Ledger.objects.get_or_create(company=company, name="Purchase Account", defaults={"ledger_type": "PURCHASE"})
+                            purch_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Purchase Accounts", defaults={"nature": "EXPENSE"})
+                            purchase_ledger, _ = Ledger.objects.get_or_create(company=company, name="Purchase Account", defaults={"ledger_type": "PURCHASE", "group": purch_grp})
 
                         voucher = PurchaseInvoiceService.generate_purchase_invoice(
                             company=company,
@@ -515,7 +599,8 @@ class SyncPushAPIView(APIView):
                         payment_ledger_id = payload.get('payment_ledger_id')
                         payment_ledger = get_company_ledger(company, payment_ledger_id, "Payment Account") if payment_ledger_id else None
                         if not payment_ledger:
-                            payment_ledger, _ = Ledger.objects.get_or_create(company=company, name="Cash", defaults={"ledger_type": "CASH"})
+                            cash_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Cash-in-Hand", defaults={"nature": "ASSET"})
+                            payment_ledger, _ = Ledger.objects.get_or_create(company=company, name="Cash", defaults={"ledger_type": "CASH", "group": cash_grp})
 
                         v_date = payload.get('voucher_date') or timezone.now().date()
                         v_num, fy = InvoiceSequenceService.get_next_number(company, vtype, v_date)
@@ -543,6 +628,12 @@ class SyncPushAPIView(APIView):
                         VoucherService.post_voucher(voucher)
                         pref_inv_id = payload.get('invoice_id') or payload.get('allocated_invoice_id') or payload.get('preferred_invoice_id')
                         PaymentAllocationService.auto_allocate_voucher(voucher, preferred_invoice_id=pref_inv_id)
+
+                    else:
+                        raise ValidationError(f"Unsupported offline command type: '{cmd_type}'")
+
+                    if not voucher:
+                        raise ValidationError(f"Command '{cmd_type}' failed to generate a valid voucher.")
 
                     if voucher:
                         # Authoritative server-side posting

@@ -70,10 +70,15 @@ class VoucherService:
     @staticmethod
     @transaction.atomic
     def post_voucher(voucher: Voucher, process_stock=True, force_duplicate=False, override_period_lock=False):
+        # Concurrency Invariant: Acquire exclusive row-level lock on voucher to serialize concurrent postings
+        voucher = Voucher.objects.select_for_update().get(id=voucher.id)
+
         if voucher.status == 'POSTED':
             raise ValidationError("Voucher is already posted.")
         if voucher.status == 'CANCELLED':
             raise ValidationError("Cannot post a cancelled voucher.")
+        if voucher.status == 'REVERSED':
+            raise ValidationError("Cannot post a reversed voucher.")
 
         # 0. Enforce Statutory Period Lock & Closed Financial Year Invariants
         if voucher.financial_year and voucher.financial_year.is_closed and not override_period_lock:

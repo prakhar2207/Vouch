@@ -1017,6 +1017,24 @@ class VoucherDetailAPIView(APIView):
                     "error": "Permission denied: Only Owner or CA can modify vouchers."
                 }, status=status.HTTP_403_FORBIDDEN)
 
+            # Optimistic Concurrency Control: If-Match / ETag validation
+            if_match = request.META.get('HTTP_IF_MATCH')
+            if if_match:
+                req_tag = if_match.strip('"').strip()
+                current_tag = f"v-{voucher.id}"
+                if req_tag and req_tag != current_tag:
+                    return Response({
+                        "success": False,
+                        "error": "Precondition failed: ETag / version mismatch. Resource was modified."
+                    }, status=status.HTTP_412_PRECONDITION_FAILED)
+
+            # Prevent modification of terminal / immutable vouchers
+            if voucher.status in ['REVERSED', 'CANCELLED']:
+                return Response({
+                    "success": False,
+                    "error": f"Cannot modify a {voucher.status.lower()} voucher."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             company = voucher.company
             data = request.data
 
@@ -1336,6 +1354,13 @@ class VoucherDetailAPIView(APIView):
                     else:
                         rounded_total = (integer_part + Decimal('1.00')).quantize(Decimal('0.01'))
                     round_off = (rounded_total - unrounded_total).quantize(Decimal('0.01'))
+
+                    # Invariant Check: New total cannot be less than already allocated payment/receipt amount
+                    from apps.accounting.models import PaymentAllocation
+                    from django.db.models import Sum
+                    total_allocated = PaymentAllocation.objects.filter(invoice_voucher=voucher).aggregate(s=Sum('allocated_amount'))['s'] or Decimal('0.00')
+                    if rounded_total < total_allocated:
+                        raise ValidationError(f"Cannot reduce invoice total to ₹{rounded_total} because ₹{total_allocated} has already been allocated in payments/receipts.")
 
                     voucher.total_amount = rounded_total
                     voucher.status = 'DRAFT'

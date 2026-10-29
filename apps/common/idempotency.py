@@ -51,6 +51,17 @@ class IdempotencyMiddleware(MiddlewareMixin):
         user_id = 'anon'
         if hasattr(request, 'user') and request.user and request.user.is_authenticated:
             user_id = str(request.user.id)
+        else:
+            # Fallback: Extract user ID from Bearer JWT in Authorization header for API views
+            auth_header = request.META.get('HTTP_AUTHORIZATION') or ''
+            if auth_header and auth_header.strip().startswith(('Bearer ', 'bearer ')):
+                token_str = auth_header.strip().split(' ', 1)[1].strip()
+                try:
+                    from rest_framework_simplejwt.tokens import AccessToken
+                    token = AccessToken(token_str)
+                    user_id = str(token.get('user_id') or 'anon')
+                except Exception:
+                    user_id = 'anon'
 
         # 3. Scope by Method and Endpoint Path
         method = request.method.upper()
