@@ -72,7 +72,15 @@ export default function TallyExportPage() {
       document.body.appendChild(link);
       link.click();
       link.parentNode?.removeChild(link);
-      window.URL.revokeObjectURL(url);
+      setTimeout(() => {
+
+        try {
+
+          window.URL.revokeObjectURL(url);
+
+        } catch {}
+
+      }, 60000);
 
       setDownloadSuccess(true);
       toast.success("Export generated successfully", "Your Tally XML file has downloaded.");

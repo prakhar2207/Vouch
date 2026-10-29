@@ -587,7 +587,9 @@ function SalesInvoiceListContent() {
       if (link.parentNode) {
         link.parentNode.removeChild(link);
       }
-      window.URL.revokeObjectURL(blobUrl);
+      setTimeout(() => {
+        try { window.URL.revokeObjectURL(blobUrl); } catch {}
+      }, 60000);
       toast.success('Invoice PDF downloaded!');
     } catch (err: any) {
       console.error('Failed to download invoice PDF:', err);
@@ -682,18 +684,28 @@ function SalesInvoiceListContent() {
       const cleanNum = (inv.voucher_number || 'INVOICE').replace(/[/\\:*?"<>|]/g, '-').trim();
       const filename = `Tax_Invoice_${cleanNum}.pdf`;
 
-      // Fetch official PDF blob
+      // Fetch official PDF blob with fallback
       let pdfFile: File | null = null;
       let pdfBlobUrl: string | null = null;
       try {
-        const pdfRes = await axios.get(`${API_BASE_URL}/api/v1/documents/vouchers/${inv.id}/pdf/?fresh=1&t=${Date.now()}`, {
+        const pdfRes = await axios.get(`${API_BASE_URL}/api/v1/documents/vouchers/${inv.id}/pdf/?fresh=1&company_id=${encodeURIComponent(activeCo)}&t=${Date.now()}`, {
           headers,
           responseType: 'blob',
         });
         pdfFile = new File([pdfRes.data], filename, { type: 'application/pdf' });
         pdfBlobUrl = window.URL.createObjectURL(pdfRes.data);
       } catch (pdfErr) {
-        console.warn('PDF fetch failed:', pdfErr);
+        console.warn('PDF fetch from documents endpoint failed, attempting fallback to accounting endpoint:', pdfErr);
+        try {
+          const fallbackRes = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/${inv.id}/pdf/?download=1&company_id=${encodeURIComponent(activeCo)}&t=${Date.now()}`, {
+            headers,
+            responseType: 'blob',
+          });
+          pdfFile = new File([fallbackRes.data], filename, { type: 'application/pdf' });
+          pdfBlobUrl = window.URL.createObjectURL(fallbackRes.data);
+        } catch (fErr) {
+          console.warn('PDF fallback also failed:', fErr);
+        }
       }
 
       const isMobile = isMobileOrPWA();
@@ -709,7 +721,7 @@ function SalesInvoiceListContent() {
                 title: filename,
                 text: waMessage,
               });
-              toast.success('Shared to WhatsApp successfully!');
+              toast.success('Shared successfully!');
               return;
             } catch (shareErr: any) {
               if (shareErr?.name === 'AbortError') {
@@ -728,14 +740,25 @@ function SalesInvoiceListContent() {
           document.body.appendChild(dlLink);
           dlLink.click();
           if (dlLink.parentNode) dlLink.parentNode.removeChild(dlLink);
+          setTimeout(() => {
+            try { window.URL.revokeObjectURL(pdfBlobUrl!); } catch {}
+          }, 60000);
         }
 
-        // Universal WhatsApp link safe for Android WebViews, PWAs and mobile browsers
+        // Deep link into WhatsApp on mobile with fallback to web URL
         const encoded = encodeURIComponent(waMessage);
-        const waUrl = phone
+        const appUrl = phone
+          ? `whatsapp://send?phone=${phone}&text=${encoded}`
+          : `whatsapp://send?text=${encoded}`;
+        const webUrl = phone
           ? `https://api.whatsapp.com/send?phone=${phone}&text=${encoded}`
           : `https://api.whatsapp.com/send?text=${encoded}`;
-        window.open(waUrl, '_blank') || (window.location.href = waUrl);
+
+        try {
+          window.location.href = appUrl;
+        } catch {
+          window.open(webUrl, '_blank') || (window.location.href = webUrl);
+        }
         return;
       }
 
@@ -748,7 +771,9 @@ function SalesInvoiceListContent() {
         document.body.appendChild(dlLink);
         dlLink.click();
         if (dlLink.parentNode) dlLink.parentNode.removeChild(dlLink);
-        window.URL.revokeObjectURL(pdfBlobUrl);
+        setTimeout(() => {
+          try { window.URL.revokeObjectURL(pdfBlobUrl!); } catch {}
+        }, 60000);
       }
 
       toast.success('Opening WhatsApp Web...');

@@ -37,7 +37,9 @@ def _get_voucher_for_request(request, voucher_id):
     If X-Company-ID or company_id param is provided, scopes to that company first.
     Otherwise, checks if the voucher belongs to ANY company request.user is an authorized member of.
     """
-    cid = request.headers.get('X-Company-ID') or request.query_params.get('company_id')
+    cid = request.headers.get('X-Company-ID') or (
+        request.query_params.get('company_id') if hasattr(request, 'query_params') else None
+    )
     qs = Voucher.objects.filter(id=voucher_id)
 
     # 1. Check share token authorization if provided
@@ -51,14 +53,31 @@ def _get_voucher_for_request(request, voucher_id):
         except Exception:
             pass
 
-    # 2. Check user authorization
-    if not getattr(request.user, 'is_superuser', False):
-        if hasattr(request, 'user') and request.user and request.user.is_authenticated:
+    # 2. Check user authorization or JWT auth_token in query params
+    user = getattr(request, 'user', None)
+    if not (user and user.is_authenticated):
+        jwt_raw = (
+            request.query_params.get('auth_token') or 
+            request.query_params.get('token')
+        ) if hasattr(request, 'query_params') else None
+        if jwt_raw:
+            try:
+                from rest_framework_simplejwt.tokens import AccessToken
+                from django.contrib.auth import get_user_model
+                validated = AccessToken(jwt_raw)
+                uid = validated.get('user_id')
+                if uid:
+                    user = get_user_model().objects.filter(id=uid).first()
+            except Exception:
+                pass
+
+    if not getattr(user, 'is_superuser', False):
+        if user and user.is_authenticated:
             from django.db.models import Q
             user_filter = (
-                Q(company__users__user=request.user) |
-                Q(created_by=request.user) |
-                Q(inward_requests__recipient_company__users__user=request.user)
+                Q(company__users__user=user) |
+                Q(created_by=user) |
+                Q(inward_requests__recipient_company__users__user=user)
             )
             qs = qs.filter(user_filter).distinct()
         else:
@@ -73,14 +92,37 @@ def _get_voucher_for_request(request, voucher_id):
 
 def _get_ledger_for_request(request, ledger_id):
     """
-    Resolves ledger ensuring multi-tenant authorization for request.user.
+    Resolves ledger ensuring multi-tenant authorization for request.user or token.
     If X-Company-ID or company_id param is provided, scopes to that company first.
     Otherwise, checks if the ledger belongs to ANY company request.user is an authorized member of.
     """
-    cid = request.headers.get('X-Company-ID') or request.query_params.get('company_id')
+    cid = request.headers.get('X-Company-ID') or (
+        request.query_params.get('company_id') if hasattr(request, 'query_params') else None
+    )
     qs = Ledger.objects.filter(id=ledger_id)
-    if not getattr(request.user, 'is_superuser', False):
-        qs = qs.filter(company__users__user=request.user)
+
+    user = getattr(request, 'user', None)
+    if not (user and user.is_authenticated):
+        jwt_raw = (
+            request.query_params.get('auth_token') or 
+            request.query_params.get('token')
+        ) if hasattr(request, 'query_params') else None
+        if jwt_raw:
+            try:
+                from rest_framework_simplejwt.tokens import AccessToken
+                from django.contrib.auth import get_user_model
+                validated = AccessToken(jwt_raw)
+                uid = validated.get('user_id')
+                if uid:
+                    user = get_user_model().objects.filter(id=uid).first()
+            except Exception:
+                pass
+
+    if not getattr(user, 'is_superuser', False):
+        if user and user.is_authenticated:
+            qs = qs.filter(company__users__user=user)
+        else:
+            return None
     if cid:
         matched = qs.filter(company_id=cid).select_related('company').first()
         if matched:
@@ -447,7 +489,7 @@ class ReportPDFExportAPIView(APIView):
 
 
 class LedgerStatementPDFExportAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    permission_classes = [AllowAny]
 
     def get(self, request, ledger_id):
         ledger = _get_ledger_for_request(request, ledger_id)

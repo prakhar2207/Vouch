@@ -199,7 +199,9 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
       document.body.appendChild(link);
       link.click();
       if (link.parentNode) link.parentNode.removeChild(link);
-      window.URL.revokeObjectURL(blobUrl);
+      setTimeout(() => {
+        try { window.URL.revokeObjectURL(blobUrl); } catch {}
+      }, 60000);
     } catch (err: any) {
       console.error('Failed to download ledger statement PDF:', err);
     } finally {
@@ -238,10 +240,18 @@ export default function LedgerStatementView({ ledgerId, context = 'party' }: Led
         }
       }
 
-      const waUrl = phone
+      const appUrl = phone
+        ? `whatsapp://send?phone=${phone}&text=${encoded}`
+        : `whatsapp://send?text=${encoded}`;
+      const webUrl = phone
         ? `https://api.whatsapp.com/send?phone=${phone}&text=${encoded}`
         : `https://api.whatsapp.com/send?text=${encoded}`;
-      window.open(waUrl, '_blank') || (window.location.href = waUrl);
+
+      try {
+        window.location.href = appUrl;
+      } catch {
+        window.open(webUrl, '_blank') || (window.location.href = webUrl);
+      }
     } catch (err: any) {
       console.error('Failed to share statement:', err);
     } finally {

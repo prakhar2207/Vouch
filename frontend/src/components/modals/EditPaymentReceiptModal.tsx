@@ -96,7 +96,15 @@ export default function EditPaymentReceiptModal({
       if (link.parentNode) {
         link.parentNode.removeChild(link);
       }
-      window.URL.revokeObjectURL(blobUrl);
+      setTimeout(() => {
+
+        try {
+
+          window.URL.revokeObjectURL(blobUrl);
+
+        } catch {}
+
+      }, 60000);
       toast.success('Slip Downloaded', `${cleanNum}_Slip.pdf saved`);
     } catch (err: any) {
       console.error('Failed to download voucher slip:', err);

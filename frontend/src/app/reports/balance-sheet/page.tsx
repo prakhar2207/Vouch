@@ -178,7 +178,15 @@ export default function BalanceSheetPage() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      window.URL.revokeObjectURL(blobUrl);
+      setTimeout(() => {
+
+        try {
+
+          window.URL.revokeObjectURL(blobUrl);
+
+        } catch {}
+
+      }, 60000);
       toast.success('Balance Sheet PDF downloaded successfully');
     } catch (err: any) {
       console.error('Failed to download Balance Sheet PDF:', err);

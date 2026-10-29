@@ -224,7 +224,15 @@ export default function ProformaDetailPage() {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      window.URL.revokeObjectURL(blobUrl);
+      setTimeout(() => {
+
+        try {
+
+          window.URL.revokeObjectURL(blobUrl);
+
+        } catch {}
+
+      }, 60000);
 
       toast.success('PDF Downloaded', `Saved as ${cleanFilename}`);
     } catch (err: any) {

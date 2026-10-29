@@ -227,9 +227,11 @@ class StockService:
                 product = Product.objects.select_for_update().filter(id=item.product_id).first()
                 if not product:
                     continue
-                if voucher.voucher_type == 'SALES':
+                # If OUT during post (SALES, DEBIT_NOTE), restore stock by adding back quantity
+                # If IN during post (PURCHASE, CREDIT_NOTE), deduct stock
+                if voucher.voucher_type in ['SALES', 'DEBIT_NOTE']:
                     product.stock_quantity += item.quantity
-                elif voucher.voucher_type == 'PURCHASE':
+                elif voucher.voucher_type in ['PURCHASE', 'CREDIT_NOTE']:
                     product.stock_quantity -= item.quantity
                     if product.stock_quantity < 0 and not allow_negative:
                         raise ValidationError(f"Cannot cancel voucher. {product.name} stock would fall below zero ({product.stock_quantity}).")

@@ -245,7 +245,7 @@ class VoucherService:
             raise ValidationError(f"Accounting books are locked up to {lock_date}. Cannot cancel vouchers on or before this date.")
 
         # 1. Revert Stock
-        if voucher.voucher_type in ['SALES', 'PURCHASE']:
+        if voucher.voucher_type in ['SALES', 'PURCHASE', 'CREDIT_NOTE', 'DEBIT_NOTE']:
             from apps.inventory.services.stock_service import StockService
             StockService.revert_voucher_stock(voucher)
 
@@ -385,18 +385,8 @@ class VoucherService:
 
         # 4. Revert stock if posted or validating
         if voucher.status in ['POSTED', 'VALIDATING']:
-            if voucher.voucher_type in ['SALES', 'PURCHASE']:
+            if voucher.voucher_type in ['SALES', 'PURCHASE', 'CREDIT_NOTE', 'DEBIT_NOTE']:
                 StockService.revert_voucher_stock(voucher)
-            elif voucher.voucher_type == 'CREDIT_NOTE':
-                for itm in voucher.items.all():
-                    if itm.product:
-                        itm.product.stock_quantity = max(Decimal('0.00'), itm.product.stock_quantity - itm.quantity)
-                        itm.product.save(update_fields=['stock_quantity'])
-            elif voucher.voucher_type == 'DEBIT_NOTE':
-                for itm in voucher.items.all():
-                    if itm.product:
-                        itm.product.stock_quantity = itm.product.stock_quantity + itm.quantity
-                        itm.product.save(update_fields=['stock_quantity'])
 
         # 5. Delete payment allocations
         PaymentAllocation.objects.filter(

@@ -5,14 +5,20 @@ const config: CapacitorConfig = {
   appName: 'SriLekh',
   webDir: 'mobile-shell',
   server: {
-    url: 'https://vouch-pi-one.vercel.app/dashboard',
+    url: 'https://srilekh.com/dashboard',
     cleartext: false,
     errorPath: 'index.html',
     androidScheme: 'https',
     iosScheme: 'srilekh',
     allowNavigation: [
+      'srilekh.com',
+      '*.srilekh.com',
       'api.srilekh.com',
       'vouch-pi-one.vercel.app',
+      '*.vercel.app',
+      'api.whatsapp.com',
+      'wa.me',
+      'web.whatsapp.com',
       'localhost',
       '127.0.0.1'
     ],

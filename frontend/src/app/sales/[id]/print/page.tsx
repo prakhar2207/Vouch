@@ -1004,6 +1004,9 @@ export default function PrintInvoicePage() {
     document.body.appendChild(downloadLink);
     downloadLink.click();
     if (downloadLink.parentNode) downloadLink.parentNode.removeChild(downloadLink);
+    setTimeout(() => {
+      try { window.URL.revokeObjectURL(blobUrl); } catch {}
+    }, 60000);
   };
 
   const buildWhatsAppTextMessage = () => {
@@ -1242,13 +1245,20 @@ export default function PrintInvoicePage() {
           }
         }
 
-        // 2. Universal WhatsApp link safe for Android WebViews, PWAs and mobile browsers
+        // 2. Direct WhatsApp link safe for Android WebViews, PWAs and mobile browsers
         const encoded = encodeURIComponent(waMessage);
-        const waUrl = phone
+        const appUrl = phone
+          ? `whatsapp://send?phone=${phone}&text=${encoded}`
+          : `whatsapp://send?text=${encoded}`;
+        const webUrl = phone
           ? `https://api.whatsapp.com/send?phone=${phone}&text=${encoded}`
           : `https://api.whatsapp.com/send?text=${encoded}`;
 
-        window.open(waUrl, '_blank') || (window.location.href = waUrl);
+        try {
+          window.location.href = appUrl;
+        } catch {
+          window.open(webUrl, '_blank') || (window.location.href = webUrl);
+        }
         return;
       }
 
