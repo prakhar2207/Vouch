@@ -72,7 +72,11 @@ def check_production_security_gate(app_configs, **kwargs):
 
     # 10. Backup Encryption Key Isolation
     backup_key = os.environ.get('BACKUP_ENCRYPTION_KEY', '') or getattr(settings, 'BACKUP_ENCRYPTION_KEY', '')
-    if not backup_key or backup_key == secret_key:
-        errors.append(Warning("BACKUP_ENCRYPTION_KEY is sharing the same key as SECRET_KEY. Configure a dedicated BACKUP_ENCRYPTION_KEY in production for defense-in-depth backup isolation.", id="vouch.security.W014"))
+    default_key = getattr(settings, '_default_backup_key', '')
+    if not backup_key or backup_key == secret_key or backup_key == default_key:
+        if not getattr(settings, 'DEBUG', True):
+            errors.append(Error("BACKUP_ENCRYPTION_KEY is missing or using the fallback derived from SECRET_KEY in production. Set a dedicated BACKUP_ENCRYPTION_KEY environment variable for cryptographic key separation.", id="vouch.security.E014"))
+        else:
+            errors.append(Warning("BACKUP_ENCRYPTION_KEY is sharing the same key derivation as SECRET_KEY. Configure a dedicated BACKUP_ENCRYPTION_KEY in production for defense-in-depth backup isolation.", id="vouch.security.W014"))
 
     return errors

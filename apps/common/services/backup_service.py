@@ -29,25 +29,66 @@ class DatabaseBackupService:
     """
 
     @classmethod
+    def get_encryption_keys(cls) -> list:
+        """
+        Derives safe 32-byte url-safe base64 keys for AES-256 encryption & decryption.
+        Returns [primary_key, *fallback_keys] to allow zero-downtime key rotation:
+        - Encryption always uses primary_key (keys[0]).
+        - Decryption automatically tries primary_key then fallback_keys via MultiFernet.
+        """
+        keys = []
+        # 1. Primary dedicated key
+        primary = getattr(settings, 'BACKUP_ENCRYPTION_KEY', None)
+        if primary and str(primary).strip():
+            hashed = hashlib.sha256(str(primary).strip().encode('utf-8')).digest()
+            keys.append(base64.urlsafe_b64encode(hashed))
+
+        # 2. Key rotation fallbacks (list or comma-separated string)
+        fallbacks = getattr(settings, 'BACKUP_ENCRYPTION_KEY_FALLBACKS', [])
+        if isinstance(fallbacks, str):
+            fallbacks = [k.strip() for k in fallbacks.split(',') if k.strip()]
+        for fb in fallbacks:
+            if fb and str(fb).strip():
+                hashed = hashlib.sha256(str(fb).strip().encode('utf-8')).digest()
+                k = base64.urlsafe_b64encode(hashed)
+                if k not in keys:
+                    keys.append(k)
+
+        # 3. Emergency fallback if no dedicated key is configured
+        if not keys:
+            logger.warning(
+                "[Security Warning] BACKUP_ENCRYPTION_KEY is not configured! "
+                "Deriving fallback key from SECRET_KEY. Configure a dedicated BACKUP_ENCRYPTION_KEY in production."
+            )
+            derived = getattr(settings, '_default_backup_key', None) or (settings.SECRET_KEY + '_vouch_dr_backup_salt')
+            hashed = hashlib.sha256(derived.encode('utf-8')).digest()
+            keys.append(base64.urlsafe_b64encode(hashed))
+
+        return keys
+
+    @classmethod
     def get_encryption_key(cls) -> bytes:
-        """Derives a safe 32-byte url-safe base64 key from settings."""
-        raw_key = getattr(settings, 'BACKUP_ENCRYPTION_KEY', None) or settings.SECRET_KEY
-        hashed = hashlib.sha256(raw_key.encode('utf-8')).digest()
-        return base64.urlsafe_b64encode(hashed)
+        """Returns the primary active key for encryption."""
+        return cls.get_encryption_keys()[0]
 
     @classmethod
     def encrypt_data(cls, raw_bytes: bytes) -> bytes:
-        """Encrypts payload with AES-256-CBC via Fernet."""
+        """Encrypts payload with AES-256-CBC via Fernet using the primary active key."""
         from cryptography.fernet import Fernet
         f = Fernet(cls.get_encryption_key())
         return f.encrypt(raw_bytes)
 
     @classmethod
     def decrypt_data(cls, encrypted_bytes: bytes) -> bytes:
-        """Decrypts AES-256 Fernet payload."""
-        from cryptography.fernet import Fernet
-        f = Fernet(cls.get_encryption_key())
-        return f.decrypt(encrypted_bytes)
+        """
+        Decrypts AES-256 Fernet payload supporting multi-key rotation via MultiFernet.
+        Gracefully tries the primary key followed by all configured fallback keys.
+        """
+        from cryptography.fernet import Fernet, MultiFernet
+        keys = cls.get_encryption_keys()
+        fernets = [Fernet(k) for k in keys]
+        mf = MultiFernet(fernets)
+        return mf.decrypt(encrypted_bytes)
 
     @classmethod
     def perform_backup(

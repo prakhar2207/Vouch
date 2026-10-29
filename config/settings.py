@@ -238,6 +238,7 @@ BACKUP_RETENTION_DAYS = env.int('BACKUP_RETENTION_DAYS', default=7)
 import hashlib
 _default_backup_key = hashlib.sha256((SECRET_KEY + '_vouch_dr_backup_salt').encode()).hexdigest()
 BACKUP_ENCRYPTION_KEY = env('BACKUP_ENCRYPTION_KEY', default=_default_backup_key)
+BACKUP_ENCRYPTION_KEY_FALLBACKS = env.list('BACKUP_ENCRYPTION_KEY_FALLBACKS', default=[])
 BACKUP_S3_BUCKET = env('BACKUP_S3_BUCKET', default=None)
 AWS_STORAGE_BUCKET_NAME = env('AWS_STORAGE_BUCKET_NAME', default=None)
 AWS_ACCESS_KEY_ID = env('AWS_ACCESS_KEY_ID', default=None)

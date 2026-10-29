@@ -408,7 +408,9 @@ class TrialBalanceAPIView(APIView):
     def get(self, request, company_id):
         try:
             company = Company.objects.get(id=company_id, users__user=request.user)
-            tb = ReportService.generate_trial_balance(company)
+            from_date = request.query_params.get('from_date')
+            to_date = request.query_params.get('to_date')
+            tb = ReportService.generate_trial_balance(company, from_date=from_date, to_date=to_date)
             return Response({"success": True, "data": tb})
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

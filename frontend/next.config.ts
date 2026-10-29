@@ -49,7 +49,9 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' data: https://fonts.gstatic.com",
               "img-src 'self' data: blob: https:",
-              "connect-src 'self' https://api.srilekh.com https://*.srilekh.com https://vouch-api-752s.onrender.com https://*.onrender.com http://localhost:8000 http://127.0.0.1:8000 ws: wss:",
+              process.env.NODE_ENV === 'development'
+                ? "connect-src 'self' https://api.srilekh.com https://*.srilekh.com https://vouch-api-752s.onrender.com https://*.onrender.com http://localhost:8000 http://127.0.0.1:8000 ws: wss:"
+                : "connect-src 'self' https://api.srilekh.com https://*.srilekh.com https://vouch-api-752s.onrender.com https://*.onrender.com ws: wss:",
               "worker-src 'self' blob:",
               "frame-ancestors 'none'",
             ].join('; '),
