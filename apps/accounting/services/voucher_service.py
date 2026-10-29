@@ -459,12 +459,17 @@ class VoucherService:
         reverts stock movements, and transitions original voucher to 'REVERSED'.
         Original voucher, items, and ledger entries remain permanently intact and auditable.
         """
-        if voucher.status not in ['POSTED', 'VALIDATING']:
-            raise ValidationError(f"Only POSTED transactions can be reversed (current status: {voucher.status}).")
-
         from apps.accounting.models import Voucher, LedgerEntry
         from apps.inventory.services.stock_service import StockService
         from apps.audit.services.audit_service import AuditService
+
+        # Concurrency Invariant: Acquire exclusive row lock on original voucher to serialize concurrent reversals
+        voucher = Voucher.objects.select_for_update().get(id=voucher.id)
+
+        if voucher.status not in ['POSTED', 'VALIDATING']:
+            raise ValidationError(f"Only POSTED transactions can be reversed (current status: {voucher.status}).")
+        if voucher.reversal_voucher_id is not None or voucher.status == 'REVERSED':
+            raise ValidationError(f"Voucher #{voucher.voucher_number} has already been reversed.")
 
         # 1. Revert Stock atomically (if requested)
         if revert_stock and voucher.voucher_type in ['SALES', 'PURCHASE']:
