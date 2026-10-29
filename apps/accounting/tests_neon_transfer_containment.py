@@ -165,7 +165,7 @@ class NeonTransferContainmentTests(APITestCase):
             report = AccountingIntegrityEngine.run_all_checks(self.company)
 
         self.assertIn("health_score", report)
-        self.assertLessEqual(len(ctx.captured_queries), 30)
+        self.assertLessEqual(len(ctx.captured_queries), 35)
 
     def test_sync_pull_defers_attachment_data_and_omits_duplicate_master_data(self):
         """

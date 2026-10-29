@@ -203,6 +203,7 @@ async function handleResponseError(error: AxiosError) {
   const refreshToken = getRefreshToken();
 
   const isPublicRoute = typeof window !== 'undefined' && (
+    window.location.pathname.startsWith('/share/') ||
     window.location.pathname.startsWith('/sales/') ||
     window.location.pathname.includes('/print')
   );
