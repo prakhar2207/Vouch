@@ -625,9 +625,105 @@ class SyncPushAPIView(APIView):
                             LedgerEntry.objects.create(voucher=voucher, ledger=payment_ledger, debit_amount=amount, credit_amount=Decimal('0.00'))
                             LedgerEntry.objects.create(voucher=voucher, ledger=party_ledger, debit_amount=Decimal('0.00'), credit_amount=amount)
 
-                        VoucherService.post_voucher(voucher)
-                        pref_inv_id = payload.get('invoice_id') or payload.get('allocated_invoice_id') or payload.get('preferred_invoice_id')
-                        PaymentAllocationService.auto_allocate_voucher(voucher, preferred_invoice_id=pref_inv_id)
+                    elif 'CONTRA' in cmd_type:
+                        from apps.accounting.services.sequence_service import InvoiceSequenceService
+                        v_date = payload.get('voucher_date') or timezone.now().date()
+                        manual_vnum = payload.get('voucher_number')
+                        if manual_vnum:
+                            v_num = str(manual_vnum).strip()
+                            fy = InvoiceSequenceService.get_or_create_active_fy(company, v_date)
+                        else:
+                            v_num, fy = InvoiceSequenceService.get_next_number(company, 'CONTRA', v_date)
+
+                        entries_data = payload.get('entries') or payload.get('ledger_entries') or []
+                        amount = to_decimal(payload.get('amount') or payload.get('total_amount', 0))
+
+                        voucher = Voucher.objects.create(
+                            company=company,
+                            financial_year=fy,
+                            voucher_type='CONTRA',
+                            voucher_number=v_num,
+                            voucher_date=v_date,
+                            status='DRAFT',
+                            total_amount=amount,
+                            created_by=request.user,
+                            narration=payload.get('narration') or 'Contra Voucher'
+                        )
+
+                        if entries_data:
+                            tot_dr = Decimal('0.00')
+                            tot_cr = Decimal('0.00')
+                            for entry in entries_data:
+                                lid = entry.get('ledger_id') or entry.get('ledger')
+                                l = get_company_ledger(company, lid, "Contra Ledger")
+                                dr = to_decimal(entry.get('debit_amount', 0))
+                                cr = to_decimal(entry.get('credit_amount', 0))
+                                LedgerEntry.objects.create(voucher=voucher, ledger=l, debit_amount=dr, credit_amount=cr)
+                                tot_dr += dr
+                                tot_cr += cr
+                            if abs(tot_dr - tot_cr) > Decimal('0.01'):
+                                raise ValidationError(f"Contra debit ({tot_dr}) does not equal credit ({tot_cr}).")
+                            voucher.total_amount = tot_dr
+                            voucher.save(update_fields=['total_amount'])
+                        else:
+                            from_lid = payload.get('from_ledger_id') or payload.get('source_ledger_id')
+                            to_lid = payload.get('to_ledger_id') or payload.get('destination_ledger_id')
+                            from_l = get_company_ledger(company, from_lid, "Source Ledger") if from_lid else None
+                            to_l = get_company_ledger(company, to_lid, "Destination Ledger") if to_lid else None
+                            if not from_l or not to_l:
+                                raise ValidationError("Both source and destination ledgers are required for contra voucher.")
+                            LedgerEntry.objects.create(voucher=voucher, ledger=to_l, debit_amount=amount, credit_amount=Decimal('0.00'))
+                            LedgerEntry.objects.create(voucher=voucher, ledger=from_l, debit_amount=Decimal('0.00'), credit_amount=amount)
+
+                    elif 'JOURNAL' in cmd_type:
+                        from apps.accounting.services.sequence_service import InvoiceSequenceService
+                        v_date = payload.get('voucher_date') or timezone.now().date()
+                        manual_vnum = payload.get('voucher_number')
+                        if manual_vnum:
+                            v_num = str(manual_vnum).strip()
+                            fy = InvoiceSequenceService.get_or_create_active_fy(company, v_date)
+                        else:
+                            v_num, fy = InvoiceSequenceService.get_next_number(company, 'JOURNAL', v_date)
+
+                        entries_data = payload.get('entries') or payload.get('ledger_entries') or []
+                        amount = to_decimal(payload.get('amount') or payload.get('total_amount', 0))
+
+                        voucher = Voucher.objects.create(
+                            company=company,
+                            financial_year=fy,
+                            voucher_type='JOURNAL',
+                            voucher_number=v_num,
+                            voucher_date=v_date,
+                            status='DRAFT',
+                            total_amount=amount,
+                            created_by=request.user,
+                            narration=payload.get('narration') or 'Journal Voucher'
+                        )
+
+                        if entries_data:
+                            tot_dr = Decimal('0.00')
+                            tot_cr = Decimal('0.00')
+                            for entry in entries_data:
+                                lid = entry.get('ledger_id') or entry.get('ledger')
+                                l = get_company_ledger(company, lid, "Journal Ledger")
+                                dr = to_decimal(entry.get('debit_amount', 0))
+                                cr = to_decimal(entry.get('credit_amount', 0))
+                                LedgerEntry.objects.create(voucher=voucher, ledger=l, debit_amount=dr, credit_amount=cr)
+                                tot_dr += dr
+                                tot_cr += cr
+                            if abs(tot_dr - tot_cr) > Decimal('0.01'):
+                                raise ValidationError(f"Journal debit ({tot_dr}) does not equal credit ({tot_cr}).")
+                            voucher.total_amount = tot_dr
+                            voucher.save(update_fields=['total_amount'])
+                        else:
+                            dr_lid = payload.get('debit_ledger_id')
+                            cr_lid = payload.get('credit_ledger_id')
+                            dr_l = get_company_ledger(company, dr_lid, "Debit Ledger") if dr_lid else None
+                            cr_l = get_company_ledger(company, cr_lid, "Credit Ledger") if cr_lid else None
+                            if not dr_l or not cr_l:
+                                raise ValidationError("Both debit and credit ledgers are required for journal voucher.")
+                            LedgerEntry.objects.create(voucher=voucher, ledger=dr_l, debit_amount=amount, credit_amount=Decimal('0.00'))
+                            LedgerEntry.objects.create(voucher=voucher, ledger=cr_l, debit_amount=Decimal('0.00'), credit_amount=amount)
 
                     else:
                         raise ValidationError(f"Unsupported offline command type: '{cmd_type}'")
@@ -639,6 +735,11 @@ class SyncPushAPIView(APIView):
                         # Authoritative server-side posting
                         if voucher.status != 'POSTED':
                             VoucherService.post_voucher(voucher)
+
+                        if voucher.voucher_type in ('PAYMENT', 'RECEIPT'):
+                            from apps.accounting.services.allocation_service import PaymentAllocationService
+                            pref_inv_id = payload.get('invoice_id') or payload.get('allocated_invoice_id') or payload.get('preferred_invoice_id')
+                            PaymentAllocationService.auto_allocate_voucher(voucher, preferred_invoice_id=pref_inv_id)
 
                         cmd_obj.status = 'PROCESSED'
                         cmd_obj.result_voucher = voucher

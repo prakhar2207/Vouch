@@ -190,6 +190,7 @@ class Voucher(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='created_vouchers')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1, db_index=True, help_text="Optimistic Concurrency Control monotonic counter")
 
     class Meta:
         unique_together = ('company', 'financial_year', 'voucher_number')
@@ -708,6 +709,33 @@ class InterCompanyEntry(models.Model):
 
     def __str__(self):
         return f"[{self.status}] {self.source_company.name} -> {self.target_company.name} (₹{self.amount})"
+
+
+class IdempotencyRecord(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    scope_key = models.CharField(max_length=255, unique=True, db_index=True)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True, related_name='idempotency_records')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='idempotency_records')
+    client_key = models.CharField(max_length=128, db_index=True)
+    endpoint = models.CharField(max_length=255, db_index=True)
+    method = models.CharField(max_length=10, default='POST')
+    payload_hash = models.CharField(max_length=64)
+    status = models.CharField(max_length=20, default='PROCESSING', db_index=True)  # PROCESSING, COMPLETED, FAILED
+    response_code = models.PositiveIntegerField(null=True, blank=True)
+    response_body = models.TextField(null=True, blank=True)
+    response_headers = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['company', 'user', 'endpoint', 'client_key']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.scope_key} [{self.status}]"
 
 
 # Proforma Invoices & Quotations

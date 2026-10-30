@@ -17,7 +17,7 @@ class BalanceRebuildService:
         Uses batch queries to eliminate N+1 latency across remote database connections.
         Logs any balance discrepancies to the AuditLog.
         """
-        ledgers = list(Ledger.objects.select_for_update().filter(company=company).select_related('group'))
+        ledgers = list(Ledger.objects.select_for_update().filter(company=company).order_by('id').select_related('group'))
         if not ledgers:
             return {
                 "success": True,

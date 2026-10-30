@@ -1017,15 +1017,32 @@ class VoucherDetailAPIView(APIView):
                     "error": "Permission denied: Only Owner or CA can modify vouchers."
                 }, status=status.HTTP_403_FORBIDDEN)
 
-            # Optimistic Concurrency Control: If-Match / ETag validation
+            company = voucher.company
+            data = request.data
+
+            # Optimistic Concurrency Control: Version / ETag / If-Match validation
+            submitted_version = data.get('version')
+            if submitted_version is not None:
+                try:
+                    if int(submitted_version) != getattr(voucher, 'version', 1):
+                        return Response({
+                            "success": False,
+                            "error": f"Conflict: Voucher was modified by another client. Expected version {getattr(voucher, 'version', 1)}, got {submitted_version}.",
+                            "current_version": getattr(voucher, 'version', 1)
+                        }, status=status.HTTP_409_CONFLICT)
+                except (ValueError, TypeError):
+                    pass
+
             if_match = request.META.get('HTTP_IF_MATCH')
             if if_match:
                 req_tag = if_match.strip('"').strip()
-                current_tag = f"v-{voucher.id}"
-                if req_tag and req_tag != current_tag:
+                curr_ver = getattr(voucher, 'version', 1)
+                valid_tags = [f"v-{voucher.id}", f"v-{voucher.id}-v{curr_ver}", str(curr_ver)]
+                if req_tag and req_tag not in valid_tags:
                     return Response({
                         "success": False,
-                        "error": "Precondition failed: ETag / version mismatch. Resource was modified."
+                        "error": "Precondition failed: ETag / version mismatch. Resource was modified.",
+                        "current_version": curr_ver
                     }, status=status.HTTP_412_PRECONDITION_FAILED)
 
             # Prevent modification of terminal / immutable vouchers
@@ -1034,9 +1051,6 @@ class VoucherDetailAPIView(APIView):
                     "success": False,
                     "error": f"Cannot modify a {voucher.status.lower()} voucher."
                 }, status=status.HTTP_400_BAD_REQUEST)
-
-            company = voucher.company
-            data = request.data
 
             with transaction.atomic():
                 # 1. Resolve party change safely without ever mutating existing party ledger master!
@@ -1606,6 +1620,10 @@ class VoucherDetailAPIView(APIView):
                 else:
                     voucher.save()
 
+                # Increment OCC version counter
+                voucher.version = getattr(voucher, 'version', 1) + 1
+                voucher.save(update_fields=['version'])
+
                 from apps.audit.services.audit_service import AuditService
                 AuditService.log_action(
                     company=company,
@@ -1643,6 +1661,7 @@ class VoucherDetailAPIView(APIView):
                     "voucher_date": str(voucher.voucher_date),
                     "status": voucher.status,
                     "total_amount": str(voucher.total_amount),
+                    "version": voucher.version,
                     "party_name": voucher.party_ledger.name if voucher.party_ledger else ""
                 }
             })

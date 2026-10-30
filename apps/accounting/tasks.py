@@ -45,12 +45,15 @@ def rebuild_company_balances_task(self, company_id: str, user_id: str = None):
     from apps.accounting.services.balance_rebuild import BalanceRebuildService
 
     try:
-        company = Company.objects.get(id=company_id)
-        user = User.objects.filter(id=user_id).first() if user_id else None
-        logger.info(f"[Celery] Starting async balance rebuild for {company.name} ({company_id})")
-        result = BalanceRebuildService.rebuild_company_ledger_balances(company, user=user)
-        logger.info(f"[Celery] Balance rebuild completed for {company.name}: {result.get('rebuilt_ledgers_count')} ledgers")
-        return result
+        from django.db import transaction
+        with transaction.atomic():
+            # Concurrency lease: Row lock on Company serializes overlapping balance rebuild tasks
+            company = Company.objects.select_for_update().get(id=company_id)
+            user = User.objects.filter(id=user_id).first() if user_id else None
+            logger.info(f"[Celery] Starting async balance rebuild for {company.name} ({company_id})")
+            result = BalanceRebuildService.rebuild_company_ledger_balances(company, user=user)
+            logger.info(f"[Celery] Balance rebuild completed for {company.name}: {result.get('rebuilt_ledgers_count')} ledgers")
+            return result
     except Company.DoesNotExist:
         logger.error(f"[Celery] Company {company_id} not found for balance rebuild.")
         return {"success": False, "error": "Company not found"}

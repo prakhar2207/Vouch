@@ -73,8 +73,8 @@ class VoucherService:
         # Concurrency Invariant: Acquire exclusive row-level lock on voucher to serialize concurrent postings
         voucher = Voucher.objects.select_for_update().get(id=voucher.id)
 
-        if voucher.status == 'POSTED':
-            raise ValidationError("Voucher is already posted.")
+        if voucher.status in ('POSTED', 'VALIDATING'):
+            raise ValidationError("Voucher is already posted or currently being posted.")
         if voucher.status == 'CANCELLED':
             raise ValidationError("Cannot post a cancelled voucher.")
         if voucher.status == 'REVERSED':

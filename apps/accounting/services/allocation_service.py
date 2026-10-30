@@ -241,13 +241,20 @@ class PaymentAllocationService:
                 continue
             ordered_candidates.append(inv)
 
+        # Global Monotonic Lock Ordering: Lock candidate rows in ascending UUID order to prevent deadlocks
+        candidate_ids = sorted([c.id for c in ordered_candidates])
+        locked_candidates_map = {}
+        if candidate_ids:
+            locked_candidates_map = {
+                v.id: v for v in Voucher.objects.select_for_update().filter(id__in=candidate_ids).order_by('id')
+            }
+
         allocations = []
         for candidate in ordered_candidates:
             if rem_funds <= Decimal('0.00'):
                 break
 
-            # Lock candidate invoice row
-            inv = Voucher.objects.select_for_update().get(id=candidate.id)
+            inv = locked_candidates_map.get(candidate.id) or Voucher.objects.select_for_update().get(id=candidate.id)
             if inv.company_id != pv.company_id:
                 from rest_framework.exceptions import ValidationError
                 raise ValidationError("Cross-company payment allocation is strictly prohibited.")
@@ -411,9 +418,13 @@ class PaymentAllocationService:
             from rest_framework.exceptions import ValidationError
             raise ValidationError("Allocated amount must be greater than zero.")
 
-        # Lock both payment and invoice rows to prevent concurrent over-allocation
-        pv = Voucher.objects.select_for_update().get(id=payment_voucher.id)
-        inv = Voucher.objects.select_for_update().get(id=invoice_voucher.id)
+        # Global Monotonic Lock Ordering: Acquire locks in deterministic ascending ID order to prevent deadlocks
+        ordered_pair = sorted([payment_voucher.id, invoice_voucher.id])
+        locked_map = {
+            v.id: v for v in Voucher.objects.select_for_update().filter(id__in=ordered_pair).order_by('id')
+        }
+        pv = locked_map.get(payment_voucher.id) or Voucher.objects.select_for_update().get(id=payment_voucher.id)
+        inv = locked_map.get(invoice_voucher.id) or Voucher.objects.select_for_update().get(id=invoice_voucher.id)
 
         # Check payment capacity
         other_pv_alloc = PaymentAllocation.objects.filter(
