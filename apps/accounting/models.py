@@ -190,7 +190,7 @@ class Voucher(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='created_vouchers')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    version = models.PositiveIntegerField(default=1, db_index=True, help_text="Optimistic Concurrency Control monotonic counter")
+    version = models.PositiveIntegerField(default=1, db_default=1, db_index=True, help_text="Optimistic Concurrency Control monotonic counter")
 
     class Meta:
         unique_together = ('company', 'financial_year', 'voucher_number')

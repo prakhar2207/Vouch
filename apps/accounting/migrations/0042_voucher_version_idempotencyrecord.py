@@ -18,7 +18,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='voucher',
             name='version',
-            field=models.PositiveIntegerField(db_index=True, default=1, help_text='Optimistic Concurrency Control monotonic counter'),
+            field=models.PositiveIntegerField(db_default=1, db_index=True, default=1, help_text='Optimistic Concurrency Control monotonic counter'),
         ),
         migrations.CreateModel(
             name='IdempotencyRecord',
