@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import axios from "axios";
+
 import { useRouter } from "next/navigation";
-import { API_BASE_URL } from "@/utils/api";
+import { api, API_BASE_URL } from "@/utils/api";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
@@ -199,7 +199,7 @@ export default function BankingPage() {
         }
       }
       if (!cid) {
-        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
+        const compRes = await api.get(`${API_BASE_URL}/api/v1/companies/`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
@@ -298,11 +298,11 @@ export default function BankingPage() {
       }
 
       const [txRes, sumRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/api/v1/accounting/banking/transactions/`, {
+        api.get(`${API_BASE_URL}/api/v1/accounting/banking/transactions/`, {
           headers,
           params,
         }),
-        axios.get(`${API_BASE_URL}/api/v1/accounting/banking/summary/`, {
+        api.get(`${API_BASE_URL}/api/v1/accounting/banking/summary/`, {
           headers,
           params: summaryParams,
         }),
@@ -361,7 +361,7 @@ export default function BankingPage() {
     setLoadingMappings(true);
     try {
       const headers = getHeaders();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/banking/mappings/`, {
+      const res = await api.get(`${API_BASE_URL}/api/v1/accounting/banking/mappings/`, {
         headers,
         params: { company_id: companyId },
       });
@@ -376,7 +376,7 @@ export default function BankingPage() {
   const deleteMapping = async (mappingId: string) => {
     try {
       const headers = getHeaders();
-      await axios.delete(`${API_BASE_URL}/api/v1/accounting/banking/mappings/${mappingId}/`, {
+      await api.delete(`${API_BASE_URL}/api/v1/accounting/banking/mappings/${mappingId}/`, {
         headers,
       });
       setMappings((prev) => prev.filter((m) => m.id !== mappingId));
@@ -392,7 +392,7 @@ export default function BankingPage() {
       const headers = getHeaders();
       const params: any = { company_id: companyId };
       if (selectedBankId) params.bank_ledger_id = selectedBankId;
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/banking/statements/`, {
+      const res = await api.get(`${API_BASE_URL}/api/v1/accounting/banking/statements/`, {
         headers,
         params,
       });
@@ -415,7 +415,7 @@ export default function BankingPage() {
     setIsExclusionSubmitting(true);
     try {
       const headers = getHeaders();
-      const res = await axios.post(
+      const res = await api.post(
         `${API_BASE_URL}/api/v1/accounting/banking/transactions/${txToExclude.id}/exclude/`,
         { reason: exclusionReasonInput || "Personal transaction" },
         { headers }
@@ -433,7 +433,7 @@ export default function BankingPage() {
   const handleRestoreTransaction = async (tx: BankTransactionItem) => {
     try {
       const headers = getHeaders();
-      const res = await axios.post(
+      const res = await api.post(
         `${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/restore/`,
         {},
         { headers }
@@ -450,7 +450,7 @@ export default function BankingPage() {
     setDirectionTogglingId(tx.id);
     try {
       const headers = getHeaders();
-      const res = await axios.post(
+      const res = await api.post(
         `${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/toggle-direction/`,
         {},
         { headers }
@@ -543,7 +543,7 @@ export default function BankingPage() {
     setIsExclusionSubmitting(true);
     try {
       const headers = getHeaders();
-      const res = await axios.post(
+      const res = await api.post(
         `${API_BASE_URL}/api/v1/accounting/banking/statements/${stmtToExclude.id}/exclude/`,
         { reason: exclusionReasonInput || "Excluded by user" },
         { headers }
@@ -562,7 +562,7 @@ export default function BankingPage() {
   const handleRestoreStatement = async (stmt: any) => {
     try {
       const headers = getHeaders();
-      const res = await axios.post(
+      const res = await api.post(
         `${API_BASE_URL}/api/v1/accounting/banking/statements/${stmt.id}/restore/`,
         {},
         { headers }
@@ -599,7 +599,7 @@ export default function BankingPage() {
       formData.append("bank_ledger_id", selectedBankId);
       formData.append("company_id", companyId);
 
-      const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/banking/upload/`, formData, {
+      const res = await api.post(`${API_BASE_URL}/api/v1/accounting/banking/upload/`, formData, {
         headers,
       });
 
@@ -777,7 +777,7 @@ export default function BankingPage() {
         payload.reason = actionRemarks || "Ignored by user";
       }
 
-      const res = await axios.post(
+      const res = await api.post(
         `${API_BASE_URL}/api/v1/accounting/banking/transactions/${selectedTx.id}/resolve/`,
         { action: actionType, payload },
         { headers }
@@ -817,7 +817,7 @@ export default function BankingPage() {
         ? { expense_ledger_id: tx.matched_party?.id, narration: tx.description }
         : { party_id: tx.matched_party?.id, narration: tx.description };
 
-      const res = await axios.post(
+      const res = await api.post(
         `${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/resolve/`,
         { action: actionType, payload },
         { headers }
@@ -850,7 +850,7 @@ export default function BankingPage() {
     setResolvingTxId(tx.id);
     try {
       const headers = getHeaders();
-      const res = await axios.post(
+      const res = await api.post(
         `${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/resolve/`,
         { action: actionType, payload },
         { headers }
@@ -887,7 +887,7 @@ export default function BankingPage() {
     setIsBulkResolving(true);
     try {
       const headers = getHeaders();
-      const res = await axios.post(
+      const res = await api.post(
         `${API_BASE_URL}/api/v1/accounting/banking/transactions/bulk-resolve/`,
         { company_id: companyId, min_confidence: 75 },
         { headers }

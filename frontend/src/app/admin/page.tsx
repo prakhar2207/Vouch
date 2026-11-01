@@ -366,7 +366,11 @@ export default function SuperadminPortalPage() {
       }
     } catch {}
     removeTokens();
-    router.push('/login');
+    if (typeof window !== 'undefined') {
+      window.location.replace('/login');
+    } else {
+      router.push('/login');
+    }
   };
 
   return (

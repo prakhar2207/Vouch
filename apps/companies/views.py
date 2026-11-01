@@ -135,7 +135,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         # Only return active companies the user belongs to with pre-fetched settings
-        return Company.objects.filter(users__user=self.request.user, is_active=True).select_related('settings')
+        return Company.objects.filter(users__user=self.request.user, is_active=True).select_related('settings').order_by('created_at')
 
     def perform_create(self, serializer):
         from django.db import transaction

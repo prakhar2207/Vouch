@@ -70,7 +70,7 @@ export default function ReconciliationCockpit({
   const isFullyReconciled = summary?.reconciliation_state === "FULLY_RECONCILED" || (isBalanced && (summary?.unresolved_count || 0) === 0);
 
   const total = summary?.total_transactions || 0;
-  const completedCount = (summary?.matched_count || 0) + (summary?.reconciled_count || 0);
+  const completedCount = summary?.completed_count ?? summary?.matched_count ?? 0;
   const progressPercent = total > 0 ? Math.min(100, Math.max(0, Math.round((completedCount / total) * 100))) : (isBalanced ? 100 : 0);
 
   return (

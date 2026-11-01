@@ -46,6 +46,7 @@ export interface ReconciliationSummary {
   unresolved_count: number;
   needs_review_count: number;
   matched_count: number;
+  completed_count?: number;
   reconciled_count: number;
   ignored_count: number;
   excluded_count: number;

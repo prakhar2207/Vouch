@@ -70,9 +70,9 @@ export default function ReconciliationStatsBar({
         >
           <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
           <span>Done</span>
-          {((summary?.matched_count || 0) + (summary?.reconciled_count || 0)) > 0 && (
+          {(summary?.completed_count ?? summary?.matched_count ?? 0) > 0 && (
             <span className="px-1.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-emerald-500/15 text-emerald-500 leading-none">
-              {(summary?.matched_count || 0) + (summary?.reconciled_count || 0)}
+              {summary?.completed_count ?? summary?.matched_count ?? 0}
             </span>
           )}
         </button>

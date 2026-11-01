@@ -758,6 +758,7 @@ class BankReconciliationService:
             "unresolved_count": unresolved,
             "needs_review_count": suggested,
             "matched_count": auto_matched + reconciled,
+            "completed_count": auto_matched + reconciled,
             "reconciled_count": reconciled,
             "ignored_count": ignored,
             "excluded_count": excluded,

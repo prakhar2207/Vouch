@@ -78,12 +78,12 @@ export const removeTokens = () => {
     try {
       localStorage.removeItem('vouch_access_token');
       localStorage.removeItem('vouch_refresh_token');
-      localStorage.removeItem('vouch_active_company_id');
+
       localStorage.removeItem('vouch_user');
     } catch {}
     syncCapacitorPreference('vouch_access_token', null);
     syncCapacitorPreference('vouch_refresh_token', null);
-    syncCapacitorPreference('vouch_active_company_id', null);
+
     syncCapacitorPreference('vouch_user', null);
   }
 };

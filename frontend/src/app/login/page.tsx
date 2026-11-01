@@ -13,13 +13,17 @@ export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [sessionExpiredNotice, setSessionExpiredNotice] = useState(false);
   const [loading, setLoading] = useState(false);
   const [warmingUp, setWarmingUp] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const router = useRouter();
 
-  // Pre-warm the Render backend container as soon as the login page opens
+  // Pre-warm backend container and detect if navigated due to session expiry
   useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search.includes('expired=1')) {
+      setSessionExpiredNotice(true);
+    }
     try {
       fetch(`${API_BASE_URL}/api/health/`, { method: 'GET', keepalive: true }).catch(() => {});
     } catch {
@@ -80,6 +84,14 @@ export default function Login() {
           <h1 className="text-xl font-extrabold text-foreground">Welcome back</h1>
           <p className="text-xs text-muted-foreground mt-1">Sign in to your accounting workspace</p>
         </div>
+
+        {/* Session Expired Notice */}
+        {sessionExpiredNotice && !error && (
+          <div role="status" className="bg-amber-500/10 border border-amber-500/20 text-amber-500 p-3 rounded-xl mb-5 text-xs flex items-start gap-2 animate-in fade-in">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>Your session has expired. Please sign in again to continue.</span>
+          </div>
+        )}
 
         {/* Error */}
         {error && (

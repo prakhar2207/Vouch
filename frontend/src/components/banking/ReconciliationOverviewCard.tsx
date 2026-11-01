@@ -65,7 +65,7 @@ export default function ReconciliationOverviewCard({
             </span>
           </div>
           <span className="text-sm font-bold font-mono tabular-nums text-foreground">
-            {(summary?.matched_count || 0) + (summary?.reconciled_count || 0)}
+            {summary?.completed_count ?? summary?.matched_count ?? 0}
           </span>
         </button>
 

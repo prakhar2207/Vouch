@@ -75,6 +75,10 @@ const accountingCustomCaching: RuntimeCaching[] = [
                 const parties = await caches.match("/parties") || await caches.match("/ledgers");
                 if (parties) return parties;
               }
+              if (reqUrl.includes("/banking")) {
+                const banking = await caches.match("/banking");
+                if (banking) return banking;
+              }
 
               // 3. Fallback to cached dedicated offline page
               const cachedOffline = await caches.match("/~offline");

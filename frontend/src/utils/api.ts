@@ -34,6 +34,12 @@ interface RequestStats {
 }
 const requestTelemetry = new Map<string, RequestStats>();
 
+function isPublicRoute(): boolean {
+  if (typeof window === 'undefined') return false;
+  const p = window.location.pathname;
+  return p.startsWith('/share/') || p.startsWith('/sales/') || p.includes('/print') || p === '/login' || p === '/register';
+}
+
 function getCleanEndpoint(url?: string): string {
   if (!url) return 'unknown';
   try {
@@ -105,8 +111,17 @@ async function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
           setTokens(newAccess, newRefresh);
           token = newAccess;
         }
-      } catch (refreshErr) {
+      } catch (refreshErr: any) {
         console.warn('[API] Preemptive token refresh failed:', refreshErr);
+        if (refreshErr?.response?.status === 401) {
+          if (typeof navigator === 'undefined' || navigator.onLine) {
+            removeTokens();
+            if (typeof window !== 'undefined' && !isPublicRoute()) {
+              console.warn('[AUTH] Preemptive refresh token rejected (401), redirecting to /login');
+              window.location.replace('/login?expired=1');
+            }
+          }
+        }
       }
     }
   }
@@ -202,12 +217,6 @@ async function handleResponseError(error: AxiosError) {
   isRefreshing = true;
   const refreshToken = getRefreshToken();
 
-  const isPublicRoute = typeof window !== 'undefined' && (
-    window.location.pathname.startsWith('/share/') ||
-    window.location.pathname.startsWith('/sales/') ||
-    window.location.pathname.includes('/print')
-  );
-
   if (!refreshToken || isTokenExpired(refreshToken)) {
     isRefreshing = false;
     processQueue(error, null);
@@ -215,7 +224,7 @@ async function handleResponseError(error: AxiosError) {
     // Only remove tokens if online and truly expired
     if (typeof navigator === 'undefined' || navigator.onLine) {
       removeTokens();
-      if (typeof window !== 'undefined' && window.location.pathname !== '/login' && !isPublicRoute) {
+      if (typeof window !== 'undefined' && !isPublicRoute()) {
         console.warn('[AUTH] Session expired and refresh token unavailable, redirecting to /login');
         window.location.replace('/login?expired=1');
       }
@@ -262,7 +271,7 @@ async function handleResponseError(error: AxiosError) {
 
     if (!isNetworkError && refreshErr.response && (refreshErr.response.status === 401 || refreshErr.response.status === 400)) {
       removeTokens();
-      if (typeof window !== 'undefined' && window.location.pathname !== '/login' && !isPublicRoute) {
+      if (typeof window !== 'undefined' && !isPublicRoute()) {
         console.warn('[AUTH] Refresh token explicitly rejected by server, redirecting to /login');
         window.location.replace('/login?expired=1');
       }

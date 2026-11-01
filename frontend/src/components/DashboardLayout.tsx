@@ -1,5 +1,6 @@
-import { safePurgeTenantData } from '@/lib/db/offlineDb';
 "use client";
+
+import { safePurgeTenantData } from '@/lib/db/offlineDb';
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -179,7 +180,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       }
     } catch {}
     removeTokens();
-    router.push("/login");
+    if (typeof window !== "undefined") {
+      window.location.replace("/login");
+    } else {
+      router.push("/login");
+    }
   };
 
   useHotkeys(
