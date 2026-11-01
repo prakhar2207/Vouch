@@ -140,10 +140,22 @@ export default function BankingPage() {
     }
   }, [activeCompanyId]);
 
+  const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     if (isValidId(companyId)) {
-      fetchTransactionsAndSummary();
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
+      }
+      fetchTimeoutRef.current = setTimeout(() => {
+        fetchTransactionsAndSummary();
+      }, 150);
     }
+    return () => {
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
+      }
+    };
   }, [companyId, selectedBankId, activeTab, activeFY?.id, fromDate, toDate]);
 
   const getHeaders = () => {
@@ -594,15 +606,47 @@ export default function BankingPage() {
     setIsUploading(true);
     try {
       const headers: Record<string, string> = { ...getHeaders() };
-      const formData = new FormData();
-      formData.append("file", uploadFile);
-      formData.append("bank_ledger_id", selectedBankId);
-      formData.append("company_id", companyId);
+      let res;
+      try {
+        const formData = new FormData();
+        formData.append("file", uploadFile);
+        formData.append("bank_ledger_id", selectedBankId);
+        formData.append("company_id", companyId);
 
-      const res = await api.post(`/api/v1/accounting/banking/upload/`, formData, {
-        headers,
-        timeout: 90000,
-      });
+        res = await api.post(`/api/v1/accounting/banking/upload/`, formData, {
+          headers,
+          timeout: 90000,
+        });
+      } catch (uploadErr: any) {
+        const isNetworkErr = !uploadErr.response && (uploadErr.code === "ERR_NETWORK" || uploadErr.message?.toLowerCase().includes("network"));
+        if (isNetworkErr && uploadFile.size < 12 * 1024 * 1024) {
+          console.warn("[Banking] Multipart upload network interrupted, retrying via JSON base64 channel...");
+          const b64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(uploadFile);
+          });
+          res = await api.post(
+            `/api/v1/accounting/banking/upload/`,
+            {
+              file_base64: b64,
+              filename: uploadFile.name,
+              bank_ledger_id: selectedBankId,
+              company_id: companyId,
+            },
+            {
+              headers: {
+                ...headers,
+                "Content-Type": "application/json",
+              },
+              timeout: 90000,
+            }
+          );
+        } else {
+          throw uploadErr;
+        }
+      }
 
       setUploadResult(res.data);
       if (res.data.is_duplicate_file) {
