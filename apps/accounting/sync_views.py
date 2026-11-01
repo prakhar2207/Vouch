@@ -346,6 +346,52 @@ class SyncPullAPIView(APIView):
             'server_time': now_ts,
         })
 
+
+def compute_canonical_payload_hash(payload) -> str:
+    """
+    Deterministic canonical SHA-256 hash of command payload.
+    - Stable dictionary key ordering (sort_keys=True)
+    - Normalized Decimal/Float representations (e.g. 10.0 vs 10.00 -> Decimal('10.00'))
+    - Date and datetime normalization
+    - Null values preserved
+    - Compact delimiters (',', ':')
+    """
+    import json
+    import hashlib
+    import re
+    from decimal import Decimal
+
+    def normalize(val):
+        if isinstance(val, dict):
+            return {str(k).strip(): normalize(v) for k, v in sorted(val.items())}
+        elif isinstance(val, list):
+            return [normalize(item) for item in val]
+        elif isinstance(val, (int, float, Decimal)):
+            try:
+                d = Decimal(str(val))
+                normalized = d.normalize()
+                return f"{normalized:f}" if normalized.as_tuple().exponent <= 0 else str(normalized)
+            except Exception:
+                return str(val)
+        elif isinstance(val, str):
+            val_str = val.strip()
+            try:
+                if re.match(r'^-?\d+(\.\d+)?$', val_str):
+                    d = Decimal(val_str)
+                    normalized = d.normalize()
+                    return f"{normalized:f}" if normalized.as_tuple().exponent <= 0 else str(normalized)
+            except Exception:
+                pass
+            return val_str
+        elif val is None:
+            return None
+        return str(val).strip()
+
+    normalized_payload = normalize(payload)
+    canonical_json = json.dumps(normalized_payload, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(canonical_json.encode('utf-8')).hexdigest()
+
+
 class SyncPushAPIView(APIView):
     """
     POST /api/v1/sync/push/
@@ -415,6 +461,8 @@ class SyncPushAPIView(APIView):
                 cmd_obj = OfflineCommand.objects.get(command_id=cmd_id)
                 created = False
 
+            incoming_hash = compute_canonical_payload_hash(payload)
+
             if not created and cmd_obj.company_id != company.id:
                 errors.append({
                     'command_id': cmd_id,
@@ -422,6 +470,17 @@ class SyncPushAPIView(APIView):
                     'error_code': 'TENANT_MISMATCH'
                 })
                 continue
+
+            # DEF-SYNC-01: Offline Command Payload Integrity Verification
+            if not created:
+                existing_hash = compute_canonical_payload_hash(cmd_obj.payload)
+                if incoming_hash != existing_hash:
+                    errors.append({
+                        'command_id': cmd_id,
+                        'error': 'Payload hash does not match original command submission for this command_id',
+                        'error_code': 'COMMAND_PAYLOAD_MISMATCH'
+                    })
+                    continue
 
             # Idempotency Check: if command already processed, skip duplicate posting and return cached voucher result
             if not created:
@@ -455,6 +514,16 @@ class SyncPushAPIView(APIView):
                 with transaction.atomic():
                     # Concurrency Lock: lock command row to serialize and prevent double processing
                     cmd_obj = OfflineCommand.objects.select_for_update().get(id=cmd_obj.id)
+                    # Recheck payload hash under row-level lock
+                    existing_hash = compute_canonical_payload_hash(cmd_obj.payload)
+                    if incoming_hash != existing_hash:
+                        errors.append({
+                            'command_id': cmd_id,
+                            'error': 'Payload hash does not match original command submission for this command_id',
+                            'error_code': 'COMMAND_PAYLOAD_MISMATCH'
+                        })
+                        continue
+
                     if cmd_obj.status == 'PROCESSED' and cmd_obj.result_voucher:
                         cached_v = cmd_obj.result_voucher
                         v_data = {
@@ -784,12 +853,16 @@ class SyncPushAPIView(APIView):
 
                 errors.append({'command_id': cmd_id, 'error': str(e), 'error_code': cmd_obj.error_code})
 
+        has_mismatch = any(e.get('error_code') == 'COMMAND_PAYLOAD_MISMATCH' for e in errors)
+        resp_status = status.HTTP_200_OK if len(errors) == 0 else (
+            status.HTTP_422_UNPROCESSABLE_ENTITY if (len(processed_commands) == 0 and has_mismatch) else status.HTTP_207_MULTI_STATUS
+        )
         return Response({
             'success': len(errors) == 0,
             'processed_count': len(processed_commands),
             'results': processed_commands,
             'errors': errors
-        }, status=status.HTTP_200_OK if len(errors) == 0 else status.HTTP_207_MULTI_STATUS)
+        }, status=resp_status)
 
 
 class SyncBootstrapAPIView(APIView):

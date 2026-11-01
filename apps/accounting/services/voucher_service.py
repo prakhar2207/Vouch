@@ -264,6 +264,9 @@ class VoucherService:
     @staticmethod
     @transaction.atomic
     def cancel_voucher(voucher: Voucher, user=None, override_period_lock=False):
+        # Concurrency Invariant: Acquire exclusive row lock on voucher to serialize concurrent modifications/cancellations
+        voucher = Voucher.objects.select_for_update().get(id=voucher.id)
+
         if voucher.status not in ['POSTED', 'VALIDATING']:
             raise ValidationError(f"Only posted or validating vouchers can be cancelled (current status: {voucher.status}).")
 

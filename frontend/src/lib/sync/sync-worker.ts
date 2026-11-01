@@ -390,6 +390,7 @@ export async function pushPendingSalesInvoices(): Promise<number> {
           headers: {
             Authorization: `Bearer ${token}`,
             "X-Company-ID": p.company_id,
+            "X-Idempotency-Key": item.operationId,
           },
           timeout: 10000,
         });

@@ -186,6 +186,27 @@ class CreateSalesInvoiceAPIView(APIView):
                 from apps.accounting.services.allocation_service import PaymentAllocationService
                 p_status, paid_amt = PaymentAllocationService.get_voucher_payment_status(voucher)
 
+                from apps.common.idempotency import IdempotencyService
+                resp_payload = {
+                    "success": True,
+                    "message": "Sales Invoice Generated Successfully.",
+                    "voucher_id": str(voucher.id),
+                    "voucher_number": voucher.voucher_number,
+                    "status": voucher.status,
+                    "total_amount": str(voucher.total_amount),
+                    "paid_amount": paid_amt,
+                    "payment_status": p_status,
+                    "voucher": {
+                        "id": str(voucher.id),
+                        "voucher_type": voucher.voucher_type,
+                        "voucher_number": voucher.voucher_number,
+                        "voucher_date": str(voucher.voucher_date),
+                        "status": voucher.status,
+                        "total_amount": str(voucher.total_amount or '0.00'),
+                    }
+                }
+                IdempotencyService.commit_idempotent_operation(request, resp_payload, status_code=201)
+
             return Response({
                 "success": True,
                 "message": "Sales Invoice Generated Successfully.",
@@ -1006,53 +1027,78 @@ class VoucherDetailAPIView(APIView):
             from apps.ledgers.models import Ledger, LedgerGroup
             from django.utils import timezone
             from decimal import Decimal
+            import re
 
-            voucher = Voucher.objects.select_related('company', 'party_ledger').get(
-                id=voucher_id, 
-                company__users__user=request.user
-            )
-            if not user_has_company_roles(request.user, voucher.company, ['OWNER', 'CA']):
+            data = request.data or {}
+
+            # Optimistic Concurrency Control (OCC): Mandatory Version / If-Match extraction
+            submitted_version = data.get('version')
+            if_match = request.META.get('HTTP_IF_MATCH')
+
+            if submitted_version is None and not if_match:
                 return Response({
                     "success": False,
-                    "error": "Permission denied: Only Owner or CA can modify vouchers."
-                }, status=status.HTTP_403_FORBIDDEN)
+                    "error": "OCC version required. Pass 'version' in body or 'If-Match' header."
+                }, status=status.HTTP_428_PRECONDITION_REQUIRED)
 
-            company = voucher.company
-            data = request.data
-
-            # Optimistic Concurrency Control: Version / ETag / If-Match validation
-            submitted_version = data.get('version')
+            expected_version = None
             if submitted_version is not None:
                 try:
-                    if int(submitted_version) != getattr(voucher, 'version', 1):
-                        return Response({
-                            "success": False,
-                            "error": f"Conflict: Voucher was modified by another client. Expected version {getattr(voucher, 'version', 1)}, got {submitted_version}.",
-                            "current_version": getattr(voucher, 'version', 1)
-                        }, status=status.HTTP_409_CONFLICT)
+                    expected_version = int(submitted_version)
                 except (ValueError, TypeError):
-                    pass
-
-            if_match = request.META.get('HTTP_IF_MATCH')
-            if if_match:
-                req_tag = if_match.strip('"').strip()
-                curr_ver = getattr(voucher, 'version', 1)
-                valid_tags = [f"v-{voucher.id}", f"v-{voucher.id}-v{curr_ver}", str(curr_ver)]
-                if req_tag and req_tag not in valid_tags:
                     return Response({
                         "success": False,
-                        "error": "Precondition failed: ETag / version mismatch. Resource was modified.",
-                        "current_version": curr_ver
-                    }, status=status.HTTP_412_PRECONDITION_FAILED)
-
-            # Prevent modification of terminal / immutable vouchers
-            if voucher.status in ['REVERSED', 'CANCELLED']:
-                return Response({
-                    "success": False,
-                    "error": f"Cannot modify a {voucher.status.lower()} voucher."
-                }, status=status.HTTP_400_BAD_REQUEST)
+                        "error": "Invalid version: version must be an integer."
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            elif if_match:
+                raw_tag = if_match.strip('"').strip()
+                m = re.search(r'(\d+)$', raw_tag)
+                if m:
+                    expected_version = int(m.group(1))
+                else:
+                    return Response({
+                        "success": False,
+                        "error": "Invalid If-Match header format. Expected numeric version."
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
             with transaction.atomic():
+                try:
+                    # Acquire row-level lock on voucher without outer joins (prevents nullable outer join error in Postgres)
+                    voucher = Voucher.objects.select_for_update().get(id=voucher_id)
+                except Voucher.DoesNotExist:
+                    return Response({
+                        "success": False,
+                        "error": "Voucher not found"
+                    }, status=status.HTTP_404_NOT_FOUND)
+
+                if not voucher.company.users.filter(user=request.user).exists():
+                    return Response({
+                        "success": False,
+                        "error": "Permission denied: You do not belong to this company."
+                    }, status=status.HTTP_403_FORBIDDEN)
+
+                if not user_has_company_roles(request.user, voucher.company, ['OWNER', 'CA']):
+                    return Response({
+                        "success": False,
+                        "error": "Permission denied: Only Owner or CA can modify vouchers."
+                    }, status=status.HTTP_403_FORBIDDEN)
+
+                # Prevent modification of terminal / immutable vouchers
+                if voucher.status in ['REVERSED', 'CANCELLED']:
+                    return Response({
+                        "success": False,
+                        "error": f"Cannot modify a {voucher.status.lower()} voucher."
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                current_version = getattr(voucher, 'version', 1) or 1
+                if current_version != expected_version:
+                    return Response({
+                        "success": False,
+                        "error": f"Conflict: Voucher was modified by another client. Expected version {expected_version}, got {current_version}.",
+                        "current_version": current_version
+                    }, status=status.HTTP_409_CONFLICT)
+
+                company = voucher.company
                 # 1. Resolve party change safely without ever mutating existing party ledger master!
                 target_party = voucher.party_ledger
                 if 'party_ledger_id' in data and data['party_ledger_id']:
@@ -1652,7 +1698,7 @@ class VoucherDetailAPIView(APIView):
                     logging.getLogger(__name__).warning(f"Could not refresh DocumentSnapshot after voucher patch: {snap_err}")
 
             type_label = "Voucher" if voucher.voucher_type in ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL'] else "Invoice"
-            return Response({
+            response = Response({
                 "success": True, 
                 "message": f"{voucher.voucher_type.title()} {type_label} #{voucher.voucher_number} updated successfully.",
                 "voucher": {
@@ -1665,6 +1711,8 @@ class VoucherDetailAPIView(APIView):
                     "party_name": voucher.party_ledger.name if voucher.party_ledger else ""
                 }
             })
+            response['ETag'] = f'"v-{voucher.id}-v{voucher.version}"'
+            return response
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2797,6 +2845,26 @@ class UniversalVoucherAPIView(APIView):
 
                     if data.get('post_immediately', True):
                         VoucherService.post_voucher(voucher)
+
+                    from apps.common.idempotency import IdempotencyService
+                    resp_dict = {
+                        "success": True,
+                        "message": f"{voucher_type.title()} voucher created and posted successfully.",
+                        "id": str(voucher.id),
+                        "voucher_id": str(voucher.id),
+                        "voucher_number": voucher.voucher_number,
+                        "total_amount": str(voucher.total_amount),
+                        "has_attachment": bool(voucher.attachment_mime),
+                        "voucher": {
+                            "id": str(voucher.id),
+                            "voucher_type": voucher.voucher_type,
+                            "voucher_number": voucher.voucher_number,
+                            "voucher_date": str(voucher.voucher_date),
+                            "status": voucher.status,
+                            "total_amount": str(voucher.total_amount or '0.00'),
+                        }
+                    }
+                    IdempotencyService.commit_idempotent_operation(request, resp_dict, status_code=201)
 
                     return Response({
                         "success": True,

@@ -379,18 +379,10 @@ export async function safePurgeTenantData(targetCompanyId?: string | null): Prom
         offlineDb.masters.where("key").startsWith(`company_${targetCompanyId}`).delete(),
       ]);
 
-      // Remove operations and outbox items for this company
-      const allOps = await offlineDb.operationLog.toArray().catch(() => []);
-      const opIdsToDelete = allOps
-        .filter((op) => op.payload?.company_id === targetCompanyId || op.payload?.company === targetCompanyId)
-        .map((op) => op.operationId);
-
-      if (opIdsToDelete.length > 0) {
-        await Promise.allSettled([
-          offlineDb.operationLog.bulkDelete(opIdsToDelete),
-          offlineDb.outboxQueue.where("operationId").anyOf(opIdsToDelete).delete(),
-        ]);
-      }
+      // DEF-DATA-01 Architectural Fix: PRESERVE offline outboxQueue and operationLog across tenant switches!
+      // Unsynced financial transactions (QUEUED, IN_PROGRESS, RETRY, FAILED) MUST NOT be deleted when switching companies.
+      // They remain isolated by company_id and are resumed only when the user returns to this authorized company.
+      // Cache tables (vouchers, ledgers, products, analytics) were purged above to prevent cross-tenant UI leakage.
     } else {
       // Complete global purge on logout: clear all tables immediately
       // This is 100% resilient and NEVER hangs even if other tabs are holding db locks
