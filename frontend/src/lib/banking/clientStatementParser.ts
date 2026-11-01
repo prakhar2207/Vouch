@@ -69,125 +69,133 @@ export async function parsePdfOnDevice(file: File): Promise<ClientParseResult> {
 
   const data = new Uint8Array(arrayBuffer);
   const doc = await pdfjs.getDocument({ data }).promise;
-  const lines: { page: number; text: string }[] = [];
+
+  const parsedTransactions: ParsedClientTransaction[] = [];
+  let detectedOpening: number | null = null;
+  let detectedClosing: number | null = null;
 
   for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
     const page = await doc.getPage(pageNum);
-    const textContent = await page.getTextContent();
+    const content = await page.getTextContent();
 
-    // Group items by vertical Y coordinates (bucket by 3.5px)
-    const lineMap = new Map<number, { x: number; text: string }[]>();
-    for (const item of textContent.items as any[]) {
-      if (!item.str || !item.str.trim()) continue;
-      const y = Math.round(item.transform[5] / 3.5) * 3.5;
-      if (!lineMap.has(y)) lineMap.set(y, []);
-      lineMap.get(y)!.push({ x: item.transform[4], text: item.str.trim() });
-    }
+    const rawItems = (content.items as any[])
+      .filter((it) => it.str && it.str.trim())
+      .map((it) => ({
+        x: Math.round(it.transform[4]),
+        y: Math.round(it.transform[5] * 10) / 10,
+        str: it.str.trim(),
+      }))
+      .sort((a, b) => b.y - a.y || a.x - b.x);
 
-    const sortedY = Array.from(lineMap.keys()).sort((a, b) => b - a);
-    for (const y of sortedY) {
-      const items = lineMap.get(y)!.sort((a, b) => a.x - b.x);
-      const lineText = items.map((it) => it.text).join(" ");
-      lines.push({ page: pageNum, text: lineText });
-    }
-  }
+    // Locate column headers to dynamically calibrate column positions
+    const headerItem = rawItems.find((it) => it.str === "Particulars" && it.x > 80 && it.x < 300);
+    const headerY = headerItem ? headerItem.y : 9999;
 
-  const dateRegex = /^(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})/;
-  const amountRegex = /(\b\d{1,3}(?:,\d{2,3})*\.\d{2}\b|\b\d+\.\d{2}\b)/g;
+    const depHeader = rawItems.find((it) => it.str === "Deposits" && it.x > 250);
+    const wdlHeader = rawItems.find((it) => it.str === "Withdrawals" && it.x > 350);
+    const balHeader = rawItems.find((it) => it.str === "Balance" && it.x > 450);
 
-  const rawBlocks: { dateStr: string; page: number; lines: string[] }[] = [];
-  let currentBlock: { dateStr: string; page: number; lines: string[] } | null = null;
+    const xDep = depHeader ? depHeader.x - 20 : 300;
+    const xWdl = wdlHeader ? wdlHeader.x - 20 : 400;
+    const xBal = balHeader ? balHeader.x - 20 : 500;
 
-  for (const line of lines) {
-    const text = line.text;
-    const dateMatch = text.match(dateRegex);
-
-    if (dateMatch) {
-      if (currentBlock) rawBlocks.push(currentBlock);
-      currentBlock = {
-        dateStr: dateMatch[1],
-        page: line.page,
-        lines: [text],
-      };
-    } else if (currentBlock) {
-      // Discard standalone boilerplate / guidelines
-      if (
-        !text.includes("DISCLAIMER") &&
-        !text.includes("Ombudsman") &&
-        !text.includes("Customer Id") &&
-        !text.includes("Statement for A/c") &&
-        !text.includes("Page ")
-      ) {
-        currentBlock.lines.push(text);
-      }
-    }
-  }
-  if (currentBlock) rawBlocks.push(currentBlock);
-
-  const parsedTransactions: ParsedClientTransaction[] = [];
-  let prevBalance: number | null = null;
-
-  for (const block of rawBlocks) {
-    const fullText = block.lines.join(" ");
-    const amts = fullText.match(amountRegex) || [];
-    if (amts.length === 0) continue;
-
-    let narration = fullText.replace(dateRegex, "").trim();
-    // Clean trailing disclaimer words
-    narration = narration
-      .replace(/UNLESS THE CONSTITUENT.*/i, "")
-      .replace(/DISCLAIMER.*/i, "")
-      .trim();
-
-    const refMatch = fullText.match(/\b(?:UPI\/CR\/|Chq:\s*|Ref:\s*|CNRBH\w*|RRN\s*)(\w{6,22})\b/i);
-    const ref = refMatch ? refMatch[1] : null;
-
-    let debit = 0;
-    let credit = 0;
-    let balance: number | null = null;
-
-    const isCreditCue = /(?:BY CLG|BY TRF|BY CASH|\bCR\b|UPI\/CR|NEFT CR|IMPS CR|DEPOSIT)/i.test(fullText);
-    const isDebitCue = /(?:TO CLG|TO TRF|TO CASH|\bDR\b|MB NEFT DR|SC NEFT|CASA DEBIT|WITHDRAWAL|PAYMENT AGAINST)/i.test(fullText);
-
-    if (amts.length >= 2) {
-      const amtVal = cleanAmount(amts[0]);
-      balance = cleanAmount(amts[amts.length - 1]);
-
-      if (isCreditCue && !isDebitCue) {
-        credit = amtVal;
-      } else if (isDebitCue && !isCreditCue) {
-        debit = amtVal;
-      } else if (prevBalance !== null && balance !== null) {
-        const delta = balance - prevBalance;
-        if (delta > 0.01) {
-          credit = amtVal;
-        } else {
-          debit = amtVal;
-        }
-      } else {
-        debit = amtVal;
-      }
-    } else if (amts.length === 1) {
-      const amtVal = cleanAmount(amts[0]);
-      if (isCreditCue) credit = amtVal;
-      else debit = amtVal;
-    }
-
-    if (balance !== null) prevBalance = balance;
-
-    parsedTransactions.push({
-      date: normalizeDateStr(block.dateStr),
-      description: narration.slice(0, 400),
-      reference: ref,
-      debit,
-      credit,
-      balance,
-      page: block.page,
+    // Filter table content from disclaimers and page numbers
+    const tableItems = rawItems.filter((it) => {
+      if (it.y >= headerY) return false;
+      if (it.str.startsWith("page ") || it.str === "DISCLAIMER" || it.str.includes("UNLESS THE CONSTITUENT")) return false;
+      if (it.y < 40) return false;
+      return true;
     });
+
+    // Check for explicit closing balance label on page
+    for (const it of rawItems) {
+      if (it.str.toLowerCase().includes("closing balance")) {
+        const balItem = rawItems.find((b) => b.y === it.y && b.x >= xBal);
+        if (balItem) {
+          const s = String(balItem.str).replace(/,/g, "").trim();
+          const num = parseFloat(s);
+          if (!isNaN(num)) detectedClosing = num;
+        }
+      }
+    }
+
+    // Segment into transaction groups based on "Chq:" terminator or date row breaks
+    const txGroups: any[][] = [];
+    let currentGroup: any[] = [];
+
+    const hasChqMarkers = tableItems.some((it) => it.str.startsWith("Chq:") || it.str === "Chq");
+
+    if (hasChqMarkers) {
+      for (const it of tableItems) {
+        currentGroup.push(it);
+        if (it.str.startsWith("Chq:") || it.str === "Chq") {
+          txGroups.push(currentGroup);
+          currentGroup = [];
+        }
+      }
+      if (currentGroup.length > 0) {
+        txGroups.push(currentGroup);
+      }
+    } else {
+      // General fall-back for statements that do not have "Chq:" markers:
+      for (const it of tableItems) {
+        const isDate = it.x < 100 && /^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$/.test(it.str);
+        if (isDate && currentGroup.some((g) => g.x < 100 && /^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$/.test(g.str))) {
+          txGroups.push(currentGroup);
+          currentGroup = [];
+        }
+        currentGroup.push(it);
+      }
+      if (currentGroup.length > 0) {
+        txGroups.push(currentGroup);
+      }
+    }
+
+    for (const group of txGroups) {
+      let date: string | null = null;
+      let debit = 0;
+      let credit = 0;
+      let balance: number | null = null;
+      const descParts: string[] = [];
+
+      for (const it of group) {
+        if (it.x < 100 && /^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$/.test(it.str)) {
+          date = normalizeDateStr(it.str);
+        } else if (it.x >= 100 && it.x < xDep) {
+          descParts.push(it.str);
+        } else if (it.x >= xDep && it.x < xWdl && /\d+\.\d{2}/.test(it.str)) {
+          credit = cleanAmount(it.str);
+        } else if (it.x >= xWdl && it.x < xBal && /\d+\.\d{2}/.test(it.str)) {
+          debit = cleanAmount(it.str);
+        } else if (it.x >= xBal && /[+-]?\d+[\d,]*\.\d{2}/.test(it.str)) {
+          const s = String(it.str).replace(/,/g, "").trim();
+          const num = parseFloat(s);
+          balance = isNaN(num) ? null : num;
+        }
+      }
+
+      if (date && (debit > 0 || credit > 0)) {
+        let fullDesc = descParts.join(" ").trim().replace(/\s+/g, " ");
+
+        // Extract reference number (Cheque, UTR, UPI, IMPS, NEFT)
+        const refMatch = fullDesc.match(/\b(?:UPI\/CR\/|Chq:\s*|Ref:\s*|CNRBH\w*|RRN\s*|MB\s*NEFT\s*DR\s*)(\w{6,22})\b/i);
+        const ref = refMatch ? refMatch[1] : null;
+
+        parsedTransactions.push({
+          page: pageNum,
+          date,
+          description: fullDesc.slice(0, 400),
+          reference: ref,
+          debit,
+          credit,
+          balance,
+        });
+      }
+    }
   }
 
-  const openingBalance = parsedTransactions.length > 0 ? parsedTransactions[0].balance : null;
-  const closingBalance = parsedTransactions.length > 0 ? parsedTransactions[parsedTransactions.length - 1].balance : null;
+  const openingBalance = detectedOpening ?? (parsedTransactions.length > 0 ? parsedTransactions[0].balance : null);
+  const closingBalance = detectedClosing ?? (parsedTransactions.length > 0 ? parsedTransactions[parsedTransactions.length - 1].balance : null);
 
   return {
     fileHash,
