@@ -632,7 +632,8 @@ class PriceListBulkImportAPIView(APIView):
                 company=company,
                 category_id=category_id,
                 brand=brand,
-                items_data=items
+                items_data=items,
+                user=request.user
             )
             return Response(result)
         except Exception as e:
@@ -786,6 +787,180 @@ class BulkUpdateMinStockAPIView(APIView):
                 "message": f"Successfully updated minimum required quantity to {min_stock} for {updated_count} items ({scope_desc})."
             })
         except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
+
+class PriceListJobCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated, CanManageInventory]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def post(self, request, company_id):
+        try:
+            import base64
+            from apps.companies.models import Company
+            from .models import ProductCategory
+            from .services.price_list_service import PriceListService
+
+            company = Company.objects.filter(id=company_id).first()
+            if not company:
+                return Response({"success": False, "error": "Company not found."}, status=404)
+            if not company.users.filter(user=request.user).exists():
+                return Response({"success": False, "error": "Unauthorized access to company."}, status=403)
+
+            category_id = request.data.get('category_id')
+            category = ProductCategory.objects.filter(id=category_id, company=company).first() if category_id else None
+            brand = request.data.get('brand', '')
+            filename = request.data.get('filename', '')
+
+            file_obj = request.FILES.get('file')
+            file_base64 = request.data.get('file_base64')
+
+            if not file_obj and not file_base64:
+                return Response({"success": False, "error": "No document uploaded. Provide 'file' or 'file_base64'."}, status=400)
+
+            if file_obj:
+                raw_bytes = file_obj.read()
+                filename = filename or getattr(file_obj, 'name', 'pricelist.pdf')
+            else:
+                b64 = file_base64
+                if "," in b64:
+                    b64 = b64.split(",", 1)[1]
+                missing_padding = len(b64) % 4
+                if missing_padding:
+                    b64 += '=' * (4 - missing_padding)
+                raw_bytes = base64.b64decode(b64)
+                filename = filename or 'pricelist.pdf'
+
+            job = PriceListService.create_import_job(
+                company=company,
+                category=category,
+                brand=brand,
+                file_bytes=raw_bytes,
+                filename=filename,
+                user=request.user
+            )
+
+            return Response({
+                "success": True,
+                "job_id": str(job.id),
+                "status": job.status,
+                "file_format": job.file_format,
+                "total_detected": job.total_detected,
+                "matched_count": job.matched_count,
+                "new_count": job.new_count,
+                "needs_review_count": job.needs_review_count,
+                "brand": job.brand,
+                "effective_date": job.effective_date
+            }, status=201)
+        except Exception as e:
+            logger.exception(f"Price list job creation failed: {e}")
+            return Response({"success": False, "error": str(e)}, status=400)
+
+
+class PriceListJobDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated, CanManageInventory]
+
+    def get(self, request, company_id, job_id):
+        try:
+            from apps.companies.models import Company
+            from .models import PriceListImportJob
+
+            company = Company.objects.filter(id=company_id).first()
+            if not company:
+                return Response({"success": False, "error": "Company not found."}, status=404)
+            if not company.users.filter(user=request.user).exists():
+                return Response({"success": False, "error": "Unauthorized access to company."}, status=403)
+
+            job = PriceListImportJob.objects.filter(id=job_id, company=company).first()
+            if not job:
+                return Response({"success": False, "error": "Import job not found."}, status=404)
+
+            items_qs = job.extracted_items.all().order_by('source_page', 'id')
+            items_data = []
+            for itm in items_qs:
+                items_data.append({
+                    "id": str(itm.id),
+                    "source_page": itm.source_page,
+                    "item_name": itm.item_name,
+                    "normalized_name": itm.normalized_name,
+                    "sku": itm.sku or "",
+                    "barcode": itm.barcode or "",
+                    "hsn_code": itm.hsn_code or "",
+                    "unit": itm.unit,
+                    "case_qty": itm.case_qty,
+                    "section": itm.section or "",
+                    "mrp": float(itm.mrp),
+                    "selling_price": float(itm.selling_price),
+                    "purchase_price": float(itm.purchase_price),
+                    "matched_product_id": str(itm.matched_product_id) if itm.matched_product_id else None,
+                    "matched_product_name": itm.matched_product.name if itm.matched_product else None,
+                    "match_method": itm.match_method,
+                    "match_confidence": itm.match_confidence,
+                    "match_reason": itm.match_reason,
+                    "existing_selling_price": float(itm.existing_selling_price) if itm.existing_selling_price is not None else None,
+                    "existing_purchase_price": float(itm.existing_purchase_price) if itm.existing_purchase_price is not None else None,
+                    "price_delta": float(itm.price_delta) if itm.price_delta is not None else None,
+                    "price_delta_percent": float(itm.price_delta_percent) if itm.price_delta_percent is not None else None,
+                    "confidence_tier": itm.confidence_tier,
+                    "validation_warnings": itm.validation_warnings,
+                    "proposed_action": itm.proposed_action,
+                    "is_approved": itm.is_approved,
+                    "is_applied": itm.is_applied,
+                })
+
+            return Response({
+                "success": True,
+                "job_id": str(job.id),
+                "status": job.status,
+                "source_filename": job.source_filename,
+                "file_format": job.file_format,
+                "brand": job.brand,
+                "effective_date": job.effective_date,
+                "total_detected": job.total_detected,
+                "matched_count": job.matched_count,
+                "new_count": job.new_count,
+                "needs_review_count": job.needs_review_count,
+                "applied_count": job.applied_count,
+                "items": items_data
+            })
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
+
+class PriceListJobCommitAPIView(APIView):
+    permission_classes = [IsAuthenticated, CanManageInventory]
+
+    def post(self, request, company_id, job_id):
+        try:
+            from apps.companies.models import Company
+            from .models import PriceListImportJob
+            from .services.price_list_service import PriceListService
+
+            company = Company.objects.filter(id=company_id).first()
+            if not company:
+                return Response({"success": False, "error": "Company not found."}, status=404)
+            if not company.users.filter(user=request.user).exists():
+                return Response({"success": False, "error": "Unauthorized access to company."}, status=403)
+
+            job = PriceListImportJob.objects.filter(id=job_id, company=company).first()
+            if not job:
+                return Response({"success": False, "error": "Import job not found."}, status=404)
+
+            approved_ids = request.data.get('approved_item_ids')
+            update_sp = request.data.get('update_selling_price', True)
+            update_pp = request.data.get('update_purchase_price', False)
+
+            result = PriceListService.commit_import_job(
+                job=job,
+                approved_item_ids=approved_ids,
+                update_selling_price=update_sp,
+                update_purchase_price=update_pp,
+                user=request.user
+            )
+
+            return Response(result)
+        except Exception as e:
+            logger.exception(f"Price list job commit failed: {e}")
             return Response({"success": False, "error": str(e)}, status=400)
 
 

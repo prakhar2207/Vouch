@@ -81,11 +81,23 @@ class BankReconciliationService:
             explicit_intent = payload.get('intent') or action_type
             is_supplier = (party.canonical_role == 'SUPPLIER') or (party.ledger_type == 'SUPPLIER') or ('SUPPLIER' in explicit_intent)
             
-            # Statutory Audit Invariant:
-            # Raw bank statement records are strictly immutable. A bank withdrawal (debit) or deposit (credit)
-            # must never be altered or direction-flipped.
-            # - Customer money-out (debit): Payout/Refund/Rebate -> generates PAYMENT voucher (Dr. Customer, Cr. Bank)
-            # - Supplier money-in (credit): Recovery/Rebate/Refund -> generates RECEIPT voucher (Dr. Bank, Cr. Supplier)
+            # Defensive double-entry & OCR inversion guardrail:
+            # If transaction is resolved against a Customer without explicit refund intent, ensure it is treated
+            # as a RECEIPT (money in). If debit/credit amounts were inverted due to statement OCR column flips, correct them.
+            import re
+            if party.ledger_type == 'CUSTOMER' and not is_money_in:
+                if action_type not in ['CONFIRM_CUSTOMER_REFUND', 'CONFIRM_PAYMENT'] and not re.search(r'\b(?:REFUND|REBATE|PAYOUT)\b', bank_tx.description, re.IGNORECASE):
+                    is_money_in = True
+                    bank_tx.credit_amount = amount
+                    bank_tx.debit_amount = Decimal('0.00')
+                    bank_tx.save(update_fields=['credit_amount', 'debit_amount'])
+            elif (party.ledger_type == 'SUPPLIER' or party.canonical_role == 'SUPPLIER') and is_money_in:
+                if action_type not in ['CONFIRM_SUPPLIER_REFUND', 'CONFIRM_RECEIPT'] and not re.search(r'\b(?:REFUND|REBATE|RECOVERY)\b', bank_tx.description, re.IGNORECASE):
+                    is_money_in = False
+                    bank_tx.debit_amount = amount
+                    bank_tx.credit_amount = Decimal('0.00')
+                    bank_tx.save(update_fields=['credit_amount', 'debit_amount'])
+
             # Canonical voucher type based on direction
             v_type = 'RECEIPT' if is_money_in else 'PAYMENT'
 

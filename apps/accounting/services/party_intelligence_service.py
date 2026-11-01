@@ -3,6 +3,7 @@ import difflib
 import datetime
 from decimal import Decimal
 from typing import Dict, Any, List, Optional
+from django.db import models
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
 from apps.accounting.models import Voucher, PartyMapping

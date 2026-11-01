@@ -681,7 +681,7 @@ class BankIntelligenceAndAccountingHealthTests(APITestCase):
         self.assertIn("score_breakdown", report)
         self.assertIn("checks", report)
         self.assertIn("findings", report)
-        self.assertEqual(report["metrics"]["total_checks"], 10)
+        self.assertEqual(report["metrics"]["total_checks"], 11)
 
         # Test health API view
         from apps.companies.models import UserCompany

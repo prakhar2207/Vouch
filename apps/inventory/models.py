@@ -1,6 +1,8 @@
 import uuid
+from decimal import Decimal
 from django.db import models
 from apps.companies.models import Company
+from apps.accounts.models import User
 
 class Warehouse(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -133,4 +135,144 @@ class InventoryEntry(models.Model):
 
     def __str__(self):
         return f"{self.product.name} | {self.movement_type} {self.quantity}"
+
+
+class PriceListImportJob(models.Model):
+    STATUS_CHOICES = (
+        ('UPLOADED', 'Uploaded'),
+        ('QUEUED', 'Queued'),
+        ('PROCESSING', 'Processing'),
+        ('EXTRACTION_COMPLETED', 'Extraction Completed'),
+        ('REVIEW_REQUIRED', 'Review Required'),
+        ('READY_TO_COMMIT', 'Ready to Commit'),
+        ('COMMITTING', 'Committing'),
+        ('COMPLETED', 'Completed'),
+        ('PARTIALLY_COMPLETED', 'Partially Completed'),
+        ('FAILED', 'Failed'),
+        ('CANCELLED', 'Cancelled'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='price_list_imports')
+    category = models.ForeignKey(ProductCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='price_list_imports')
+    brand = models.CharField(max_length=255, blank=True, null=True)
+    source_filename = models.CharField(max_length=255)
+    file_format = models.CharField(max_length=20, default='PDF') # PDF, XLSX, XLS, CSV, IMAGE
+    file_hash = models.CharField(max_length=64, db_index=True)
+    effective_date = models.CharField(max_length=100, blank=True, null=True)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='UPLOADED')
+    total_detected = models.PositiveIntegerField(default=0)
+    matched_count = models.PositiveIntegerField(default=0)
+    new_count = models.PositiveIntegerField(default=0)
+    needs_review_count = models.PositiveIntegerField(default=0)
+    applied_count = models.PositiveIntegerField(default=0)
+    error_summary = models.JSONField(default=list, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_price_list_imports')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['company', 'status']),
+            models.Index(fields=['company', 'file_hash']),
+            models.Index(fields=['company', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f"Import {self.source_filename} ({self.status}) - {self.company.name}"
+
+
+class PriceListExtractedItem(models.Model):
+    CONFIDENCE_CHOICES = (
+        ('HIGH_CONFIDENCE', 'High Confidence'),
+        ('NEEDS_REVIEW', 'Needs Review'),
+        ('LOW_CONFIDENCE', 'Low Confidence'),
+        ('INVALID', 'Invalid'),
+        ('DUPLICATE', 'Duplicate'),
+        ('UNMATCHED', 'Unmatched'),
+    )
+
+    ACTION_CHOICES = (
+        ('CREATE_PRODUCT', 'Create New Product'),
+        ('UPDATE_PRICE', 'Update Existing Product Price'),
+        ('UPDATE_SELECTED_FIELDS', 'Update Selected Fields'),
+        ('SKIP', 'Skip Product'),
+        ('MANUAL_REVIEW', 'Mark for Manual Review'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(PriceListImportJob, on_delete=models.CASCADE, related_name='extracted_items')
+    raw_text = models.TextField(blank=True, null=True)
+    source_page = models.PositiveIntegerField(default=1)
+
+    item_name = models.CharField(max_length=255)
+    normalized_name = models.CharField(max_length=255)
+    sku = models.CharField(max_length=100, blank=True, null=True)
+    barcode = models.CharField(max_length=100, blank=True, null=True)
+    hsn_code = models.CharField(max_length=50, blank=True, null=True)
+    unit = models.CharField(max_length=50, default='PCS')
+    pack_size = models.CharField(max_length=50, blank=True, null=True)
+    case_qty = models.PositiveIntegerField(default=1)
+    section = models.CharField(max_length=255, blank=True, null=True)
+
+    mrp = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    list_price = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    selling_price = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    purchase_price = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    wholesale_price = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    retail_price = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    gst_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    is_tax_inclusive = models.BooleanField(null=True, blank=True)
+
+    matched_product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True, related_name='price_list_matches')
+    match_method = models.CharField(max_length=50, blank=True, null=True)
+    match_confidence = models.FloatField(default=0.0)
+    match_reason = models.CharField(max_length=255, blank=True, null=True)
+
+    existing_selling_price = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    existing_purchase_price = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    existing_mrp = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    price_delta = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    price_delta_percent = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+
+    confidence_tier = models.CharField(max_length=30, choices=CONFIDENCE_CHOICES, default='NEEDS_REVIEW')
+    validation_warnings = models.JSONField(default=list, blank=True)
+    proposed_action = models.CharField(max_length=30, choices=ACTION_CHOICES, default='UPDATE_PRICE')
+    is_approved = models.BooleanField(default=False)
+    is_applied = models.BooleanField(default=False)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['job', 'confidence_tier']),
+            models.Index(fields=['job', 'proposed_action']),
+        ]
+
+    def __str__(self):
+        return f"{self.item_name} (MRP: {self.mrp}) -> {self.proposed_action}"
+
+
+class PriceHistory(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='price_histories')
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='price_history')
+    import_job = models.ForeignKey(PriceListImportJob, on_delete=models.SET_NULL, null=True, blank=True, related_name='price_changes')
+    old_selling_price = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    new_selling_price = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    old_purchase_price = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    new_purchase_price = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    old_mrp = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    new_mrp = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    effective_date = models.CharField(max_length=100, blank=True, null=True)
+    source = models.CharField(max_length=100, default='PRICE_LIST_IMPORT')
+    changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='price_changes')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['company', 'product', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.product.name}: ₹{self.old_selling_price} -> ₹{self.new_selling_price}"
 

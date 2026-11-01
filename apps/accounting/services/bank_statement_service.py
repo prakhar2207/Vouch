@@ -292,19 +292,19 @@ class BankStatementService:
         """
         Identifies column indices for Date, Value Date, Description, Reference,
         Debit, Credit, Amount, Balance, and Type based on Indian bank formats
-        (SBI, HDFC, ICICI, Axis, Kotak, PNB, etc.).
+        (SBI, HDFC, ICICI, Axis, Kotak, PNB, Canara, etc.).
         """
         mapping = {}
         cleaned = [str(col).strip().lower() for col in header_row if col is not None]
 
-        date_aliases = ['txn date', 'transaction date', 'trans date', 'date', 'posting date', 'value dt', 'txndate', 'tran date']
+        date_aliases = ['txn date', 'transaction date', 'trans date', 'date', 'posting date', 'value dt', 'txndate', 'tran date', 'post date', 'दिनांक']
         val_date_aliases = ['value date', 'val date', 'value dt', 'v.date']
-        desc_aliases = ['narration', 'description', 'particulars', 'remarks', 'transaction remarks', 'details', 'trans details', 'statement details']
-        ref_aliases = ['chq/ref no', 'chq / ref no', 'ref no', 'ref', 'reference', 'cheque no', 'chq no', 'utr', 'tran id', 'txn id', 'reference number', 'cheque / ref. no.', 'chqno', 'cheque number']
-        dr_aliases = ['debit', 'withdrawal', 'dr', 'dr amount', 'withdrawals', 'debit amount', 'withdrawal (dr)', 'withdrawal amt.', 'withdrawal amount (inr )']
-        cr_aliases = ['credit', 'deposit', 'cr', 'cr amount', 'deposits', 'credit amount', 'deposit (cr)', 'deposit amt.', 'deposit amount (inr )']
+        desc_aliases = ['narration', 'description', 'particulars', 'remarks', 'transaction remarks', 'details', 'trans details', 'statement details', 'details / narration', 'details/narration', 'विवरण']
+        ref_aliases = ['chq/ref no', 'chq / ref no', 'ref no', 'ref', 'reference', 'cheque no', 'chq no', 'utr', 'tran id', 'txn id', 'reference number', 'cheque / ref. no.', 'chqno', 'cheque number', 'chq. no.', 'chq.no', 'cheque no.', 'instrument no']
+        dr_aliases = ['debit', 'withdrawal', 'dr', 'dr amount', 'withdrawals', 'debit amount', 'withdrawal (dr)', 'withdrawal amt.', 'withdrawal amount (inr )', 'withdrawals (dr)', 'withdrawal(dr)', 'debit (inr)', 'dr (inr)', 'dr.', 'withdrawal', 'डेबिट']
+        cr_aliases = ['credit', 'deposit', 'cr', 'cr amount', 'deposits', 'credit amount', 'deposit (cr)', 'deposit amt.', 'deposit amount (inr )', 'deposits (cr)', 'deposit(cr)', 'credit (inr)', 'cr (inr)', 'cr.', 'deposit', 'क्रेडिट']
         amount_aliases = ['amount', 'txn amount', 'transaction amount', 'net amount']
-        bal_aliases = ['balance', 'closing balance', 'running balance', 'bal', 'closing bal', 'balance (inr)', 'balance (inr )', 'closing balance (inr )']
+        bal_aliases = ['balance', 'closing balance', 'running balance', 'bal', 'closing bal', 'balance (inr)', 'balance (inr )', 'closing balance (inr )', 'बैलेंस']
         type_aliases = ['dr/cr', 'type', 'cr/dr', 'indicator', 'txn type']
 
         for idx, col in enumerate(cleaned):
@@ -814,7 +814,7 @@ class BankStatementService:
 
         # Strategy B: Multi-line narration stitching line tokenizer
         date_start_re = re.compile(
-            r'^(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{1,2}[\s\-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s\-]\d{2,4})',
+            r'^(?:\d{1,6}[\s\.\)\-\t]+)?(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{1,2}[\s\-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s\-]\d{2,4})',
             re.IGNORECASE
         )
         amt_finder_re = re.compile(r'(\b\d{1,3}(?:,\d{2,3})*\.\d{2}\b|\b\d+\.\d{2}\b)')
@@ -903,13 +903,17 @@ class BankStatementService:
                         "lines": [l_str]
                     }
             elif current_block:
-                if cls.is_boilerplate_line(l_str):
+                if cls.is_boilerplate_line(l_str) or re.search(r'\b(?:closing\s+balance|opening\s+balance|disclaimer|end\s+of\s+statement|statement\s+summary|total\s+withdrawals|total\s+deposits|ombudsman|beware\s+of)\b', l_str, re.IGNORECASE):
+                    pending_blocks.append(current_block)
+                    current_block = None
                     continue
                 cutoff = cls.BOILERPLATE_REGEX.search(l_str)
                 if cutoff:
                     clean_part = l_str[:cutoff.start()].strip()
                     if clean_part and not cls.is_boilerplate_line(clean_part):
                         current_block["lines"].append(clean_part)
+                    pending_blocks.append(current_block)
+                    current_block = None
                     continue
                 current_block["lines"].append(l_str)
 
@@ -1091,6 +1095,212 @@ class BankStatementService:
                     "source_page": block["page"]
                 })
 
+        # Strategy C: Positional horizontal text reconstruction for mobile e-passbooks (Canara Bank, PNB, etc.)
+        if len(valid_rows) == 0 and has_pymupdf and doc is not None:
+            pos_lines = []
+            for p_idx, page in enumerate(doc):
+                try:
+                    words = page.get_text("words")
+                    if not words:
+                        continue
+                    lines_by_y = {}
+                    for w in words:
+                        x0, y0, text = w[0], w[1], str(w[4]).strip()
+                        if not text:
+                            continue
+                        matched_y = None
+                        for y_key in lines_by_y:
+                            if abs(y_key - y0) <= 3.5:
+                                matched_y = y_key
+                                break
+                        if matched_y is None:
+                            matched_y = y0
+                            lines_by_y[matched_y] = []
+                        lines_by_y[matched_y].append((x0, text))
+
+                    for y_val in sorted(lines_by_y.keys()):
+                        words_sorted = sorted(lines_by_y[y_val], key=lambda it: it[0])
+                        line_str = " ".join(t for _, t in words_sorted).strip()
+                        if line_str:
+                            pos_lines.append((p_idx + 1, line_str))
+                except Exception:
+                    continue
+
+            if pos_lines:
+                pos_blocks = []
+                terminal_footer_re = re.compile(
+                    r'\b(?:closing\s+balance|opening\s+balance|disclaimer|end\s+of\s+statement|statement\s+summary|total\s+withdrawals|total\s+deposits|ombudsman|beware\s+of|unless\s+the\s+constituent|imb\s+users|page\s+\d+)\b',
+                    re.IGNORECASE
+                )
+                date_finder_re = re.compile(r'\b(\d{1,2}[-\/\.](?:[A-Za-z]{3}|\d{1,2})[-\/\.]\d{2,4})\b')
+                chq_count = sum(1 for _, l in pos_lines if re.search(r'\bchq\s*:', l, re.IGNORECASE))
+                has_chq_terminators = chq_count >= 3
+
+                if has_chq_terminators:
+                    curr_lines = []
+                    in_table = False
+                    for page_no, l_str in pos_lines:
+                        if re.search(r'\bdate\b.*\bparticulars\b', l_str, re.IGNORECASE):
+                            in_table = True
+                            continue
+                        if not in_table:
+                            continue
+                        if terminal_footer_re.search(l_str):
+                            if 'opening balance' in l_str.lower():
+                                continue
+                            if curr_lines:
+                                pos_blocks.append({"date_str": None, "page": page_no, "lines": curr_lines})
+                                curr_lines = []
+                            continue
+                        curr_lines.append(l_str)
+                        if re.search(r'\bchq\s*:', l_str, re.IGNORECASE):
+                            pos_blocks.append({"date_str": None, "page": page_no, "lines": curr_lines})
+                            curr_lines = []
+                    if curr_lines:
+                        pos_blocks.append({"date_str": None, "page": pos_lines[-1][0], "lines": curr_lines})
+                else:
+                    c_block = None
+                    for page_no, l_str in pos_lines:
+                        if terminal_footer_re.search(l_str) and 'opening balance' not in l_str.lower():
+                            if c_block:
+                                pos_blocks.append(c_block)
+                                c_block = None
+                            continue
+                        m = date_start_re.match(l_str)
+                        if m:
+                            if cls.is_boilerplate_line(l_str):
+                                if c_block:
+                                    pos_blocks.append(c_block)
+                                    c_block = None
+                                continue
+                            cutoff = cls.BOILERPLATE_REGEX.search(l_str)
+                            if cutoff:
+                                before_c = l_str[:cutoff.start()].strip()
+                                if cls.is_boilerplate_line(before_c):
+                                    if c_block:
+                                        pos_blocks.append(c_block)
+                                        c_block = None
+                                    continue
+                                l_str = before_c
+                            if c_block:
+                                pos_blocks.append(c_block)
+                            c_block = {
+                                "date_str": m.group(1),
+                                "page": page_no,
+                                "lines": [l_str]
+                            }
+                        elif c_block:
+                            if not cls.is_boilerplate_line(l_str):
+                                c_block["lines"].append(l_str)
+                    if c_block:
+                        pos_blocks.append(c_block)
+
+                for block in pos_blocks:
+                    dt_str = block.get("date_str")
+                    if not dt_str:
+                        dt_m = date_finder_re.search(" ".join(block["lines"]))
+                        if dt_m:
+                            dt_str = dt_m.group(1)
+                    if not dt_str:
+                        continue
+                    dt = cls.parse_date_str(dt_str)
+                    if not dt:
+                        continue
+                    full_block_text = " ".join(block["lines"])
+                    full_block_text = cls.clean_boilerplate_from_narration(full_block_text)
+                    if not full_block_text or cls.is_boilerplate_line(full_block_text):
+                        continue
+                    amts = amt_finder_re.findall(full_block_text)
+                    if not amts:
+                        continue
+                    cleaned_narration = full_block_text
+                    for a in amts:
+                        cleaned_narration = cleaned_narration.replace(a, " ")
+                    cleaned_narration = date_start_re.sub("", cleaned_narration).strip()
+                    norm_desc = cls.normalize_narration(cleaned_narration)
+                    if not norm_desc or cls.is_boilerplate_line(norm_desc):
+                        continue
+                    ref_no = cls.extract_reference_number(full_block_text)
+                    debit = Decimal('0.00')
+                    credit = Decimal('0.00')
+                    bal = None
+                    upper_block = full_block_text.upper()
+                    has_credit = bool(is_credit_re.search(upper_block))
+                    has_debit = bool(is_debit_re.search(upper_block))
+
+                    if len(amts) >= 3:
+                        bal = cls.clean_amount_str(amts[-1])
+                        candidate_amts = [cls.clean_amount_str(a) for a in amts[:-1]]
+                        non_bal_amts = [a for a in candidate_amts if a > 0 and (bal is None or abs(a - bal) > Decimal('0.05'))]
+                        amt_val = non_bal_amts[0] if non_bal_amts else (candidate_amts[0] if candidate_amts else Decimal('0.00'))
+                        if has_credit and not has_debit:
+                            credit = amt_val
+                        elif has_debit and not has_credit:
+                            debit = amt_val
+                        elif prev_balance is not None and bal is not None:
+                            delta = bal - prev_balance
+                            if delta > Decimal('0.01'):
+                                credit = amt_val
+                            else:
+                                debit = amt_val
+                        elif deposit_col_first:
+                            credit = amt_val
+                        else:
+                            debit = amt_val
+                    elif len(amts) == 2:
+                        amt_val = cls.clean_amount_str(amts[0])
+                        bal = cls.clean_amount_str(amts[1])
+                        if has_credit and not has_debit:
+                            credit = amt_val
+                        elif has_debit and not has_credit:
+                            debit = amt_val
+                        elif prev_balance is not None and bal is not None:
+                            delta = bal - prev_balance
+                            if delta > Decimal('0.01'):
+                                credit = amt_val
+                            else:
+                                debit = amt_val
+                        elif deposit_col_first:
+                            credit = amt_val
+                        else:
+                            debit = amt_val
+                    elif len(amts) == 1:
+                        amt_val = cls.clean_amount_str(amts[0])
+                        if has_debit and not has_credit:
+                            debit = amt_val
+                        else:
+                            credit = amt_val
+
+                    if bal is not None:
+                        prev_balance = bal
+
+                    if debit > 0 or credit > 0:
+                        valid_rows.append({
+                            "date": dt,
+                            "value_date": dt,
+                            "description": norm_desc,
+                            "reference": ref_no,
+                            "debit": debit,
+                            "credit": credit,
+                            "balance": bal,
+                            "confidence": 0.95,
+                            "source_page": block["page"]
+                        })
+
+        if doc is not None:
+            try:
+                doc.close()
+            except Exception:
+                pass
+            doc = None
+        import gc
+        gc.collect()
+        try:
+            from apps.common.ocr_engine import OCRMemoryLimiter
+            OCRMemoryLimiter.force_os_memory_trim()
+        except Exception:
+            pass
+
         return valid_rows, errors
 
     @classmethod
@@ -1101,35 +1311,17 @@ class BankStatementService:
         mime_type: str = "image/png"
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
-        Processes scanned PDFs or document photos using Pillow image preprocessing
-        and Google Gemini Vision AI. Returns normalized transactions.
+        Processes scanned PDFs or document photos using streaming page-by-page
+        memory bounded execution and Google Gemini Vision AI.
         """
-        import os
         import json
         from PIL import Image
-        from django.conf import settings
+        from apps.common.ocr_engine import OCRMemoryLimiter, GeminiClientProvider, PDFPageImageStreamer
 
         valid_rows = []
         errors = []
 
-        is_pdf = "pdf" in mime_type.lower() or file_bytes[:4] == b'%PDF'
-        pages_to_process = []
-
-        if is_pdf:
-            try:
-                import pymupdf
-                doc = pymupdf.open(stream=file_bytes, filetype="pdf")
-                max_pages = min(5, len(doc))
-                for p_idx in range(max_pages):
-                    pix = doc[p_idx].get_pixmap(dpi=200)
-                    pages_to_process.append((p_idx + 1, pix.tobytes("png"), "image/png"))
-            except (ImportError, Exception):
-                # If pymupdf is not available, pass the PDF directly to Gemini Vision
-                pages_to_process.append((1, file_bytes, "application/pdf"))
-        else:
-            pages_to_process.append((1, file_bytes, mime_type))
-
-        active_key = os.environ.get("GEMINI_API_KEY", "").strip() or getattr(settings, "GEMINI_API_KEY", "")
+        active_key = GeminiClientProvider.get_api_key()
         if not active_key:
             errors.append({
                 "row": 0,
@@ -1169,114 +1361,130 @@ class BankStatementService:
         )
 
         try:
-            from google import genai
-            from google.genai import types
-            client = genai.Client(api_key=active_key)
+            with OCRMemoryLimiter.guard("BankStatement_ScannedOCR", timeout=45.0):
+                from google import genai
+                from google.genai import types
+                client = genai.Client(api_key=active_key)
 
-            for page_no, img_bytes, img_mime in pages_to_process:
-                try:
-                    pil_img = Image.open(io.BytesIO(img_bytes))
-                    if pil_img.mode in ("RGBA", "P"):
-                        pil_img = pil_img.convert("RGB")
-                    if max(pil_img.size) > 2000:
-                        pil_img.thumbnail((2000, 2000), Image.Resampling.LANCZOS)
-                    out_buf = io.BytesIO()
-                    pil_img.save(out_buf, format="JPEG", quality=85)
-                    proc_bytes = out_buf.getvalue()
-                    proc_mime = "image/jpeg"
-                except Exception:
-                    proc_bytes = img_bytes
-                    proc_mime = img_mime
+                is_pdf = "pdf" in mime_type.lower() or file_bytes[:4] == b'%PDF'
 
-                res_dict = None
-                for b_model in ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.8-flash"]:
+                def page_generator():
+                    if is_pdf:
+                        for p_no, b_data, m_type in PDFPageImageStreamer.stream_pages(file_bytes, max_pages=3, dpi=120, jpg_quality=80):
+                            yield p_no, b_data, m_type
+                    else:
+                        yield 1, file_bytes, mime_type
+
+                for page_no, img_bytes, img_mime in page_generator():
                     try:
+                        pil_img = Image.open(io.BytesIO(img_bytes))
+                        if pil_img.mode in ("RGBA", "P"):
+                            pil_img = pil_img.convert("RGB")
+                        if max(pil_img.size) > 1600:
+                            pil_img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+                        out_buf = io.BytesIO()
+                        pil_img.save(out_buf, format="JPEG", quality=80)
+                        proc_bytes = out_buf.getvalue()
+                        proc_mime = "image/jpeg"
+                        pil_img = None
+                    except Exception:
+                        proc_bytes = img_bytes
+                        proc_mime = img_mime
+
+                    res_dict = None
+                    for b_model in GeminiClientProvider.SUPPORTED_MODELS:
                         try:
-                            response = client.models.generate_content(
-                                model=b_model,
-                                contents=[
-                                    types.Part.from_bytes(data=proc_bytes, mime_type=proc_mime),
-                                    prompt
-                                ],
-                                config=types.GenerateContentConfig(
-                                    response_mime_type="application/json",
-                                    response_schema=BankStatementExtractionSchema,
-                                    temperature=0.1
+                            try:
+                                response = client.models.generate_content(
+                                    model=b_model,
+                                    contents=[
+                                        types.Part.from_bytes(data=proc_bytes, mime_type=proc_mime),
+                                        prompt
+                                    ],
+                                    config=types.GenerateContentConfig(
+                                        response_mime_type="application/json",
+                                        response_schema=BankStatementExtractionSchema,
+                                        temperature=0.1
+                                    )
                                 )
-                            )
-                        except Exception as s_err:
-                            response = client.models.generate_content(
-                                model=b_model,
-                                contents=[
-                                    types.Part.from_bytes(data=proc_bytes, mime_type=proc_mime),
-                                    prompt
-                                ],
-                                config=types.GenerateContentConfig(
-                                    response_mime_type="application/json",
-                                    temperature=0.1
+                            except Exception:
+                                response = client.models.generate_content(
+                                    model=b_model,
+                                    contents=[
+                                        types.Part.from_bytes(data=proc_bytes, mime_type=proc_mime),
+                                        prompt
+                                    ],
+                                    config=types.GenerateContentConfig(
+                                        response_mime_type="application/json",
+                                        temperature=0.1
+                                    )
                                 )
-                            )
-                        resp_text = response.text or ""
-                        if "```json" in resp_text:
-                            resp_text = resp_text.split("```json", 1)[1].split("```", 1)[0].strip()
-                        elif "```" in resp_text:
-                            resp_text = resp_text.split("```", 1)[1].split("```", 1)[0].strip()
-                        res_dict = json.loads(resp_text)
-                        if res_dict:
-                            break
-                    except Exception as b_err:
-                        print(f"[Bank OCR] Model {b_model} attempt failed: {b_err}")
-                        continue
-                if not res_dict:
-                    continue
-                txs = res_dict.get("transactions", [])
-                for t in txs:
-                    raw_desc = (t.get("description") or "").strip()
-                    if not raw_desc:
+                            resp_text = response.text or ""
+                            if "```json" in resp_text:
+                                resp_text = resp_text.split("```json", 1)[1].split("```", 1)[0].strip()
+                            elif "```" in resp_text:
+                                resp_text = resp_text.split("```", 1)[1].split("```", 1)[0].strip()
+                            res_dict = json.loads(resp_text)
+                            if res_dict:
+                                break
+                        except Exception as b_err:
+                            continue
+
+                    # Free image buffer immediately
+                    proc_bytes = None
+                    img_bytes = None
+
+                    if not res_dict:
                         continue
 
-                    # 1. Reject summary, footer, guidelines, or closing balance rows
-                    if cls.is_boilerplate_line(raw_desc):
-                        continue
-                    cleaned_desc = cls.clean_boilerplate_from_narration(raw_desc)
-                    if not cleaned_desc or cls.is_boilerplate_line(cleaned_desc):
-                        continue
-                    raw_desc = cleaned_desc
+                    txs = res_dict.get("transactions", [])
+                    for t in txs:
+                        raw_desc = (t.get("description") or "").strip()
+                        if not raw_desc:
+                            continue
 
-                    dt = cls.parse_date_str(t.get("date"))
-                    if not dt:
-                        continue
-                    deb = Decimal(str(t.get("debit", 0.0) or 0.0))
-                    cred = Decimal(str(t.get("credit", 0.0) or 0.0))
-                    bal_val = t.get("balance")
-                    bal = Decimal(str(bal_val)) if bal_val is not None else None
+                        # 1. Reject summary, footer, guidelines, or closing balance rows
+                        if cls.is_boilerplate_line(raw_desc):
+                            continue
+                        cleaned_desc = cls.clean_boilerplate_from_narration(raw_desc)
+                        if not cleaned_desc or cls.is_boilerplate_line(cleaned_desc):
+                            continue
+                        raw_desc = cleaned_desc
 
-                    # 2. Deterministic Indian banking direction safety guardrails
-                    norm_desc = cls.normalize_narration(raw_desc)
-                    has_credit = bool(cls.IS_CREDIT_REGEX.search(norm_desc))
-                    has_debit = bool(cls.IS_DEBIT_REGEX.search(norm_desc))
+                        dt = cls.parse_date_str(t.get("date"))
+                        if not dt:
+                            continue
+                        deb = Decimal(str(t.get("debit", 0.0) or 0.0))
+                        cred = Decimal(str(t.get("credit", 0.0) or 0.0))
+                        bal_val = t.get("balance")
+                        bal = Decimal(str(bal_val)) if bal_val is not None else None
 
-                    if has_credit and not has_debit:
-                        if deb > 0 and cred == 0:
-                            cred = deb
-                            deb = Decimal('0.00')
-                    elif has_debit and not has_credit:
-                        if cred > 0 and deb == 0:
-                            deb = cred
-                            cred = Decimal('0.00')
+                        # 2. Deterministic Indian banking direction safety guardrails
+                        norm_desc = cls.normalize_narration(raw_desc)
+                        has_credit = bool(cls.IS_CREDIT_REGEX.search(norm_desc))
+                        has_debit = bool(cls.IS_DEBIT_REGEX.search(norm_desc))
 
-                    if deb > 0 or cred > 0:
-                        valid_rows.append({
-                            "date": dt,
-                            "value_date": cls.parse_date_str(t.get("value_date")) or dt,
-                            "description": norm_desc,
-                            "reference": t.get("reference") or None,
-                            "debit": deb,
-                            "credit": cred,
-                            "balance": bal,
-                            "confidence": 0.95,
-                            "source_page": page_no
-                        })
+                        if has_credit and not has_debit:
+                            if deb > 0 and cred == 0:
+                                cred = deb
+                                deb = Decimal('0.00')
+                        elif has_debit and not has_credit:
+                            if cred > 0 and deb == 0:
+                                deb = cred
+                                cred = Decimal('0.00')
+
+                        if deb > 0 or cred > 0:
+                            valid_rows.append({
+                                "date": dt,
+                                "value_date": cls.parse_date_str(t.get("value_date")) or dt,
+                                "description": norm_desc,
+                                "reference": t.get("reference") or None,
+                                "debit": deb,
+                                "credit": cred,
+                                "balance": bal,
+                                "confidence": 0.95,
+                                "source_page": page_no
+                            })
         except Exception as e:
             errors.append({"row": 0, "error": f"AI Vision OCR error: {str(e)}", "raw": ""})
 
@@ -1290,11 +1498,9 @@ class BankStatementService:
                 diff = curr_bal - prev_bal
                 c_deb = curr_row["debit"]
                 c_cred = curr_row["credit"]
-                # Balance increased by approximately transaction amount -> must be credit (deposit)
                 if diff > 0 and c_deb > 0 and c_cred == 0 and abs(diff - c_deb) < Decimal('0.05'):
                     curr_row["credit"] = c_deb
                     curr_row["debit"] = Decimal('0.00')
-                # Balance decreased by approximately transaction amount -> must be debit (withdrawal)
                 elif diff < 0 and c_cred > 0 and c_deb == 0 and abs(abs(diff) - c_cred) < Decimal('0.05'):
                     curr_row["debit"] = c_cred
                     curr_row["credit"] = Decimal('0.00')

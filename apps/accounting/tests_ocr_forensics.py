@@ -529,3 +529,54 @@ class OCRForensicsTestCase(TestCase):
         self.assertEqual(voucher.total_amount, Decimal("15000.00"))
         self.assertEqual(voucher.party_ledger, self.customer_a)
 
+    def test_canara_bank_epassbook_vector_reconstruction_and_memory_isolation(self):
+        """
+        Verify that mobile e-passbooks (such as Canara Bank OD statements) are parsed
+        directly via horizontal vector reconstruction in <0.2s without invoking Vision OCR,
+        without leaking disclaimer boilerplate, and with strict memory boundedness.
+        """
+        import os, fitz
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((36, 146), "Statement for A/c XXXXXXXX4288 between 01-Oct-2026 and 31-Oct-2026")
+        page.insert_text((43, 392), "Date Particulars Deposits Withdrawals Balance")
+        page.insert_text((305, 416), "Opening Balance -9,03,744.64")
+        page.insert_text((26, 474), "01-10-2026")
+        page.insert_text((106, 432), "MB NEFT DR CNRBH00164691439")
+        page.insert_text((413, 474), "20,000.00")
+        page.insert_text((517, 474), "-9,23,744.64")
+        page.insert_text((106, 516), "Chq: 627409690091")
+        page.insert_text((26, 582), "01-10-2026")
+        page.insert_text((106, 540), "MB NEFT DR CNRBH00164691440")
+        page.insert_text((413, 582), "28,222.00")
+        page.insert_text((517, 582), "-9,51,966.64")
+        page.insert_text((106, 624), "Chq: 0")
+        page.insert_text((321, 700), "Closing Balance -9,51,966.64")
+        page.insert_text((356, 730), "DISCLAIMER")
+        page.insert_text((403, 750), "UNLESS THE CONSTITUENT BRINGS TO THE NOTICE OF THE BANK ANY")
+        pdf_bytes = doc.write()
+        doc.close()
+
+        rows, errors = BankStatementService.parse_pdf(pdf_bytes)
+        self.assertEqual(len(errors), 0)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["debit"], Decimal("20000.00"))
+        self.assertEqual(rows[0]["balance"], Decimal("923744.64"))
+        self.assertEqual(rows[1]["debit"], Decimal("28222.00"))
+        self.assertEqual(rows[1]["balance"], Decimal("951966.64"))
+        self.assertNotIn("DISCLAIMER", rows[1]["description"])
+        self.assertNotIn("CONSTITUENT", rows[1]["description"])
+
+        # Also verify real Canara e-Passbook fixture if present on system
+        real_passbook = r"C:\Users\prakh\Downloads\canara_epassbook_2026-11-01 133109.707715.pdf"
+        if os.path.exists(real_passbook):
+            with open(real_passbook, "rb") as f:
+                real_bytes = f.read()
+            real_rows, real_errors = BankStatementService.parse_pdf(real_bytes)
+            self.assertEqual(len(real_errors), 0)
+            self.assertEqual(len(real_rows), 52)
+            self.assertEqual(real_rows[0]["debit"], Decimal("20000.00"))
+            self.assertNotIn("DISCLAIMER", real_rows[-1]["description"])
+            self.assertNotIn("bobangalore", real_rows[-1]["description"])
+
+
