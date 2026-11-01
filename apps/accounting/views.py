@@ -558,6 +558,7 @@ class ListVouchersAPIView(APIView):
                     "date": v.voucher_date.strftime('%Y-%m-%d'),
                     "status": v.status,
                     "total_amount": v.total_amount,
+                    "version": getattr(v, 'version', 1) or 1,
                     "paid_amount": paid_amt,
                     "payment_status": p_status,
                     "has_attachment": bool(v.has_attachment_flag),
@@ -746,6 +747,7 @@ def serialize_voucher_detail(voucher, include_attachment=False, user=None):
         "type": voucher.voucher_type,
         "date": voucher.voucher_date.strftime('%Y-%m-%d'),
         "status": voucher.status,
+        "version": getattr(voucher, 'version', 1) or 1,
         "total_amount": voucher.total_amount,
         "paid_amount": float(paid_amount_total),
         "unallocated_amount": float(max(Decimal('0.00'), (voucher.total_amount or Decimal('0.00')) - paid_amount_total)),
@@ -976,7 +978,10 @@ class VoucherDetailAPIView(APIView):
                 voucher_qs = voucher_qs.defer('attachment_data')
             voucher = voucher_qs.get(id=voucher_id, company__users__user=request.user)
             data = serialize_voucher_detail(voucher, include_attachment=include_attachment, user=request.user)
-            return Response({"success": True, "data": data})
+            response = Response({"success": True, "data": data})
+            v_ver = getattr(voucher, 'version', 1) or 1
+            response['ETag'] = f'"v-{voucher.id}-v{v_ver}"'
+            return response
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1032,7 +1037,9 @@ class VoucherDetailAPIView(APIView):
             data = request.data or {}
 
             # Optimistic Concurrency Control (OCC): Mandatory Version / If-Match extraction
-            submitted_version = data.get('version')
+            submitted_version = data.get('version') if isinstance(data, dict) else None
+            if submitted_version is None:
+                submitted_version = request.query_params.get('version') or request.META.get('HTTP_X_VOUCHER_VERSION')
             if_match = request.META.get('HTTP_IF_MATCH')
 
             if submitted_version is None and not if_match:
@@ -1052,14 +1059,17 @@ class VoucherDetailAPIView(APIView):
                     }, status=status.HTTP_400_BAD_REQUEST)
             elif if_match:
                 raw_tag = if_match.strip('"').strip()
-                m = re.search(r'(\d+)$', raw_tag)
-                if m:
-                    expected_version = int(m.group(1))
+                if raw_tag == '*':
+                    expected_version = None
                 else:
-                    return Response({
-                        "success": False,
-                        "error": "Invalid If-Match header format. Expected numeric version."
-                    }, status=status.HTTP_400_BAD_REQUEST)
+                    m = re.search(r'(\d+)$', raw_tag)
+                    if m:
+                        expected_version = int(m.group(1))
+                    else:
+                        return Response({
+                            "success": False,
+                            "error": "Invalid If-Match header format. Expected numeric version."
+                        }, status=status.HTTP_400_BAD_REQUEST)
 
             with transaction.atomic():
                 try:
@@ -1091,7 +1101,7 @@ class VoucherDetailAPIView(APIView):
                     }, status=status.HTTP_400_BAD_REQUEST)
 
                 current_version = getattr(voucher, 'version', 1) or 1
-                if current_version != expected_version:
+                if expected_version is not None and current_version != expected_version:
                     return Response({
                         "success": False,
                         "error": f"Conflict: Voucher was modified by another client. Expected version {expected_version}, got {current_version}.",
@@ -2408,6 +2418,7 @@ class ListPaymentReceiptAPIView(APIView):
                     "date": v.voucher_date.strftime('%Y-%m-%d'),
                     "status": v.status,
                     "total_amount": str(v.total_amount),
+                    "version": getattr(v, 'version', 1) or 1,
                     "party_name": v.party_ledger.name if v.party_ledger else "N/A",
                     "narration": v.narration or "",
                     "financial_year_id": str(v.financial_year_id) if v.financial_year_id else None,

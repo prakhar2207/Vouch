@@ -70,9 +70,13 @@ export default function EditPurchaseInvoiceModal({
   const [products, setProducts] = useState<any[]>([]);
   const [activeSearchIdx, setActiveSearchIdx] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
+  const [version, setVersion] = useState<number>(1);
 
   useEffect(() => {
     if (isOpen && voucher?.id) {
+      if (voucher.version !== undefined && voucher.version !== null) {
+        setVersion(Number(voucher.version));
+      }
       loadFullVoucher();
     }
   }, [isOpen, voucher?.id]);
@@ -147,6 +151,11 @@ export default function EditPurchaseInvoiceModal({
 
       if (res.data.success && res.data.data) {
         const v = res.data.data;
+        if (v.version !== undefined && v.version !== null) {
+          setVersion(Number(v.version));
+        } else if (voucher?.version !== undefined && voucher?.version !== null) {
+          setVersion(Number(voucher.version));
+        }
         const targetCid = v.company?.id || v.company_id;
         fetchMasters(targetCid);
 
@@ -353,7 +362,15 @@ export default function EditPurchaseInvoiceModal({
     setSaving(true);
     try {
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const activeCo = (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') || '' : '') || voucher?.company_id || voucher?.company?.id || '';
+      const currentVersion = Number(version || voucher?.version || 1);
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        'If-Match': `"${currentVersion}"`,
+      };
+      if (activeCo) {
+        headers['X-Company-ID'] = activeCo;
+      }
 
       const payload = {
         voucher_number: invoiceNumber.trim(),
@@ -361,6 +378,7 @@ export default function EditPurchaseInvoiceModal({
         party_ledger_id: isCustomParty ? null : (partyLedgerId || null),
         party_name: partyName.trim(),
         narration: narration.trim(),
+        version: currentVersion,
         items: items.map((it) => ({
           product_id: it.product_id || null,
           product_name: it.product_name.trim(),
@@ -383,6 +401,9 @@ export default function EditPurchaseInvoiceModal({
       );
 
       if (res.data.success) {
+        if (res.data.voucher?.version) {
+          setVersion(Number(res.data.voucher.version));
+        }
         toast.success(
           "Invoice updated successfully!",
           "Quantities, rates, HSN, and inventory stock have been recalculated."
@@ -393,6 +414,11 @@ export default function EditPurchaseInvoiceModal({
         toast.error("Failed to update invoice", res.data.error);
       }
     } catch (err: any) {
+      if (err.response?.status === 409) {
+        toast.error("Concurrency Conflict", "This invoice was modified concurrently. Refreshing latest version...");
+        loadFullVoucher();
+        return;
+      }
       toast.error("Update error", err.response?.data?.error || err.message);
     } finally {
       setSaving(false);

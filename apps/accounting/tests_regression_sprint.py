@@ -153,7 +153,8 @@ class SprintRegressionTestCase(TestCase):
         url = f"/api/vouchers/{invoice.id}/"
         payload = {
             "party_name": "Zenith Industries",
-            "correction_reason": "Billed to incorrect customer"
+            "correction_reason": "Billed to incorrect customer",
+            "version": invoice.version or 1
         }
         res = self.client.patch(url, payload, format="json")
         self.assertEqual(res.status_code, status.HTTP_200_OK, getattr(res, 'data', None))
@@ -373,6 +374,7 @@ class SprintRegressionTestCase(TestCase):
             "voucher_date": "2026-09-05",
             "party_name": "SKF Bearings Ltd",
             "narration": "Updated invoice date",
+            "version": invoice.version or 1,
             "items": [{
                 "product_id": str(prod.id),
                 "product_name": "Bearing B 65",
@@ -443,6 +445,7 @@ class SprintRegressionTestCase(TestCase):
         payload = {
             "voucher_number": "BILL-8801",
             "voucher_date": "2026-09-10",
+            "version": invoice.version or 1,
             "items": [{
                 "product_id": str(prod.id),
                 "product_name": "Shaft S 20",
@@ -510,6 +513,7 @@ class SprintRegressionTestCase(TestCase):
         payload = {
             "voucher_number": "BILL-7701",
             "voucher_date": "2026-09-10",
+            "version": invoice.version or 1,
             "items": [{
                 "product_id": str(prod.id),
                 "product_name": "Valve V 10",

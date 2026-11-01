@@ -420,7 +420,8 @@ class PostedVoucherImmutabilityTests(BaseHardeningTestCase):
 
         self.client.force_authenticate(user=self.user_owner_a)
         patch_payload = {
-            "items": [{"product_id": str(self.prod_a.id), "quantity": 4, "rate": 150.00}]
+            "items": [{"product_id": str(self.prod_a.id), "quantity": 4, "rate": 150.00}],
+            "version": voucher.version or 1
         }
         res = self.client.patch(f"/api/vouchers/detail/{voucher.id}/", data=patch_payload, format='json')
         self.assertEqual(res.status_code, status.HTTP_200_OK)

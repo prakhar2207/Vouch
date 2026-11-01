@@ -53,6 +53,7 @@ export default function EditPaymentReceiptModal({
   const [voucherDate, setVoucherDate] = useState("");
   const [narration, setNarration] = useState("");
   const [referenceNumber, setReferenceNumber] = useState("");
+  const [version, setVersion] = useState<number>(1);
 
   const [paymentMode, setPaymentMode] = useState<PaymentMode>("CASH");
   const [isAddBankModalOpen, setIsAddBankModalOpen] = useState(false);
@@ -63,6 +64,9 @@ export default function EditPaymentReceiptModal({
 
   useEffect(() => {
     if (isOpen && voucher?.id) {
+      if (voucher.version !== undefined && voucher.version !== null) {
+        setVersion(Number(voucher.version));
+      }
       loadDetailsAndLedgers();
     }
   }, [isOpen, voucher?.id]);
@@ -138,6 +142,11 @@ export default function EditPaymentReceiptModal({
       const vRes = await axios.get(`${API_BASE_URL}/api/vouchers/${voucher.id}/`, { headers });
       if (vRes.data.success && vRes.data.data) {
         const d = vRes.data.data;
+        if (d.version !== undefined && d.version !== null) {
+          setVersion(Number(d.version));
+        } else if (voucher?.version !== undefined && voucher?.version !== null) {
+          setVersion(Number(voucher.version));
+        }
         setVoucherDate(d.date || voucher.date || "");
         setAmount(String(d.total_amount || voucher.total_amount || ""));
         setNarration(d.narration || voucher.narration || "");
@@ -273,7 +282,15 @@ export default function EditPaymentReceiptModal({
     setSaving(true);
     try {
       const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const activeCo = (typeof window !== 'undefined' ? localStorage.getItem('vouch_active_company_id') || '' : '') || voucher?.companyId || voucher?.company_id || companyId || '';
+      const currentVersion = Number(version || voucher?.version || 1);
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        'If-Match': `"${currentVersion}"`,
+      };
+      if (activeCo) {
+        headers['X-Company-ID'] = activeCo;
+      }
 
       const payload = {
         voucher_date: voucherDate,
@@ -282,11 +299,15 @@ export default function EditPaymentReceiptModal({
         payment_ledger_id: paymentLedgerId,
         reference_number: referenceNumber.trim(),
         narration: narration.trim(),
+        version: currentVersion,
       };
 
       const res = await axios.patch(`${API_BASE_URL}/api/vouchers/${voucher.id}/`, payload, { headers });
 
       if (res.data.success) {
+        if (res.data.voucher?.version) {
+          setVersion(Number(res.data.voucher.version));
+        }
         toast.success(
           `${voucherType === "RECEIPT" ? "Receipt" : "Payment"} Updated`,
           `Voucher #${voucherNumber} updated and ledger balances recalculated.`
@@ -297,6 +318,11 @@ export default function EditPaymentReceiptModal({
         toast.error("Update failed", res.data.error);
       }
     } catch (err: any) {
+      if (err.response?.status === 409) {
+        toast.error("Concurrency Conflict", "This voucher was modified concurrently. Refreshing latest details...");
+        loadDetailsAndLedgers();
+        return;
+      }
       toast.error("Error updating voucher", err.response?.data?.error || err.message);
     } finally {
       setSaving(false);

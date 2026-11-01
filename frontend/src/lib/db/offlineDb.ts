@@ -46,6 +46,7 @@ export interface SyncedVoucher {
   partyLedgerId?: string | null;
   partyName?: string;
   status: "DRAFT" | "POSTED" | "CANCELLED" | "REVERSED" | "SUPERSEDED" | "CORRECTED" | "PENDING_SYNC";
+  version?: number;
   totalAmount: number; // numeric float/decimal representation
   roundOff?: number; // round-off adjustment (+/-)
   paymentStatus?: "PAID" | "PARTIAL" | "UNPAID" | "ALLOCATED" | "UNALLOCATED";

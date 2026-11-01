@@ -272,7 +272,7 @@ class AccountantTrustWorkflowTests(TestCase):
         # User edits invoice to change party from Party A to Party B
         resp = self.client.patch(
             f'/api/v1/accounting/vouchers/detail/{inv.id}/',
-            {"party_ledger_id": str(self.party_b.id)},
+            {"party_ledger_id": str(self.party_b.id), "version": inv.version or 1},
             format='json'
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)

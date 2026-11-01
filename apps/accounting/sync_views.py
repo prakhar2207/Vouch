@@ -235,6 +235,7 @@ class SyncPullAPIView(APIView):
                     'paid_amount': paid_amt,
                     'payment_status': p_status,
                     'narration': v.narration or '',
+                    'version': getattr(v, 'version', 1) or 1,
                     'server_updated_at': int(v.updated_at.timestamp() * 1000) if getattr(v, 'updated_at', None) else now_ts,
                 }
                 if v.status in ['CANCELLED', 'REVERSED', 'SUPERSEDED']:
@@ -998,6 +999,7 @@ class SyncBootstrapAPIView(APIView):
                 'status': v.status,
                 'party_ledger_id': str(v.party_ledger_id) if v.party_ledger_id else None,
                 'party_name': v.party_ledger.name if v.party_ledger else (v.buyer_name or ''),
+                'version': getattr(v, 'version', 1) or 1,
             }
             for v in recent_vchs
         ]
