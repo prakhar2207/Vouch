@@ -85,7 +85,7 @@ class AuditLogListView(APIView):
         Detects any broken previous_hash, invalid current_hash, or tampering.
         """
         import hashlib, json
-        logs = list(AuditLog.objects.filter(company=company).order_by('created_at'))
+        logs = list(AuditLog.objects.filter(company=company).order_by('created_at', 'id'))
         if not logs:
             return "NOT_VERIFIED"
 

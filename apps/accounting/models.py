@@ -212,6 +212,8 @@ class Voucher(models.Model):
         pass
 
     def save(self, *args, **kwargs):
+        if not self.version:
+            self.version = 1
         self.clean()
         super().save(*args, **kwargs)
 

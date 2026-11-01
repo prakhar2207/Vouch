@@ -338,7 +338,7 @@ class VoucherService:
 
     @staticmethod
     @transaction.atomic
-    def delete_voucher(voucher: Voucher, user=None, reason="User Deletion"):
+    def delete_voucher(voucher: Voucher, user=None, reason="User Deletion", recalculate_balance: bool = True):
         """
         Permanently deletes a voucher and all associated ledger entries and line items.
         Stores full snapshot in AuditLog for audit trail compliance.
@@ -429,14 +429,17 @@ class VoucherService:
         ).delete()
 
         # 6. Unlink any self-referencing reversal voucher relationships
-        if voucher.reversal_voucher_id:
-            rev_v = voucher.reversal_voucher
-            voucher.reversal_voucher = None
-            voucher.save(update_fields=['reversal_voucher'])
-            if rev_v:
-                rev_v.items.all().delete()
-                rev_v.ledger_entries.all().delete()
-                rev_v.delete()
+        rev_id = getattr(voucher, 'reversal_voucher_id', None)
+        if rev_id:
+            Voucher.objects.filter(id=voucher.id).update(reversal_voucher=None)
+            try:
+                rev_v = Voucher.objects.filter(id=rev_id).first()
+                if rev_v:
+                    rev_v.items.all().delete()
+                    rev_v.ledger_entries.all().delete()
+                    rev_v.delete()
+            except Exception:
+                pass
         Voucher.objects.filter(reversal_voucher=voucher).update(reversal_voucher=None)
 
         # 7. Delete items and ledger entries
@@ -469,10 +472,11 @@ class VoucherService:
             )
 
         # 11. Recalculate affected ledger balances
-        for lid in affected_ledger_ids:
-            l = Ledger.objects.filter(id=lid).first()
-            if l:
-                VoucherService.recalculate_ledger_balance(l)
+        if recalculate_balance:
+            for lid in affected_ledger_ids:
+                l = Ledger.objects.filter(id=lid).first()
+                if l:
+                    VoucherService.recalculate_ledger_balance(l)
 
         # 12. Emit SyncEvent for offline sync
         SyncEvent.objects.create(

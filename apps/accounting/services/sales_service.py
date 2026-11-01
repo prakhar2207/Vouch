@@ -117,7 +117,8 @@ class SalesInvoiceService:
             is_reverse_charge=bool(is_reverse_charge),
             status='DRAFT',
             created_by=user,
-            narration=narration_text
+            narration=narration_text,
+            version=1
         )
         
         total_invoice_value = Decimal('0.00')

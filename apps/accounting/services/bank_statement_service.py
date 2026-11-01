@@ -1466,6 +1466,9 @@ class BankStatementService:
         from apps.accounting.services.party_intelligence_service import PartyIntelligenceService
 
         with transaction.atomic():
+            # Exclusively lock the bank ledger to prevent concurrent duplicate import collisions
+            Ledger.objects.select_for_update().filter(id=bank_ledger.id).first()
+
             import_record = BankStatementImport.objects.create(
                 company=company,
                 bank_ledger=bank_ledger,
@@ -1498,7 +1501,7 @@ class BankStatementService:
             preloaded_cash = Ledger.objects.filter(company=company, ledger_type='CASH', is_archived=False).first()
             if not preloaded_cash:
                 preloaded_cash = Ledger.objects.filter(company=company, name__iexact='Cash', is_archived=False).first()
-            preloaded_expenses = list(Ledger.objects.filter(company=company, group__nature='EXPENSE', is_archived=False)[:20])
+            preloaded_expenses = list(Ledger.objects.filter(company=company, group__nature='EXPENSE', is_archived=False))
 
             row_dates = [r.get('date') for r in valid_rows if r.get('date')]
             min_stmt_date = min(row_dates) if row_dates else None
@@ -1631,7 +1634,26 @@ class BankStatementService:
                 ))
 
             if transactions_to_create:
-                created_transactions = BankTransaction.objects.bulk_create(transactions_to_create)
+                # Use ignore_conflicts=True to safely absorb database duplicate race conditions
+                BankTransaction.objects.bulk_create(transactions_to_create, ignore_conflicts=True)
+                actually_inserted = list(BankTransaction.objects.filter(statement_import=import_record))
+                conflict_dups = len(transactions_to_create) - len(actually_inserted)
+                duplicate_count += conflict_dups
+
+                # Atomically bulk-emit SyncEvents for all actually inserted transactions
+                from apps.accounting.models import SyncEvent
+                sync_events = [
+                    SyncEvent(
+                        company_id=company.id,
+                        entity_type='BANKTRANSACTION',
+                        entity_id=tx.id,
+                        operation='CREATE'
+                    )
+                    for tx in actually_inserted
+                ]
+                if sync_events:
+                    SyncEvent.objects.bulk_create(sync_events)
+                created_transactions = actually_inserted
             else:
                 created_transactions = []
 
