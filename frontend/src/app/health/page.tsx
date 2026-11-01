@@ -1,10 +1,9 @@
 "use client";
 
 import React, { useEffect, useState, useMemo } from "react";
-import axios from "axios";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { API_BASE_URL } from "@/utils/api";
+import { api, API_BASE_URL } from "@/utils/api";
 import { getAccessToken, isAuthenticated } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useToast } from "@/context/ToastContext";
@@ -161,7 +160,7 @@ export default function HealthPage() {
         cid = localStorage.getItem("vouch_active_company_id");
       }
       if (!cid) {
-        const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
+        const compRes = await api.get(`${API_BASE_URL}/api/v1/companies/`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
@@ -193,7 +192,7 @@ export default function HealthPage() {
         Authorization: `Bearer ${token}`,
         "X-Company-ID": targetCid,
       };
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${targetCid}`, { headers });
+      const res = await api.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${targetCid}`, { headers });
       setReport(res.data);
     } catch (err: any) {
       console.error(err);
@@ -210,7 +209,7 @@ export default function HealthPage() {
     setIsDiagnosticOpen(true);
     try {
       const headers = getHeaders();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/health/diagnose-balance/?company_id=${companyId}`, { headers });
+      const res = await api.get(`${API_BASE_URL}/api/v1/accounting/health/diagnose-balance/?company_id=${companyId}`, { headers });
       setDiagnosticResult(res.data);
     } catch (err: any) {
       toast.error("Diagnostic failed", err.message || "Could not diagnose balance.");
@@ -224,7 +223,7 @@ export default function HealthPage() {
     setLoadingPreview(true);
     try {
       const headers = getHeaders();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/health/findings/${finding.id}/preview/?company_id=${companyId}`, {
+      const res = await api.get(`${API_BASE_URL}/api/v1/accounting/health/findings/${finding.id}/preview/?company_id=${companyId}`, {
         headers,
       });
       setPreviewData(res.data);
@@ -241,7 +240,7 @@ export default function HealthPage() {
     setExecutingFix(true);
     try {
       const headers = getHeaders();
-      const res = await axios.post(
+      const res = await api.post(
         `${API_BASE_URL}/api/v1/accounting/health/findings/${previewFinding.id}/fix/`,
         { company_id: companyId },
         { headers }
