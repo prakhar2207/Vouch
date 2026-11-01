@@ -1052,6 +1052,66 @@ class BankReconciliationService:
 
     @classmethod
     @transaction.atomic
+    def restore_transaction(cls, bank_tx: BankTransaction, user=None) -> Dict[str, Any]:
+        """
+        Audited restoration of a previously excluded bank transaction.
+        """
+        if not bank_tx.is_excluded:
+            return {
+                "status": "SUCCESS",
+                "message": "Transaction is already active in books."
+            }
+
+        bank_tx.is_excluded = False
+        bank_tx.status = 'UNRESOLVED'
+        bank_tx.exclusion_reason = None
+        bank_tx.excluded_at = None
+        bank_tx.excluded_by = None
+        bank_tx.save(update_fields=['is_excluded', 'status', 'exclusion_reason', 'excluded_at', 'excluded_by', 'updated_at'])
+
+        AuditService.log_action(
+            company=bank_tx.company,
+            user=user,
+            action='RESTORE',
+            model_name='BankTransaction',
+            record_id=bank_tx.id,
+            changes={"status": "UNRESOLVED", "is_excluded": False}
+        )
+        return {
+            "status": "SUCCESS",
+            "message": "Transaction restored to books."
+        }
+
+    @classmethod
+    @transaction.atomic
+    def restore_statement_import(cls, statement_import: BankStatementImport, user=None) -> int:
+        """
+        Audited restoration of a previously excluded statement import and all associated transactions.
+        """
+        txs = list(statement_import.transactions.filter(is_excluded=True))
+        count = 0
+        for tx in txs:
+            cls.restore_transaction(tx, user=user)
+            count += 1
+
+        statement_import.is_excluded = False
+        statement_import.exclusion_reason = None
+        statement_import.excluded_at = None
+        statement_import.excluded_by = None
+        statement_import.save(update_fields=['is_excluded', 'exclusion_reason', 'excluded_at', 'excluded_by'])
+
+        AuditService.log_action(
+            company=statement_import.company,
+            user=user,
+            action='RESTORE',
+            model_name='BankStatementImport',
+            record_id=statement_import.id,
+            changes={"restored_count": count, "is_excluded": False}
+        )
+        return count
+
+    @classmethod
+    @transaction.atomic
     def delete_transaction(cls, bank_tx: BankTransaction) -> None:
         """
         Deletes a bank transaction from the server.

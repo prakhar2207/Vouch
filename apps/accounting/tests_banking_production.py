@@ -445,3 +445,62 @@ class BankingProductionIntegrationTests(APITestCase):
         self.assertEqual(data_dup.get("imported_count"), 0)
         self.assertEqual(data_dup.get("duplicates_count"), 2)
 
+    def test_11_statement_exclude_and_restore(self):
+        """Verify statement and transaction exclusion and restoration via /exclude/ and /restore/ endpoints."""
+        self.client.force_authenticate(user=self.user)
+        import_rec = BankStatementImport.objects.create(
+            company=self.company,
+            bank_ledger=self.bank_ledger,
+            source_file_name="test_statement.pdf",
+            file_hash="testhash_exclude_restore",
+            status="COMPLETED",
+            total_rows=1,
+            successful_rows=1
+        )
+        tx = BankTransaction.objects.create(
+            company=self.company,
+            statement_import=import_rec,
+            bank_ledger=self.bank_ledger,
+            transaction_date=datetime.date(2026, 6, 20),
+            description="TEST PAYMENT",
+            normalized_narration="TEST PAYMENT",
+            debit_amount=Decimal("1000.00"),
+            credit_amount=Decimal("0.00"),
+            status="UNRESOLVED"
+        )
+
+        # 1. Exclude statement via /exclude/ route
+        exclude_url = f"/api/v1/accounting/banking/statements/{import_rec.id}/exclude/"
+        res = self.client.post(exclude_url, {"reason": "Wrong account upload"}, format="json", HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        import_rec.refresh_from_db()
+        tx.refresh_from_db()
+        self.assertTrue(import_rec.is_excluded)
+        self.assertTrue(tx.is_excluded)
+        self.assertEqual(tx.status, "EXCLUDED")
+
+        # 2. Restore statement via /restore/ route
+        restore_url = f"/api/v1/accounting/banking/statements/{import_rec.id}/restore/"
+        res_restore = self.client.post(restore_url, {}, format="json", HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(res_restore.status_code, status.HTTP_200_OK)
+        import_rec.refresh_from_db()
+        tx.refresh_from_db()
+        self.assertFalse(import_rec.is_excluded)
+        self.assertFalse(tx.is_excluded)
+        self.assertEqual(tx.status, "UNRESOLVED")
+
+        # 3. Exclude single transaction via /exclude/ route
+        tx_exclude_url = f"/api/v1/accounting/banking/transactions/{tx.id}/exclude/"
+        res_tx_exc = self.client.post(tx_exclude_url, {"reason": "Personal expense"}, format="json", HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(res_tx_exc.status_code, status.HTTP_200_OK)
+        tx.refresh_from_db()
+        self.assertTrue(tx.is_excluded)
+        self.assertEqual(tx.status, "EXCLUDED")
+
+        # 4. Restore single transaction via /restore/ route
+        tx_restore_url = f"/api/v1/accounting/banking/transactions/{tx.id}/restore/"
+        res_tx_res = self.client.post(tx_restore_url, {}, format="json", HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(res_tx_res.status_code, status.HTTP_200_OK)
+        tx.refresh_from_db()
+        self.assertFalse(tx.is_excluded)
+        self.assertEqual(tx.status, "UNRESOLVED")

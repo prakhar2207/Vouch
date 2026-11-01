@@ -637,6 +637,44 @@ class BankStatementImportDetailAPIView(APIView):
             return Response({"error": "Failed to exclude statement.", "correlation_id": correlation_id}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class BankTransactionRestoreAPIView(APIView):
+    permission_classes = [IsAuthenticated, CanManageLedgers]
+
+    def post(self, request, pk, *args, **kwargs):
+        """
+        Restores a previously excluded bank transaction.
+        """
+        company = get_authorized_company(request)
+        tx = get_object_or_404(BankTransaction, id=pk, company=company)
+        try:
+            res = BankReconciliationService.restore_transaction(tx, user=request.user)
+            return Response(res, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception("Failed to restore transaction: %s", e)
+            return Response({"error": "Failed to restore transaction."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class BankStatementImportRestoreAPIView(APIView):
+    permission_classes = [IsAuthenticated, CanManageLedgers]
+
+    def post(self, request, pk, *args, **kwargs):
+        """
+        Restores a previously excluded statement import and all associated transactions.
+        """
+        company = get_authorized_company(request)
+        statement_import = get_object_or_404(BankStatementImport, id=pk, company=company)
+        try:
+            count = BankReconciliationService.restore_statement_import(statement_import, user=request.user)
+            return Response({
+                "status": "SUCCESS",
+                "message": f"Statement '{statement_import.source_file_name}' and {count} transactions restored to books.",
+                "restored_count": count
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception("Failed to restore statement import: %s", e)
+            return Response({"error": "Failed to restore statement."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class BankTransactionToggleDirectionAPIView(APIView):
     permission_classes = [IsAuthenticated, CanManageLedgers]
 
