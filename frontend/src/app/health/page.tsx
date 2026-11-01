@@ -608,13 +608,13 @@ export default function HealthPage() {
               </div>
               <div className="truncate">
                 <h3 className="text-xs sm:text-sm font-bold text-foreground flex items-center gap-2">
-                  <span>11 Automated Accounting Audits</span>
+                  <span>{report?.metrics?.total_checks || 11} Automated Accounting Audits</span>
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-normal">
-                    {report?.checks ? `${report.checks.filter((c) => c.status === "PASSED").length}/11 Passing` : "--"}
+                    {report?.checks ? `${report.checks.filter((c) => c.status === "PASSED").length}/${report.metrics?.total_checks || report.checks.length} Passing` : "--"}
                   </span>
                 </h3>
                 <p className="text-[11px] text-muted-foreground truncate hidden sm:block">
-                  Trial balance, duplicate entries, party balances, GST compliance, and document numbering
+                  Trial balance, duplicate entries, party balances, GST compliance, TDS withholding, and document numbering
                 </p>
               </div>
             </div>
@@ -623,7 +623,7 @@ export default function HealthPage() {
               onClick={() => setIsChecksExpanded(!isChecksExpanded)}
               className="px-3 py-1.5 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/70 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
             >
-              <span>{isChecksExpanded ? "Hide Audits" : "View All 11 Audits"}</span>
+              <span>{isChecksExpanded ? "Hide Audits" : `View All ${report?.metrics?.total_checks || 11} Audits`}</span>
               {isChecksExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
           </div>

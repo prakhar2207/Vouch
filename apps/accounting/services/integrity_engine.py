@@ -1116,8 +1116,8 @@ class AccountingIntegrityEngine:
         """
         active_findings = [f for f in findings if not f.is_resolved]
 
-        CORE_CATEGORIES = {'TRIAL_BALANCE', 'PARTY_BALANCE', 'PAYMENT', 'WRONG_PARTY', 'NUMBERING', 'DUPLICATE', 'DUPLICATE_BANK', 'DUPLICATE_INVENTORY', 'DUPLICATE_LEDGER', 'LIQUIDITY'}
-        RECON_CATEGORIES = {'BANK', 'BANK_RECONCILIATION', 'INVENTORY', 'GST'}
+        CORE_CATEGORIES = {'TRIAL_BALANCE', 'PARTY_BALANCE', 'PAYMENT', 'WRONG_PARTY', 'NUMBERING', 'LIQUIDITY', 'TDS'}
+        RECON_CATEGORIES = {'BANK', 'BANK_RECONCILIATION', 'INVENTORY', 'GST', 'DUPLICATE', 'DUPLICATE_BANK', 'DUPLICATE_INVENTORY', 'DUPLICATE_LEDGER'}
 
         core_critical = sum(1 for f in active_findings if f.severity == 'CRITICAL' and f.category in CORE_CATEGORIES)
         core_warning = sum(1 for f in active_findings if f.severity == 'WARNING' and f.category in CORE_CATEGORIES)
@@ -1132,17 +1132,17 @@ class AccountingIntegrityEngine:
         if unresolved_bank is None:
             unresolved_bank = BankTransaction.objects.filter(company=company, status='UNRESOLVED').count()
 
-        # Core Integrity Score (100% if double-entry books balance with zero critical defects)
-        core_penalty = (core_critical * 20) + (core_warning * 5)
+        # Core Integrity Score: Fundamental double-entry accounting correctness (Trial balance, party ledgers, cash drawer safety)
+        core_penalty = min(100, (core_critical * 25) + (core_warning * 5))
         core_integrity_score = max(0, 100 - core_penalty)
 
-        # Operational Reconciliation Score (Pipeline progress)
+        # Operational Reconciliation Score: Pipeline tasks pending review (duplicate entries, bank reconciliation, inventory catalog)
         bank_penalty = min(35, unresolved_bank * 1)
-        recon_penalty = bank_penalty + (recon_critical * 20) + (recon_warning * 10)
-        reconciliation_score = max(0, 100 - recon_penalty)
+        recon_penalty = min(90, bank_penalty + (recon_critical * 10) + (recon_warning * 2))
+        reconciliation_score = max(10, 100 - recon_penalty)
 
-        # Blended Score: 75% Core Integrity + 25% Operational Reconciliation
-        score = int(round((core_integrity_score * 0.75) + (reconciliation_score * 0.25)))
+        # Blended Score: 70% Core Integrity + 30% Operational Reconciliation
+        score = int(round((core_integrity_score * 0.70) + (reconciliation_score * 0.30)))
 
         status = 'HEALTHY'
         if core_critical > 0 or critical_count > 0:
@@ -1210,6 +1210,12 @@ class AccountingIntegrityEngine:
                 "category": "NUMBERING",
                 "description": "Guarantees sequential document numbering without gaps or duplicates within each financial year.",
                 "match": lambda f: f.category == 'NUMBERING',
+            },
+            {
+                "name": "TDS & Statutory Withholding",
+                "category": "TDS",
+                "description": "Validates TDS Section 206AA compliance, PAN verification, and Form 26Q statutory readiness.",
+                "match": lambda f: f.category == 'TDS' or 'tds' in f.title.lower(),
             },
         ]
 
