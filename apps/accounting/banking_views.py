@@ -93,6 +93,14 @@ class BankStatementUploadAPIView(APIView):
                 "error": "An internal error occurred while parsing the bank statement.",
                 "correlation_id": correlation_id
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            import gc
+            gc.collect()
+            try:
+                import ctypes
+                ctypes.CDLL('libc.so.6').malloc_trim(0)
+            except Exception:
+                pass
 
 
 from decimal import Decimal

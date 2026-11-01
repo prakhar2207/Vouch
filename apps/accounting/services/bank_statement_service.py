@@ -11,7 +11,7 @@ from django.db.models import Q
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from pydantic import BaseModel, Field
-from apps.accounting.models import BankStatementImport, BankTransaction, PartyMapping
+from apps.accounting.models import BankStatementImport, BankTransaction, PartyMapping, Voucher
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
 
@@ -692,7 +692,7 @@ class BankStatementService:
             import pymupdf
             doc = pymupdf.open(stream=file_content, filetype="pdf")
             has_pymupdf = True
-        except ImportError:
+        except Exception:
             doc = None
             has_pymupdf = False
 
@@ -702,6 +702,11 @@ class BankStatementService:
             # Check total extracted text to determine if digital vector PDF or scanned
             total_text_chars = sum(len(page.get_text("text").strip()) for page in doc)
             if total_text_chars < 80:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
+                doc = None
                 return [], [{"row": 0, "error": "Scanned or image-only PDF detected. Initiating Vision OCR.", "raw": ""}]
 
             # Strategy A: Try pymupdf find_tables()
@@ -1670,7 +1675,185 @@ class BankStatementService:
         stmt_end_date = max(dates) if dates else None
 
         from apps.accounting.services.party_intelligence_service import PartyIntelligenceService
+        from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
+        from apps.common.money import quantize_money
+        import collections
 
+        # Batch pre-fetch references OUTSIDE the transaction to eliminate N+1 latency over remote DB WAN
+        preloaded_parties = list(Ledger.objects.filter(
+            company=company,
+            ledger_type__in=['CUSTOMER', 'SUPPLIER', 'GENERAL'],
+            is_archived=False
+        ).exclude(group__nature='EXPENSE'))
+
+        preloaded_mappings = list(PartyMapping.objects.filter(company=company).select_related('party'))
+        preloaded_cash = Ledger.objects.filter(company=company, ledger_type='CASH', is_archived=False).first()
+        if not preloaded_cash:
+            preloaded_cash = Ledger.objects.filter(company=company, name__iexact='Cash', is_archived=False).first()
+        preloaded_expenses = list(Ledger.objects.filter(company=company, group__nature='EXPENSE', is_archived=False))
+
+        # Batch pre-load all open invoices and their allocations in ONE single query for O(1) matching
+        open_vouchers = list(Voucher.objects.filter(
+            company=company,
+            voucher_type__in=['SALES', 'OPENING_INVOICE', 'PURCHASE', 'OPENING_BILL'],
+            status__in=EffectiveVoucherService.ACTIVE_STATUSES
+        ).defer('attachment_data', 'attachment_mime'))
+
+        v_ids = [v.id for v in open_vouchers]
+        alloc_map = {}
+        if v_ids:
+            from django.db.models import Sum
+            allocs = PaymentAllocation.objects.filter(
+                invoice_voucher_id__in=v_ids
+            ).values('invoice_voucher_id').annotate(total_paid=Sum('allocated_amount'))
+            alloc_map = {a['invoice_voucher_id']: a['total_paid'] for a in allocs}
+
+        preloaded_vouchers_map = {str(v.id): v for v in open_vouchers}
+        preloaded_unpaid_by_party = collections.defaultdict(list)
+        for v in open_vouchers:
+            tot = quantize_money(v.total_amount)
+            paid = quantize_money(alloc_map.get(v.id, Decimal('0.00')))
+            rem = tot - paid
+            if rem > Decimal('0.00'):
+                preloaded_unpaid_by_party[v.party_ledger_id].append({
+                    'voucher_id': str(v.id),
+                    'voucher_number': v.voucher_number,
+                    'voucher_date': str(v.voucher_date),
+                    'total_amount': str(tot),
+                    'paid_amount': str(paid),
+                    'remaining_amount': str(rem)
+                })
+
+        row_dates = [r.get('date') for r in valid_rows if r.get('date')]
+        min_stmt_date = min(row_dates) if row_dates else None
+        max_stmt_date = max(row_dates) if row_dates else None
+
+        existing_tx_qs = BankTransaction.objects.filter(company=company, bank_ledger=bank_ledger)
+        if min_stmt_date and max_stmt_date:
+            existing_tx_qs = existing_tx_qs.filter(transaction_date__gte=min_stmt_date, transaction_date__lte=max_stmt_date)
+
+        existing_txs = list(existing_tx_qs.values('fingerprint', 'transaction_date', 'debit_amount', 'credit_amount', 'reference_number', 'normalized_narration'))
+        existing_fingerprints = {t['fingerprint'] for t in existing_txs if t['fingerprint']}
+        existing_tuples = {
+            (t['transaction_date'], t['debit_amount'], t['credit_amount'], (t['reference_number'] or t['normalized_narration'])[:100])
+            for t in existing_txs
+        }
+
+        duplicate_count = 0
+        auto_matched_count = 0
+        suggested_count = 0
+        discrepancy_row_indices = {dr.get('row_index') for dr in chain_report.get('discrepancy_rows', []) if dr.get('row_index')}
+
+        prepared_transactions = []
+
+        for idx, row in enumerate(valid_rows):
+            raw_desc = str(row.get('description', '') or '')
+            norm_desc = cls.normalize_narration(raw_desc, max_length=500)[:500]
+            ref_no = cls.extract_reference_number(raw_desc, row.get('reference'))
+            if ref_no:
+                ref_no = str(ref_no).strip()[:100]
+            deb_amt = row.get('debit', Decimal('0.00'))
+            cred_amt = row.get('credit', Decimal('0.00'))
+            tx_date = row.get('date')
+
+            # Directional integrity check prior to party matching:
+            # In Indian banking, narrations starting with 'BY' (BY CLG, BY TRF, BY CASH, etc.) are strictly Deposits.
+            # Narrations starting with 'TO' (TO CLG, TO TRF, CHQ PAID, etc.) are strictly Withdrawals.
+            if cls.IS_CREDIT_REGEX.search(norm_desc) and not cls.IS_DEBIT_REGEX.search(norm_desc):
+                if deb_amt > 0 and cred_amt == 0:
+                    cred_amt = deb_amt
+                    deb_amt = Decimal('0.00')
+                elif deb_amt > 0 and cred_amt > 0:
+                    deb_amt = Decimal('0.00')
+            elif cls.IS_DEBIT_REGEX.search(norm_desc) and not cls.IS_CREDIT_REGEX.search(norm_desc):
+                if cred_amt > 0 and deb_amt == 0:
+                    deb_amt = cred_amt
+                    cred_amt = Decimal('0.00')
+                elif deb_amt > 0 and cred_amt > 0:
+                    cred_amt = Decimal('0.00')
+
+            # Absolute hard guard: A bank transaction can NEVER have both debit and credit > 0.
+            # Enforces database check constraint: bank_tx_not_both_debit_and_credit
+            if deb_amt > Decimal('0.00') and cred_amt > Decimal('0.00'):
+                row_bal = row.get('balance')
+                if row_bal is not None and abs(cred_amt - row_bal) <= Decimal('0.05'):
+                    cred_amt = Decimal('0.00')
+                elif row_bal is not None and abs(deb_amt - row_bal) <= Decimal('0.05'):
+                    deb_amt = Decimal('0.00')
+                elif cls.IS_CREDIT_REGEX.search(norm_desc):
+                    deb_amt = Decimal('0.00')
+                elif cls.IS_DEBIT_REGEX.search(norm_desc):
+                    cred_amt = Decimal('0.00')
+                else:
+                    cred_amt = Decimal('0.00')
+
+            primary_id = ref_no if ref_no else norm_desc
+            fprint = cls.compute_transaction_fingerprint(company.id, bank_ledger.id, tx_date, deb_amt, cred_amt, primary_id)
+            if fprint:
+                fprint = str(fprint)[:64]
+
+            ref_or_norm = (ref_no if ref_no else norm_desc)[:100]
+            if fprint in existing_fingerprints or (tx_date, deb_amt, cred_amt, ref_or_norm) in existing_tuples:
+                duplicate_count += 1
+                continue
+
+            if fprint:
+                existing_fingerprints.add(fprint)
+            existing_tuples.add((tx_date, deb_amt, cred_amt, ref_or_norm))
+
+            match_res = PartyIntelligenceService.match_transaction(
+                company=company,
+                narration=norm_desc,
+                debit_amount=deb_amt,
+                credit_amount=cred_amt,
+                reference_number=ref_no,
+                tx_date=tx_date,
+                preloaded_parties=preloaded_parties,
+                preloaded_mappings=preloaded_mappings,
+                preloaded_cash_ledger=preloaded_cash,
+                preloaded_exp_ledgers=preloaded_expenses,
+                preloaded_unpaid_invoices=preloaded_unpaid_by_party,
+                preloaded_vouchers_map=preloaded_vouchers_map,
+                preloaded_open_vouchers=open_vouchers
+            )
+
+            # Bank statement source evidence is immutable:
+            # Debits (Money OUT) and Credits (Money IN) are recorded exactly as received.
+            initial_status = 'UNRESOLVED'
+            if match_res['confidence'] >= 0.95:
+                initial_status = 'MATCHED_AUTO'
+                auto_matched_count += 1
+            elif match_res['confidence'] >= 0.75:
+                initial_status = 'MATCHED_SUGGESTED'
+                suggested_count += 1
+
+            prepared_transactions.append({
+                "transaction_date": tx_date,
+                "value_date": row.get('value_date') or tx_date,
+                "description": raw_desc,
+                "normalized_narration": norm_desc[:500],
+                "reference_number": ref_no[:100] if ref_no else None,
+                "fingerprint": fprint[:64] if fprint else None,
+                "debit_amount": deb_amt,
+                "credit_amount": cred_amt,
+                "balance": row.get('balance'),
+                "source_file": str(filename or "")[:255],
+                "source_page": row.get('source_page', 1),
+                "extraction_confidence": row.get('confidence', 1.0),
+                "status": initial_status,
+                "matched_party": match_res.get('matched_party'),
+                "matched_invoice": match_res.get('matched_invoice'),
+                "match_confidence": match_res.get('confidence', 0.0),
+                "match_notes": {
+                    "is_duplicate": False,
+                    "signals": match_res.get('signals', []),
+                    "suggested_matches": match_res.get('suggested_matches', []),
+                    "is_bank_expense": match_res.get('is_bank_expense', False),
+                    "balance_chain_discrepancy": ((idx + 1) in discrepancy_row_indices)
+                }
+            })
+
+        # Micro-second isolated database commit block
         with transaction.atomic():
             # Exclusively lock the bank ledger to prevent concurrent duplicate import collisions
             Ledger.objects.select_for_update().filter(id=bank_ledger.id).first()
@@ -1696,148 +1879,15 @@ class BankStatementService:
                 created_by=user
             )
 
-            # Batch pre-fetch references to eliminate N+1 latency over remote DB WAN
-            preloaded_parties = list(Ledger.objects.filter(
-                company=company,
-                ledger_type__in=['CUSTOMER', 'SUPPLIER', 'GENERAL'],
-                is_archived=False
-            ).exclude(group__nature='EXPENSE'))
-
-            preloaded_mappings = list(PartyMapping.objects.filter(company=company).select_related('party'))
-            preloaded_cash = Ledger.objects.filter(company=company, ledger_type='CASH', is_archived=False).first()
-            if not preloaded_cash:
-                preloaded_cash = Ledger.objects.filter(company=company, name__iexact='Cash', is_archived=False).first()
-            preloaded_expenses = list(Ledger.objects.filter(company=company, group__nature='EXPENSE', is_archived=False))
-
-            row_dates = [r.get('date') for r in valid_rows if r.get('date')]
-            min_stmt_date = min(row_dates) if row_dates else None
-            max_stmt_date = max(row_dates) if row_dates else None
-
-            existing_tx_qs = BankTransaction.objects.filter(company=company, bank_ledger=bank_ledger)
-            if min_stmt_date and max_stmt_date:
-                existing_tx_qs = existing_tx_qs.filter(transaction_date__gte=min_stmt_date, transaction_date__lte=max_stmt_date)
-
-            existing_txs = list(existing_tx_qs.values('fingerprint', 'transaction_date', 'debit_amount', 'credit_amount', 'reference_number', 'normalized_narration'))
-            existing_fingerprints = {t['fingerprint'] for t in existing_txs if t['fingerprint']}
-            existing_tuples = {
-                (t['transaction_date'], t['debit_amount'], t['credit_amount'], (t['reference_number'] or t['normalized_narration'])[:100])
-                for t in existing_txs
-            }
-
-            created_transactions = []
-            duplicate_count = 0
-            auto_matched_count = 0
-            suggested_count = 0
-            discrepancy_row_indices = {dr.get('row_index') for dr in chain_report.get('discrepancy_rows', []) if dr.get('row_index')}
-
-            transactions_to_create = []
-
-            for idx, row in enumerate(valid_rows):
-                raw_desc = str(row.get('description', '') or '')
-                norm_desc = cls.normalize_narration(raw_desc, max_length=500)[:500]
-                ref_no = cls.extract_reference_number(raw_desc, row.get('reference'))
-                if ref_no:
-                    ref_no = str(ref_no).strip()[:100]
-                deb_amt = row.get('debit', Decimal('0.00'))
-                cred_amt = row.get('credit', Decimal('0.00'))
-                tx_date = row.get('date')
-
-                # Directional integrity check prior to party matching:
-                # In Indian banking, narrations starting with 'BY' (BY CLG, BY TRF, BY CASH, etc.) are strictly Deposits.
-                # Narrations starting with 'TO' (TO CLG, TO TRF, CHQ PAID, etc.) are strictly Withdrawals.
-                if cls.IS_CREDIT_REGEX.search(norm_desc) and not cls.IS_DEBIT_REGEX.search(norm_desc):
-                    if deb_amt > 0 and cred_amt == 0:
-                        cred_amt = deb_amt
-                        deb_amt = Decimal('0.00')
-                    elif deb_amt > 0 and cred_amt > 0:
-                        deb_amt = Decimal('0.00')
-                elif cls.IS_DEBIT_REGEX.search(norm_desc) and not cls.IS_CREDIT_REGEX.search(norm_desc):
-                    if cred_amt > 0 and deb_amt == 0:
-                        deb_amt = cred_amt
-                        cred_amt = Decimal('0.00')
-                    elif deb_amt > 0 and cred_amt > 0:
-                        cred_amt = Decimal('0.00')
-
-                # Absolute hard guard: A bank transaction can NEVER have both debit and credit > 0.
-                # Enforces database check constraint: bank_tx_not_both_debit_and_credit
-                if deb_amt > Decimal('0.00') and cred_amt > Decimal('0.00'):
-                    row_bal = row.get('balance')
-                    if row_bal is not None and abs(cred_amt - row_bal) <= Decimal('0.05'):
-                        cred_amt = Decimal('0.00')
-                    elif row_bal is not None and abs(deb_amt - row_bal) <= Decimal('0.05'):
-                        deb_amt = Decimal('0.00')
-                    elif cls.IS_CREDIT_REGEX.search(norm_desc):
-                        deb_amt = Decimal('0.00')
-                    elif cls.IS_DEBIT_REGEX.search(norm_desc):
-                        cred_amt = Decimal('0.00')
-                    else:
-                        cred_amt = Decimal('0.00')
-
-                primary_id = ref_no if ref_no else norm_desc
-                fprint = cls.compute_transaction_fingerprint(company.id, bank_ledger.id, tx_date, deb_amt, cred_amt, primary_id)
-                if fprint:
-                    fprint = str(fprint)[:64]
-
-                ref_or_norm = (ref_no if ref_no else norm_desc)[:100]
-                if fprint in existing_fingerprints or (tx_date, deb_amt, cred_amt, ref_or_norm) in existing_tuples:
-                    duplicate_count += 1
-                    continue
-
-                if fprint:
-                    existing_fingerprints.add(fprint)
-                existing_tuples.add((tx_date, deb_amt, cred_amt, ref_or_norm))
-
-                match_res = PartyIntelligenceService.match_transaction(
-                    company=company,
-                    narration=norm_desc,
-                    debit_amount=deb_amt,
-                    credit_amount=cred_amt,
-                    reference_number=ref_no,
-                    tx_date=tx_date,
-                    preloaded_parties=preloaded_parties,
-                    preloaded_mappings=preloaded_mappings,
-                    preloaded_cash_ledger=preloaded_cash,
-                    preloaded_exp_ledgers=preloaded_expenses
-                )
-
-                # Bank statement source evidence is immutable:
-                # Debits (Money OUT) and Credits (Money IN) are recorded exactly as received.
-                initial_status = 'UNRESOLVED'
-                if match_res['confidence'] >= 0.95:
-                    initial_status = 'MATCHED_AUTO'
-                    auto_matched_count += 1
-                elif match_res['confidence'] >= 0.75:
-                    initial_status = 'MATCHED_SUGGESTED'
-                    suggested_count += 1
-
-                transactions_to_create.append(BankTransaction(
+            transactions_to_create = [
+                BankTransaction(
                     company=company,
                     statement_import=import_record,
                     bank_ledger=bank_ledger,
-                    transaction_date=tx_date,
-                    value_date=row.get('value_date') or tx_date,
-                    description=raw_desc,
-                    normalized_narration=norm_desc[:500],
-                    reference_number=ref_no[:100] if ref_no else None,
-                    fingerprint=fprint[:64] if fprint else None,
-                    debit_amount=deb_amt,
-                    credit_amount=cred_amt,
-                    balance=row.get('balance'),
-                    source_file=str(filename or "")[:255],
-                    source_page=row.get('source_page', 1),
-                    extraction_confidence=row.get('confidence', 1.0),
-                    status=initial_status,
-                    matched_party=match_res.get('matched_party'),
-                    matched_invoice=match_res.get('matched_invoice'),
-                    match_confidence=match_res.get('confidence', 0.0),
-                    match_notes={
-                        "is_duplicate": False,
-                        "signals": match_res.get('signals', []),
-                        "suggested_matches": match_res.get('suggested_matches', []),
-                        "is_bank_expense": match_res.get('is_bank_expense', False),
-                        "balance_chain_discrepancy": ((idx + 1) in discrepancy_row_indices)
-                    }
-                ))
+                    **tx_dict
+                )
+                for tx_dict in prepared_transactions
+            ]
 
             if transactions_to_create:
                 # Use ignore_conflicts=True to safely absorb database duplicate race conditions

@@ -78,6 +78,9 @@ class PartyIntelligenceService:
         preloaded_mappings: Optional[List[PartyMapping]] = None,
         preloaded_cash_ledger: Optional[Ledger] = None,
         preloaded_exp_ledgers: Optional[List[Ledger]] = None,
+        preloaded_unpaid_invoices: Optional[Dict[Any, List[Dict]]] = None,
+        preloaded_vouchers_map: Optional[Dict[Any, Any]] = None,
+        preloaded_open_vouchers: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
         """
         Evaluates 10 distinct signals in descending priority order to identify the associated party.
@@ -351,17 +354,23 @@ class PartyIntelligenceService:
 
         # Check if amount matches an outstanding invoice of best party or any candidate
         if best_party and amount > Decimal('0.00'):
-            unpaid_invoices = PaymentAllocationService.get_unpaid_invoices_for_party(company, best_party)
+            if preloaded_unpaid_invoices is not None:
+                unpaid_invoices = preloaded_unpaid_invoices.get(best_party.id, [])
+            else:
+                unpaid_invoices = PaymentAllocationService.get_unpaid_invoices_for_party(company, best_party)
             # 1-to-1 exact amount match
             for inv in unpaid_invoices:
                 rem_amt = Decimal(inv['remaining_amount'])
                 if rem_amt == amount:
                     best_score = min(1.0, best_score + 0.10)
                     signals_triggered.append(f"Exact outstanding invoice amount match (Invoice #{inv['voucher_number']}, ₹{amount})")
-                    try:
-                        best_invoice = Voucher.objects.get(id=inv['voucher_id'])
-                    except Voucher.DoesNotExist:
-                        pass
+                    if preloaded_vouchers_map and inv['voucher_id'] in preloaded_vouchers_map:
+                        best_invoice = preloaded_vouchers_map[inv['voucher_id']]
+                    else:
+                        try:
+                            best_invoice = Voucher.objects.get(id=inv['voucher_id'])
+                        except Voucher.DoesNotExist:
+                            pass
                     break
 
             # 1-to-Many Multi-Invoice Settlement Detection:
@@ -377,36 +386,56 @@ class PartyIntelligenceService:
                         best_score = min(1.0, best_score + 0.15)
                         v_nums = ', '.join(f"#{x['voucher_number']}" for x in matched_combo)
                         signals_triggered.append(f"Multi-invoice lump-sum settlement match ({len(matched_combo)} invoices: {v_nums} sum to ₹{amount})")
-                        try:
-                            best_invoice = Voucher.objects.get(id=matched_combo[0]['voucher_id'])
-                        except Voucher.DoesNotExist:
-                            pass
+                        if preloaded_vouchers_map and matched_combo[0]['voucher_id'] in preloaded_vouchers_map:
+                            best_invoice = preloaded_vouchers_map[matched_combo[0]['voucher_id']]
+                        else:
+                            try:
+                                best_invoice = Voucher.objects.get(id=matched_combo[0]['voucher_id'])
+                            except Voucher.DoesNotExist:
+                                pass
                         break
                     elif cum_sum > amount:
                         break
 
         # If no party found yet, attempt amount match across all parties with unpaid invoices
         if not best_party and amount > Decimal('0.00'):
-            # Look for unpaid invoices across company with exact amount
-            matching_invoices = Voucher.objects.filter(
-                company=company,
-                voucher_type='SALES' if is_receipt else 'PURCHASE',
-                status='POSTED',
-                total_amount=amount
-            ).select_related('party_ledger')
-            
-            if matching_invoices.count() == 1:
-                inv = matching_invoices.first()
-                if inv.party_ledger:
-                    best_party = inv.party_ledger
-                    best_invoice = inv
-                    best_score = 0.80  # Medium confidence
-                    signals_triggered.append(f"Unique matching unpaid invoice #{inv.voucher_number} for ₹{amount}")
-                    candidates.append({
-                        "party": best_party,
-                        "score": best_score,
-                        "reasons": [f"Matching invoice #{inv.voucher_number}"]
-                    })
+            target_vtype = 'SALES' if is_receipt else 'PURCHASE'
+            if preloaded_open_vouchers is not None:
+                from apps.common.money import quantize_money
+                matches = [v for v in preloaded_open_vouchers if v.voucher_type == target_vtype and quantize_money(v.total_amount) == amount]
+                if len(matches) == 1:
+                    inv = matches[0]
+                    if inv.party_ledger:
+                        best_party = inv.party_ledger
+                        best_invoice = inv
+                        best_score = 0.80  # Medium confidence
+                        signals_triggered.append(f"Unique matching unpaid invoice #{inv.voucher_number} for ₹{amount}")
+                        candidates.append({
+                            "party": best_party,
+                            "score": best_score,
+                            "reasons": [f"Matching invoice #{inv.voucher_number}"]
+                        })
+            else:
+                # Look for unpaid invoices across company with exact amount
+                matching_invoices = Voucher.objects.filter(
+                    company=company,
+                    voucher_type=target_vtype,
+                    status='POSTED',
+                    total_amount=amount
+                ).select_related('party_ledger')
+                
+                if matching_invoices.count() == 1:
+                    inv = matching_invoices.first()
+                    if inv.party_ledger:
+                        best_party = inv.party_ledger
+                        best_invoice = inv
+                        best_score = 0.80  # Medium confidence
+                        signals_triggered.append(f"Unique matching unpaid invoice #{inv.voucher_number} for ₹{amount}")
+                        candidates.append({
+                            "party": best_party,
+                            "score": best_score,
+                            "reasons": [f"Matching invoice #{inv.voucher_number}"]
+                        })
 
         suggested_list = []
         for cand in candidates[:3]:

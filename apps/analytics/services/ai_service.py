@@ -1,13 +1,29 @@
 import pandas as pd
 import numpy as np
-try:
-    from sklearn.cluster import KMeans
-    from sklearn.linear_model import LinearRegression
-    from statsmodels.tsa.holtwinters import ExponentialSmoothing
-except ImportError:
-    KMeans = None
-    LinearRegression = None
-    ExponentialSmoothing = None
+
+# Lazy references to heavy machine-learning libraries to minimize RAM footprint (<512MB on Render)
+KMeans = None
+LinearRegression = None
+
+def _get_kmeans():
+    global KMeans
+    if KMeans is None:
+        try:
+            from sklearn.cluster import KMeans as _KMeans
+            KMeans = _KMeans
+        except ImportError:
+            KMeans = False
+    return KMeans if KMeans is not False else None
+
+def _get_linear_regression():
+    global LinearRegression
+    if LinearRegression is None:
+        try:
+            from sklearn.linear_model import LinearRegression as _LR
+            LinearRegression = _LR
+        except ImportError:
+            LinearRegression = False
+    return LinearRegression if LinearRegression is not False else None
 from django.db.models import Sum, Count, Q
 from django.utils import timezone
 from datetime import timedelta
@@ -85,7 +101,8 @@ class AnalyticsEngine:
             
         rfm = pd.DataFrame(rfm_data)
         
-        if len(rfm) < 3 or KMeans is None:
+        KMeansClass = _get_kmeans()
+        if len(rfm) < 3 or KMeansClass is None:
             # Deterministic tiering when <3 records or scikit-learn is unavailable
             mean_monetary = rfm['monetary'].mean()
             def assign_tier(val):
@@ -104,7 +121,7 @@ class AnalyticsEngine:
         X_scaled = (X - X.mean()) / (X.std() + 1e-9)
         
         n_clusters = min(3, len(rfm))
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        kmeans = KMeansClass(n_clusters=n_clusters, random_state=42, n_init=10)
         rfm['cluster'] = kmeans.fit_predict(X_scaled)
         
         # Rank clusters by average monetary value to assign clean names
@@ -176,8 +193,9 @@ class AnalyticsEngine:
         X = np.arange(len(recent_df)).reshape(-1, 1)
         y = recent_df['rolling_7d'].values
         
-        if LinearRegression is not None:
-            reg = LinearRegression().fit(X, y)
+        LRClass = _get_linear_regression()
+        if LRClass is not None:
+            reg = LRClass().fit(X, y)
             slope = float(reg.coef_[0])
         else:
             x_flat = np.arange(len(recent_df), dtype=float)

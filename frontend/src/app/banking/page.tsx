@@ -599,8 +599,9 @@ export default function BankingPage() {
       formData.append("bank_ledger_id", selectedBankId);
       formData.append("company_id", companyId);
 
-      const res = await api.post(`${API_BASE_URL}/api/v1/accounting/banking/upload/`, formData, {
+      const res = await api.post(`/api/v1/accounting/banking/upload/`, formData, {
         headers,
+        timeout: 90000,
       });
 
       setUploadResult(res.data);
@@ -618,9 +619,13 @@ export default function BankingPage() {
       fetchTransactionsAndSummary();
     } catch (err: any) {
       console.error(err);
+      const isNetworkErr = !err.response && (err.code === "ERR_NETWORK" || err.message?.toLowerCase().includes("network"));
+      const errMsg = isNetworkErr
+        ? "Network connection interrupted while uploading. The server may be processing or restarting. Please verify your connection and retry in a few moments."
+        : (err.response?.data?.error || err.response?.data?.detail || err.message || "Invalid or unparseable statement file.");
       toast.error(
         "Upload failed",
-        err.response?.data?.error || err.message || "Invalid or unparseable statement file."
+        errMsg
       );
     } finally {
       setIsUploading(false);
