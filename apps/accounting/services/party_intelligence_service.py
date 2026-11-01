@@ -72,7 +72,11 @@ class PartyIntelligenceService:
         debit_amount: Decimal = Decimal('0.00'),
         credit_amount: Decimal = Decimal('0.00'),
         reference_number: Optional[str] = None,
-        tx_date: Optional[datetime.date] = None
+        tx_date: Optional[datetime.date] = None,
+        preloaded_parties: Optional[List[Ledger]] = None,
+        preloaded_mappings: Optional[List[PartyMapping]] = None,
+        preloaded_cash_ledger: Optional[Ledger] = None,
+        preloaded_exp_ledgers: Optional[List[Ledger]] = None,
     ) -> Dict[str, Any]:
         """
         Evaluates 10 distinct signals in descending priority order to identify the associated party.
@@ -110,11 +114,14 @@ class PartyIntelligenceService:
         # 1. Historical confirmed PartyMapping (highest confidence, company-isolated)
         upi_id = cls.extract_upi_id(norm_narration)
         if upi_id:
-            learned_upi = PartyMapping.objects.filter(
-                company=company,
-                mapping_type='UPI',
-                normalized_pattern=upi_id
-            ).select_related('party').first()
+            if preloaded_mappings is not None:
+                learned_upi = next((m for m in preloaded_mappings if m.mapping_type == 'UPI' and m.normalized_pattern == upi_id), None)
+            else:
+                learned_upi = PartyMapping.objects.filter(
+                    company=company,
+                    mapping_type='UPI',
+                    normalized_pattern=upi_id
+                ).select_related('party').first()
             if learned_upi:
                 signals_triggered.append(f"Confirmed learned UPI mapping: {upi_id}")
                 return {
@@ -126,10 +133,13 @@ class PartyIntelligenceService:
                 }
 
         # Check narration keywords in PartyMapping
-        learned_narration = PartyMapping.objects.filter(
-            company=company,
-            mapping_type='NARRATION'
-        ).select_related('party')
+        if preloaded_mappings is not None:
+            learned_narration = [m for m in preloaded_mappings if m.mapping_type == 'NARRATION']
+        else:
+            learned_narration = PartyMapping.objects.filter(
+                company=company,
+                mapping_type='NARRATION'
+            ).select_related('party')
         for l_map in learned_narration:
             if l_map.normalized_pattern in norm_narration:
                 signals_triggered.append(f"Confirmed learned narration pattern: '{l_map.pattern}'")
@@ -147,11 +157,13 @@ class PartyIntelligenceService:
             norm_narration
         ))
         if is_cash_deposit and (credit_amount > Decimal('0.00') or has_credit_cues):
-            cash_ledger = Ledger.objects.filter(
-                company=company,
-                ledger_type='CASH',
-                is_archived=False
-            ).first()
+            cash_ledger = preloaded_cash_ledger
+            if not cash_ledger:
+                cash_ledger = Ledger.objects.filter(
+                    company=company,
+                    ledger_type='CASH',
+                    is_archived=False
+                ).first()
             if not cash_ledger:
                 cash_ledger = Ledger.objects.filter(
                     company=company,
@@ -191,12 +203,20 @@ class PartyIntelligenceService:
         ))
         if bank_expense_match:
             exp_ledger = None
-            if 'INTEREST' in norm_narration:
-                exp_ledger = Ledger.objects.filter(company=company, name__icontains='interest', is_archived=False).first()
-            if not exp_ledger:
-                exp_ledger = Ledger.objects.filter(company=company, name__icontains='charge', is_archived=False).first()
-            if not exp_ledger:
-                exp_ledger = Ledger.objects.filter(company=company, group__nature='EXPENSE', is_archived=False).first()
+            if preloaded_exp_ledgers is not None:
+                if 'INTEREST' in norm_narration:
+                    exp_ledger = next((l for l in preloaded_exp_ledgers if 'interest' in l.name.lower()), None)
+                if not exp_ledger:
+                    exp_ledger = next((l for l in preloaded_exp_ledgers if 'charge' in l.name.lower()), None)
+                if not exp_ledger and preloaded_exp_ledgers:
+                    exp_ledger = preloaded_exp_ledgers[0]
+            else:
+                if 'INTEREST' in norm_narration:
+                    exp_ledger = Ledger.objects.filter(company=company, name__icontains='interest', is_archived=False).first()
+                if not exp_ledger:
+                    exp_ledger = Ledger.objects.filter(company=company, name__icontains='charge', is_archived=False).first()
+                if not exp_ledger:
+                    exp_ledger = Ledger.objects.filter(company=company, group__nature='EXPENSE', is_archived=False).first()
 
             if exp_ledger:
                 signals_triggered.append(f"Detected Bank Expense: {exp_ledger.name}")
@@ -216,11 +236,14 @@ class PartyIntelligenceService:
                 }
 
         # Fetch active party ledgers for the company (excluding expense accounts)
-        parties = list(Ledger.objects.filter(
-            company=company,
-            ledger_type__in=['CUSTOMER', 'SUPPLIER', 'GENERAL'],
-            is_archived=False
-        ).exclude(group__nature='EXPENSE'))
+        if preloaded_parties is not None:
+            parties = preloaded_parties
+        else:
+            parties = list(Ledger.objects.filter(
+                company=company,
+                ledger_type__in=['CUSTOMER', 'SUPPLIER', 'GENERAL'],
+                is_archived=False
+            ).exclude(group__nature='EXPENSE'))
 
         gstin_in_text = cls.extract_gstin(norm_narration)
         phone_in_text = cls.extract_phone(norm_narration)

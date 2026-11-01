@@ -11,7 +11,7 @@ from django.db.models import Q
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from pydantic import BaseModel, Field
-from apps.accounting.models import BankStatementImport, BankTransaction
+from apps.accounting.models import BankStatementImport, BankTransaction, PartyMapping
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
 
@@ -1487,11 +1487,41 @@ class BankStatementService:
                 created_by=user
             )
 
+            # Batch pre-fetch references to eliminate N+1 latency over remote DB WAN
+            preloaded_parties = list(Ledger.objects.filter(
+                company=company,
+                ledger_type__in=['CUSTOMER', 'SUPPLIER', 'GENERAL'],
+                is_archived=False
+            ).exclude(group__nature='EXPENSE'))
+
+            preloaded_mappings = list(PartyMapping.objects.filter(company=company).select_related('party'))
+            preloaded_cash = Ledger.objects.filter(company=company, ledger_type='CASH', is_archived=False).first()
+            if not preloaded_cash:
+                preloaded_cash = Ledger.objects.filter(company=company, name__iexact='Cash', is_archived=False).first()
+            preloaded_expenses = list(Ledger.objects.filter(company=company, group__nature='EXPENSE', is_archived=False)[:20])
+
+            row_dates = [r.get('date') for r in valid_rows if r.get('date')]
+            min_stmt_date = min(row_dates) if row_dates else None
+            max_stmt_date = max(row_dates) if row_dates else None
+
+            existing_tx_qs = BankTransaction.objects.filter(company=company, bank_ledger=bank_ledger)
+            if min_stmt_date and max_stmt_date:
+                existing_tx_qs = existing_tx_qs.filter(transaction_date__gte=min_stmt_date, transaction_date__lte=max_stmt_date)
+
+            existing_txs = list(existing_tx_qs.values('fingerprint', 'transaction_date', 'debit_amount', 'credit_amount', 'reference_number', 'normalized_narration'))
+            existing_fingerprints = {t['fingerprint'] for t in existing_txs if t['fingerprint']}
+            existing_tuples = {
+                (t['transaction_date'], t['debit_amount'], t['credit_amount'], (t['reference_number'] or t['normalized_narration'])[:100])
+                for t in existing_txs
+            }
+
             created_transactions = []
             duplicate_count = 0
             auto_matched_count = 0
             suggested_count = 0
             discrepancy_row_indices = {dr.get('row_index') for dr in chain_report.get('discrepancy_rows', []) if dr.get('row_index')}
+
+            transactions_to_create = []
 
             for idx, row in enumerate(valid_rows):
                 raw_desc = str(row.get('description', '') or '')
@@ -1539,17 +1569,14 @@ class BankStatementService:
                 if fprint:
                     fprint = str(fprint)[:64]
 
-                dup_qs = BankTransaction.objects.filter(
-                    company=company,
-                    bank_ledger=bank_ledger
-                ).filter(
-                    Q(fingerprint=fprint) |
-                    (Q(transaction_date=tx_date, debit_amount=deb_amt, credit_amount=cred_amt) & (Q(reference_number=ref_no) if ref_no else Q(normalized_narration=norm_desc)))
-                )
-
-                if dup_qs.exists():
+                ref_or_norm = (ref_no if ref_no else norm_desc)[:100]
+                if fprint in existing_fingerprints or (tx_date, deb_amt, cred_amt, ref_or_norm) in existing_tuples:
                     duplicate_count += 1
                     continue
+
+                if fprint:
+                    existing_fingerprints.add(fprint)
+                existing_tuples.add((tx_date, deb_amt, cred_amt, ref_or_norm))
 
                 match_res = PartyIntelligenceService.match_transaction(
                     company=company,
@@ -1557,7 +1584,11 @@ class BankStatementService:
                     debit_amount=deb_amt,
                     credit_amount=cred_amt,
                     reference_number=ref_no,
-                    tx_date=tx_date
+                    tx_date=tx_date,
+                    preloaded_parties=preloaded_parties,
+                    preloaded_mappings=preloaded_mappings,
+                    preloaded_cash_ledger=preloaded_cash,
+                    preloaded_exp_ledgers=preloaded_expenses
                 )
 
                 # Bank statement source evidence is immutable:
@@ -1570,7 +1601,7 @@ class BankStatementService:
                     initial_status = 'MATCHED_SUGGESTED'
                     suggested_count += 1
 
-                tx = BankTransaction.objects.create(
+                transactions_to_create.append(BankTransaction(
                     company=company,
                     statement_import=import_record,
                     bank_ledger=bank_ledger,
@@ -1597,26 +1628,12 @@ class BankStatementService:
                         "is_bank_expense": match_res.get('is_bank_expense', False),
                         "balance_chain_discrepancy": ((idx + 1) in discrepancy_row_indices)
                     }
-                )
+                ))
 
-                # Auto-reconcile cash deposit as cash invoice receipt
-                if match_res.get('is_cash_deposit') and cred_amt > Decimal('0.00') and match_res.get('matched_party'):
-                    from apps.accounting.services.bank_reconciliation_service import BankReconciliationService
-                    try:
-                        BankReconciliationService.resolve_transaction(
-                            bank_tx=tx,
-                            action_type='RECORD_PAYMENT',
-                            payload={
-                                'party_id': str(match_res['matched_party'].id),
-                                'narration': f"Cash Deposit: {norm_desc}"
-                            },
-                            user=user
-                        )
-                        auto_matched_count += 1
-                    except Exception as ex:
-                        logger.warning(f"Auto-reconciliation for cash deposit {tx.id} skipped: {ex}")
-
-                created_transactions.append(tx)
+            if transactions_to_create:
+                created_transactions = BankTransaction.objects.bulk_create(transactions_to_create)
+            else:
+                created_transactions = []
 
             unresolved_count = len(created_transactions) - auto_matched_count - suggested_count
 
