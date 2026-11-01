@@ -11,7 +11,7 @@ from django.db.models import Q
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from pydantic import BaseModel, Field
-from apps.accounting.models import BankStatementImport, BankTransaction, PartyMapping, Voucher
+from apps.accounting.models import BankStatementImport, BankTransaction, PartyMapping, Voucher, PaymentAllocation, SyncEvent
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
 

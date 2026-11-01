@@ -642,63 +642,34 @@ export default function BankingPage() {
     try {
       const cacheKey = await computeStatementHash(uploadFile, selectedBankId, companyId);
 
-      // Instant Local Device Cache Check:
-      // If statement was already verified & processed on this device, reload instantly from IndexedDB!
-      // This completely avoids hitting the Render server, saving WAN bandwidth and server memory.
-      const cached = await offlineDb.ocrCache.get(cacheKey).catch(() => null);
-      if (cached && cached.result) {
-        console.log(`[PWA Cache] Loaded statement instantly from local IndexedDB cache for ${uploadFile.name}`);
-        setUploadResult(cached.result);
-        toast.info(
-          "Loaded From Local Cache",
-          `Statement was previously parsed on this device (${cached.result.total_detected || cached.result.total_rows || 0} rows). Loaded with 0 KB server transfer.`
-        );
-        fetchTransactionsAndSummary();
-        setIsUploading(false);
-        setUploadProgress({ current: 0, total: 0, phase: "idle" });
-        return;
-      }
-
-      // Step 1: Parse statement directly on client device (sub-second, 0 MB server load!)
-      setUploadProgress({ current: 0, total: 0, phase: "parsing" });
+      // Check if transactions were previously parsed and cached locally
+      let allParsedTxs: any[] = [];
       let clientParsed: any = null;
-      try {
-        clientParsed = await parseStatementOnDevice(uploadFile);
-      } catch (parseErr) {
-        console.warn("[Banking] Client-side parsing failed, falling back to server ingestion:", parseErr);
+
+      const cached = await offlineDb.ocrCache.get(cacheKey).catch(() => null);
+      if (cached && Array.isArray(cached.transactions) && cached.transactions.length > 0) {
+        console.log(`[PWA Cache] Reusing ${cached.transactions.length} pre-parsed transactions from local cache.`);
+        allParsedTxs = cached.transactions;
+        clientParsed = {
+          transactions: cached.transactions,
+          openingBalance: cached.openingBalance,
+          closingBalance: cached.closingBalance,
+          fileHash: cacheKey,
+        };
+      } else {
+        // Step 1: Parse statement directly on client device (sub-second, 0 MB server load!)
+        setUploadProgress({ current: 0, total: 0, phase: "parsing" });
+        try {
+          clientParsed = await parseStatementOnDevice(uploadFile);
+          allParsedTxs = clientParsed?.transactions || [];
+        } catch (parseErr) {
+          console.warn("[Banking] Client-side parsing failed, falling back to server ingestion:", parseErr);
+        }
       }
 
-      const allParsedTxs = clientParsed?.transactions || [];
-
-      // Step 2: If client successfully extracted transactions, stream/push to backend in lightweight batches
+      // Step 2: Stream/push to backend in lightweight batches
       // This completely eliminates Gunicorn 30-second timeouts and Render 512MB RAM exhaustion!
       if (allParsedTxs.length > 0) {
-        const localSummary = {
-          import_id: `local_${cacheKey}`,
-          source_file: uploadFile.name,
-          file_hash: cacheKey,
-          status: "COMPLETED",
-          total_detected: allParsedTxs.length,
-          total_rows: allParsedTxs.length,
-          successful_rows: allParsedTxs.length,
-          imported_count: allParsedTxs.length,
-          auto_matched_count: 0,
-          needs_review_count: 0,
-          duplicates_detected: 0,
-          opening_balance: clientParsed.openingBalance,
-          closing_balance: clientParsed.closingBalance,
-          is_client_cached: true,
-        };
-
-        // Cache locally immediately so user sees transactions even before network sync
-        await offlineDb.ocrCache.put({
-          fileHash: cacheKey,
-          fileName: uploadFile.name,
-          fileSize: uploadFile.size,
-          result: localSummary,
-          cachedAt: Date.now(),
-        }).catch(() => {});
-
         const BATCH_SIZE = 10;
         let totalImported = 0;
         let totalDuplicates = 0;
@@ -719,10 +690,10 @@ export default function BankingPage() {
                 company_id: companyId,
                 statement_info: {
                   filename: uploadFile.name,
-                  file_hash: clientParsed.fileHash,
+                  file_hash: clientParsed?.fileHash || cacheKey,
                   total_rows: allParsedTxs.length,
-                  opening_balance: clientParsed.openingBalance,
-                  closing_balance: clientParsed.closingBalance,
+                  opening_balance: clientParsed?.openingBalance,
+                  closing_balance: clientParsed?.closingBalance,
                 },
                 transactions: chunk,
               },
@@ -750,23 +721,37 @@ export default function BankingPage() {
         }
 
         if (successfulBatches === 0 && lastBatchError) {
+          // If server push failed, delete stale cache entry so un-synced state doesn't block future attempts
+          await offlineDb.ocrCache.delete(cacheKey).catch(() => {});
           throw lastBatchError;
         }
 
         const finalSummary = {
-          ...localSummary,
+          import_id: `stmt_${cacheKey}`,
+          source_file: uploadFile.name,
+          file_hash: cacheKey,
+          status: "COMPLETED",
+          total_detected: allParsedTxs.length,
+          total_rows: allParsedTxs.length,
+          successful_rows: allParsedTxs.length,
           imported_count: totalImported,
           duplicates_detected: totalDuplicates,
           auto_matched_count: totalAutoMatched,
+          opening_balance: clientParsed?.openingBalance,
+          closing_balance: clientParsed?.closingBalance,
         };
         setUploadResult(finalSummary);
 
-        // Update local cache with verified server counts
+        // Update local cache with verified transactions and server sync state
         await offlineDb.ocrCache.put({
           fileHash: cacheKey,
           fileName: uploadFile.name,
           fileSize: uploadFile.size,
+          transactions: allParsedTxs,
+          openingBalance: clientParsed?.openingBalance,
+          closingBalance: clientParsed?.closingBalance,
           result: finalSummary,
+          is_synced: true,
           cachedAt: Date.now(),
         }).catch(() => {});
 

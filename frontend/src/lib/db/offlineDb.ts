@@ -27,6 +27,10 @@ export interface OcrCache {
   fileName: string;
   fileSize: number;
   result: any;
+  transactions?: any[];
+  openingBalance?: number | null;
+  closingBalance?: number | null;
+  is_synced?: boolean;
   cachedAt: number;
 }
 
