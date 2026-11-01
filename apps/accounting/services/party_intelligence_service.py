@@ -203,20 +203,23 @@ class PartyIntelligenceService:
         ))
         if bank_expense_match:
             exp_ledger = None
+            is_interest = bool(re.search(r'\b(?:DEBIT\s+INTEREST|INTEREST\s+CAPITALIZED|INT(?:EREST)?\.?\s*(?:PD|COLL|DR|DEBIT)|INTEREST)\b', norm_narration, re.IGNORECASE))
+            is_charges = bool(re.search(r'\b(?:BANK\s+CHARGES?|SERVICE\s+CHARGES?|SMS\s*(?:ALERT)?\s*CH(?:AR)?G(?:ES)?|FOLIO(?:\s*AMT)?|PROC\s*CHGS?|PROCESSING\s*(?:CHGS?|FEES?)|CONSOLIDATED\s*(?:CHG|CHARGES?)|ANNUAL\s*(?:MAINTENANCE\s*)?FEE|AMC\s*CH(?:AR)?G(?:ES)?|MIN(?:IMUM)?\s*BAL(?:ANCE)?\s*CH(?:AR)?G(?:ES)?|ATM\s*CH(?:AR)?G(?:ES)?|INSPECTION\s*CH(?:AR)?G(?:ES)?|CHARGES?|FEE)\b', norm_narration, re.IGNORECASE))
+
             if preloaded_exp_ledgers is not None:
-                if 'INTEREST' in norm_narration:
-                    exp_ledger = next((l for l in preloaded_exp_ledgers if 'interest' in l.name.lower()), None)
-                if not exp_ledger:
-                    exp_ledger = next((l for l in preloaded_exp_ledgers if 'charge' in l.name.lower()), None)
-                if not exp_ledger and preloaded_exp_ledgers:
-                    exp_ledger = preloaded_exp_ledgers[0]
-            else:
-                if 'INTEREST' in norm_narration:
-                    exp_ledger = Ledger.objects.filter(company=company, name__icontains='interest', is_archived=False).first()
-                if not exp_ledger:
-                    exp_ledger = Ledger.objects.filter(company=company, name__icontains='charge', is_archived=False).first()
-                if not exp_ledger:
-                    exp_ledger = Ledger.objects.filter(company=company, group__nature='EXPENSE', is_archived=False).first()
+                if is_interest:
+                    exp_ledger = next((l for l in preloaded_exp_ledgers if 'interest' in l.name.lower() and not l.is_archived), None)
+                elif is_charges:
+                    exp_ledger = next((l for l in preloaded_exp_ledgers if any(k in l.name.lower() for k in ['charge', 'fee']) and not l.is_archived), None)
+
+            # Direct ORM fallback if not found in preloaded cache
+            if not exp_ledger:
+                if is_interest:
+                    exp_ledger = Ledger.objects.filter(company=company, group__nature='EXPENSE', is_archived=False, name__icontains='interest').first()
+                elif is_charges:
+                    exp_ledger = Ledger.objects.filter(company=company, group__nature='EXPENSE', is_archived=False).filter(
+                        models.Q(name__icontains='charge') | models.Q(name__icontains='fee')
+                    ).first()
 
             if exp_ledger:
                 signals_triggered.append(f"Detected Bank Expense: {exp_ledger.name}")

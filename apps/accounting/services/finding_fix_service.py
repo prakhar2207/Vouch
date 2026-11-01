@@ -382,6 +382,7 @@ class FindingFixService:
         Deterministically executes a user-approved fix for an AccountingFinding.
         Creates an audit log, preserves reversal records, and recalculates balances.
         """
+        finding = AccountingFinding.objects.select_for_update().get(id=finding.id)
         if finding.is_resolved:
             raise ValidationError("This finding is already resolved.")
 
@@ -391,10 +392,20 @@ class FindingFixService:
         if fix_action == 'MOVE_PARTY':
             v_id = evidence.get('voucher_id')
             sugg_p_id = evidence.get('suggested_party_id')
+            curr_p_id = evidence.get('current_party_id')
             if not (v_id and sugg_p_id):
                 raise ValidationError("Missing voucher or target party in finding evidence.")
 
-            original_voucher = Voucher.objects.get(id=v_id, company=finding.company)
+            original_voucher = Voucher.objects.filter(id=v_id, company=finding.company).select_for_update().first()
+            if not original_voucher:
+                raise ValidationError("Original voucher not found.")
+            if original_voucher.status in ['REVERSED', 'CANCELLED']:
+                raise ValidationError(f"Cannot execute fix: voucher {original_voucher.voucher_number} is already {original_voucher.status.lower()}.")
+            if evidence.get('amount') and abs(original_voucher.total_amount - Decimal(str(evidence['amount']))) > Decimal('0.001'):
+                raise ValidationError("Underlying voucher amount has changed since this fix preview was generated. Please regenerate the preview.")
+            if curr_p_id and str(original_voucher.party_ledger_id) != str(curr_p_id):
+                raise ValidationError("Underlying voucher party has changed since this fix preview was generated. Please regenerate the preview.")
+
             target_party = Ledger.objects.get(id=sugg_p_id, company=finding.company)
             old_party = original_voucher.party_ledger
 
