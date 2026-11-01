@@ -1610,6 +1610,11 @@ class BankStatementService:
             r['description'] = cleaned_d
             filtered_rows.append(r)
         valid_rows = filtered_rows
+        # Immediately release uploaded binary payload from server RAM
+        try:
+            del file_bytes
+        except Exception:
+            pass
 
         valid_rows.sort(key=lambda r: r.get("date") or datetime.date.min)
 

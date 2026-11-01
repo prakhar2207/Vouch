@@ -13,6 +13,7 @@ import { useAccountingPeriod } from "@/context/PeriodContext";
 import AddBankModal from "@/components/modals/AddBankModal";
 import { SearchableOption } from "@/components/SearchableSelect";
 import { bankTransactionsRepository, ledgersRepository } from "@/lib/data";
+import { offlineDb } from "@/lib/db/offlineDb";
 import {
   Landmark,
   UploadCloud,
@@ -75,7 +76,39 @@ export default function BankingPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [uploadResult, setUploadResult] = useState<any | null>(null);
+  const [isCachedLocally, setIsCachedLocally] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const computeStatementHash = async (file: File, bankId: string, compId: string): Promise<string> => {
+    try {
+      const buffer = await file.arrayBuffer();
+      const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const rawHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+      return `stmt_${compId}_${bankId}_${rawHex}`;
+    } catch (err) {
+      console.warn("[Banking] Web Crypto SHA-256 unavailable, falling back to name/size hash:", err);
+      return `stmt_${compId}_${bankId}_${file.name}_${file.size}_${file.lastModified}`;
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    if (uploadFile && selectedBankId && isValidId(companyId)) {
+      computeStatementHash(uploadFile, selectedBankId, companyId).then((key) => {
+        offlineDb.ocrCache.get(key).then((cached) => {
+          if (active) {
+            setIsCachedLocally(Boolean(cached && cached.result));
+          }
+        }).catch(() => {
+          if (active) setIsCachedLocally(false);
+        });
+      });
+    } else {
+      setIsCachedLocally(false);
+    }
+    return () => { active = false; };
+  }, [uploadFile, selectedBankId, companyId]);
 
   // Mappings Drawer State
   const [isMappingsOpen, setIsMappingsOpen] = useState<boolean>(false);
@@ -598,13 +631,32 @@ export default function BankingPage() {
       return;
     }
 
-    if (typeof window !== "undefined" && !navigator.onLine) {
-      toast.error("Offline", "Internet connection required to upload and parse new bank statements.");
-      return;
-    }
-
     setIsUploading(true);
     try {
+      const cacheKey = await computeStatementHash(uploadFile, selectedBankId, companyId);
+
+      // Instant Local Device Cache Check:
+      // If statement was already verified & processed on this device, reload instantly from IndexedDB!
+      // This completely avoids hitting the Render server, saving WAN bandwidth and server memory.
+      const cached = await offlineDb.ocrCache.get(cacheKey).catch(() => null);
+      if (cached && cached.result) {
+        console.log(`[PWA Cache] Loaded statement instantly from local IndexedDB cache for ${uploadFile.name}`);
+        setUploadResult(cached.result);
+        toast.info(
+          "Loaded From Local Cache",
+          `Statement was previously parsed on this device (${cached.result.total_detected || cached.result.total_rows || 0} rows). Loaded with 0 KB server transfer.`
+        );
+        fetchTransactionsAndSummary();
+        setIsUploading(false);
+        return;
+      }
+
+      if (typeof window !== "undefined" && !navigator.onLine) {
+        toast.error("Offline", "Internet connection required to upload new (uncached) bank statements.");
+        setIsUploading(false);
+        return;
+      }
+
       const headers: Record<string, string> = { ...getHeaders() };
       let res;
       try {
@@ -646,6 +698,17 @@ export default function BankingPage() {
         } else {
           throw uploadErr;
         }
+      }
+
+      // Persist parse result in local IndexedDB ocrCache for instant future reloads
+      if (cacheKey && res.data) {
+        await offlineDb.ocrCache.put({
+          fileHash: cacheKey,
+          fileName: uploadFile.name,
+          fileSize: uploadFile.size,
+          result: res.data,
+          cachedAt: Date.now(),
+        }).catch((cacheErr) => console.warn("[PWA Cache] Failed to persist statement cache:", cacheErr));
       }
 
       setUploadResult(res.data);
@@ -1293,6 +1356,7 @@ export default function BankingPage() {
           onFileChange={setUploadFile}
           isUploading={isUploading}
           uploadResult={uploadResult}
+          isCachedLocally={isCachedLocally}
           onUploadSubmit={handleFileUpload}
           fileInputRef={fileInputRef}
           isMappingsOpen={isMappingsOpen}

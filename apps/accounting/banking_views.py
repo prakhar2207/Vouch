@@ -94,6 +94,10 @@ class BankStatementUploadAPIView(APIView):
                 "correlation_id": correlation_id
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         finally:
+            try:
+                del file_bytes
+            except Exception:
+                pass
             import gc
             gc.collect()
             try:

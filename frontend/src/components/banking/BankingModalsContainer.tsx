@@ -31,6 +31,7 @@ interface BankingModalsContainerProps {
   onFileChange: (file: File | null) => void;
   isUploading: boolean;
   uploadResult: any;
+  isCachedLocally?: boolean;
   onUploadSubmit: (e: React.FormEvent) => void;
   fileInputRef: RefObject<HTMLInputElement | null>;
 
@@ -101,6 +102,7 @@ export default function BankingModalsContainer({
   onFileChange,
   isUploading,
   uploadResult,
+  isCachedLocally = false,
   onUploadSubmit,
   fileInputRef,
   isMappingsOpen,
@@ -249,6 +251,13 @@ export default function BankingModalsContainer({
                 </div>
               )}
 
+              {isCachedLocally && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold animate-in fade-in">
+                  <Sparkles className="w-4 h-4 shrink-0" />
+                  <span>Statement was previously verified & cached locally on this device.</span>
+                </div>
+              )}
+
               <div className="flex items-center gap-3 pt-2">
                 <button
                   type="button"
@@ -265,10 +274,10 @@ export default function BankingModalsContainer({
                   {isUploading ? (
                     <>
                       <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin"></div>
-                      <span>Parsing Statement...</span>
+                      <span>{isCachedLocally ? "Loading from Local Cache..." : "Parsing Statement..."}</span>
                     </>
                   ) : (
-                    <span>Upload & Ingest</span>
+                    <span>{isCachedLocally ? "Load From Local Cache (Instant)" : "Upload & Ingest"}</span>
                   )}
                 </button>
               </div>
