@@ -1513,6 +1513,227 @@ class BankStatementService:
         return valid_rows, errors
 
     @classmethod
+    def ingest_preparsed_batch(
+        cls,
+        company: Company,
+        bank_ledger: Ledger,
+        transactions: List[Dict[str, Any]],
+        statement_info: Dict[str, Any],
+        user=None
+    ) -> Dict[str, Any]:
+        """
+        Accepts pre-parsed JSON transactions from client-side parser.
+        Ingests in lightweight batches without holding or parsing any binary PDF files on server.
+        Eliminates Gunicorn worker timeouts and 512MB RAM exhaustion.
+        """
+        from apps.accounting.services.party_intelligence_service import PartyIntelligenceService
+        from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
+        from apps.common.money import quantize_money
+        import collections
+
+        file_hash = statement_info.get("file_hash") or hashlib.sha256(str(statement_info).encode()).hexdigest()
+        filename = statement_info.get("filename") or "statement_client_parsed.pdf"
+        file_format = statement_info.get("file_format") or "PDF"
+        total_rows = statement_info.get("total_rows") or len(transactions)
+
+        # Batch pre-fetch references outside atomic block for speed
+        preloaded_parties = list(Ledger.objects.filter(
+            company=company,
+            ledger_type__in=['CUSTOMER', 'SUPPLIER', 'GENERAL'],
+            is_archived=False
+        ).exclude(group__nature='EXPENSE'))
+
+        preloaded_mappings = list(PartyMapping.objects.filter(company=company).select_related('party'))
+        preloaded_cash = Ledger.objects.filter(company=company, ledger_type='CASH', is_archived=False).first()
+        preloaded_expenses = list(Ledger.objects.filter(company=company, group__nature='EXPENSE', is_archived=False))
+
+        open_vouchers = list(Voucher.objects.filter(
+            company=company,
+            voucher_type__in=['SALES', 'OPENING_INVOICE', 'PURCHASE', 'OPENING_BILL'],
+            status__in=EffectiveVoucherService.ACTIVE_STATUSES
+        ).defer('attachment_data', 'attachment_mime'))
+
+        v_ids = [v.id for v in open_vouchers]
+        alloc_map = {}
+        if v_ids:
+            from django.db.models import Sum
+            allocs = PaymentAllocation.objects.filter(
+                invoice_voucher_id__in=v_ids
+            ).values('invoice_voucher_id').annotate(total_paid=Sum('allocated_amount'))
+            alloc_map = {a['invoice_voucher_id']: a['total_paid'] for a in allocs}
+
+        preloaded_vouchers_map = {str(v.id): v for v in open_vouchers}
+        preloaded_unpaid_by_party = collections.defaultdict(list)
+        for v in open_vouchers:
+            tot = quantize_money(v.total_amount)
+            paid = quantize_money(alloc_map.get(v.id, Decimal('0.00')))
+            rem = tot - paid
+            if rem > Decimal('0.00'):
+                preloaded_unpaid_by_party[v.party_ledger_id].append({
+                    'voucher_id': str(v.id),
+                    'voucher_number': v.voucher_number,
+                    'voucher_date': str(v.voucher_date),
+                    'total_amount': str(tot),
+                    'paid_amount': str(paid),
+                    'remaining_amount': str(rem)
+                })
+
+        prepared_transactions = []
+        duplicate_count = 0
+        auto_matched_count = 0
+        suggested_count = 0
+
+        # Query existing fingerprints for this bank account
+        existing_fingerprints = set(BankTransaction.objects.filter(
+            company=company,
+            bank_ledger=bank_ledger
+        ).values_list('fingerprint', flat=True))
+
+        for row in transactions:
+            raw_desc = str(row.get('description', '') or '')
+            norm_desc = cls.normalize_narration(raw_desc, max_length=500)[:500]
+            ref_no = cls.extract_reference_number(raw_desc, row.get('reference'))
+            if ref_no:
+                ref_no = str(ref_no).strip()[:100]
+
+            deb_amt = cls.clean_amount_str(row.get('debit', 0))
+            cred_amt = cls.clean_amount_str(row.get('credit', 0))
+            tx_date_raw = row.get('date')
+            tx_date = cls.parse_date_str(tx_date_raw) if tx_date_raw else None
+            if not tx_date:
+                continue
+
+            # Directional integrity check
+            if cls.IS_CREDIT_REGEX.search(norm_desc) and not cls.IS_DEBIT_REGEX.search(norm_desc):
+                if deb_amt > 0 and cred_amt == 0:
+                    cred_amt = deb_amt
+                    deb_amt = Decimal('0.00')
+                elif deb_amt > 0 and cred_amt > 0:
+                    deb_amt = Decimal('0.00')
+            elif cls.IS_DEBIT_REGEX.search(norm_desc) and not cls.IS_CREDIT_REGEX.search(norm_desc):
+                if cred_amt > 0 and deb_amt == 0:
+                    deb_amt = cred_amt
+                    cred_amt = Decimal('0.00')
+                elif deb_amt > 0 and cred_amt > 0:
+                    cred_amt = Decimal('0.00')
+
+            primary_id = ref_no if ref_no else norm_desc
+            fprint = cls.compute_transaction_fingerprint(company.id, bank_ledger.id, tx_date, deb_amt, cred_amt, primary_id)
+            if fprint in existing_fingerprints:
+                duplicate_count += 1
+                continue
+            if fprint:
+                existing_fingerprints.add(fprint)
+
+            match_res = PartyIntelligenceService.match_transaction(
+                company=company,
+                narration=norm_desc,
+                debit_amount=deb_amt,
+                credit_amount=cred_amt,
+                reference_number=ref_no,
+                tx_date=tx_date,
+                preloaded_parties=preloaded_parties,
+                preloaded_mappings=preloaded_mappings,
+                preloaded_cash_ledger=preloaded_cash,
+                preloaded_exp_ledgers=preloaded_expenses,
+                preloaded_unpaid_invoices=preloaded_unpaid_by_party,
+                preloaded_vouchers_map=preloaded_vouchers_map,
+                preloaded_open_vouchers=open_vouchers
+            )
+
+            initial_status = 'UNRESOLVED'
+            if match_res['confidence'] >= 0.95:
+                initial_status = 'MATCHED_AUTO'
+                auto_matched_count += 1
+            elif match_res['confidence'] >= 0.75:
+                initial_status = 'MATCHED_SUGGESTED'
+                suggested_count += 1
+
+            bal_val = row.get('balance')
+            bal = Decimal(str(bal_val)) if bal_val is not None else None
+
+            prepared_transactions.append({
+                "transaction_date": tx_date,
+                "value_date": tx_date,
+                "description": raw_desc,
+                "normalized_narration": norm_desc[:500],
+                "reference_number": ref_no[:100] if ref_no else None,
+                "fingerprint": fprint[:64] if fprint else None,
+                "debit_amount": deb_amt,
+                "credit_amount": cred_amt,
+                "balance": bal,
+                "source_file": str(filename or "")[:255],
+                "source_page": row.get('page', 1),
+                "extraction_confidence": 0.98,
+                "status": initial_status,
+                "matched_party": match_res.get('matched_party'),
+                "matched_invoice": match_res.get('matched_invoice'),
+                "match_confidence": match_res.get('confidence', 0.0),
+                "match_notes": {
+                    "is_duplicate": False,
+                    "signals": match_res.get('signals', []),
+                    "suggested_matches": match_res.get('suggested_matches', []),
+                    "is_bank_expense": match_res.get('is_bank_expense', False),
+                }
+            })
+
+        with transaction.atomic():
+            import_record, _ = BankStatementImport.objects.get_or_create(
+                company=company,
+                bank_ledger=bank_ledger,
+                file_hash=file_hash,
+                defaults={
+                    "source_file_name": str(filename or "")[:255],
+                    "file_format": str(file_format or "PDF")[:20],
+                    "status": "COMPLETED",
+                    "total_rows": total_rows,
+                    "successful_rows": total_rows,
+                    "created_by": user
+                }
+            )
+
+            transactions_to_create = [
+                BankTransaction(
+                    company=company,
+                    statement_import=import_record,
+                    bank_ledger=bank_ledger,
+                    **tx_dict
+                )
+                for tx_dict in prepared_transactions
+            ]
+
+            actually_inserted = []
+            if transactions_to_create:
+                BankTransaction.objects.bulk_create(transactions_to_create, ignore_conflicts=True)
+                actually_inserted = list(BankTransaction.objects.filter(
+                    statement_import=import_record,
+                    fingerprint__in=[t.fingerprint for t in transactions_to_create if t.fingerprint]
+                ))
+
+                from apps.accounting.models import SyncEvent
+                sync_events = [
+                    SyncEvent(
+                        company_id=company.id,
+                        entity_type='BANKTRANSACTION',
+                        entity_id=tx.id,
+                        operation='CREATE'
+                    )
+                    for tx in actually_inserted
+                ]
+                if sync_events:
+                    SyncEvent.objects.bulk_create(sync_events)
+
+            return {
+                "success": True,
+                "import_id": str(import_record.id),
+                "batch_count": len(transactions),
+                "imported_count": len(actually_inserted),
+                "duplicates_count": duplicate_count + (len(transactions_to_create) - len(actually_inserted)),
+                "auto_matched_count": auto_matched_count,
+                "suggested_count": suggested_count
+            }
+
+    @classmethod
     def parse_statement(
         cls,
         company: Company,

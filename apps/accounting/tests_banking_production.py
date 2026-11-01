@@ -4,7 +4,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.test import APITestCase
 from rest_framework import status
 
-from apps.companies.models import Company
+from apps.companies.models import Company, UserCompany
 from apps.accounts.models import User
 from apps.ledgers.models import Ledger, LedgerGroup
 from apps.accounting.models import (
@@ -32,6 +32,7 @@ class BankingProductionIntegrationTests(APITestCase):
             email="owner@apexsolutions.com",
             password="testpassword123"
         )
+        UserCompany.objects.create(user=self.user, company=self.company, role="ADMIN")
         self.fy = FinancialYear.objects.create(
             company=self.company,
             name="FY 2026-27",
@@ -393,3 +394,54 @@ class BankingProductionIntegrationTests(APITestCase):
         }, format="json", HTTP_X_COMPANY_ID=str(self.company.id))
 
         self.assertIn(response.status_code, [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND])
+
+    def test_10_client_parsed_batch_ingest(self):
+        """Batch ingestion of client-parsed transactions creates transactions cleanly without timeout."""
+        self.client.force_authenticate(user=self.user)
+        url = "/api/v1/accounting/banking/ingest-batch/"
+
+        payload = {
+            "bank_ledger_id": str(self.bank_ledger.id),
+            "company_id": str(self.company.id),
+            "statement_info": {
+                "filename": "canara_test.pdf",
+                "file_hash": "testhash_1234567890abcdef",
+                "total_rows": 2,
+                "opening_balance": 10000.0,
+                "closing_balance": 25000.0,
+            },
+            "transactions": [
+                {
+                    "date": "2026-06-15",
+                    "description": "UPI/123456/NEFT PAYMENT FROM ACME",
+                    "reference": "UPI/123456",
+                    "debit": 0.0,
+                    "credit": 15000.0,
+                    "balance": 25000.0,
+                    "page": 1
+                },
+                {
+                    "date": "2026-06-16",
+                    "description": "ATM WDL MUMBAI",
+                    "reference": "ATM1001",
+                    "debit": 2000.0,
+                    "credit": 0.0,
+                    "balance": 23000.0,
+                    "page": 1
+                }
+            ]
+        }
+
+        response = self.client.post(url, payload, format="json", HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertTrue(data.get("success"))
+        self.assertEqual(data.get("imported_count"), 2)
+
+        # Idempotency: re-submitting same batch reports duplicate rows
+        response_dup = self.client.post(url, payload, format="json", HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(response_dup.status_code, status.HTTP_200_OK)
+        data_dup = response_dup.json()
+        self.assertEqual(data_dup.get("imported_count"), 0)
+        self.assertEqual(data_dup.get("duplicates_count"), 2)
+

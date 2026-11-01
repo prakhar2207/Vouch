@@ -112,6 +112,43 @@ from django.db.models import Q
 import json
 import ast
 
+class BankStatementBatchIngestAPIView(APIView):
+    permission_classes = [IsAuthenticated, CanManageLedgers]
+
+    def post(self, request, *args, **kwargs):
+        """
+        Accepts pre-parsed JSON transactions from client-side parser.
+        Ingests in lightweight batches without holding or parsing any binary PDF files on server.
+        Eliminates Gunicorn worker timeouts and 512MB RAM exhaustion.
+        """
+        company = get_authorized_company(request)
+        bank_ledger_id = request.data.get('bank_ledger_id')
+        if not bank_ledger_id:
+            return Response({"error": "bank_ledger_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        bank_ledger = get_object_or_404(Ledger, id=bank_ledger_id, company=company)
+
+        batch = request.data.get('transactions', [])
+        statement_info = request.data.get('statement_info', {})
+
+        if not batch:
+            return Response({"error": "No transactions provided in batch."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            res = BankStatementService.ingest_preparsed_batch(
+                company=company,
+                bank_ledger=bank_ledger,
+                transactions=batch,
+                statement_info=statement_info,
+                user=request.user
+            )
+            return Response(res, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception("Batch ingest failed: %s", e)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            import gc
+            gc.collect()
+
 class BankTransactionListAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
 

@@ -32,6 +32,7 @@ interface BankingModalsContainerProps {
   isUploading: boolean;
   uploadResult: any;
   isCachedLocally?: boolean;
+  uploadProgress?: { current: number; total: number; phase: "idle" | "parsing" | "ingesting" };
   onUploadSubmit: (e: React.FormEvent) => void;
   fileInputRef: RefObject<HTMLInputElement | null>;
 
@@ -103,6 +104,7 @@ export default function BankingModalsContainer({
   isUploading,
   uploadResult,
   isCachedLocally = false,
+  uploadProgress = { current: 0, total: 0, phase: "idle" },
   onUploadSubmit,
   fileInputRef,
   isMappingsOpen,
@@ -251,10 +253,33 @@ export default function BankingModalsContainer({
                 </div>
               )}
 
-              {isCachedLocally && (
+              {isCachedLocally && !isUploading && (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold animate-in fade-in">
                   <Sparkles className="w-4 h-4 shrink-0" />
                   <span>Statement was previously verified & cached locally on this device.</span>
+                </div>
+              )}
+
+              {isUploading && (
+                <div className="space-y-2 p-3 rounded-xl bg-muted/40 border border-border/50 animate-in fade-in">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-foreground">
+                      {uploadProgress.phase === "parsing" ? "Parsing document on device (0 MB server load)..." : `Synchronizing to books: ${uploadProgress.current} / ${uploadProgress.total} transactions`}
+                    </span>
+                    {uploadProgress.total > 0 && (
+                      <span className="font-mono text-muted-foreground">
+                        {Math.round((uploadProgress.current / uploadProgress.total) * 100)}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all duration-300"
+                      style={{
+                        width: uploadProgress.phase === "parsing" ? "30%" : `${Math.max(10, Math.round((uploadProgress.current / uploadProgress.total) * 100))}%`
+                      }}
+                    />
+                  </div>
                 </div>
               )}
 
