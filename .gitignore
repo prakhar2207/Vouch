@@ -72,6 +72,7 @@ Thumbs.db
 # Temporary & Assistant artifacts
 walkthrough*.md
 implementation_plan*.md
+!docs/trust-flexibility/*.md
 .system_generated/
 scratch/
 backups/
