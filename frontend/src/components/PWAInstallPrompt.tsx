@@ -9,10 +9,12 @@ export default function PWAInstallPrompt() {
 
   useEffect(() => {
     // Check 7-day dismissal window
-    const dismissedUntil = localStorage.getItem("pwa_install_dismissed_until");
-    if (dismissedUntil && Number(dismissedUntil) > Date.now()) {
-      return;
-    }
+    try {
+      const dismissedUntil = localStorage.getItem("pwa_install_dismissed_until");
+      if (dismissedUntil && Number(dismissedUntil) > Date.now()) {
+        return;
+      }
+    } catch {}
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
@@ -24,10 +26,12 @@ export default function PWAInstallPrompt() {
       setIsVisible(false);
       setDeferredPrompt(null);
       // Mark as permanently or long-term installed
-      localStorage.setItem(
-        "pwa_install_dismissed_until",
-        String(Date.now() + 30 * 24 * 60 * 60 * 1000)
-      );
+      try {
+        localStorage.setItem(
+          "pwa_install_dismissed_until",
+          String(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        );
+      } catch {}
     };
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
@@ -52,10 +56,12 @@ export default function PWAInstallPrompt() {
   const handleDismiss = () => {
     setIsVisible(false);
     // 7-day dismissal persistence in localStorage
-    localStorage.setItem(
-      "pwa_install_dismissed_until",
-      String(Date.now() + 7 * 24 * 60 * 60 * 1000)
-    );
+    try {
+      localStorage.setItem(
+        "pwa_install_dismissed_until",
+        String(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      );
+    } catch {}
   };
 
   if (!isVisible) return null;

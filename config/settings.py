@@ -306,8 +306,11 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'x-app-version',
     'x-device-id',
     'x-sync-cursor',
+    'if-match',
+    'if-none-match',
+    'x-voucher-version',
 ]
-CORS_EXPOSE_HEADERS = ['X-Idempotent-Replay', 'X-Idempotency-Key', 'X-Server-Version', 'X-API-Contract', 'Retry-After']
+CORS_EXPOSE_HEADERS = ['X-Idempotent-Replay', 'X-Idempotency-Key', 'X-Server-Version', 'X-API-Contract', 'Retry-After', 'ETag', 'If-Match']
 
 CSRF_TRUSTED_ORIGINS = [
     'https://vouch-pi-one.vercel.app',

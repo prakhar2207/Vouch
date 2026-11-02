@@ -108,14 +108,17 @@ export default function OnboardingTour() {
     setTourStarter(startGuidedTour);
 
     if (isAuthenticated() && typeof window !== "undefined") {
-      const tourDone = localStorage.getItem("vouch_tour_completed");
-      const isDashboard = window.location.pathname === "/" || window.location.pathname === "/dashboard";
-      if (!tourDone && isDashboard) {
-        const timer = setTimeout(() => {
-          startGuidedTour();
-        }, 1500);
-        return () => clearTimeout(timer);
-      }
+      try {
+        if (window.innerWidth < 768) return; // Skip desktop tour on mobile
+        const tourDone = localStorage.getItem("vouch_tour_completed");
+        const isDashboard = window.location.pathname === "/" || window.location.pathname === "/dashboard";
+        if (!tourDone && isDashboard) {
+          const timer = setTimeout(() => {
+            startGuidedTour();
+          }, 1500);
+          return () => clearTimeout(timer);
+        }
+      } catch {}
     }
   }, [setTourStarter]);
 

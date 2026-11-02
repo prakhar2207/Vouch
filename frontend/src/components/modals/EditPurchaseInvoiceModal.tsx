@@ -366,7 +366,6 @@ export default function EditPurchaseInvoiceModal({
       const currentVersion = Number(version || voucher?.version || 1);
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
-        'If-Match': `"${currentVersion}"`,
       };
       if (activeCo) {
         headers['X-Company-ID'] = activeCo;
