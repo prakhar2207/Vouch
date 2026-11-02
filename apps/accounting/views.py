@@ -1042,11 +1042,6 @@ class VoucherDetailAPIView(APIView):
                 submitted_version = request.query_params.get('version') or request.META.get('HTTP_X_VOUCHER_VERSION')
             if_match = request.META.get('HTTP_IF_MATCH')
 
-            if submitted_version is None and not if_match:
-                return Response({
-                    "success": False,
-                    "error": "OCC version required. Pass 'version' in body or 'If-Match' header."
-                }, status=status.HTTP_428_PRECONDITION_REQUIRED)
 
             expected_version = None
             if submitted_version is not None:

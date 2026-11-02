@@ -575,7 +575,7 @@ class CryptographicAuditVerificationTests(BaseHardeningTestCase):
         self.assertEqual(status_res, "VERIFIED")
 
         # Simulate database tamper: bypass model .save() via direct queryset update
-        AuditLog.objects.filter(id=log1.id).update(current_hash="tampered_hash_000000000000000000000000000000000000000000000000000000")
+        AuditLog.objects.filter(id=log1.id).update(current_hash="f" * 64)
         tampered_res = AuditLogListView.verify_company_chain(self.comp_a)
         self.assertEqual(tampered_res, "BROKEN")
 

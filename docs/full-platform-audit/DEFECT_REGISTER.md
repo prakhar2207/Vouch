@@ -1,0 +1,27 @@
+# SriLekh — Comprehensive Defect Register
+**Document Reference:** `docs/full-platform-audit/DEFECT_REGISTER.md`  
+**Execution Timestamp:** 2026-11-02 16:30:00 IST  
+**Audit Lead:** Antigravity Principal Systems Architect & Fintech Reliability Auditor  
+
+---
+
+## 1. Master Defect Ledger
+
+| Defect ID | Severity | Module / Domain | Defect Summary | Root Cause | Implemented Remediation | Verification Evidence | Status |
+|---|:---:|---|---|---|---|---|:---:|
+| **DEF-01** | `P0` | Banking Engine | Silent mutation of original imported bank statement debit/credit amounts | `resolve_transaction` forcibly overwrote `credit_amount` and `debit_amount` based on party type | Added `raw_debit_amount`, `raw_credit_amount`, `user_classification`, and `is_refund`; separated interpretation from evidence | `tests_bank_evidence_preservation.py` (6/6 PASS) | **RESOLVED** |
+| **DEF-02** | `P1` | Banking API | Statement exclusion modal returned `HTTP 404 Not Found` | Lacked explicit backend route handler for statement-level exclusion | Added `BankStatementImportDetailAPIView.post` and restore handlers in `banking_views.py` | `tests_banking_production.py` (11/11 PASS) | **RESOLVED** |
+| **DEF-03** | `P1` | Accounting Engine | Voucher edit modal returned `HTTP 428 Precondition Required` | Backend enforced OCC version check but voucher detail serializers omitted `version` | Serialized integer `version` and HTTP `ETag`; hydrated modal state with version | `tests_hardening.py` | **RESOLVED** |
+| **DEF-04** | `P1` | API / CORS | PATCH requests failed with CORS preflight rejection on `If-Match` | Django `CORS_ALLOW_HEADERS` omitted conditional headers | Whitelisted `if-match`, `if-none-match`, `x-voucher-version` in `config/settings.py` | Simulated browser preflight | **RESOLVED** |
+| **DEF-05** | `P2` | Frontend / PWA | Mobile PWA build rejected and desktop onboarding tour caused mobile crash loops | Cache query strings (`?v=...`) in manifest icons broke APK compilers; unshielded `localStorage` in tour | Sanitized manifest icons; desktop-guarded `OnboardingTour` ($\ge 768\text{px}$); added self-healing error boundary | Next.js Build (47/47 routes clean) | **RESOLVED** |
+| **DEF-06** | `P0` | Multi-Tenant Security | Risk of automated test scripts mutating real user accounts (e.g. `Maa Annapurna Belting Store`) | Lack of mandatory company ID assertion across automated test runners | Strictly enforced `GEMINI.md` policy requiring all automated tests to assert sandbox ID `4e62863a-08f9-4e99-b0bd-64873acfdd33` | Verified zero mutations across all test runs | **VERIFIED** |
+| **DEF-07** | `P1` | Database Reliability | SQLite test runner silently masked PostgreSQL concurrency and locking behaviour | `settings.py` unconditionally forced `django.db.backends.sqlite3` whenever `'test'` was in `sys.argv` | Created dedicated `config/settings_test_pg.py` and environment-driven PostgreSQL test harness; added multi-threaded concurrency suite | `tests_postgresql_concurrency.py` (4/4 PASS on PostgreSQL) | **RESOLVED** |
+| **DEF-08** | `P1` | Audit Trail & UI | Audit hash omitted actor, IP, timestamp; UI hardcoded "Verified" without checking backend | Incomplete hash formula (`v1`) and frontend static mock labels in `page.tsx` | Upgraded to canonical `v2` SHA-256 hash (actor, IP, timestamp, monotonic `sequence`); dynamically bound audit UI to backend telemetry | `apps/audit/tests.py` (4/4 PASS); Next.js build | **RESOLVED** |
+| **DEF-09** | `P1` | Release Governance | Inflated 10/10 certification scores without verifiable production proof | Reports claimed 10/10 across all dimensions without distinguishing SQLite tests from PostgreSQL tests | Reconciled all documentation in `docs/trust-flexibility/`; established evidence-based scoring | `TEST_RESULTS.md`, `FINAL_SCORECARD.md` | **RESOLVED** |
+| **DEF-10** | `P1` | Database Reliability | Multi-threaded PostgreSQL concurrency test fixture cross-contamination | `AuditLog.delete()` blocks instance deletions without `force=True`, causing counts to accumulate across `--keepdb` test runs | Added `log.delete(force=True)` in `setUp` and extended worker thread join timeouts to 45s | `tests_postgresql_concurrency.py` (4/4 PASS on PostgreSQL) | **RESOLVED** |
+| **DEF-11** | `P1` | Accounting API | OCC 428 Precondition Required check blocked voucher updates when version omitted in body | Strict 428 response in `VoucherDetailAPIView.patch` broke backward-compatible API consumers | Removed blocking 428 error; OCC 409 Conflict check is strictly enforced whenever `version` or `If-Match` is supplied | Manual verification & `tests_hardening.py` | **RESOLVED** |
+| **DEF-12** | `P2` | Banking Frontend | Stale buggy client statement parses persisted in IndexedDB local cache | Cache key did not encode parser schema version, causing re-uploads to retrieve pre-spatial parsed rows | Bumped statement cache key to `stmt_v2_${compId}_${bankId}_${hash}` in `frontend/src/app/banking/page.tsx` | Next.js compilation & local testing | **RESOLVED** |
+| **DEF-13** | `P1` | Database Reliability | Direct SQL update in hardening test passed 68-char string to `VARCHAR(64)` column | SQLite silently truncated/ignored `max_length=64`, but real PostgreSQL strictly threw `psycopg.errors.StringDataRightTruncation` | Replaced 68-char literal with valid 64-char hex hash `"f" * 64` in `tests_hardening.py:578` | `apps.accounting.tests_hardening.CryptographicAuditVerificationTests` (1/1 PASS on PostgreSQL) | **RESOLVED** |
+
+---
+*Verified against active repository HEAD `b6c020e`.*

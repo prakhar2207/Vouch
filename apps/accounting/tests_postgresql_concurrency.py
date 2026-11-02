@@ -48,6 +48,9 @@ class PostgreSQLConcurrencyIntegrationTests(TransactionTestCase):
             company=self.company, name='Apex Test Debtor',
             defaults={'group': cust_grp, 'ledger_type': 'CUSTOMER'}
         )
+        # Sandbox test fixture cleanup: remove prior test logs with force=True
+        for l in AuditLog.objects.filter(company=self.company):
+            l.delete(force=True)
 
     def tearDown(self):
         connections.close_all()
@@ -127,8 +130,9 @@ class PostgreSQLConcurrencyIntegrationTests(TransactionTestCase):
             threads.append(t)
             t.start()
 
-        for t in threads:
-            t.join(timeout=15)
+        for tid, t in enumerate(threads):
+            t.join(timeout=45)
+            self.assertFalse(t.is_alive(), f"Worker thread {tid} timed out waiting for database lock")
 
         self.assertEqual(len(errors), 0, f"Concurrent audit log errors: {errors}")
         total_logs = AuditLog.objects.filter(company=self.company).count()

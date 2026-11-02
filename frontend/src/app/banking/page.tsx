@@ -91,10 +91,10 @@ export default function BankingPage() {
       const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       const rawHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-      return `stmt_${compId}_${bankId}_${rawHex}`;
+      return `stmt_v2_${compId}_${bankId}_${rawHex}`;
     } catch (err) {
       console.warn("[Banking] Web Crypto SHA-256 unavailable, falling back to name/size hash:", err);
-      return `stmt_${compId}_${bankId}_${file.name}_${file.size}_${file.lastModified}`;
+      return `stmt_v2_${compId}_${bankId}_${file.name}_${file.size}_${file.lastModified}`;
     }
   };
 
