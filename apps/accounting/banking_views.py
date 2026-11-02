@@ -284,6 +284,10 @@ class BankTransactionListAPIView(APIView):
                 "reference_number": tx.reference_number,
                 "debit_amount": str(tx.debit_amount),
                 "credit_amount": str(tx.credit_amount),
+                "raw_debit_amount": str(tx.raw_debit_amount or tx.debit_amount),
+                "raw_credit_amount": str(tx.raw_credit_amount or tx.credit_amount),
+                "user_classification": tx.user_classification,
+                "is_refund": tx.is_refund,
                 "balance": str(tx.balance) if tx.balance is not None else None,
                 "status": tx.status,
                 "is_excluded": tx.is_excluded,
@@ -637,6 +641,25 @@ class BankStatementImportDetailAPIView(APIView):
             return Response({"error": "Failed to exclude statement.", "correlation_id": correlation_id}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class BankTransactionUnreconcileAPIView(APIView):
+    permission_classes = [IsAuthenticated, CanManageLedgers]
+
+    def post(self, request, pk, *args, **kwargs):
+        """
+        Un-reconciles a reconciled bank transaction without altering original bank evidence.
+        Reverses any auto-created voucher and returns transaction to UNRESOLVED state.
+        """
+        company = get_authorized_company(request)
+        tx = get_object_or_404(BankTransaction, id=pk, company=company)
+        reason = request.data.get('reason', 'User un-reconciled transaction')
+        try:
+            res = BankReconciliationService.unreconcile_transaction(tx, reason=reason, user=request.user)
+            return Response(res, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception("Failed to unreconcile transaction: %s", e)
+            return Response({"error": "Failed to unreconcile transaction."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class BankTransactionRestoreAPIView(APIView):
     permission_classes = [IsAuthenticated, CanManageLedgers]
 
@@ -735,6 +758,16 @@ class BankTransactionToggleDirectionAPIView(APIView):
         notes['signals'] = match_res.get('signals', [])
         notes['suggested_matches'] = match_res.get('suggested_matches', [])
         notes['is_bank_expense'] = match_res.get('is_bank_expense', False)
+        from django.utils import timezone
+        notes.setdefault('source_corrections', []).append({
+            'timestamp': timezone.now().isoformat(),
+            'old_debit': str(old_debit),
+            'old_credit': str(old_credit),
+            'new_debit': str(tx.debit_amount),
+            'new_credit': str(tx.credit_amount),
+            'user': request.user.email if request.user.is_authenticated else 'SYSTEM',
+            'reason': request.data.get('reason', 'User corrected parser/OCR column inversion')
+        })
         tx.match_notes = notes
 
         if tx.matched_party and tx.status == 'UNRESOLVED':

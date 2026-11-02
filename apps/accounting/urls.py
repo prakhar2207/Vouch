@@ -112,6 +112,7 @@ urlpatterns = [
     path('banking/transactions/<uuid:pk>/', apps.accounting.banking_views.BankTransactionDetailAPIView.as_view(), name='banking_transaction_detail'),
     path('banking/transactions/<uuid:pk>/exclude/', apps.accounting.banking_views.BankTransactionDetailAPIView.as_view(), name='banking_transaction_exclude'),
     path('banking/transactions/<uuid:pk>/restore/', apps.accounting.banking_views.BankTransactionRestoreAPIView.as_view(), name='banking_transaction_restore'),
+    path('banking/transactions/<uuid:pk>/unreconcile/', apps.accounting.banking_views.BankTransactionUnreconcileAPIView.as_view(), name='banking_transaction_unreconcile'),
     path('banking/transactions/<uuid:pk>/toggle-direction/', apps.accounting.banking_views.BankTransactionToggleDirectionAPIView.as_view(), name='banking_transaction_toggle_direction'),
     path('banking/transactions/<uuid:pk>/resolve/', apps.accounting.banking_views.BankTransactionResolveAPIView.as_view(), name='banking_transaction_resolve'),
     path('banking/transactions/bulk-resolve/', apps.accounting.banking_views.BankTransactionBulkResolveAPIView.as_view(), name='banking_transaction_bulk_resolve'),

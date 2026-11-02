@@ -190,6 +190,7 @@ class Voucher(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='created_vouchers')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
     version = models.PositiveIntegerField(default=1, db_default=1, db_index=True, help_text="Optimistic Concurrency Control monotonic counter")
 
     class Meta:
@@ -518,6 +519,10 @@ class BankTransaction(models.Model):
     fingerprint = models.CharField(max_length=64, null=True, blank=True, db_index=True)
     debit_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     credit_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    raw_debit_amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    raw_credit_amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    user_classification = models.CharField(max_length=50, blank=True, default='')
+    is_refund = models.BooleanField(default=False)
     balance = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     source_file = models.CharField(max_length=255, blank=True)
     source_page = models.IntegerField(null=True, blank=True)
@@ -534,6 +539,15 @@ class BankTransaction(models.Model):
     match_notes = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        # Immutable source evidence preservation:
+        # Populate raw_debit_amount and raw_credit_amount on initial creation
+        if self.raw_debit_amount is None and self.debit_amount is not None:
+            self.raw_debit_amount = self.debit_amount
+        if self.raw_credit_amount is None and self.credit_amount is not None:
+            self.raw_credit_amount = self.credit_amount
+        super().save(*args, **kwargs)
 
     class Meta:
         ordering = ['-transaction_date', '-created_at']

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 import uuid
 import datetime
 from decimal import Decimal
@@ -81,22 +83,25 @@ class BankReconciliationService:
             explicit_intent = payload.get('intent') or action_type
             is_supplier = (party.canonical_role == 'SUPPLIER') or (party.ledger_type == 'SUPPLIER') or ('SUPPLIER' in explicit_intent)
             
-            # Defensive double-entry & OCR inversion guardrail:
-            # If transaction is resolved against a Customer without explicit refund intent, ensure it is treated
-            # as a RECEIPT (money in). If debit/credit amounts were inverted due to statement OCR column flips, correct them.
-            import re
-            if party.ledger_type == 'CUSTOMER' and not is_money_in:
-                if action_type not in ['CONFIRM_CUSTOMER_REFUND', 'CONFIRM_PAYMENT'] and not re.search(r'\b(?:REFUND|REBATE|PAYOUT)\b', bank_tx.description, re.IGNORECASE):
-                    is_money_in = True
-                    bank_tx.credit_amount = amount
-                    bank_tx.debit_amount = Decimal('0.00')
-                    bank_tx.save(update_fields=['credit_amount', 'debit_amount'])
-            elif (party.ledger_type == 'SUPPLIER' or party.canonical_role == 'SUPPLIER') and is_money_in:
-                if action_type not in ['CONFIRM_SUPPLIER_REFUND', 'CONFIRM_RECEIPT'] and not re.search(r'\b(?:REFUND|REBATE|RECOVERY)\b', bank_tx.description, re.IGNORECASE):
-                    is_money_in = False
-                    bank_tx.debit_amount = amount
-                    bank_tx.credit_amount = Decimal('0.00')
-                    bank_tx.save(update_fields=['credit_amount', 'debit_amount'])
+            # Separate Accounting Interpretation from Immutable Source Evidence:
+            # We NEVER mutate bank_tx.credit_amount or bank_tx.debit_amount.
+            # Transaction direction is strictly defined by original imported evidence (is_money_in).
+            # If a Customer has money out -> It is classified as a Customer Refund (Payment voucher).
+            # If a Supplier has money in -> It is classified as a Supplier Refund/Rebate (Receipt voucher).
+            if is_money_in:
+                if is_supplier or explicit_intent in ['CONFIRM_SUPPLIER_REFUND', 'SUPPLIER_REFUND']:
+                    v_classification = 'SUPPLIER_REFUND'
+                    is_refund = True
+                else:
+                    v_classification = 'CUSTOMER_RECEIPT'
+                    is_refund = False
+            else:
+                if is_supplier:
+                    v_classification = 'SUPPLIER_PAYMENT'
+                    is_refund = False
+                else:
+                    v_classification = 'CUSTOMER_REFUND'
+                    is_refund = True
 
             # Canonical voucher type based on direction
             v_type = 'RECEIPT' if is_money_in else 'PAYMENT'
@@ -239,7 +244,22 @@ class BankReconciliationService:
             bank_tx.matched_voucher = created_voucher
             bank_tx.status = 'RECONCILED'
             bank_tx.match_confidence = 1.0
-            bank_tx.save(update_fields=['matched_party', 'matched_voucher', 'status', 'match_confidence', 'updated_at'])
+            bank_tx.user_classification = v_classification
+            bank_tx.is_refund = is_refund
+            notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+            notes.setdefault('interpretation_history', []).append({
+                'timestamp': timezone.now().isoformat(),
+                'action_type': action_type,
+                'party_id': str(party.id),
+                'party_name': party.name,
+                'classification': v_classification,
+                'is_refund': is_refund,
+                'voucher_id': str(created_voucher.id),
+                'voucher_number': created_voucher.voucher_number,
+                'user': user.email if user else 'SYSTEM'
+            })
+            bank_tx.match_notes = notes
+            bank_tx.save(update_fields=['matched_party', 'matched_voucher', 'status', 'match_confidence', 'user_classification', 'is_refund', 'match_notes', 'updated_at'])
 
             AuditService.log_action(
                 company=company,
@@ -987,6 +1007,64 @@ class BankReconciliationService:
             "variance": str(variance),
             "is_reconciled": is_reconciled,
             "reconciliation_status": "PERFECTLY_RECONCILED" if is_reconciled else "VARIANCE_DETECTED"
+        }
+
+    @classmethod
+    def unreconcile_transaction(cls, bank_tx: BankTransaction, reason: str = "User un-reconciled transaction", user=None) -> Dict[str, Any]:
+        """
+        Un-reconciles a reconciled bank transaction without mutating imported bank evidence.
+        - Reverses or cancels any auto-created voucher.
+        - Detaches matched_voucher and matched_party.
+        - Resets status to UNRESOLVED.
+        - Preserves debit_amount, credit_amount, raw amounts.
+        - Logs the reversal in interpretation_history and AuditLog.
+        """
+        if bank_tx.status != 'RECONCILED':
+            return {"status": "NOOP", "message": "Transaction is not currently reconciled."}
+
+        vch = bank_tx.matched_voucher
+        vch_num = vch.voucher_number if vch else None
+        if vch and vch.status in EffectiveVoucherService.ACCOUNTING_STATUSES:
+            try:
+                VoucherService.cancel_voucher(vch, user=user)
+            except Exception as e:
+                logger.warning(f"Failed to cancel matched voucher {vch.id} on unreconcile: {e}")
+
+        bank_tx.matched_voucher = None
+        bank_tx.matched_party = None
+        bank_tx.matched_invoice = None
+        bank_tx.status = 'UNRESOLVED'
+        bank_tx.user_classification = ''
+        bank_tx.is_refund = False
+
+        notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+        notes.setdefault('interpretation_history', []).append({
+            'timestamp': timezone.now().isoformat(),
+            'action_type': 'UNRECONCILE',
+            'reason': reason,
+            'reversed_voucher_number': vch_num,
+            'user': user.email if user else 'SYSTEM'
+        })
+        bank_tx.match_notes = notes
+        bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'matched_invoice', 'status', 'user_classification', 'is_refund', 'match_notes', 'updated_at'])
+
+        AuditService.log_action(
+            company=bank_tx.company,
+            user=user,
+            action='UPDATE',
+            model_name='BankReconciliation',
+            record_id=bank_tx.id,
+            changes={
+                "action": "UNRECONCILE",
+                "reason": reason,
+                "reversed_voucher_number": vch_num
+            }
+        )
+
+        return {
+            "status": "SUCCESS",
+            "message": f"Transaction '{bank_tx.description}' successfully un-reconciled.",
+            "transaction_id": str(bank_tx.id)
         }
 
     @classmethod

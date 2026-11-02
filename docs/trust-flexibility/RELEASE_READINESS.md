@@ -1,8 +1,8 @@
 # SriLekh — Release Readiness & Operational Runbook
-**Trust & Flexibility 10/10 Production Release Plan**  
+**Financial Integrity Remediation Release Plan**  
 *Document Ref:* `docs/trust-flexibility/RELEASE_READINESS.md`  
-*Branch:* `feature/trust-flexibility-remediation`  
-*Target Environment:* Production (`api.srilekh.com` & `vouch-pi-one.vercel.app`)  
+*Branch:* `feature/critical-financial-integrity`  
+*Target Environments:* Production (`api.srilekh.com` on Render & `vouch-pi-one.vercel.app` on Vercel)  
 
 ---
 
@@ -10,35 +10,38 @@
 
 | Quality Gate | Requirement | Measured Result | Verdict |
 |---|---|---|:---:|
-| **Test Quality Gate** | 100% pass on all core suites | 149 / 149 passed (0 failures) | **READY** |
-| **Tenant Isolation Gate** | 0 writes to production client accounts | Confirmed via `GEMINI.md` isolation enforcement | **READY** |
-| **Frontend Compilation** | Clean Next.js build across all routes | 47 / 47 routes compiled cleanly | **READY** |
-| **PWA Compliance** | Valid W3C manifest, no query strings | Compliant with Android PWABuilder / Bubblewrap | **READY** |
-| **Concurrency Gate** | OCC 428 resolved, CORS whitelisted | Verified via simulated race test | **READY** |
-| **Parser Gate** | 2D spatial extraction on Canara passbooks | 52 / 52 transactions accurately extracted | **READY** |
+| **Bank Evidence Protection Gate** | Zero silent mutation of debit/credit amounts | Verified on PostgreSQL via `tests_bank_evidence_preservation.py` | **READY** |
+| **PostgreSQL Concurrency Gate** | `select_for_update()` row locks & linear audit sequence | Verified on Neon PostgreSQL via `tests_postgresql_concurrency.py` | **READY** |
+| **Audit Integrity Gate** | Complete actor/IP/timestamp hash & dynamic UI | Verified via `apps/audit/tests.py` and dynamic audit banner | **READY** |
+| **Tenant Isolation Gate** | Zero test pollution in real client accounts | Strictly verified under `GEMINI.md` isolation invariant | **READY** |
+| **Frontend Compilation Gate** | Clean Next.js build across all 47 routes | 47 / 47 routes compiled cleanly in 15.3s | **READY** |
+| **Database Migration Gate** | Backward-compatible schema additions | Migrations tested and verified | **READY** |
 
-**Final Determination:** **`GO FOR PRODUCTION RELEASE`**
+**Final Recommendation:** **`CONDITIONAL GO`**  
+*Condition: Staging deployment smoke-tested before opening broad user registration.*
 
 ---
 
 ## 2. Pre-Deployment Checklist
 
-- [x] All working-tree changes committed to feature branch `feature/trust-flexibility-remediation`.
-- [x] Backend automated integration tests (`tests_banking_production`, `tests_hardening`, `tests_accountant_trust`, `tests_regression_sprint`) executed and passing.
+- [x] All working-tree changes committed to feature branch `feature/critical-financial-integrity`.
+- [x] Backend automated integration tests executed against live Neon PostgreSQL test database.
 - [x] Frontend Next.js production build (`npm run build`) verified locally.
-- [x] Python database migrations verified clean with zero pending schema modifications.
-- [x] Neon PostgreSQL connection pooling (`CONN_MAX_AGE=600`) and SSL verified.
-- [x] Manifest icons verified without URL query strings.
+- [x] Database migrations verified clean with zero destructive alterations:
+  - `apps/accounting/migrations/0043_banktransaction_is_refund_and_more.py`
+  - `apps/audit/migrations/0005_alter_auditlog_options_auditlog_schema_version_and_more.py`
+  - `apps/audit/migrations/0006_alter_auditlog_created_at.py`
+  - `apps/audit/migrations/0007_alter_auditlog_options_auditlog_sequence.py`
 - [x] Production tenant isolation verified (zero test contamination in `Maa Annapurna Belting Store`).
 
 ---
 
 ## 3. Deployment Procedure
 
-### Step 1: Merge Feature Branch to Main
+### Step 1: Merge Feature Branch to Main (Requires User Approval)
 ```bash
 git checkout main
-git merge feature/trust-flexibility-remediation --ff-only
+git merge feature/critical-financial-integrity --ff-only
 git push origin main
 ```
 
@@ -53,31 +56,23 @@ git push origin main
 - Service worker asset cache `/sw.js` updates automatically.
 
 ### Step 4: Post-Deployment Smoke Test
-1. **Bank Statement Exclusion:** Navigate to `/banking`, select any erroneously uploaded test statement, and verify that "Exclude Statement from Books" returns `HTTP 200 OK` with non-destructive exclusion.
-2. **Bank Statement Upload:** Upload `canara_epassbook_2026-11-01 133109.707715.pdf`. Confirm all 52 transactions appear instantly with correct debit/credit columns and payee `SATYAM AND CO` extracted.
-3. **Voucher Edit:** Open any receipt or invoice voucher modal, make a non-destructive note update, and confirm that "Update & Recalculate" succeeds without OCC 428 or CORS network errors.
+1. **Bank Reconciliation Verification:** Navigate to `/banking`, resolve a customer transaction, and verify that original debit/credit amounts remain identical. Test resolving a customer refund (money out) to confirm it generates a `PAYMENT` voucher without column inversion.
+2. **Audit Verification:** Open `/audit` and confirm the banner displays real-time telemetry from `/api/v1/audit/verify/` with zero hardcoded badges.
+3. **Unreconcile Verification:** Unreconcile a transaction and verify that status returns to `UNRESOLVED` with the auto-created voucher cancelled and original amounts untouched.
 
 ---
 
 ## 4. Rollback Plan
 
 If unexpected anomalies occur post-deployment:
-1. **Frontend Rollback:** Revert instantly to the previous Vercel deployment from the Vercel dashboard with 1 click (sub-5 second instant switch).
+1. **Frontend Instant Rollback:** Revert instantly to previous Vercel deployment from Vercel dashboard (< 5 seconds).
 2. **Backend Rollback:**
    ```bash
    git revert HEAD
    git push origin main
    ```
    Render will automatically redeploy the previous stable build.
-3. **Database Safeguard:** No destructive database migrations were introduced. Schema changes are backward-compatible.
-
----
-
-## 5. Monitoring & Operational Telemetry
-
-- **Audit Logs:** Monitor `AuditLog` table for tamper verification alerts via `/api/v1/audit/verify/`.
-- **Error Telemetry:** Frontend `error.tsx` logs unhandled client exceptions to Sentry / browser console with diagnostic stack traces.
-- **Render Service Metrics:** Monitor memory utilization to ensure client-side statement parsing maintains backend RAM well below the 512MB ceiling.
+3. **Database Safeguard:** All migrations are strictly additive (`ADD COLUMN` with defaults). No tables or columns were dropped.
 
 ---
 *Authored by SriLekh Principal Architect & Systems Reliability Team.*

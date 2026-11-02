@@ -59,12 +59,13 @@ class AuditLogListView(APIView):
                 for log in page_logs
             ]
 
-            chain_integrity = self.verify_company_chain(company)
+            telemetry = self.verify_company_chain_telemetry(company)
 
             return Response({
                 "success": True,
                 "data": data,
-                "chain_integrity": chain_integrity,
+                "chain_integrity": telemetry["status"],
+                "chain_telemetry": telemetry,
                 "pagination": {
                     "total_count": total_count,
                     "limit": limit,
@@ -77,26 +78,86 @@ class AuditLogListView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-    @staticmethod
-    def verify_company_chain(company) -> str:
+    @classmethod
+    def verify_company_chain_telemetry(cls, company) -> dict:
         """
-        P1-17: Cryptographic audit chain verification.
+        P1-17: Cryptographic audit chain verification with full telemetry.
         Valid states: 'VERIFIED', 'BROKEN', 'NOT_VERIFIED'
         Detects any broken previous_hash, invalid current_hash, or tampering.
         """
         import hashlib, json
-        logs = list(AuditLog.objects.filter(company=company).order_by('created_at', 'id'))
+        from django.utils import timezone
+        logs = list(AuditLog.objects.filter(company=company).order_by('sequence', 'created_at'))
         if not logs:
-            return "NOT_VERIFIED"
+            return {
+                "status": "NOT_VERIFIED",
+                "message": "No audit records found for this company.",
+                "total_records_checked": 0,
+                "invalid_records_count": 0,
+                "last_verified_at": timezone.now().isoformat(),
+                "first_tampered_id": None,
+                "details": []
+            }
 
         expected_prev = "0" * 64
+        invalid_count = 0
+        first_tampered_id = None
+        details = []
+
         for log in logs:
             if log.previous_hash != expected_prev:
-                return "BROKEN"
-            payload = f"{log.previous_hash}:{log.company_id}:{log.action}:{log.model_name}:{log.record_id}:{json.dumps(log.changes, sort_keys=True) if log.changes else ''}"
-            computed = hashlib.sha256(payload.encode('utf-8')).hexdigest()
+                invalid_count += 1
+                if not first_tampered_id:
+                    first_tampered_id = str(log.id)
+                details.append(f"Broken previous_hash link at log {log.id}: expected {expected_prev}, got {log.previous_hash}")
+                break
+
+            if getattr(log, 'schema_version', 'v1') == 'v2':
+                computed = log.compute_hash(expected_prev)
+            else:
+                payload = f"{log.previous_hash}:{log.company_id}:{log.action}:{log.model_name}:{log.record_id}:{json.dumps(log.changes, sort_keys=True) if log.changes else ''}"
+                computed = hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
             if log.current_hash != computed:
-                return "BROKEN"
+                invalid_count += 1
+                if not first_tampered_id:
+                    first_tampered_id = str(log.id)
+                details.append(f"Hash mismatch at log {log.id}: expected {log.current_hash}, computed {computed}")
+                break
+
             expected_prev = log.current_hash
 
-        return "VERIFIED"
+        status_str = "VERIFIED" if invalid_count == 0 else "BROKEN"
+        return {
+            "status": status_str,
+            "message": "Audit chain intact and cryptographically verified." if status_str == "VERIFIED" else "Audit chain compromised.",
+            "total_records_checked": len(logs),
+            "invalid_records_count": invalid_count,
+            "last_verified_at": timezone.now().isoformat(),
+            "first_tampered_id": first_tampered_id,
+            "details": details
+        }
+
+    @classmethod
+    def verify_company_chain(cls, company) -> str:
+        return cls.verify_company_chain_telemetry(company)["status"]
+
+
+class AuditVerificationAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get(self, request, company_id=None):
+        if company_id:
+            company = Company.objects.filter(id=company_id, users__user=request.user).first()
+        else:
+            company = Company.objects.filter(users__user=request.user).first()
+
+        if not company:
+            return Response({"success": False, "error": "Company not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        telemetry = AuditLogListView.verify_company_chain_telemetry(company)
+        return Response({
+            "success": True,
+            "company_id": str(company.id),
+            "telemetry": telemetry
+        }, status=status.HTTP_200_OK)

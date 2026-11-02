@@ -159,8 +159,10 @@ if 'default' in DATABASES and 'postgresql' in DATABASES['default'].get('ENGINE',
     DATABASES['default']['CONN_MAX_AGE'] = env.int('CONN_MAX_AGE', default=600)
     DATABASES['default']['CONN_HEALTH_CHECKS'] = True
 
-import sys
-if 'test' in sys.argv:
+import sys, os
+# Dedicated PostgreSQL testing: if USE_POSTGRES_TEST=1 or DJANGO_SETTINGS_MODULE specifies postgres test settings,
+# preserve PostgreSQL configuration; otherwise use fast isolated SQLite for unit testing.
+if 'test' in sys.argv and os.environ.get('USE_POSTGRES_TEST') != '1' and os.environ.get('DJANGO_SETTINGS_MODULE') != 'config.settings_test_pg':
     DATABASES['default'] = {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'test_db.sqlite3',

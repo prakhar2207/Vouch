@@ -2,6 +2,7 @@ import uuid
 import hashlib
 import json
 from django.db import models, transaction
+from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 from apps.companies.models import Company
 from apps.accounts.models import User
@@ -31,10 +32,31 @@ class AuditLog(models.Model):
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     previous_hash = models.CharField(max_length=64, null=True, blank=True)
     current_hash = models.CharField(max_length=64, null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    schema_version = models.CharField(max_length=10, default='v2', db_index=True)
+    sequence = models.BigIntegerField(default=0, db_index=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    def compute_hash(self, prev_hash: str) -> str:
+        changes_json = json.dumps(self.changes or {}, sort_keys=True, separators=(',', ':'))
+        ts_iso = self.created_at.isoformat() if self.created_at else ''
+        payload_parts = [
+            str(self.schema_version or 'v2'),
+            str(prev_hash or '0' * 64),
+            str(self.id or ''),
+            str(self.company_id or 'NO_COMPANY'),
+            str(self.user_id or 'SYSTEM'),
+            str(self.action or '').upper(),
+            str(self.model_name or ''),
+            str(self.record_id or ''),
+            ts_iso,
+            str(self.ip_address or '0.0.0.0'),
+            changes_json
+        ]
+        canonical_str = '|'.join(payload_parts)
+        return hashlib.sha256(canonical_str.encode('utf-8')).hexdigest()
 
     class Meta:
-        ordering = ['created_at', 'id']
+        ordering = ['sequence', 'created_at']
         indexes = [
             models.Index(fields=['company', 'model_name', 'record_id']),
             models.Index(fields=['company', 'created_at']),
@@ -54,10 +76,18 @@ class AuditLog(models.Model):
             if self.company_id:
                 Company.objects.select_for_update().filter(id=self.company_id).first()
 
-            last_log = AuditLog.objects.filter(company=self.company).order_by('-created_at', '-id').first()
+            if not self.created_at:
+                from django.utils import timezone
+                self.created_at = timezone.now()
+
+            last_log = AuditLog.objects.filter(company=self.company).order_by('-sequence', '-created_at').first()
+            self.sequence = (last_log.sequence + 1) if last_log and last_log.sequence is not None else 1
             self.previous_hash = last_log.current_hash if last_log and last_log.current_hash else "0" * 64
-            payload = f"{self.previous_hash}:{self.company_id}:{self.action}:{self.model_name}:{self.record_id}:{json.dumps(self.changes, sort_keys=True) if self.changes else ''}"
-            self.current_hash = hashlib.sha256(payload.encode('utf-8')).hexdigest()
+            if self.schema_version == 'v2':
+                self.current_hash = self.compute_hash(self.previous_hash)
+            else:
+                payload = f"{self.previous_hash}:{self.company_id}:{self.action}:{self.model_name}:{self.record_id}:{json.dumps(self.changes, sort_keys=True) if self.changes else ''}"
+                self.current_hash = hashlib.sha256(payload.encode('utf-8')).hexdigest()
             super().save(*args, **kwargs)
 
     def __str__(self):

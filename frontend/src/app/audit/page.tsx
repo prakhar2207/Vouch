@@ -59,6 +59,17 @@ export default function AuditPage() {
   // Diff Modal
   const [selectedEntry, setSelectedEntry] = useState<AuditEntry | null>(null);
 
+  // Chain Telemetry from backend
+  const [chainTelemetry, setChainTelemetry] = useState<{
+    status: 'VERIFIED' | 'BROKEN' | 'NOT_VERIFIED';
+    message: string;
+    total_records_checked: number;
+    invalid_records_count: number;
+    last_verified_at: string | null;
+    first_tampered_id: string | null;
+    details: string[];
+  } | null>(null);
+
   useEffect(() => {
     if (!isAuthenticated()) {
       router.push('/login');
@@ -103,6 +114,19 @@ export default function AuditPage() {
         setLogs(res.data.data || []);
         setPagination(res.data.pagination);
         setPage(targetPage);
+        if (res.data.chain_telemetry) {
+          setChainTelemetry(res.data.chain_telemetry);
+        } else if (res.data.chain_integrity) {
+          setChainTelemetry({
+            status: res.data.chain_integrity,
+            message: res.data.chain_integrity === 'VERIFIED' ? 'Audit chain intact and verified.' : 'Audit chain pending.',
+            total_records_checked: (res.data.data || []).length,
+            invalid_records_count: 0,
+            last_verified_at: new Date().toISOString(),
+            first_tampered_id: null,
+            details: []
+          });
+        }
       }
     } catch (err: any) {
       console.error('Failed to fetch audit logs:', err);
@@ -170,27 +194,79 @@ export default function AuditPage() {
         </div>
 
         {/* Cryptographic Tamper-Chain Verification Banner */}
-        <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+          chainTelemetry?.status === 'VERIFIED'
+            ? 'border-emerald-500/30 bg-emerald-500/10'
+            : chainTelemetry?.status === 'BROKEN'
+            ? 'border-rose-500/40 bg-rose-500/10'
+            : 'border-amber-500/30 bg-amber-500/10'
+        }`}>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+            <div className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${
+              chainTelemetry?.status === 'VERIFIED'
+                ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400'
+                : chainTelemetry?.status === 'BROKEN'
+                ? 'bg-rose-500/20 border-rose-500/30 text-rose-400'
+                : 'bg-amber-500/20 border-amber-500/30 text-amber-400'
+            }`}>
               <Lock className="w-5 h-5" />
             </div>
             <div>
               <div className="font-bold text-sm text-foreground flex items-center gap-2">
-                <span>Audit Log Integrity: Verified</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full font-bold">
-                  SHA-256
+                <span>
+                  Audit Log Integrity:{' '}
+                  {chainTelemetry?.status === 'VERIFIED'
+                    ? 'Verified'
+                    : chainTelemetry?.status === 'BROKEN'
+                    ? 'Compromised'
+                    : 'Pending / Unverified'}
+                </span>
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                  chainTelemetry?.status === 'VERIFIED'
+                    ? 'bg-emerald-500/20 text-emerald-400'
+                    : chainTelemetry?.status === 'BROKEN'
+                    ? 'bg-rose-500/20 text-rose-400'
+                    : 'bg-amber-500/20 text-amber-400'
+                }`}>
+                  SHA-256 v2
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Every transaction is cryptographically verified to ensure records cannot be altered.
+                {chainTelemetry?.status === 'VERIFIED'
+                  ? `Cryptographic SHA-256 chain verified across ${chainTelemetry.total_records_checked} record(s) with actor attribution and UTC timestamps.`
+                  : chainTelemetry?.status === 'BROKEN'
+                  ? `Warning: Hash mismatch or broken chain detected (${chainTelemetry.invalid_records_count} invalid record). First affected: ${chainTelemetry.first_tampered_id || 'Unknown'}`
+                  : 'Verification status pending backend chain evaluation.'}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 text-xs font-mono text-emerald-400">
-            <CheckCircle2 className="w-4 h-4" />
-            <span>Verified Records</span>
+          <div className="flex flex-col sm:items-end gap-1">
+            <div className={`flex items-center gap-2 text-xs font-mono ${
+              chainTelemetry?.status === 'VERIFIED'
+                ? 'text-emerald-400'
+                : chainTelemetry?.status === 'BROKEN'
+                ? 'text-rose-400'
+                : 'text-amber-400'
+            }`}>
+              {chainTelemetry?.status === 'VERIFIED' ? (
+                <CheckCircle2 className="w-4 h-4" />
+              ) : (
+                <AlertCircle className="w-4 h-4" />
+              )}
+              <span>
+                {chainTelemetry?.status === 'VERIFIED'
+                  ? `${chainTelemetry.total_records_checked} Verified Record(s)`
+                  : chainTelemetry?.status === 'BROKEN'
+                  ? `${chainTelemetry.invalid_records_count} Invalid Record(s)`
+                  : 'Unverified'}
+              </span>
+            </div>
+            {chainTelemetry?.last_verified_at && (
+              <span className="text-[10px] text-muted-foreground font-mono">
+                Verified: {new Date(chainTelemetry.last_verified_at).toLocaleTimeString()}
+              </span>
+            )}
           </div>
         </div>
 

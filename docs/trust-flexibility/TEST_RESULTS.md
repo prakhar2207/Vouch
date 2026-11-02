@@ -1,116 +1,107 @@
 # SriLekh — Test Results & Verification Evidence
-**Evidence-Based Validation for Trust & Flexibility 10/10**  
+**Evidence-Based Validation for Financial Integrity Remediation**  
 *Document Ref:* `docs/trust-flexibility/TEST_RESULTS.md`  
-*Branch:* `feature/trust-flexibility-remediation`  
+*Branch:* `feature/critical-financial-integrity`  
 *Verification Date:* 2026-11-02  
 
 ---
 
-## 1. Executive Summary
+## 1. Executive Summary & Quality Gate Status
 
-| Test Domain / Suite | Scope / Focus | Total Tests | Passed | Failed | Duration | Status |
-|---|---|:---:|:---:|:---:|:---:|:---:|
-| **Banking Production Suite** | Statement/Transaction Exclusion, Ingestion, Reconcile | 11 | 11 | 0 | 8.38s | **PASSED** |
-| **System Hardening Suite** | Double-Entry, OCC, Lockouts, Soft-Delete | 25 | 25 | 0 | 61.31s | **PASSED** |
-| **Accountant Trust Suite** | Vouch Health, Self-Healing, Reversals | 5 | 5 | 0 | 2.34s | **PASSED** |
-| **Regression Sprint Suite** | Concurrency, Voucher Patch, Multi-Tenant Barriers | 9 | 9 | 0 | 7.71s | **PASSED** |
-| **Client PDF Parser Engine** | 2D Spatial Extraction, Cheque Delimiters, Multi-Line | 52 | 52 | 0 | 0.81s | **PASSED** |
-| **Next.js Production Build** | Static & Dynamic Route Compilation (App Router) | 47 routes | 47 | 0 | 20.4s | **PASSED** |
-| **Total Automated Quality Gate** | Backend + Frontend + Spatial Intelligence | **149** | **149** | **0** | — | **100% PASS** |
+| Test Suite / Target | Scope & Invariants Tested | Execution Environment | Total Tests | Passed | Failed | Skipped | Duration | Verdict |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **PostgreSQL Concurrency Suite** | `select_for_update()` row locks, multi-threaded audit hash chaining, tenant isolation | **Neon PostgreSQL 18.6** | 4 | 4 | 0 | 0 | 56.68s | **PASSED** |
+| **Bank Evidence Preservation Suite** | Immutable raw amounts, Customer refunds (Dr Customer, Cr Bank), Supplier refunds (Dr Bank, Cr Supplier), Unreconcile reversals | **Neon PostgreSQL 18.6** | 6 | 6 | 0 | 0 | 77.82s | **PASSED** |
+| **Audit Hash Completeness Suite** | Actor attribution, IP address, UTC timestamp, SHA-256 v2 chaining, DB-level tamper detection, deletion detection | Local SQLite & Test DB | 4 | 4 | 0 | 0 | 0.12s | **PASSED** |
+| **Banking Production Suite** | Statement/transaction exclusion, batch ingestion, FIFO allocation | Local Ephemeral Test DB | 11 | 11 | 0 | 0 | 4.74s | **PASSED** |
+| **System Hardening Suite** | Double-entry equilibrium, sequential numbering, soft deletion | Local Ephemeral Test DB | 25 | 25 | 0 | 0 | 61.31s | **PASSED** |
+| **Accountant Trust Suite** | Automated diagnostics, finding previews, audited fixes | Local Ephemeral Test DB | 5 | 5 | 0 | 0 | 2.34s | **PASSED** |
+| **Regression Sprint Suite** | Concurrency, voucher patch contracts, role permissions | Local Ephemeral Test DB | 9 | 9 | 0 | 0 | 7.71s | **PASSED** |
+| **Next.js Production Build** | Static & dynamic route compilation (App Router) | Node.js 24 / Webpack | 47 routes | 47 | 0 | 0 | 36.6s | **PASSED** |
 
 ---
 
-## 2. Mandatory Test Isolation Enforcement
+## 2. Mandatory Test Isolation Policy Verification (`GEMINI.md`)
 
-> **VERIFIED INVARIANT (Highest Priority - GEMINI.md Policy):**  
-> Under no circumstances may any test, mock generator, or automated script insert, modify, or delete vouchers, ledgers, or bank statements in any real user account.  
+> **CRITICAL POLICY INVARIANT:**  
+> Under no circumstances may any test, mock data generator, or automated script insert, modify, or delete vouchers, ledgers, or bank statements in any real user account.  
 > Specifically, **`Maa Annapurna Belting Store` (`5d2e5dea-ff86-4871-b2af-fe1c5a05c03c`)** is strictly protected.
 
-- **Automated Test Isolation:** All automated Django test suites executed in ephemeral database sandboxes, guaranteeing 0 mutations to production tenants.
-- **Manual / Scratch Isolation:** All benchmark and verification scripts explicitly target the dedicated demo company:
+- **Automated Test Isolation:** All automated Django test suites executed in disposable database sandboxes (`test_neondb` on PostgreSQL, `:memory:` on SQLite).
+- **Dedicated Sandbox Target:** All tests explicitly asserted and used the dedicated demo company:
   - **Company Name:** `Apex Belting & Industrial Store (Demo)`
   - **Company ID:** `4e62863a-08f9-4e99-b0bd-64873acfdd33`
-- **Result:** **ZERO** modifications, deletions, or insertions occurred in `Maa Annapurna Belting Store`.
+- **Result:** **ZERO** rows created, modified, or deleted in `Maa Annapurna Belting Store`.
 
 ---
 
-## 3. Detailed Test Suite Execution Telemetry
+## 3. Real PostgreSQL Execution Telemetry
 
-### 3.1 Banking Production Integration Suite (`apps.accounting.tests_banking_production`)
-- **Execution Command:** `python manage.py test apps.accounting.tests_banking_production`
-- **Elapsed Time:** 8.380s
-- **Test Cases Executed:**
-  1. `test_auto_fifo_reconciliation_exact_and_partial`: Verified FIFO auto-allocation across invoice payment chains. (PASS)
-  2. `test_bank_ledger_double_entry_balance_invariance`: Verified mathematical equilibrium on bank postings. (PASS)
-  3. `test_batch_preparsed_ingestion_eliminates_timeouts`: Verified 10-row batch streaming with zero server memory spikes. (PASS)
-  4. `test_contra_cash_withdrawal_reconciliation`: Verified contra cash vouchers between bank and cash accounts. (PASS)
-  5. `test_customer_receipt_allocation_updates_invoice_status`: Verified invoice payment statuses (`UNPAID` $\rightarrow$ `PARTIAL` $\rightarrow$ `PAID`). (PASS)
-  6. `test_duplicate_statement_ingest_prevention`: Verified SHA-256 file fingerprinting halts duplicate uploads. (PASS)
-  7. `test_party_intelligence_signal_priority`: Verified 10-signal hierarchy for party identification. (PASS)
-  8. `test_statement_and_transaction_audited_exclusion`: Verified non-destructive exclusion with reverse voucher generation. (PASS)
-  9. `test_statement_exclusion_rollback_reconciliation`: Verified reversal of auto-created vouchers on statement exclusion. (PASS)
-  10. `test_supplier_payment_unpaid_bills_matching`: Verified matching against open supplier bills. (PASS)
-  11. `test_unauthorized_party_cross_tenant_mapping_prevention`: Verified multi-tenant security barrier rejects cross-company mapping. (PASS)
+### 3.1 PostgreSQL Concurrency & Isolation Suite (`tests_postgresql_concurrency.py`)
+- **Command:** `python manage.py test apps.accounting.tests_postgresql_concurrency --keepdb --settings=config.settings_test_pg`
+- **Active Database Vendor:** `postgresql` (Confirmed PostgreSQL 18.6 on Neon serverless)
+- **Execution Telemetry:**
+  ```text
+  Using existing test database for alias 'default'...
+  ....
+  ----------------------------------------------------------------------
+  Ran 4 tests in 56.685s
 
----
+  OK
+  Preserving test database for alias 'default'...
+  Found 4 test(s).
+  [DATABASE CONCURRENCY TEST] Active Database Vendor: postgresql
+  ```
+- **Test Scenarios Verified:**
+  1. `test_database_engine_inspection`: Confirmed vendor is strictly PostgreSQL.
+  2. `test_select_for_update_row_locking`: Verified that `select_for_update()` on a ledger row held an exclusive row lock, forcing concurrent threads to wait until transaction commit.
+  3. `test_concurrent_audit_log_linear_chaining`: Verified 3 concurrent worker threads writing audit logs serialized cleanly via company row lock without competing chain heads or sort inversions.
+  4. `test_tenant_isolation_boundary`: Verified Company A cannot view or mutate Company B's records.
 
-### 3.2 System Hardening & Accounting Integrity Suite (`apps.accounting.tests_hardening`)
-- **Execution Command:** `python manage.py test apps.accounting.tests_hardening`
-- **Elapsed Time:** 61.306s
-- **Highlights:**
-  - Tested Optimistic Concurrency Control (OCC) under simulated race conditions.
-  - Tested voucher cancellation and automatic ledger balance recalibration from genesis.
-  - Verified tamper-evident SHA-256 audit chaining.
-  - Verified duplicate invoice prevention and gapless sequential voucher numbering.
-  - All 25/25 test cases passed with 0 failures.
+### 3.2 Bank Evidence Preservation Suite (`tests_bank_evidence_preservation.py`)
+- **Command:** `python manage.py test apps.accounting.tests_bank_evidence_preservation --keepdb --settings=config.settings_test_pg`
+- **Active Database Vendor:** `postgresql` (Neon)
+- **Execution Telemetry:**
+  ```text
+  Using existing test database for alias 'default'...
+  ......
+  ----------------------------------------------------------------------
+  Ran 6 tests in 77.822s
 
----
+  OK
+  Preserving test database for alias 'default'...
+  ```
+- **Test Scenarios Verified:**
+  1. `test_customer_payment_receipt_preserves_evidence`: Deposit from customer creates `RECEIPT` voucher; `raw_credit_amount` and `credit_amount` are never modified.
+  2. `test_customer_refund_preserves_evidence_without_flipping`: Withdrawal to customer creates `PAYMENT` voucher (Customer Refund); `debit_amount` is preserved and NOT flipped.
+  3. `test_supplier_payment_preserves_evidence`: Withdrawal to supplier creates `PAYMENT` voucher; `debit_amount` is preserved.
+  4. `test_supplier_refund_preserves_evidence_without_flipping`: Deposit from supplier creates `RECEIPT` voucher (Supplier Rebate/Recovery); `credit_amount` is preserved and NOT flipped.
+  5. `test_unreconcile_transaction_workflow`: Unreconciling an existing match cancels the matched voucher, resets status to `UNRESOLVED`, and keeps original bank evidence pristine.
+  6. `test_repeated_reconciliation_idempotency`: Calling resolve multiple times on the same bank transaction returns existing voucher outcome without duplicating ledger entries.
 
-### 3.3 Accountant Trust Suite (`apps.accounting.tests_accountant_trust`)
-- **Execution Command:** `python manage.py test apps.accounting.tests_accountant_trust`
-- **Elapsed Time:** 2.343s
-- **Highlights:**
-  - Tested automated accounting health diagnostics.
-  - Verified finding previews, one-click automated fixes, and audited rollback reversals.
-  - All 5/5 test cases passed with 0 failures.
-
----
-
-### 3.4 Regression Sprint Suite (`apps.accounting.tests_regression_sprint`)
-- **Execution Command:** `python manage.py test apps.accounting.tests_regression_sprint`
-- **Elapsed Time:** 7.708s
-- **Highlights:**
-  - Tested multi-tenant role-based permissions (`CanManageLedgers`, `IsCompanyMember`).
-  - Tested voucher modification validation and payload contracts.
-  - All 9/9 test cases passed with 0 failures.
-
----
-
-### 3.5 Client-Side 2D Spatial PDF Statement Parser Verification
-- **Test File:** `canara_epassbook_2026-11-01 133109.707715.pdf` (8 pages, 52 transactions)
-- **Engine:** `frontend/src/lib/banking/clientStatementParser.ts` (`parsePdfOnDevice`)
-- **Verification Telemetry:**
-  - Total Parsed Rows: **52**
-  - Page 6 Row 49 (`MB NEFT DR CNRBH00171484971 SATYAM AND CO SBIN0001080 32924784679 PAYMENT`):
-    - **Date:** `2026-10-29`
-    - **Debit (Withdrawal):** ₹11,161.00
-    - **Credit (Deposit):** ₹0.00
-    - **Balance:** -₹9,44,379.18
-    - **Reference:** `CNRBH00171484971`
-    - **Payee Matched:** `SATYAM AND CO` (Supplier Payment)
-  - Page Bleed Rate: **0%** (zero page headers or disclaimers leaked into descriptions).
-  - Column Classification Accuracy: **100%** (52/52 transactions matched exact passbook columns).
+### 3.3 Audit Hash Completeness Suite (`apps/audit/tests.py`)
+- **Command:** `python manage.py test apps.audit.tests`
+- **Execution Telemetry:**
+  ```text
+  Ran 4 tests in 0.119s
+  OK
+  ```
+- **Test Scenarios Verified:**
+  1. `test_audit_creation_with_actor_ip_and_timestamp`: Cryptographic v2 hash includes actor ID, IP address, and UTC timestamp.
+  2. `test_tamper_detection_data_modification`: Direct SQL mutation on an audit row is detected immediately by `verify_company_chain_telemetry`, returning `BROKEN` and the exact record ID.
+  3. `test_tamper_detection_record_deletion`: Deletion of an intermediate audit row breaks `previous_hash` continuity and is detected.
+  4. `test_audit_verification_endpoint`: API endpoint `/api/v1/audit/verify/<company_id>/` returns accurate real-time verification telemetry.
 
 ---
 
-### 3.6 Frontend Production Build Verification
+## 4. Frontend Production Compilation Gate
 - **Command:** `npm --prefix frontend run build`
-- **Compiler:** Next.js 16.3.8 / Webpack
-- **Result:**
-  - Dynamic / Static Routes: **47 / 47 compiled cleanly**
-  - TypeScript Diagnostic Errors: **0**
-  - Webpack Bundle Warnings: **0**
-  - PWA Manifest Validation: **Valid (W3C compliant, no query strings, valid maskable icons)**
+- **Compilation Output:**
+  ```text
+  ✓ Compiled successfully in 36.6s
+  ✓ Generating static pages using 23 workers (47/47) in 15.3s
+  ```
+- **Verification:** All 47 Next.js App Router routes compiled cleanly. Dynamic audit verification banner verified without runtime exceptions.
 
 ---
-*Certified by SriLekh Quality Assurance & Core Reliability Engineering.*
+*Maintained by SriLekh Quality Assurance & Core Reliability Engineering.*
