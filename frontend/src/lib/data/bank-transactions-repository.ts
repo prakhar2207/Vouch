@@ -1,6 +1,6 @@
 import { offlineDb, SyncedBankTransaction } from "../db/offlineDb";
 import axios from "axios";
-import { API_BASE_URL } from "@/utils/api";
+import api, { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
 
 export interface BankTransactionQueryOptions {
@@ -44,10 +44,10 @@ export class BankTransactionsRepository {
         const token = getAccessToken();
         if (token) {
           const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
-          const res = await axios.get(`${API_BASE_URL}/api/v1/accounting/banking/transactions/`, {
-            headers,
+          const res = await api.get(`/api/v1/accounting/banking/transactions/`, {
+            headers: { "X-Company-ID": companyId },
             params: { company_id: companyId, page_size: 100 },
-            timeout: 6000,
+            timeout: 8000,
           });
           const raw = res.data?.results || (Array.isArray(res.data) ? res.data : []);
           if (raw.length > 0) {

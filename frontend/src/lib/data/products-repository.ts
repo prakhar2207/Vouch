@@ -1,6 +1,6 @@
 import { offlineDb, SyncedProduct } from "../db/offlineDb";
 import axios from "axios";
-import { API_BASE_URL } from "@/utils/api";
+import api, { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
 
 export interface ProductQueryOptions {
@@ -28,7 +28,7 @@ export class ProductsRepository {
         const token = getAccessToken();
         if (token) {
           const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
-          const res = await axios.get(`${API_BASE_URL}/api/v1/inventory/products/${companyId}/`, { headers, timeout: 5000 });
+          const res = await api.get(`/api/v1/inventory/products/${companyId}/`, { headers: { "X-Company-ID": companyId }, timeout: 8000 });
           const raw = res.data?.data || (Array.isArray(res.data) ? res.data : []);
           if (raw.length > 0) {
             const toPut: SyncedProduct[] = raw.map((p: any) => ({

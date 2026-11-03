@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef, useMemo } from "react";
 import axios from "axios";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { API_BASE_URL } from "@/utils/api";
+import api, { API_BASE_URL } from "@/utils/api";
 import { getAccessToken, isAuthenticated, getUser } from "@/utils/auth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useShortcuts } from "@/context/ShortcutContext";
@@ -210,6 +210,11 @@ export default function Dashboard() {
 
   useEffect(() => {
     setHasMounted(true);
+    // Hard failsafe: ensure full-page loading spinner is dismissed within 1200ms
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 1200);
+    return () => clearTimeout(timer);
   }, []);
 
   const { activeCompany, companyId: activeCompanyId } = useCompany();
@@ -261,21 +266,34 @@ export default function Dashboard() {
           } catch {}
         }
         if (!cid) {
-          const token = getAccessToken();
-          const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          const companies = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
-          if (companies.length === 0) {
-            if (isMounted) {
-              setError("No companies found. Please create a company first.");
-              setLoading(false);
+          try {
+            const entry = await offlineDb.masters.get('all_companies');
+            if (entry?.data && Array.isArray(entry.data) && entry.data.length > 0 && entry.data[0]?.id) {
+              const firstId = String(entry.data[0].id);
+              cid = firstId;
+              if (typeof window !== "undefined") {
+                localStorage.setItem("vouch_active_company_id", firstId);
+              }
             }
-            return;
-          }
-          cid = companies[0].id;
-          if (cid && typeof window !== "undefined") {
-            localStorage.setItem("vouch_active_company_id", cid);
+          } catch {}
+        }
+        if (!cid) {
+          try {
+            const compRes = await api.get('/api/v1/companies/', { timeout: 5000 });
+            const companies = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
+            if (companies.length === 0) {
+              if (isMounted) {
+                setError("No companies found. Please create a company first.");
+                setLoading(false);
+              }
+              return;
+            }
+            cid = companies[0].id;
+            if (cid && typeof window !== "undefined") {
+              localStorage.setItem("vouch_active_company_id", cid);
+            }
+          } catch (compErr) {
+            console.warn("Could not fetch remote companies on startup:", compErr);
           }
         }
 
@@ -348,22 +366,20 @@ export default function Dashboard() {
             }
             
             // Also refresh canonical forecast from server if online in the background
-            const token = getAccessToken();
-            if (token) {
-              axios.get(`${API_BASE_URL}/api/v1/analytics/forecast/${validCid}/?days=30&company_id=${validCid}`, {
-                headers: { Authorization: `Bearer ${token}`, "X-Company-ID": validCid }
-              }).then((fRes) => {
-                if (isMounted && fRes.data?.success && fRes.data.data) {
-                  const cloudForecast = { ...fRes.data.data, is_cloud_authoritative: true };
-                  setForecast(cloudForecast);
-                  if (typeof localStorage !== "undefined") {
-                    try {
-                      localStorage.setItem(`vouch_authoritative_forecast_${validCid}_30`, JSON.stringify(cloudForecast));
-                    } catch (e) {}
-                  }
+            api.get(`/api/v1/analytics/forecast/${validCid}/?days=30&company_id=${validCid}`, {
+              headers: { "X-Company-ID": validCid },
+              timeout: 10000,
+            }).then((fRes) => {
+              if (isMounted && fRes.data?.success && fRes.data.data) {
+                const cloudForecast = { ...fRes.data.data, is_cloud_authoritative: true };
+                setForecast(cloudForecast);
+                if (typeof localStorage !== "undefined") {
+                  try {
+                    localStorage.setItem(`vouch_authoritative_forecast_${validCid}_30`, JSON.stringify(cloudForecast));
+                  } catch (e) {}
                 }
-              }).catch(() => {});
-            }
+              }
+            }).catch(() => {});
 
             pullIncrementalChanges(validCid, (msg) => {
               if (isMounted) setSyncMessage(msg);
@@ -404,19 +420,18 @@ export default function Dashboard() {
 
           // Fetch health check if no valid cache exists
           if (!hasValidHealthCache) {
-            const token = getAccessToken();
-            const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": validCid };
-            axios.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${validCid}`, { headers })
-              .then((hRes) => {
-                if (isMounted && hRes.data) {
-                  const reportWithTs = { ...hRes.data, _cachedAt: Date.now() };
-                  setHealthReport(reportWithTs);
-                  if (typeof window !== "undefined") {
-                    sessionStorage.setItem(`vouch_health_${validCid}`, JSON.stringify(reportWithTs));
-                  }
+            api.get(`/api/v1/accounting/health/?company_id=${validCid}`, {
+              headers: { "X-Company-ID": validCid },
+              timeout: 10000,
+            }).then((hRes) => {
+              if (isMounted && hRes.data) {
+                const reportWithTs = { ...hRes.data, _cachedAt: Date.now() };
+                setHealthReport(reportWithTs);
+                if (typeof window !== "undefined") {
+                  sessionStorage.setItem(`vouch_health_${validCid}`, JSON.stringify(reportWithTs));
                 }
-              })
-              .catch(() => {});
+              }
+            }).catch(() => {});
           }
         } else {
           if (isMounted) {
@@ -493,19 +508,18 @@ export default function Dashboard() {
       setForecast((prev: any) => (prev?.is_cloud_authoritative ? prev : refreshed.forecast));
     }
 
-    const token = getAccessToken();
-    const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": cid };
-    axios.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${cid}`, { headers })
-      .then((hRes) => {
-        if (hRes.data) {
-          const reportWithTs = { ...hRes.data, _cachedAt: Date.now() };
-          setHealthReport(reportWithTs);
-          if (typeof window !== "undefined") {
-            sessionStorage.setItem(`vouch_health_${cid}`, JSON.stringify(reportWithTs));
-          }
+    api.get(`/api/v1/accounting/health/?company_id=${cid}`, {
+      headers: { "X-Company-ID": cid },
+      timeout: 10000,
+    }).then((hRes) => {
+      if (hRes.data) {
+        const reportWithTs = { ...hRes.data, _cachedAt: Date.now() };
+        setHealthReport(reportWithTs);
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem(`vouch_health_${cid}`, JSON.stringify(reportWithTs));
         }
-      })
-      .catch(() => {});
+      }
+    }).catch(() => {});
 
     setSyncStatus("IDLE");
     setSyncMessage("");

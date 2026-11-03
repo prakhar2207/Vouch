@@ -3,6 +3,7 @@ import { ClientKeyManager } from "./clientKeyManager";
 import { canonicalJsonStringify, computeCanonicalSha256, getCanonicalOperationDict } from "./canonicalJson";
 import { buildCanonicalTransaction, hashCanonicalTransaction, type CanonicalTransactionEnvelope } from "./canonicalTransaction";
 import { getAccessToken } from "@/utils/auth";
+import { getValidAccessToken } from "@/utils/api";
 import { API_BASE_URL } from "@/utils/api";
 
 export interface VoucherMutationParams {
@@ -371,7 +372,7 @@ export class ClientOperationManager {
       return { syncedCount: 0, receivedCount: 0, status: "IDLE" };
     }
 
-    const token = getAccessToken();
+    const token = (await getValidAccessToken()) || getAccessToken();
     const replicaId = this.getReplicaId();
 
     // Group outbox items by transactionId

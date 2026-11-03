@@ -1,7 +1,7 @@
 import axios from "axios";
 import { offlineDb, SyncedVoucher, SyncedLedger, SyncedProduct } from "../db/offlineDb";
 import { LocalAnalyticsEngine } from "../analytics/analytics-engine";
-import { API_BASE_URL } from "@/utils/api";
+import { api, API_BASE_URL, getValidAccessToken } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
 import { ClientOperationManager } from "../crdt/clientOperationManager";
 
@@ -309,7 +309,7 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
  */
 export async function pushPendingSalesInvoices(): Promise<number> {
   if (typeof window === "undefined" || !navigator.onLine) return 0;
-  const token = getAccessToken();
+  const token = (await getValidAccessToken()) || getAccessToken();
   if (!token) return 0;
 
   const queued = await offlineDb.outboxQueue
@@ -556,7 +556,7 @@ export async function pullIncrementalChanges(
 
       isPullInProgress = true;
 
-      const token = getAccessToken();
+      const token = (await getValidAccessToken()) || getAccessToken();
       if (!token) {
         return { success: false, totalRecords: 0, error: "Authentication required" };
       }
@@ -588,7 +588,7 @@ export async function pullIncrementalChanges(
           onProgress(`Synchronizing operational data (batch ${batchIndex})...`);
         }
 
-        const response = await fetch(`${API_BASE_URL}/api/v1/sync/pull/`, {
+        let response = await fetch(`${API_BASE_URL}/api/v1/sync/pull/`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -601,6 +601,25 @@ export async function pullIncrementalChanges(
             limit: 500,
           }),
         });
+
+        if (response.status === 401) {
+          const freshToken = await getValidAccessToken();
+          if (freshToken) {
+            response = await fetch(`${API_BASE_URL}/api/v1/sync/pull/`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${freshToken}`,
+                "X-Company-ID": companyId,
+              },
+              body: JSON.stringify({
+                company_id: companyId,
+                cursor: currentCursor,
+                limit: 500,
+              }),
+            });
+          }
+        }
 
       if (!response.ok) {
         const errText = await response.text().catch(() => "");

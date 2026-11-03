@@ -1,6 +1,6 @@
 import { offlineDb, SyncedVoucher, OfflineVoucher } from "../db/offlineDb";
 import axios from "axios";
-import { API_BASE_URL } from "@/utils/api";
+import api, { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
 
 export interface VoucherQueryOptions {
@@ -189,7 +189,7 @@ export class VouchersRepository {
           params.append("status", options.status || "ACTIVE");
 
           const url = `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?${params.toString()}`;
-          const res = await axios.get(url, { headers, timeout: 6000 });
+          const res = await api.get(url, { headers: { "X-Company-ID": companyId }, timeout: 8000 });
           const serverList = res.data?.data || [];
           if (serverList.length > 0) {
             const toPut: SyncedVoucher[] = serverList.map((v: any) => ({

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import axios from "axios";
+import api from "@/utils/api";
 import { API_BASE_URL } from "@/utils/api";
 import {
   getAccessToken,
@@ -41,10 +41,7 @@ export function useRole(): RolePermissions {
     }
 
     try {
-      const token = getAccessToken();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/auth/me/`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await api.get(`/api/v1/auth/me/`, { timeout: 6000 });
       const userData = res.data?.data;
       if (userData) {
         setUser(userData);

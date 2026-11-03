@@ -20,11 +20,13 @@ export const API_BASE_URL = getDefaultApiUrl().replace(/\/+$/, '');
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 15000,
 });
 
 // Dedicated isolated client for auth refresh to prevent interceptor recursion
 const refreshClient = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 12000,
 });
 
 // Request Telemetry & Loop Guard (Phase 1 & 19)
@@ -51,6 +53,80 @@ function getCleanEndpoint(url?: string): string {
   } catch {
     return url.split('?')[0];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shared in-flight refresh promise mutex across all callers (P0 Concurrency Fix)
+// ---------------------------------------------------------------------------
+let refreshPromise: Promise<string | null> | null = null;
+
+export async function getValidAccessToken(): Promise<string | null> {
+  const token = getAccessToken();
+  if (token && !isTokenExpired(token)) {
+    return token;
+  }
+
+  const refreshToken = getRefreshToken();
+  if (!refreshToken || isTokenExpired(refreshToken)) {
+    return token || null;
+  }
+
+  // If currently offline, return stored token without attempting network refresh
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return token || null;
+  }
+
+  // Mutex: If a refresh is already in flight, reuse the exact same promise (prevents token rotation race)
+  if (refreshPromise) {
+    try {
+      const refreshedToken = await refreshPromise;
+      return refreshedToken || getAccessToken() || null;
+    } catch {
+      return getAccessToken() || null;
+    }
+  }
+
+  refreshPromise = (async () => {
+    try {
+      const currentRefreshToken = getRefreshToken() || refreshToken;
+      const res = await refreshClient.post(
+        '/api/v1/auth/refresh/',
+        { refresh: currentRefreshToken },
+        { headers: { 'Content-Type': 'application/json' }, timeout: 12000 }
+      );
+      const newAccess = res.data?.access;
+      const newRefresh = res.data?.refresh || currentRefreshToken;
+      if (newAccess) {
+        setTokens(newAccess, newRefresh);
+        return newAccess;
+      }
+      return null;
+    } catch (err: any) {
+      console.warn('[AUTH] Token refresh request failed:', err?.message || err);
+      // ONLY invalidate session if server explicitly returned 401/400 (token invalid/blacklisted/expired)
+      // AND it was NOT a network error or timeout.
+      const isNetworkError =
+        (typeof navigator !== 'undefined' && !navigator.onLine) ||
+        !err.response ||
+        err.code === 'ERR_NETWORK' ||
+        err.code === 'ECONNABORTED' ||
+        err.message?.toLowerCase().includes('timeout') ||
+        err.message?.toLowerCase().includes('network');
+
+      if (!isNetworkError && err.response && (err.response.status === 401 || err.response.status === 400)) {
+        console.warn('[AUTH] Refresh token explicitly rejected by server (401/400). Clearing session.');
+        removeTokens();
+        if (typeof window !== 'undefined' && !isPublicRoute()) {
+          window.location.replace('/login?expired=1');
+        }
+      }
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return await refreshPromise;
 }
 
 async function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
@@ -92,37 +168,13 @@ async function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
   }
 
   let token = getAccessToken();
-  const refreshToken = getRefreshToken();
-
-  // Preemptive token refresh: If access token is expired or missing, and refresh token is still valid
   const isAuthEndpoint = endpoint.includes('/api/v1/auth/refresh/') || endpoint.includes('/api/v1/auth/login/') || endpoint.includes('/api/v1/auth/token/');
-  if (!isAuthEndpoint && (!token || isTokenExpired(token)) && refreshToken && !isTokenExpired(refreshToken)) {
-    // Only attempt refresh when online
-    if (typeof navigator !== 'undefined' && navigator.onLine) {
-      try {
-        const refreshResponse = await refreshClient.post(
-          `/api/v1/auth/refresh/`,
-          { refresh: refreshToken },
-          { headers: { 'Content-Type': 'application/json' } }
-        );
-        const newAccess = refreshResponse.data?.access;
-        const newRefresh = refreshResponse.data?.refresh || refreshToken;
-        if (newAccess) {
-          setTokens(newAccess, newRefresh);
-          token = newAccess;
-        }
-      } catch (refreshErr: any) {
-        console.warn('[API] Preemptive token refresh failed:', refreshErr);
-        if (refreshErr?.response?.status === 401) {
-          if (typeof navigator === 'undefined' || navigator.onLine) {
-            removeTokens();
-            if (typeof window !== 'undefined' && !isPublicRoute()) {
-              console.warn('[AUTH] Preemptive refresh token rejected (401), redirecting to /login');
-              window.location.replace('/login?expired=1');
-            }
-          }
-        }
-      }
+
+  // Preemptive token refresh: If access token is expired or missing, obtain a valid token via shared mutex
+  if (!isAuthEndpoint && (!token || isTokenExpired(token))) {
+    const validToken = await getValidAccessToken();
+    if (validToken) {
+      token = validToken;
     }
   }
 
@@ -151,23 +203,6 @@ api.interceptors.request.use(recordAndGuardRequest, (error) => Promise.reject(er
 // ---------------------------------------------------------------------------
 // Automatic 401 Unauthorized Session Refresh & Retry Interceptor
 // ---------------------------------------------------------------------------
-let isRefreshing = false;
-let failedQueue: Array<{
-  resolve: (value: string) => void;
-  reject: (reason?: unknown) => void;
-}> = [];
-
-const processQueue = (error: unknown, token: string | null = null) => {
-  failedQueue.forEach((prom) => {
-    if (error) {
-      prom.reject(error);
-    } else if (token) {
-      prom.resolve(token);
-    }
-  });
-  failedQueue = [];
-};
-
 async function handleResponseError(error: AxiosError) {
   // CRITICAL: Never queue or refresh tokens during SSR
   if (typeof window === 'undefined') {
@@ -201,90 +236,22 @@ async function handleResponseError(error: AxiosError) {
     return Promise.reject(error);
   }
 
-  if (isRefreshing) {
-    // Another request is already refreshing the session, queue this request
-    return new Promise<string>((resolve, reject) => {
-      failedQueue.push({ resolve, reject });
-    })
-      .then((newToken) => {
-        if (!originalRequest.headers) originalRequest.headers = {} as InternalAxiosRequestConfig['headers'];
-        originalRequest.headers.Authorization = `Bearer ${newToken}`;
-        return api(originalRequest);
-      })
-      .catch((err) => Promise.reject(err));
-  }
-
-  isRefreshing = true;
-  const refreshToken = getRefreshToken();
-
-  if (!refreshToken || isTokenExpired(refreshToken)) {
-    isRefreshing = false;
-    processQueue(error, null);
-    
-    // Only remove tokens if online and truly expired
-    if (typeof navigator === 'undefined' || navigator.onLine) {
-      removeTokens();
-      if (typeof window !== 'undefined' && !isPublicRoute()) {
-        console.warn('[AUTH] Session expired and refresh token unavailable, redirecting to /login');
-        window.location.replace('/login?expired=1');
-      }
-    }
-    return Promise.reject(error);
-  }
-
   try {
-    // Call refresh endpoint via dedicated un-intercepted client to avoid recursion
-    const refreshResponse = await refreshClient.post(
-      `/api/v1/auth/refresh/`,
-      { refresh: refreshToken },
-      { headers: { 'Content-Type': 'application/json' } }
-    );
-
-    const newAccessToken = refreshResponse.data?.access;
-    const newRefreshToken = refreshResponse.data?.refresh || refreshToken;
-
-    if (!newAccessToken) {
-      throw new Error('No access token returned by refresh endpoint');
+    const newToken = await getValidAccessToken();
+    if (!newToken) {
+      return Promise.reject(error);
     }
-
-    // Persist fresh tokens in cookies and localStorage
-    setTokens(newAccessToken, newRefreshToken);
-
-    // Resolve any concurrent requests waiting in queue
-    processQueue(null, newAccessToken);
 
     // Update original request with new token and retry seamlessly
     if (!originalRequest.headers) originalRequest.headers = {} as InternalAxiosRequestConfig['headers'];
-    originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+    originalRequest.headers.Authorization = `Bearer ${newToken}`;
 
     return api(originalRequest);
-  } catch (refreshErr: any) {
-    processQueue(refreshErr, null);
-    
-    // Only drop session if the server EXPLICITLY REJECTED the refresh token (HTTP 401/400).
-    // Never drop session due to network drops, offline mode, or timeouts!
-    const isNetworkError = (typeof navigator !== 'undefined' && !navigator.onLine) || 
-      !refreshErr.response || 
-      refreshErr.code === 'ERR_NETWORK' || 
-      refreshErr.code === 'ECONNABORTED' ||
-      refreshErr.message?.toLowerCase().includes('network');
-
-    if (!isNetworkError && refreshErr.response && (refreshErr.response.status === 401 || refreshErr.response.status === 400)) {
-      removeTokens();
-      if (typeof window !== 'undefined' && !isPublicRoute()) {
-        console.warn('[AUTH] Refresh token explicitly rejected by server, redirecting to /login');
-        window.location.replace('/login?expired=1');
-      }
-    } else {
-      console.warn('[AUTH] Network error during token refresh. Session remains valid locally.');
-    }
+  } catch (refreshErr) {
     return Promise.reject(refreshErr);
-  } finally {
-    isRefreshing = false;
   }
 }
 
 api.interceptors.response.use((response) => response, handleResponseError);
 
 export default api;
-
