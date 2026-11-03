@@ -114,7 +114,8 @@ class VoucherOCCUnitAndWorkflowTests(BaseOCCFixtureMixin, TestCase):
     - 409 on stale version with current_version in payload
     - Cross-tenant modification rejection (403)
     - Complete frontend edit and conflict refresh retry workflow
-    - CORS preflight allow-headers verification
+    - Zero side-effects rollback verification for 428 and 409
+    - Real browser-style OPTIONS preflight test followed by PATCH using version headers
     """
 
     def setUp(self):
@@ -331,24 +332,141 @@ class VoucherOCCUnitAndWorkflowTests(BaseOCCFixtureMixin, TestCase):
         self.assertEqual(voucher.version, 3)
         self.assertEqual(voucher.narration, "Update by Client B after refresh")
 
-    def test_cors_preflight_allows_version_headers(self):
+    def test_real_browser_preflight_and_patch_flow(self):
         """
-        Verifies that CORS preflight permits If-Match and X-Voucher-Version headers.
+        Real Browser Simulation:
+        1. OPTIONS Preflight with Origin, Access-Control-Request-Method, Access-Control-Request-Headers.
+        2. Assert 200 OK, Access-Control-Allow-Origin, Access-Control-Allow-Headers (containing if-match and x-voucher-version),
+           and Access-Control-Expose-Headers (containing ETag and X-Voucher-Version).
+        3. Real PATCH request using If-Match header and X-Voucher-Version.
+        4. Assert 200 OK, response ETag matches new version, X-Voucher-Version header incremented.
         """
-        voucher = self.create_test_voucher("OCC-CORS-PREFLIGHT")
+        voucher = self.create_test_voucher("OCC-BROWSER-FLOW")
         url = f"/api/vouchers/{voucher.id}/"
+        origin = 'https://vouch-pi-one.vercel.app'
 
-        res = self.client.options(
+        # 1. Real browser preflight OPTIONS request
+        preflight_res = self.client.options(
             url,
-            HTTP_ORIGIN='https://vouch-pi-one.vercel.app',
+            HTTP_ORIGIN=origin,
             HTTP_ACCESS_CONTROL_REQUEST_METHOD='PATCH',
             HTTP_ACCESS_CONTROL_REQUEST_HEADERS='authorization, content-type, if-match, x-voucher-version'
         )
-
-        self.assertEqual(res.status_code, status.HTTP_200_OK)
-        allow_headers = res.get('Access-Control-Allow-Headers', '').lower()
+        self.assertEqual(preflight_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(preflight_res.get('Access-Control-Allow-Origin'), origin)
+        allow_headers = preflight_res.get('Access-Control-Allow-Headers', '').lower()
         self.assertIn('if-match', allow_headers)
         self.assertIn('x-voucher-version', allow_headers)
+
+        expose_headers = preflight_res.get('Access-Control-Expose-Headers', '')
+        self.assertIn('ETag', expose_headers)
+        self.assertIn('X-Voucher-Version', expose_headers)
+
+        # 2. Browser sends actual PATCH request with If-Match header
+        patch_res = self.client.patch(
+            url,
+            {"narration": "Browser-style update with conditional headers"},
+            format="json",
+            HTTP_ORIGIN=origin,
+            HTTP_IF_MATCH=f'"{voucher.version}"',
+            HTTP_X_VOUCHER_VERSION=str(voucher.version)
+        )
+        self.assertEqual(patch_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(patch_res.get('Access-Control-Allow-Origin'), origin)
+        self.assertEqual(patch_res.get('X-Voucher-Version'), '2')
+        self.assertEqual(patch_res.get('ETag'), f'"v-{voucher.id}-v2"')
+
+        voucher.refresh_from_db()
+        self.assertEqual(voucher.version, 2)
+        self.assertEqual(voucher.narration, "Browser-style update with conditional headers")
+
+    def test_precondition_required_and_conflict_zero_side_effects(self):
+        """
+        P0 Invariant: Neither 428 Precondition Required nor 409 Conflict
+        may produce any financial side effects or partial mutations:
+        - Voucher fields (narration, amounts) remain unchanged
+        - Voucher items count and quantities remain unchanged
+        - Ledger entries count and amounts remain unchanged
+        - Product stock quantities remain unchanged
+        - Audit logs for update are NOT emitted
+        """
+        from apps.inventory.models import Product
+        from apps.audit.models import AuditLog
+
+        prod = Product.objects.create(
+            company=self.company,
+            name="OCC Belt Shield",
+            sku=f"OCC-SHIELD-{uuid.uuid4().hex[:4]}",
+            stock_quantity=Decimal('100.00'),
+            purchase_price=Decimal('50.00'),
+            selling_price=Decimal('100.00')
+        )
+        voucher = self.create_test_voucher("OCC-ZERO-MUTATE")
+        item = VoucherItem.objects.create(
+            voucher=voucher,
+            product=prod,
+            quantity=Decimal('10.00'),
+            rate=Decimal('100.00'),
+            taxable_amount=Decimal('1000.00'),
+            gst_rate=Decimal('18.00'),
+            total_amount=Decimal('1180.00')
+        )
+        entry_dr = LedgerEntry.objects.create(
+            voucher=voucher,
+            ledger=self.party_a,
+            debit_amount=Decimal('1180.00'),
+            credit_amount=Decimal('0.00')
+        )
+        entry_cr = LedgerEntry.objects.create(
+            voucher=voucher,
+            ledger=self.sales_ledger,
+            debit_amount=Decimal('0.00'),
+            credit_amount=Decimal('1180.00')
+        )
+
+        initial_narration = voucher.narration
+        initial_version = voucher.version
+        initial_items_count = VoucherItem.objects.filter(voucher=voucher).count()
+        initial_entries_count = LedgerEntry.objects.filter(voucher=voucher).count()
+        initial_stock = prod.stock_quantity
+        initial_audit_count = AuditLog.objects.filter(record_id=str(voucher.id), action='UPDATE').count()
+
+        url = f"/api/vouchers/{voucher.id}/"
+
+        # 1. Attempt unversioned PATCH -> 428 Precondition Required
+        res_428 = self.client.patch(url, {
+            "narration": "Tampered via 428 attempt",
+            "items": [{"product_id": str(prod.id), "quantity": 999, "rate": 999}]
+        }, format="json")
+        self.assertEqual(res_428.status_code, status.HTTP_428_PRECONDITION_REQUIRED)
+
+        # Verify ZERO side effects after 428
+        voucher.refresh_from_db()
+        prod.refresh_from_db()
+        self.assertEqual(voucher.narration, initial_narration)
+        self.assertEqual(voucher.version, initial_version)
+        self.assertEqual(VoucherItem.objects.filter(voucher=voucher).count(), initial_items_count)
+        self.assertEqual(LedgerEntry.objects.filter(voucher=voucher).count(), initial_entries_count)
+        self.assertEqual(prod.stock_quantity, initial_stock)
+        self.assertEqual(AuditLog.objects.filter(record_id=str(voucher.id), action='UPDATE').count(), initial_audit_count)
+
+        # 2. Attempt stale version PATCH -> 409 Conflict
+        res_409 = self.client.patch(url, {
+            "narration": "Tampered via 409 attempt",
+            "version": 999,  # Stale/incorrect version
+            "items": [{"product_id": str(prod.id), "quantity": 999, "rate": 999}]
+        }, format="json")
+        self.assertEqual(res_409.status_code, status.HTTP_409_CONFLICT)
+
+        # Verify ZERO side effects after 409
+        voucher.refresh_from_db()
+        prod.refresh_from_db()
+        self.assertEqual(voucher.narration, initial_narration)
+        self.assertEqual(voucher.version, initial_version)
+        self.assertEqual(VoucherItem.objects.filter(voucher=voucher).count(), initial_items_count)
+        self.assertEqual(LedgerEntry.objects.filter(voucher=voucher).count(), initial_entries_count)
+        self.assertEqual(prod.stock_quantity, initial_stock)
+        self.assertEqual(AuditLog.objects.filter(record_id=str(voucher.id), action='UPDATE').count(), initial_audit_count)
 
 
 class VoucherOCCConcurrencyIntegrationTests(BaseOCCFixtureMixin, TransactionTestCase):
@@ -370,6 +488,12 @@ class VoucherOCCConcurrencyIntegrationTests(BaseOCCFixtureMixin, TransactionTest
         """
         CRITICAL CONCURRENCY INVARIANT:
         Two concurrent threads attempt to update the same voucher using the same initial version (1).
+        
+        Proof of Race Condition Setup:
+        1. Both threads execute client.get(url) and independently read the EXACT same initial version (1).
+        2. Both threads synchronize on a threading.Barrier(2).
+        3. Both threads submit concurrent PATCH requests using that identical initial version.
+        
         Under PostgreSQL with select_for_update(), requests serialize:
         - Exactly ONE request succeeds (HTTP 200).
         - Exactly ONE request receives a conflict (HTTP 409).
@@ -378,6 +502,8 @@ class VoucherOCCConcurrencyIntegrationTests(BaseOCCFixtureMixin, TransactionTest
         voucher = self.create_test_voucher("OCC-CONCURRENT-RACE")
         voucher_id = voucher.id
         results = []
+        barrier = threading.Barrier(2)
+        initial_versions_read = []
 
         def worker(thread_id):
             from django.db import connection as conn
@@ -388,9 +514,20 @@ class VoucherOCCConcurrencyIntegrationTests(BaseOCCFixtureMixin, TransactionTest
                 client.credentials(HTTP_X_COMPANY_ID=str(self.company.id))
 
                 url = f"/api/vouchers/{voucher_id}/"
+
+                # Step 1: Independently fetch latest voucher details from server
+                get_res = client.get(url)
+                self.assertEqual(get_res.status_code, status.HTTP_200_OK)
+                read_version = get_res.data.get("data", {}).get("version")
+                initial_versions_read.append((thread_id, read_version))
+
+                # Step 2: Synchronize at barrier to ensure both threads read before either writes
+                barrier.wait(timeout=10)
+
+                # Step 3: Concurrently attempt update using the loaded version
                 payload = {
                     "narration": f"Concurrent update from thread {thread_id}",
-                    "version": 1
+                    "version": read_version
                 }
                 res = client.patch(url, payload, format="json")
                 results.append((thread_id, res.status_code, getattr(res, 'data', {})))
@@ -406,13 +543,18 @@ class VoucherOCCConcurrencyIntegrationTests(BaseOCCFixtureMixin, TransactionTest
         t1.join(timeout=30)
         t2.join(timeout=30)
 
-        self.assertEqual(len(results), 2, "Both threads must complete")
+        # Verification 1: Prove both threads read the identical version (1)
+        self.assertEqual(len(initial_versions_read), 2, "Both threads must have read initial voucher")
+        self.assertEqual(initial_versions_read[0][1], 1, "Thread 1 must have read version 1")
+        self.assertEqual(initial_versions_read[1][1], 1, "Thread 2 must have read version 1")
 
+        # Verification 2: Exactly one 200 and one 409
+        self.assertEqual(len(results), 2, "Both threads must complete")
         status_codes = [r[1] for r in results]
         self.assertIn(status.HTTP_200_OK, status_codes, f"One thread must succeed: {results}")
         self.assertIn(status.HTTP_409_CONFLICT, status_codes, f"One thread must get 409 Conflict: {results}")
 
-        # Final voucher state check
+        # Verification 3: Final voucher state check
         voucher.refresh_from_db()
         self.assertEqual(voucher.version, 2, "Voucher version must increment exactly once")
 
@@ -424,6 +566,7 @@ class VoucherOCCConcurrencyIntegrationTests(BaseOCCFixtureMixin, TransactionTest
         v1 = self.create_test_voucher("OCC-DIFF-V1")
         v2 = self.create_test_voucher("OCC-DIFF-V2")
         results = []
+        barrier = threading.Barrier(2)
 
         def worker(v_id, name):
             from django.db import connection as conn
@@ -434,9 +577,17 @@ class VoucherOCCConcurrencyIntegrationTests(BaseOCCFixtureMixin, TransactionTest
                 client.credentials(HTTP_X_COMPANY_ID=str(self.company.id))
 
                 url = f"/api/vouchers/{v_id}/"
+
+                # Both read initial state
+                get_res = client.get(url)
+                self.assertEqual(get_res.status_code, status.HTTP_200_OK)
+                read_version = get_res.data.get("data", {}).get("version")
+
+                barrier.wait(timeout=10)
+
                 payload = {
                     "narration": f"Updated {name}",
-                    "version": 1
+                    "version": read_version
                 }
                 res = client.patch(url, payload, format="json")
                 results.append((name, res.status_code))
