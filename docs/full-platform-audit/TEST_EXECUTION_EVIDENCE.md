@@ -180,4 +180,68 @@ Route (app)
 ```
 
 ---
+
+### 2.6 Voucher Mandatory Optimistic Concurrency Control (OCC) Regression Suite (`apps.accounting.tests_voucher_occ`)
+
+```bash
+python manage.py test apps.accounting.tests_voucher_occ.VoucherOCCUnitAndWorkflowTests --keepdb --settings=config.settings_test_pg
+python manage.py test apps.accounting.tests_voucher_occ.VoucherOCCConcurrencyIntegrationTests --keepdb --settings=config.settings_test_pg
+```
+
+**Unit & Workflow Test Output (10/10 PASS):**
+```text
+Using existing test database for alias 'default'...
+.2026-11-03 11:37:09,488 [INFO] [vouch.access] HTTP PATCH /api/vouchers/b95998a8-fe56-47a0-8aa5-950cea4b3f0b/ 403 in 825.13ms
+..2026-11-03 11:37:28,168 [INFO] [vouch.access] HTTP GET /api/vouchers/6a21ff40-261b-416c-85ba-347da1764ac7/ 200 in 948.9ms
+2026-11-03 11:37:29,175 [INFO] [vouch.access] HTTP GET /api/vouchers/6a21ff40-261b-416c-85ba-347da1764ac7/ 200 in 1004.69ms
+2026-11-03 11:37:34,973 [INFO] [vouch.access] HTTP PATCH /api/vouchers/6a21ff40-261b-416c-85ba-347da1764ac7/ 200 in 5792.82ms
+2026-11-03 11:37:35,741 [INFO] [vouch.access] HTTP PATCH /api/vouchers/6a21ff40-261b-416c-85ba-347da1764ac7/ 409 in 764.89ms
+2026-11-03 11:37:36,795 [INFO] [vouch.access] HTTP GET /api/vouchers/6a21ff40-261b-416c-85ba-347da1764ac7/ 200 in 1046.57ms
+2026-11-03 11:37:40,171 [INFO] [vouch.access] HTTP PATCH /api/vouchers/6a21ff40-261b-416c-85ba-347da1764ac7/ 200 in 3371.05ms
+.2026-11-03 11:37:53,586 [INFO] [vouch.access] HTTP PATCH /api/vouchers/2c342512-75f1-4675-8d9f-7a8954fa85ac/ 200 in 3688.63ms
+.2026-11-03 11:38:08,550 [INFO] [vouch.access] HTTP PATCH /api/vouchers/d462dd6d-fc9f-48f9-91ad-1cd16d2141e7/ 200 in 5233.84ms
+.2026-11-03 11:38:18,860 [INFO] [vouch.access] HTTP PATCH /api/vouchers/b52811af-d189-4112-8667-4186fedb2e2f/ 400 in 176.19ms
+2026-11-03 11:38:19,360 [INFO] [vouch.access] HTTP PATCH /api/vouchers/b52811af-d189-4112-8667-4186fedb2e2f/ 400 in 497.28ms
+.2026-11-03 11:38:33,745 [INFO] [vouch.access] HTTP PATCH /api/vouchers/e3e87064-dd58-42d3-8abf-9d2bc54cb981/ 428 in 388.3ms
+.2026-11-03 11:38:46,924 [INFO] [vouch.access] HTTP PATCH /api/vouchers/adf0dc74-e453-4ec4-ab62-693aba1a7d12/ 409 in 914.67ms
+.2026-11-03 11:38:59,416 [INFO] [vouch.access] HTTP PATCH /api/vouchers/16d2099d-dcd4-4e50-9339-7532a98490a8/ 428 in 431.63ms
+.
+----------------------------------------------------------------------
+Ran 10 tests in 135.739s
+
+OK
+Preserving test database for alias 'default'...
+Found 10 test(s).
+```
+
+**Multi-Threaded Concurrency Test Output (2/2 PASS):**
+```text
+Using existing test database for alias 'default'...
+2026-11-03 11:40:27,820 [INFO] [vouch.access] HTTP PATCH /api/vouchers/49ead52f-0e94-438f-960f-4dd32ea1f079/ 200 in 4439.2ms
+2026-11-03 11:40:37,039 [INFO] [vouch.access] HTTP PATCH /api/vouchers/e0b4d935-af89-4d1e-a049-6620e134f6bb/ 200 in 13638.01ms
+.2026-11-03 11:41:15,928 [INFO] [vouch.access] HTTP PATCH /api/vouchers/c6afacea-7459-4eef-94a4-7ed9d05cf030/ 200 in 5035.11ms
+2026-11-03 11:41:16,271 [INFO] [vouch.access] HTTP PATCH /api/vouchers/c6afacea-7459-4eef-94a4-7ed9d05cf030/ 409 in 5422.87ms
+.
+----------------------------------------------------------------------
+Ran 2 tests in 101.441s
+
+OK
+Preserving test database for alias 'default'...
+Found 2 test(s).
+```
+
+**Verified Test Invariants:**
+1. `test_patch_no_version_returns_428_precondition_required`: Unversioned PATCH rejected with HTTP 428.
+2. `test_patch_wildcard_if_match_rejected_with_428`: `If-Match: *` rejected with HTTP 428.
+3. `test_patch_invalid_version_type_returns_400_bad_request`: Non-integer version rejected with HTTP 400.
+4. `test_patch_current_version_succeeds_and_increments`: Current version updates voucher and increments version from 1 to 2; returns ETag and `X-Voucher-Version: 2`.
+5. `test_patch_current_version_via_if_match_succeeds`: `If-Match` header updates voucher and increments version.
+6. `test_patch_stale_version_returns_409_conflict`: Stale version returns HTTP 409 Conflict with current version in body.
+7. `test_cross_tenant_isolation_denied`: Cross-tenant modification rejected with HTTP 403 Forbidden.
+8. `test_frontend_edit_workflow_and_conflict_refresh`: Full lifecycle (Load -> Edit A -> Edit B Conflict -> Refresh -> Edit B Retry) verified.
+9. `test_cors_preflight_allows_version_headers`: OPTIONS preflight allows `if-match` and `x-voucher-version`.
+10. `test_two_concurrent_updates_same_version_one_succeeds_one_conflicts`: Two parallel threads updating same voucher with version 1 serialize via `select_for_update()`; exactly one returns 200, one returns 409, final version is 2.
+11. `test_two_concurrent_updates_different_vouchers_both_succeed`: Concurrent updates to different vouchers both return 200.
+
+---
 *Captured live on Neon PostgreSQL 18.6 and Next.js 16.3.8.*

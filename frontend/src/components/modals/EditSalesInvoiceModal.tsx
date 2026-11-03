@@ -407,6 +407,8 @@ export default function EditSalesInvoiceModal({
       const currentVersion = Number(version || voucher?.version || 1);
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
+        'If-Match': `"${currentVersion}"`,
+        'X-Voucher-Version': String(currentVersion),
       };
       if (activeCo) {
         headers['X-Company-ID'] = activeCo;
@@ -476,7 +478,7 @@ export default function EditSalesInvoiceModal({
         toast.error("Failed to update invoice", res.data.error);
       }
     } catch (err: any) {
-      if (err.response?.status === 409) {
+      if (err.response?.status === 409 || err.response?.status === 428) {
         toast.error("Concurrency Conflict", "This invoice was modified concurrently. Refreshing latest version...");
         loadFullVoucher();
         return;

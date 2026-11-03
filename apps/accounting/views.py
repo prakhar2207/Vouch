@@ -981,6 +981,7 @@ class VoucherDetailAPIView(APIView):
             response = Response({"success": True, "data": data})
             v_ver = getattr(voucher, 'version', 1) or 1
             response['ETag'] = f'"v-{voucher.id}-v{v_ver}"'
+            response['X-Voucher-Version'] = str(v_ver)
             return response
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -1042,6 +1043,12 @@ class VoucherDetailAPIView(APIView):
                 submitted_version = request.query_params.get('version') or request.META.get('HTTP_X_VOUCHER_VERSION')
             if_match = request.META.get('HTTP_IF_MATCH')
 
+            # Precondition: Version or If-Match MUST be present (P0 Concurrency Requirement)
+            if submitted_version is None and not if_match:
+                return Response({
+                    "success": False,
+                    "error": "Precondition Required: Optimistic Concurrency Control requires an explicit 'version' field or 'If-Match' header to prevent lost updates."
+                }, status=status.HTTP_428_PRECONDITION_REQUIRED)
 
             expected_version = None
             if submitted_version is not None:
@@ -1055,16 +1062,24 @@ class VoucherDetailAPIView(APIView):
             elif if_match:
                 raw_tag = if_match.strip('"').strip()
                 if raw_tag == '*':
-                    expected_version = None
+                    return Response({
+                        "success": False,
+                        "error": "Wildcard '*' If-Match is not permitted for voucher updates. An explicit numeric version is required."
+                    }, status=status.HTTP_428_PRECONDITION_REQUIRED)
+                m = re.search(r'(\d+)$', raw_tag)
+                if m:
+                    expected_version = int(m.group(1))
                 else:
-                    m = re.search(r'(\d+)$', raw_tag)
-                    if m:
-                        expected_version = int(m.group(1))
-                    else:
-                        return Response({
-                            "success": False,
-                            "error": "Invalid If-Match header format. Expected numeric version."
-                        }, status=status.HTTP_400_BAD_REQUEST)
+                    return Response({
+                        "success": False,
+                        "error": "Invalid If-Match header format. Expected numeric version."
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            if expected_version is None:
+                return Response({
+                    "success": False,
+                    "error": "Precondition Required: Valid integer version or numeric If-Match header is required."
+                }, status=status.HTTP_428_PRECONDITION_REQUIRED)
 
             with transaction.atomic():
                 try:
@@ -1717,6 +1732,7 @@ class VoucherDetailAPIView(APIView):
                 }
             })
             response['ETag'] = f'"v-{voucher.id}-v{voucher.version}"'
+            response['X-Voucher-Version'] = str(voucher.version)
             return response
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
