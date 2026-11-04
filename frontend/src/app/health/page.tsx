@@ -143,10 +143,8 @@ export default function HealthPage() {
   }, [activeCompanyId]);
 
   const getHeaders = () => {
-    const token = getAccessToken();
     return {
-      Authorization: `Bearer ${token}`,
-      "X-Company-ID": companyId,
+      "X-Company-ID": companyId || "",
     };
   };
 
@@ -154,15 +152,12 @@ export default function HealthPage() {
     setLoading(true);
     setError(null);
     try {
-      const token = getAccessToken();
       let cid = activeCompanyId;
       if (!cid && typeof window !== "undefined") {
         cid = localStorage.getItem("vouch_active_company_id");
       }
       if (!cid) {
-        const compRes = await api.get(`${API_BASE_URL}/api/v1/companies/`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const compRes = await api.get(`/api/v1/companies/`);
         const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data.data || []);
         cid = list[0]?.id;
       }
@@ -175,7 +170,7 @@ export default function HealthPage() {
       await fetchHealthReport(cid);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Failed to initialize health audit");
+      setError(err.response?.data?.error || err.response?.data?.detail || err.message || "Failed to initialize health audit");
     } finally {
       setLoading(false);
     }
@@ -187,17 +182,15 @@ export default function HealthPage() {
     setRefreshing(true);
     setError(null);
     try {
-      const token = getAccessToken();
-      const headers = {
-        Authorization: `Bearer ${token}`,
-        "X-Company-ID": targetCid,
-      };
-      const res = await api.get(`${API_BASE_URL}/api/v1/accounting/health/?company_id=${targetCid}`, { headers });
+      const res = await api.get(`/api/v1/accounting/health/?company_id=${targetCid}`, {
+        headers: { "X-Company-ID": targetCid },
+      });
       setReport(res.data);
     } catch (err: any) {
       console.error(err);
-      setError(err.response?.data?.error || err.message || "Could not complete accounting checks.");
-      toast.error("Audit error", err.message || "Could not complete accounting checks.");
+      const errMsg = err.response?.data?.error || err.response?.data?.detail || err.message || "Could not complete accounting checks.";
+      setError(errMsg);
+      toast.error("Audit error", errMsg);
     } finally {
       setRefreshing(false);
     }
@@ -208,11 +201,13 @@ export default function HealthPage() {
     setDiagnosing(true);
     setIsDiagnosticOpen(true);
     try {
-      const headers = getHeaders();
-      const res = await api.get(`${API_BASE_URL}/api/v1/accounting/health/diagnose-balance/?company_id=${companyId}`, { headers });
+      const res = await api.get(`/api/v1/accounting/health/diagnose-balance/?company_id=${companyId}`, {
+        headers: { "X-Company-ID": companyId },
+      });
       setDiagnosticResult(res.data);
     } catch (err: any) {
-      toast.error("Diagnostic failed", err.message || "Could not diagnose balance.");
+      const errMsg = err.response?.data?.error || err.response?.data?.detail || err.message || "Could not diagnose balance.";
+      toast.error("Diagnostic failed", errMsg);
     } finally {
       setDiagnosing(false);
     }
@@ -222,9 +217,8 @@ export default function HealthPage() {
     setPreviewFinding(finding);
     setLoadingPreview(true);
     try {
-      const headers = getHeaders();
-      const res = await api.get(`${API_BASE_URL}/api/v1/accounting/health/findings/${finding.id}/preview/?company_id=${companyId}`, {
-        headers,
+      const res = await api.get(`/api/v1/accounting/health/findings/${finding.id}/preview/?company_id=${companyId}`, {
+        headers: { "X-Company-ID": companyId },
       });
       setPreviewData(res.data);
     } catch (err: any) {
@@ -239,11 +233,10 @@ export default function HealthPage() {
     if (!previewFinding) return;
     setExecutingFix(true);
     try {
-      const headers = getHeaders();
       const res = await api.post(
-        `${API_BASE_URL}/api/v1/accounting/health/findings/${previewFinding.id}/fix/`,
+        `/api/v1/accounting/health/findings/${previewFinding.id}/fix/`,
         { company_id: companyId },
-        { headers }
+        { headers: { "X-Company-ID": companyId } }
       );
 
       toast.success(

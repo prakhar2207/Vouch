@@ -60,15 +60,21 @@ function getCleanEndpoint(url?: string): string {
 // ---------------------------------------------------------------------------
 let refreshPromise: Promise<string | null> | null = null;
 
-export async function getValidAccessToken(): Promise<string | null> {
+export async function getValidAccessToken(forceRefresh = false): Promise<string | null> {
   const token = getAccessToken();
-  if (token && !isTokenExpired(token)) {
+  if (!forceRefresh && token && !isTokenExpired(token)) {
     return token;
   }
 
   const refreshToken = getRefreshToken();
   if (!refreshToken || isTokenExpired(refreshToken)) {
-    return token || null;
+    // If no valid refresh token is available and we're online, clear tokens and redirect to login
+    if (typeof window !== 'undefined' && !isPublicRoute() && typeof navigator !== 'undefined' && navigator.onLine) {
+      console.warn('[AUTH] Session expired: No valid refresh token available. Redirecting to login.');
+      removeTokens();
+      window.location.replace('/login?expired=1');
+    }
+    return null;
   }
 
   // If currently offline, return stored token without attempting network refresh
@@ -179,9 +185,16 @@ async function recordAndGuardRequest(config: InternalAxiosRequestConfig) {
   }
 
   const currentAuth = config.headers?.Authorization;
-  const isInvalidAuth = !currentAuth || currentAuth === 'Bearer undefined' || currentAuth === 'Bearer null' || currentAuth === 'Bearer ';
+  // Determine if Authorization header is missing, malformed, or stale/expired
+  let isInvalidAuth = !currentAuth || currentAuth === 'Bearer undefined' || currentAuth === 'Bearer null' || currentAuth === 'Bearer ';
+  if (!isInvalidAuth && typeof currentAuth === 'string' && currentAuth.startsWith('Bearer ')) {
+    const raw = currentAuth.slice(7).trim();
+    if (isTokenExpired(raw)) {
+      isInvalidAuth = true;
+    }
+  }
 
-  if (token && isInvalidAuth) {
+  if (token && (isInvalidAuth || (config.headers?.Authorization !== `Bearer ${token}` && !isAuthEndpoint))) {
     if (!config.headers) config.headers = {} as InternalAxiosRequestConfig['headers'];
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -237,7 +250,8 @@ async function handleResponseError(error: AxiosError) {
   }
 
   try {
-    const newToken = await getValidAccessToken();
+    // Force refresh since the server rejected the current token with 401
+    const newToken = await getValidAccessToken(true);
     if (!newToken) {
       return Promise.reject(error);
     }
