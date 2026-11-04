@@ -7,7 +7,8 @@ from enum import Enum
 class MappingConfidence(str, Enum):
     MANUAL = "MANUAL"
     HEURISTIC = "HEURISTIC"
-    ML_PREDICTED = "ML_PREDICTED"
+    HEURISTIC_TOKEN_MATCH = "HEURISTIC_TOKEN_MATCH"
+    ML_PREDICTED = "HEURISTIC_TOKEN_MATCH"  # Backward-compatible alias for heuristic token matching
 
 class ApprovalState(str, Enum):
     PENDING = "PENDING"
@@ -32,6 +33,9 @@ class ProductMapping:
     # Optional semantic attributes
     conversion_multiplier: float = 1.0  # e.g., Seller sends '1 Box', Buyer logs '10 Units'. Multiplier = 10.0
     hsn_override: Optional[str] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[int] = None
+    rejection_reason: Optional[str] = None
 
 
 class SemanticMappingEngine:
@@ -102,13 +106,13 @@ class SemanticMappingEngine:
             elif norm_foreign_hsn and norm_foreign_hsn == item_hsn:
                 name_sim = cls._jaccard_similarity(tokens_foreign_name, cls._tokenize(item_name))
                 score = 0.60 + (0.30 * name_sim)
-                confidence = MappingConfidence.ML_PREDICTED if score >= 0.75 else MappingConfidence.MANUAL
+                confidence = MappingConfidence.HEURISTIC_TOKEN_MATCH if score >= 0.75 else MappingConfidence.MANUAL
             # Tier 4: Token similarity
             else:
                 name_sim = cls._jaccard_similarity(tokens_foreign_name, cls._tokenize(item_name))
                 if name_sim >= 0.70:
                     score = name_sim
-                    confidence = MappingConfidence.ML_PREDICTED
+                    confidence = MappingConfidence.HEURISTIC_TOKEN_MATCH
 
             if score > best_score:
                 best_score = score

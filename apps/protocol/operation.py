@@ -96,7 +96,7 @@ class AccountingOperation:
     operation_class: Optional[OperationClass] = None
     tenant_id: str = "DEFAULT_TENANT"
     vector_clock: Dict[str, int] = field(default_factory=dict)
-    physical_timestamp: float = field(default_factory=time.time)
+    physical_timestamp: float = 0.0
     mapping_version: int = 1
     protocol_version: str = "1.0"
     schema_version: int = 1
@@ -122,19 +122,25 @@ class AccountingOperation:
         """
         Generates a strictly deterministic SHA-256 digest of the complete operation.
         Forms the cryptographic node for causal DAG linkage.
+        Covers all operational payload data and critical security metadata.
         """
         canonical_dict = {
-            "operation_id": self.operation_id,
-            "transaction_id": self.transaction_id,
-            "tenant_id": self.tenant_id,
-            "replica_id": self.replica_id,
-            "type": self.operation_type.value if isinstance(self.operation_type, Enum) else self.operation_type,
             "class": self.operation_class.value if isinstance(self.operation_class, Enum) else self.operation_class,
-            "payload": self.payload,
-            "timestamp": self.logical_timestamp,
+            "created_by": str(self.created_by or "SYSTEM"),
+            "mapping_version": int(self.mapping_version or 1),
+            "operation_id": self.operation_id,
             "parents": sorted(list(self.parents)),
-            "vector_clock": dict(self.vector_clock),
+            "payload": self.payload,
+            "physical_timestamp": float(self.physical_timestamp or 0.0),
             "prev_hash": self.previous_operation_hash or "GENESIS",
+            "protocol_version": str(self.protocol_version or "1.0"),
+            "replica_id": self.replica_id,
+            "schema_version": int(self.schema_version or 1) if str(self.schema_version or 1).isdigit() else self.schema_version,
+            "tenant_id": self.tenant_id,
+            "timestamp": self.logical_timestamp,
+            "transaction_id": self.transaction_id,
+            "type": self.operation_type.value if isinstance(self.operation_type, Enum) else self.operation_type,
+            "vector_clock": dict(self.vector_clock),
             "version": self.version
         }
         canonical_json = json.dumps(canonical_dict, sort_keys=True, separators=(',', ':'))
@@ -163,6 +169,17 @@ class AccountingOperation:
             "version": self.version,
             "payload_hash": self.payload_hash
         }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'AccountingOperation':
+        """Reconstructs an AccountingOperation from wire dictionary payload."""
+        data_copy = dict(data)
+        data_copy.pop('payload_hash', None)
+        if isinstance(data_copy.get('operation_type'), str):
+            data_copy['operation_type'] = OperationType(data_copy['operation_type'])
+        if isinstance(data_copy.get('operation_class'), str):
+            data_copy['operation_class'] = OperationClass(data_copy['operation_class'])
+        return cls(**data_copy)
 
     def sign(self, private_key_hex: str) -> 'AccountingOperation':
         """Signs the operation payload hash with an Ed25519 private key, attaching the signature."""

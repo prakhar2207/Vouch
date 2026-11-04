@@ -1,6 +1,7 @@
 import json
 import base64
 import time
+import os
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
 
@@ -76,8 +77,21 @@ class QRSessionManager:
         # 2. Expiry Check (e.g., QRs expire 5 minutes after rendering)
         if current_timestamp > payload.expires_at:
             raise SecurityViolation("QR Code has expired. Please refresh the sender's screen.")
+
+        # 3. Signature Verification (Mandatory BEFORE nonce consumption to defeat Nonce Starvation DoS)
+        if not payload.signature:
+            raise SecurityViolation("QR lacks cryptographic signature.")
             
-        # 3. Nonce Check (Cross-Instance Multi-Node Replay Attack Prevention)
+        public_key = self.public_keys.get(payload.issuer_id, f"PUB_{payload.issuer_id}")
+        is_valid = self.signer.verify(
+            payload_hash=payload.serialize_for_signature(),
+            signature=payload.signature,
+            public_key=public_key
+        )
+        if not is_valid:
+            raise SecurityViolation("Cryptographic signature validation failed.")
+            
+        # 4. Nonce Check (Cross-Instance Multi-Node Replay Attack Prevention)
         nonce_consumed = False
         nonce_key = f"qr_nonce:{payload.issuer_id}:{payload.nonce}"
         timeout = max(60, payload.expires_at - current_timestamp)
@@ -112,25 +126,29 @@ class QRSessionManager:
             except Exception as ex:
                 if "already exists" in str(ex) or "UNIQUE" in str(ex).upper():
                     raise SecurityViolation("Replay Attack Detected: Nonce has already been consumed.")
-                # Local memory fallback strictly in unit tests when DB and Redis are disabled
+                # Fail-closed defense barrier (DEFECT-EDI-06 remediation):
+                # All non-test environments (production, staging, live servers) MUST strictly fail closed
+                # if durable Redis and database replay protection are both unavailable.
+                # Process-local in-memory fallback is permitted strictly in explicitly isolated test environments.
+                from django.conf import settings
+                import sys
+                is_explicit_test = (
+                    getattr(settings, 'TESTING', False) is True
+                    or getattr(settings, 'TEST', False) is True
+                    or ('test' in sys.argv)
+                )
+                env_name = str(getattr(settings, 'ENVIRONMENT', '') or os.environ.get('ENVIRONMENT', '') or '').strip().lower()
+                is_prod_or_staging = (not getattr(settings, 'DEBUG', True)) or env_name in ('production', 'prod', 'staging', 'stage')
+
+                if not is_explicit_test or is_prod_or_staging:
+                    raise SecurityViolation("Durable replay protection store is unavailable. Aborting for security.")
+
+                # Process-local fallback strictly within isolated test executions
                 if payload.nonce in self.used_nonces:
                     raise SecurityViolation("Replay Attack Detected: Nonce has already been consumed.")
                 self.used_nonces.add(payload.nonce)
                 nonce_consumed = True
 
-        # 4. Signature Verification
-        if not payload.signature:
-            raise SecurityViolation("QR lacks cryptographic signature.")
-            
-        public_key = self.public_keys.get(payload.issuer_id, f"PUB_{payload.issuer_id}")
-        is_valid = self.signer.verify(
-            payload_hash=payload.serialize_for_signature(),
-            signature=payload.signature,
-            public_key=public_key
-        )
-        if not is_valid:
-            raise SecurityViolation("Cryptographic signature validation failed.")
-        
         # 5. Bootstrap the EDI State Machine
         session = EdiStateMachine(session_id=payload.session_id)
         

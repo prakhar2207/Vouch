@@ -5,9 +5,10 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 
 from apps.companies.models import Company
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
+from django.utils import timezone
 from .sync_service import SyncService, MultiTenantSecurityError
-from .handshake import EdiStateMachine, EdiState
+from .handshake import EdiStateMachine, EdiState, IllegalStateTransitionError, StatePersistenceError
 import uuid
 from .models import ProtocolTransaction, ProtocolOperation, CryptographicCommitment, EdiSession, AuthorizedDevice, DeviceKeyRotationAudit
 from .operation import AccountingOperation
@@ -61,10 +62,10 @@ class ProtocolSyncAPIView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Retrieve existing server operations for this transaction (streamed to prevent OOM)
+        # Retrieve existing server operations for this transaction
         server_ops_qs = ProtocolOperation.objects.filter(transaction__transaction_id=tx_id).order_by('logical_timestamp')
         server_operations = []
-        for db_op in server_ops_qs.iterator(chunk_size=500):
+        for db_op in server_ops_qs:
             server_operations.append(AccountingOperation(
                 operation_id=db_op.operation_id,
                 transaction_id=tx_id,
@@ -108,7 +109,9 @@ class ProtocolSyncAPIView(APIView):
             res_status = sync_result.get("status")
             if res_status == "SYNC_SUCCESS":
                 return Response(sync_result, status=status.HTTP_200_OK)
-            elif res_status in ("SYNC_REJECTED", "AWAITING_DEPENDENCIES"):
+            elif res_status == "AWAITING_APPROVAL":
+                return Response(sync_result, status=status.HTTP_200_OK)
+            elif res_status in ("SYNC_REJECTED", "AWAITING_DEPENDENCIES", "MAPPING_REJECTED"):
                 return Response(sync_result, status=status.HTTP_400_BAD_REQUEST)
             elif res_status in ("BRIDGE_FAILED", "PERSISTENCE_FAILED"):
                 return Response(sync_result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -158,16 +161,49 @@ class ProtocolHandshakeAPIView(APIView):
                         status=status.HTTP_403_FORBIDDEN
                     )
 
+        # Resolve target state enum
+        try:
+            if isinstance(target_state, EdiState):
+                target_enum = target_state
+            elif isinstance(target_state, str):
+                target_enum = EdiState[target_state.strip().upper()]
+            elif isinstance(target_state, int):
+                target_enum = EdiState(target_state)
+            else:
+                return Response(
+                    {"error": f"Invalid target_state type '{type(target_state).__name__}'", "status": "INVALID_STATE"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except (KeyError, ValueError):
+            return Response(
+                {"error": f"Invalid target_state '{target_state}'. Valid states are {[s.name for s in EdiState]}", "status": "INVALID_STATE"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
             sm = EdiStateMachine(session_id=session_id)
-            new_state = sm.transition_to(EdiState(target_state), context_data=context_data)
+            sm.advance(target_enum, context_data=context_data)
+            
+            # Format transition history from the persisted record or in-memory log
+            session_rec = EdiSession.objects.filter(session_id=session_id).first()
+            if session_rec and session_rec.transition_history:
+                history = session_rec.transition_history
+            else:
+                history = [{"state": s.name, "timestamp": ts.isoformat()} for s, ts in sm.transition_log]
+
             return Response({
                 "session_id": session_id,
-                "current_state": new_state.value,
-                "history": sm.session.transition_history if sm.session else []
+                "current_state": sm.current_state.name,
+                "history": history
             }, status=status.HTTP_200_OK)
+        except IllegalStateTransitionError as e:
+            return Response({"error": str(e), "status": "ILLEGAL_STATE_TRANSITION"}, status=status.HTTP_400_BAD_REQUEST)
+        except StatePersistenceError as e:
+            logger.error(f"Handshake persistence error: {e}", exc_info=True)
+            return Response({"error": str(e), "status": "PERSISTENCE_FAILED"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Handshake error: {e}", exc_info=True)
+            return Response({"error": str(e), "status": "HANDSHAKE_ERROR"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class ProtocolCommitmentAPIView(APIView):
@@ -472,3 +508,258 @@ class ProtocolDeviceRevocationAPIView(APIView):
             "replica_id": device.replica_id,
             "message": f"Device {device.device_id} has been permanently revoked."
         }, status=status.HTTP_200_OK)
+
+
+class ProtocolPendingMappingsAPIView(APIView):
+    """
+    Query endpoint for cross-enterprise semantic mappings awaiting human review.
+    Enforces strict multi-tenant isolation: callers may only view mappings intended
+    for their authenticated company.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+        requested_company_id = request.query_params.get("company_id")
+
+        company = None
+        if getattr(user, 'is_superuser', False):
+            if requested_company_id:
+                company = Company.objects.filter(id=requested_company_id).first()
+            else:
+                company = Company.objects.first()
+        else:
+            if requested_company_id:
+                company = Company.objects.filter(id=requested_company_id, users__user=user).first()
+                if not company:
+                    return Response(
+                        {"error": "Access Denied: You do not have membership in the requested company.", "status": "ACCESS_DENIED"},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            else:
+                user_co = user.companies.select_related('company').first()
+                if user_co:
+                    company = user_co.company
+
+        if not company:
+            return Response(
+                {"error": "Access Denied: Authenticated user is not associated with an authorized active company.", "status": "ACCESS_DENIED"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        company_identifiers = [str(company.id)]
+        if company.gstin:
+            company_identifiers.append(company.gstin.strip())
+
+        from .models import EntityMapping
+        from .mapping import ApprovalState
+
+        pending_qs = EntityMapping.objects.filter(
+            destination_company_id__in=company_identifiers,
+            approval_state=ApprovalState.PENDING.value
+        ).order_by('-created_at')
+
+        results = []
+        for m in pending_qs:
+            results.append({
+                "mapping_id": m.mapping_id,
+                "source_company_id": m.source_company_id,
+                "destination_company_id": m.destination_company_id,
+                "foreign_sku": m.foreign_sku,
+                "suggested_local_sku": m.local_sku,
+                "mapping_version": m.mapping_version,
+                "confidence_level": m.confidence_level,
+                "approval_state": m.approval_state,
+                "conversion_multiplier": m.conversion_multiplier,
+                "hsn_override": m.hsn_override,
+                "created_at": m.created_at.isoformat() if m.created_at else None
+            })
+
+        return Response({
+            "status": "SUCCESS",
+            "company_id": str(company.id),
+            "count": len(results),
+            "pending_mappings": results
+        }, status=status.HTTP_200_OK)
+
+
+class ProtocolMappingApprovalAPIView(APIView):
+    """
+    Review and approval endpoint for cross-enterprise semantic mappings.
+    Allows designated personnel to APPROVE (with optional target product & conversion override)
+    or REJECT pending mappings.
+    Guarantees idempotency via select_for_update() row locking, records approver identity and timestamp,
+    and revalidates target product existence in local inventory.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        data = request.data
+        mapping_id = data.get("mapping_id")
+        action = (data.get("action") or "").strip().upper()
+        target_product_id = data.get("target_product_id")
+        target_sku = data.get("target_sku")
+        conversion_multiplier = data.get("conversion_multiplier")
+        rejection_reason = data.get("rejection_reason")
+        requested_company_id = data.get("company_id")
+
+        if not mapping_id:
+            return Response(
+                {"error": "mapping_id is required.", "status": "INVALID_PAYLOAD"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if action not in ("APPROVE", "REJECT"):
+            return Response(
+                {"error": "action must be either 'APPROVE' or 'REJECT'.", "status": "INVALID_ACTION"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = request.user
+        company = None
+        if getattr(user, 'is_superuser', False):
+            if requested_company_id:
+                company = Company.objects.filter(id=requested_company_id).first()
+            else:
+                company = Company.objects.first()
+        else:
+            if requested_company_id:
+                company = Company.objects.filter(id=requested_company_id, users__user=user).first()
+                if not company:
+                    return Response(
+                        {"error": "Access Denied: You do not have membership in the requested company.", "status": "ACCESS_DENIED"},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            else:
+                user_co = user.companies.select_related('company').first()
+                if user_co:
+                    company = user_co.company
+
+        if not company:
+            return Response(
+                {"error": "Access Denied: Authenticated user is not associated with an authorized active company.", "status": "ACCESS_DENIED"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Role & Permission check: Admin, Owner, Manager, or Accountant
+        is_authorized = (
+            getattr(user, 'is_superuser', False) or
+            user.companies.filter(company=company, role__in=['ADMIN', 'OWNER', 'MANAGER', 'ACCOUNTANT']).exists() or
+            getattr(user, 'role', '') in ['ADMIN', 'OWNER', 'MANAGER', 'ACCOUNTANT']
+        )
+        if not is_authorized:
+            return Response(
+                {"error": "Access Denied: Mapping approval requires Manager, Accountant, or Admin permissions.", "status": "PERMISSION_DENIED"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        from .models import EntityMapping
+        from .mapping import ApprovalState, MappingConfidence
+        from apps.inventory.models import Product
+
+        company_identifiers = [str(company.id)]
+        if company.gstin:
+            company_identifiers.append(company.gstin.strip())
+
+        with transaction.atomic():
+            mapping = EntityMapping.objects.select_for_update().filter(mapping_id=mapping_id).first()
+            if not mapping:
+                return Response(
+                    {"error": f"Mapping '{mapping_id}' not found.", "status": "MAPPING_NOT_FOUND"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Strict Tenant Isolation Barrier: Verify destination company belongs to caller's company
+            if mapping.destination_company_id not in company_identifiers:
+                return Response(
+                    {"error": "Access Denied: Mapping belongs to another tenant.", "status": "TENANT_VIOLATION"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            if action == "APPROVE":
+                # Idempotency Check: Already approved
+                if mapping.approval_state == ApprovalState.APPROVED.value:
+                    approver_name = str(getattr(mapping.approved_by, 'email', None) or getattr(mapping.approved_by, 'username', None) or (mapping.approved_by.id if mapping.approved_by else None))
+                    return Response({
+                        "status": "ALREADY_APPROVED",
+                        "idempotent": True,
+                        "mapping_id": mapping.mapping_id,
+                        "local_sku": mapping.local_sku,
+                        "approved_by": approver_name,
+                        "approved_at": mapping.approved_at.isoformat() if mapping.approved_at else None,
+                        "conversion_multiplier": mapping.conversion_multiplier
+                    }, status=status.HTTP_200_OK)
+
+                # Revalidate / Resolve target local product
+                product = None
+                if target_product_id:
+                    product = Product.objects.filter(company=company, id=target_product_id).first()
+                elif target_sku:
+                    product = Product.objects.filter(company=company, sku__iexact=target_sku.strip()).first()
+                elif mapping.local_sku:
+                    product = Product.objects.filter(company=company, sku__iexact=mapping.local_sku.strip()).first()
+
+                if not product:
+                    return Response({
+                        "error": f"Target local product not found in company '{company.name}'. Revalidation failed.",
+                        "status": "REVALIDATION_FAILED"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                mapping.local_sku = product.sku
+                if conversion_multiplier is not None:
+                    try:
+                        mapping.conversion_multiplier = float(conversion_multiplier)
+                    except (ValueError, TypeError):
+                        return Response({"error": "Invalid conversion_multiplier.", "status": "INVALID_MULTIPLIER"}, status=status.HTTP_400_BAD_REQUEST)
+
+                if product.hsn_code:
+                    mapping.hsn_override = product.hsn_code
+                mapping.confidence_level = MappingConfidence.MANUAL.value
+                mapping.approval_state = ApprovalState.APPROVED.value
+                mapping.approved_by = user
+                mapping.approved_at = timezone.now()
+                mapping.rejection_reason = None
+                mapping.save(update_fields=['local_sku', 'conversion_multiplier', 'hsn_override', 'confidence_level', 'approval_state', 'approved_by', 'approved_at', 'rejection_reason'])
+
+                approver_name = str(getattr(user, 'email', None) or getattr(user, 'username', None) or user.id)
+                return Response({
+                    "status": "APPROVED",
+                    "mapping_id": mapping.mapping_id,
+                    "foreign_sku": mapping.foreign_sku,
+                    "local_sku": mapping.local_sku,
+                    "product_id": str(product.id),
+                    "product_name": product.name,
+                    "conversion_multiplier": mapping.conversion_multiplier,
+                    "approved_by": approver_name,
+                    "approved_at": mapping.approved_at.isoformat()
+                }, status=status.HTTP_200_OK)
+
+            elif action == "REJECT":
+                # Idempotency Check: Already rejected
+                if mapping.approval_state == ApprovalState.REJECTED.value:
+                    rejecter_name = str(getattr(mapping.approved_by, 'email', None) or getattr(mapping.approved_by, 'username', None) or (mapping.approved_by.id if mapping.approved_by else None))
+                    return Response({
+                        "status": "ALREADY_REJECTED",
+                        "idempotent": True,
+                        "mapping_id": mapping.mapping_id,
+                        "foreign_sku": mapping.foreign_sku,
+                        "rejection_reason": mapping.rejection_reason,
+                        "rejected_by": rejecter_name,
+                        "rejected_at": mapping.approved_at.isoformat() if mapping.approved_at else None
+                    }, status=status.HTTP_200_OK)
+
+                mapping.approval_state = ApprovalState.REJECTED.value
+                mapping.rejection_reason = rejection_reason or "Rejected by company administrator."
+                mapping.approved_by = user
+                mapping.approved_at = timezone.now()
+                mapping.save(update_fields=['approval_state', 'rejection_reason', 'approved_by', 'approved_at'])
+
+                rejecter_name = str(getattr(user, 'email', None) or getattr(user, 'username', None) or user.id)
+                return Response({
+                    "status": "REJECTED",
+                    "mapping_id": mapping.mapping_id,
+                    "foreign_sku": mapping.foreign_sku,
+                    "rejection_reason": mapping.rejection_reason,
+                    "rejected_by": rejecter_name,
+                    "rejected_at": mapping.approved_at.isoformat()
+                }, status=status.HTTP_200_OK)

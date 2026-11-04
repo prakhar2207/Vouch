@@ -62,7 +62,7 @@ def run_real_accounting_e2e():
     seller_company, _ = Company.objects.get_or_create(
         name=f"Apex Heavy Industries {test_run_id}",
         defaults={
-            "gstin": "27AAAAA1234A1Z5",
+            "gstin": f"27{test_run_id[:5]}1234A1Z5",
             "state_code": "27",
             "state_name": "Maharashtra"
         }
@@ -71,7 +71,7 @@ def run_real_accounting_e2e():
     buyer_company, _ = Company.objects.get_or_create(
         name=f"Metro Infra Buildcon {test_run_id}",
         defaults={
-            "gstin": "27BBBBB5678B1Z6",
+            "gstin": f"27{test_run_id[:5]}5678B1Z6",
             "state_code": "27",
             "state_name": "Maharashtra"
         }

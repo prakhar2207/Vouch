@@ -398,5 +398,94 @@ class TransactionDeduplicationEngineTestCase(TestCase):
         findings = AccountingIntegrityEngine.check_document_numbering(self.company)
         purchase_gaps = [f for f in findings if "PURCHASE" in f.title]
         self.assertEqual(len(purchase_gaps), 0)
+    def test_reversed_voucher_not_clustered_as_duplicate(self):
+        """
+        Reversed vouchers have zero accounting balance and must NEVER be clustered
+        with active POSTED vouchers as duplicates.
+        """
+        # 1. Reversed payment voucher (e.g. from an excluded bank statement)
+        v_reversed = Voucher.objects.create(
+            company=self.company,
+            financial_year=self.fy,
+            voucher_type="PAYMENT",
+            voucher_number="PAY-REV-01",
+            voucher_date=datetime.date.today(),
+            party_ledger=self.customer,
+            total_amount=Decimal("8480.00"),
+            status="REVERSED",
+            created_by=self.user
+        )
 
+        # 2. Legitimate active payment voucher created later
+        v_posted = Voucher.objects.create(
+            company=self.company,
+            financial_year=self.fy,
+            voucher_type="PAYMENT",
+            voucher_number="PAY-ACT-01",
+            voucher_date=datetime.date.today(),
+            party_ledger=self.customer,
+            total_amount=Decimal("8480.00"),
+            status="POSTED",
+            created_by=self.user
+        )
+
+        findings = TransactionDeduplicationEngine.scan_duplicate_vouchers(self.company)
+        dup_numbers = [
+            f["evidence"].get("duplicate_voucher_number")
+            for f in findings if f.get("category") == "DUPLICATE"
+        ]
+        self.assertNotIn("PAY-ACT-01", dup_numbers)
+        self.assertNotIn("PAY-REV-01", dup_numbers)
+
+    def test_void_duplicate_safeguard_when_primary_is_reversed(self):
+        """
+        If a finding references a primary voucher that has become REVERSED,
+        execute_fix must abort deletion of the duplicate and retain it.
+        """
+        v_reversed = Voucher.objects.create(
+            company=self.company,
+            financial_year=self.fy,
+            voucher_type="PAYMENT",
+            voucher_number="PAY-OLD-REV",
+            voucher_date=datetime.date.today(),
+            party_ledger=self.customer,
+            total_amount=Decimal("500.00"),
+            status="REVERSED",
+            created_by=self.user
+        )
+        v_active = Voucher.objects.create(
+            company=self.company,
+            financial_year=self.fy,
+            voucher_type="PAYMENT",
+            voucher_number="PAY-NEW-ACT",
+            voucher_date=datetime.date.today(),
+            party_ledger=self.customer,
+            total_amount=Decimal("500.00"),
+            status="POSTED",
+            created_by=self.user
+        )
+
+        finding = AccountingFinding.objects.create(
+            company=self.company,
+            category="DUPLICATE",
+            title="Duplicate Payment PAY-NEW-ACT",
+            severity="CRITICAL",
+            description="Test duplicate finding",
+            evidence={
+                "duplicate_voucher_id": str(v_active.id),
+                "primary_voucher_id": str(v_reversed.id),
+                "duplicate_voucher_number": v_active.voucher_number,
+                "primary_voucher_number": v_reversed.voucher_number
+            },
+            fix_action="VOID_DUPLICATE_VOUCHER"
+        )
+
+        res = FindingFixService.execute_fix(finding=finding, user=self.user)
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertIn("already reversed", res["message"])
+
+        # Crucial: active voucher MUST NOT have been deleted
+        self.assertTrue(Voucher.objects.filter(id=v_active.id).exists())
+        finding.refresh_from_db()
+        self.assertTrue(finding.is_resolved)
 

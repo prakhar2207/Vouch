@@ -633,6 +633,30 @@ class FindingFixService:
                     "primary_voucher": dup_v.voucher_number
                 }
 
+            # Safeguard 1: If primary voucher is not active (e.g. REVERSED or CANCELLED), do NOT delete dup_v!
+            if prim_v.status != 'POSTED':
+                finding.is_resolved = True
+                finding.resolved_at = timezone.now()
+                finding.resolved_by = user
+                finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
+                return {
+                    "status": "SUCCESS",
+                    "message": f"Primary voucher #{prim_v.voucher_number} is already {prim_v.status.lower()}; keeping #{dup_v.voucher_number} as the active record.",
+                    "primary_voucher": dup_v.voucher_number
+                }
+
+            # Safeguard 2: If duplicate voucher is already reversed or cancelled, no deletion is needed
+            if dup_v.status != 'POSTED':
+                finding.is_resolved = True
+                finding.resolved_at = timezone.now()
+                finding.resolved_by = user
+                finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
+                return {
+                    "status": "SUCCESS",
+                    "message": f"Duplicate voucher #{dup_v.voucher_number} is already {dup_v.status.lower()}; no deletion required.",
+                    "primary_voucher": prim_v.voucher_number
+                }
+
             dup_num = dup_v.voucher_number
             prim_num = prim_v.voucher_number
 

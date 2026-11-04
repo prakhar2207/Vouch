@@ -522,13 +522,13 @@ class GSTRReportService:
             if v.voucher_type == 'PURCHASE':
                 purchase_count += 1
 
-        effective_sales_cgst = sales_cgst if sales_cgst > Decimal('0.00') else max(Decimal('0.00'), ledger_output_cgst)
-        effective_sales_sgst = sales_sgst if sales_sgst > Decimal('0.00') else max(Decimal('0.00'), ledger_output_sgst)
-        effective_sales_igst = sales_igst if sales_igst > Decimal('0.00') else max(Decimal('0.00'), ledger_output_igst)
+        effective_sales_cgst = max(sales_cgst, ledger_output_cgst)
+        effective_sales_sgst = max(sales_sgst, ledger_output_sgst)
+        effective_sales_igst = max(sales_igst, ledger_output_igst)
 
-        effective_itc_cgst = itc_cgst if itc_cgst > Decimal('0.00') else max(Decimal('0.00'), ledger_input_cgst)
-        effective_itc_sgst = itc_sgst if itc_sgst > Decimal('0.00') else max(Decimal('0.00'), ledger_input_sgst)
-        effective_itc_igst = itc_igst if itc_igst > Decimal('0.00') else max(Decimal('0.00'), ledger_input_igst)
+        effective_itc_cgst = max(itc_cgst, ledger_input_cgst)
+        effective_itc_sgst = max(itc_sgst, ledger_input_sgst)
+        effective_itc_igst = max(itc_igst, ledger_input_igst)
 
         total_outward_tax = effective_sales_cgst + effective_sales_sgst + effective_sales_igst
         total_itc = effective_itc_cgst + effective_itc_sgst + effective_itc_igst

@@ -1,6 +1,9 @@
 from enum import Enum, auto
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timezone, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EdiState(Enum):
     """Rigorous state machine for distributed transaction coordination."""
@@ -30,6 +33,10 @@ class EdiState(Enum):
     ROLLBACK_REQUIRED = auto()
 
 class IllegalStateTransitionError(Exception):
+    pass
+
+class StatePersistenceError(Exception):
+    """Raised when EdiStateMachine cannot persist session transitions durably to the database."""
     pass
 
 # States that are final — no further transitions allowed
@@ -102,8 +109,9 @@ class EdiStateMachine:
                             "timestamp": self.created_at.isoformat()
                         }]
                     )
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.error(f"Failed to persist or retrieve EdiSession '{self.session_id}': {ex}", exc_info=True)
+                raise StatePersistenceError(f"Database error initializing EdiSession '{self.session_id}': {ex}") from ex
 
     @property
     def is_terminal(self) -> bool:
@@ -135,8 +143,9 @@ class EdiStateMachine:
                         history.append({"state": EdiState.EXPIRED.name, "timestamp": now.isoformat()})
                         record.transition_history = history
                         record.save(update_fields=['current_state', 'transition_history', 'updated_at'])
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.error(f"Failed to persist EXPIRED state for EdiSession '{self.session_id}': {ex}", exc_info=True)
+                    raise StatePersistenceError(f"Database error persisting expiration for '{self.session_id}': {ex}") from ex
             raise IllegalStateTransitionError(
                 f"Session {self.session_id} has expired after {self.timeout_seconds}s"
             )
@@ -171,9 +180,18 @@ class EdiStateMachine:
                         if "transaction_id" in context_data:
                             record.transaction_id = context_data["transaction_id"]
                     record.save(update_fields=['current_state', 'transition_history', 'context_data', 'transaction_id', 'updated_at'])
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.error(f"Failed to persist state transition to {next_state.name} for EdiSession '{self.session_id}': {ex}", exc_info=True)
+                raise StatePersistenceError(f"Database error persisting state {next_state.name} for '{self.session_id}': {ex}") from ex
 
         return True
+
+    def transition_to(self, next_state: EdiState, context_data: Optional[Dict] = None) -> EdiState:
+        """
+        Transitions the session to the target state and returns the updated EdiState.
+        Serves as an ergonomic helper and backward-compatible alias for advance().
+        """
+        self.advance(next_state, context_data=context_data)
+        return self.current_state
 
 

@@ -57,6 +57,7 @@ export async function computeCanonicalSha256(obj: any): Promise<string> {
 
 /**
  * Constructs the canonical operation dictionary representation for DAG signing and verification.
+ * Strictly mirrors server-side Python AccountingOperation.payload_hash.
  */
 export function getCanonicalOperationDict(params: {
   operation_id: string;
@@ -71,14 +72,24 @@ export function getCanonicalOperationDict(params: {
   vector_clock?: Record<string, number>;
   previous_operation_hash?: string;
   version?: number;
+  mapping_version?: number;
+  schema_version?: number | string;
+  protocol_version?: string;
+  created_by?: string;
+  physical_timestamp?: number;
 }): Record<string, any> {
   return {
     class: params.operation_class || "CAUSAL",
+    created_by: params.created_by || "SYSTEM",
+    mapping_version: params.mapping_version || 1,
     operation_id: params.operation_id,
     parents: [...params.parents].sort(),
     payload: params.payload,
+    physical_timestamp: params.physical_timestamp || 0,
     prev_hash: params.previous_operation_hash || "GENESIS",
+    protocol_version: params.protocol_version || "1.0",
     replica_id: params.replica_id,
+    schema_version: params.schema_version || 1,
     tenant_id: params.tenant_id || "DEFAULT_TENANT",
     timestamp: params.logical_timestamp,
     transaction_id: params.transaction_id,

@@ -5,7 +5,9 @@ from .views import (
     ProtocolCommitmentAPIView,
     ProtocolDeviceRegistrationAPIView,
     ProtocolDeviceRotationAPIView,
-    ProtocolDeviceRevocationAPIView
+    ProtocolDeviceRevocationAPIView,
+    ProtocolPendingMappingsAPIView,
+    ProtocolMappingApprovalAPIView
 )
 
 urlpatterns = [
@@ -15,4 +17,6 @@ urlpatterns = [
     path('devices/register/', ProtocolDeviceRegistrationAPIView.as_view(), name='protocol_device_register'),
     path('devices/rotate/', ProtocolDeviceRotationAPIView.as_view(), name='protocol_device_rotate'),
     path('devices/revoke/', ProtocolDeviceRevocationAPIView.as_view(), name='protocol_device_revoke'),
+    path('mappings/pending/', ProtocolPendingMappingsAPIView.as_view(), name='protocol_pending_mappings'),
+    path('mappings/approve/', ProtocolMappingApprovalAPIView.as_view(), name='protocol_mapping_approval'),
 ]

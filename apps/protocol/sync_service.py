@@ -347,11 +347,36 @@ class SyncService:
                 logger.error(f"LedgerBridge execution error: {e}", exc_info=True)
                 bridge_result = {"status": "BRIDGE_FAILED", "error": str(e)}
 
-            if not bridge_result or bridge_result.get("status") != "BRIDGE_SUCCESS":
+            if not bridge_result:
                 return {
                     "status": "BRIDGE_FAILED",
                     "transaction_id": transaction_id,
-                    "error": bridge_result.get("error", "LedgerBridge execution failed") if bridge_result else "Bridge execution returned null",
+                    "error": "Bridge execution returned null",
+                    "bridge_result": None
+                }
+
+            if bridge_result.get("status") == "AWAITING_APPROVAL":
+                return {
+                    "status": "AWAITING_APPROVAL",
+                    "transaction_id": transaction_id,
+                    "pending_mappings": bridge_result.get("pending_mappings", []),
+                    "message": "Transaction awaiting semantic mapping approval before vouchers can be posted.",
+                    "bridge_result": bridge_result
+                }
+
+            if bridge_result.get("status") == "MAPPING_REJECTED":
+                return {
+                    "status": "MAPPING_REJECTED",
+                    "transaction_id": transaction_id,
+                    "reason": bridge_result.get("error", "One or more item mappings were rejected."),
+                    "bridge_result": bridge_result
+                }
+
+            if bridge_result.get("status") != "BRIDGE_SUCCESS":
+                return {
+                    "status": "BRIDGE_FAILED",
+                    "transaction_id": transaction_id,
+                    "error": bridge_result.get("error", "LedgerBridge execution failed"),
                     "bridge_result": bridge_result
                 }
 

@@ -44,7 +44,7 @@ class TransactionDeduplicationEngine:
         if amount <= Decimal('0.00'):
             return {"is_duplicate": False, "confidence": 0.0}
 
-        active_statuses = list(EffectiveVoucherService.ACCOUNTING_STATUSES) + ['DRAFT', 'VALIDATING']
+        active_statuses = ['POSTED', 'DRAFT', 'VALIDATING']
         qs = Voucher.objects.filter(
             company=company,
             voucher_type=voucher_type,
@@ -87,7 +87,7 @@ class TransactionDeduplicationEngine:
                 invoice_voucher_id=preferred_invoice_id,
                 allocated_amount=amount,
                 payment_voucher__voucher_date=voucher_date,
-                payment_voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
+                payment_voucher__status='POSTED'
             )
             if exclude_voucher_id:
                 existing_alloc = existing_alloc.exclude(payment_voucher_id=exclude_voucher_id)
@@ -171,7 +171,7 @@ class TransactionDeduplicationEngine:
         candidates = Voucher.objects.filter(
             company_id=company_id,
             voucher_type=v_type,
-            status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
+            status='POSTED',
             total_amount=amount,
             voucher_date__gte=start_date,
             voucher_date__lte=end_date
@@ -251,7 +251,7 @@ class TransactionDeduplicationEngine:
         duplicate_groups = (
             Voucher.objects.filter(
                 company=company,
-                status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
+                status='POSTED',
                 party_ledger__isnull=False
             )
             .values('voucher_type', 'party_ledger', 'total_amount', 'voucher_date')
@@ -271,7 +271,7 @@ class TransactionDeduplicationEngine:
                     party_ledger=party,
                     total_amount=group['total_amount'],
                     voucher_date=group['voucher_date'],
-                    status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
+                    status='POSTED'
                 )
                 .order_by('created_at')
                 .prefetch_related('allocations_made', 'allocations_received', 'items')
@@ -289,6 +289,8 @@ class TransactionDeduplicationEngine:
             # 3. Otherwise, the earliest created voucher is primary.
             def rank_primary(v: Voucher):
                 score = 0
+                if v.status != 'POSTED':
+                    score -= 1000
                 if bool(v.allocations_made.all()):
                     score += 20
                 if bool(v.allocations_received.all()):
@@ -357,7 +359,7 @@ class TransactionDeduplicationEngine:
         near_groups = (
             Voucher.objects.filter(
                 company=company,
-                status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
+                status='POSTED',
                 party_ledger__isnull=False
             )
             .values('voucher_type', 'party_ledger', 'total_amount')
@@ -376,7 +378,7 @@ class TransactionDeduplicationEngine:
                     voucher_type=ng['voucher_type'],
                     party_ledger=party,
                     total_amount=ng['total_amount'],
-                    status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
+                    status='POSTED'
                 )
                 .order_by('voucher_date', 'created_at')
                 .prefetch_related('allocations_made', 'allocations_received', 'items')
@@ -427,6 +429,8 @@ class TransactionDeduplicationEngine:
 
                     def rank_primary_near(v: Voucher):
                         score = 0
+                        if v.status != 'POSTED':
+                            score -= 1000
                         if bool(v.allocations_made.all()):
                             score += 20
                         if bool(v.allocations_received.all()):
@@ -492,7 +496,11 @@ class TransactionDeduplicationEngine:
 
         # Check duplicate payment allocations against the same invoice
         dup_allocs = (
-            PaymentAllocation.objects.filter(company=company)
+            PaymentAllocation.objects.filter(
+                company=company,
+                payment_voucher__status='POSTED',
+                invoice_voucher__status='POSTED'
+            )
             .values('invoice_voucher_id', 'allocated_amount', 'payment_voucher__voucher_date')
             .annotate(count=Count('id'))
             .filter(count__gt=1)
@@ -501,6 +509,8 @@ class TransactionDeduplicationEngine:
             alloc_records = list(
                 PaymentAllocation.objects.filter(
                     company=company,
+                    payment_voucher__status='POSTED',
+                    invoice_voucher__status='POSTED',
                     invoice_voucher_id=da['invoice_voucher_id'],
                     allocated_amount=da['allocated_amount'],
                     payment_voucher__voucher_date=da['payment_voucher__voucher_date']
