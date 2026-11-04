@@ -22,6 +22,7 @@ import {
 import { BankTransactionItem, BankingActionType } from "./types";
 import { SearchableOption } from "@/components/SearchableSelect";
 import InlineMatchTray from "./InlineMatchTray";
+import { ReconciliationStateBadge } from "./ReconciliationStateBadge";
 
 interface BankTransactionCardProps {
   tx: BankTransactionItem;
@@ -189,33 +190,7 @@ export default function BankTransactionCard({
                   </span>
                 )}
 
-                <span
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${
-                    tx.is_excluded || tx.status === "EXCLUDED"
-                      ? "bg-muted text-muted-foreground border border-border"
-                      : tx.status === "MATCHED" || tx.status === "RECONCILED"
-                      ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/25"
-                      : tx.status === "MATCHED_AUTO"
-                      ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/25"
-                      : tx.status === "NEEDS_REVIEW" || tx.status === "MATCHED_SUGGESTED"
-                      ? "bg-amber-500/10 text-amber-500 border border-amber-500/25"
-                      : tx.status === "IGNORED"
-                      ? "bg-muted text-muted-foreground border border-border/50"
-                      : "bg-rose-500/10 text-rose-500 border border-rose-500/25"
-                  }`}
-                >
-                  {tx.is_excluded || tx.status === "EXCLUDED"
-                    ? "Excluded"
-                    : tx.status === "MATCHED" || tx.status === "RECONCILED"
-                    ? "Reconciled"
-                    : tx.status === "MATCHED_AUTO"
-                    ? "AI Auto-Match"
-                    : tx.status === "NEEDS_REVIEW" || tx.status === "MATCHED_SUGGESTED"
-                    ? "Suggested Match"
-                    : tx.status === "IGNORED"
-                    ? "Ignored"
-                    : "Needs Attention"}
-                </span>
+                <ReconciliationStateBadge status={tx.status} isExcluded={tx.is_excluded} size="sm" />
 
                 {isLikelyExpense && !tx.matched_party && (
                   <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/25">

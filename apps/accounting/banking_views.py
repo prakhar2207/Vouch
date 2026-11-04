@@ -175,9 +175,9 @@ class BankTransactionListAPIView(APIView):
             resolved_statuses = []
             for s in raw_statuses:
                 if s == 'NEEDS_REVIEW':
-                    resolved_statuses.extend(['MATCHED_SUGGESTED', 'NEEDS_REVIEW'])
-                elif s == 'MATCHED':
-                    resolved_statuses.extend(['MATCHED_AUTO', 'RECONCILED'])
+                    resolved_statuses.extend(['MATCHED_SUGGESTED', 'MATCHED_AUTO', 'NEEDS_REVIEW'])
+                elif s in ['MATCHED', 'RECONCILED']:
+                    resolved_statuses.extend(['RECONCILED', 'MATCHED'])
                 elif s == 'UNRESOLVED':
                     resolved_statuses.extend(['UNRESOLVED', 'UNPROCESSED'])
                 else:
