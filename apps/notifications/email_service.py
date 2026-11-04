@@ -1,0 +1,400 @@
+import logging
+import uuid
+from typing import Optional, Dict, Any, List, Tuple
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
+from django.utils import timezone
+from apps.notifications.models import EmailDeliveryLog
+
+logger = logging.getLogger(__name__)
+
+
+class EmailService:
+    """
+    Centralized Transactional Email Service for SriLekh.
+    All transactional emails originate from SriLekh <admin@srilekh.com> with reply-to support@srilekh.com.
+    Guarantees idempotency, audit trail logging, non-blocking financial operations, and responsive HTML/text rendering.
+    """
+
+    @classmethod
+    def get_default_from_email(cls) -> str:
+        return getattr(settings, 'DEFAULT_FROM_EMAIL', 'SriLekh <admin@srilekh.com>')
+
+    @classmethod
+    def get_default_reply_to(cls) -> List[str]:
+        reply_to = getattr(settings, 'EMAIL_REPLY_TO', 'support@srilekh.com')
+        return [reply_to] if reply_to else []
+
+    @classmethod
+    def send_email(
+        cls,
+        to_email: str,
+        subject: str,
+        template_name: str,
+        context: Dict[str, Any],
+        email_type: str = 'SYSTEM_ALERT',
+        idempotency_key: Optional[str] = None,
+        attachments: Optional[List[Tuple[str, bytes, str]]] = None,
+        company: Optional[Any] = None,
+        from_email: Optional[str] = None,
+        reply_to: Optional[List[str]] = None,
+    ) -> Tuple[bool, Optional[EmailDeliveryLog], Optional[str]]:
+        """
+        Core email delivery method.
+        Returns: (success: bool, delivery_log: Optional[EmailDeliveryLog], error_or_message: Optional[str])
+        """
+        if not to_email or '@' not in to_email:
+            logger.warning(f"Email delivery skipped: invalid recipient '{to_email}'")
+            return False, None, "Invalid recipient email"
+
+        sender = from_email or cls.get_default_from_email()
+        reply_to_list = reply_to if reply_to is not None else cls.get_default_reply_to()
+
+        # Idempotency check: if key provided and already SENT, do not re-send
+        if idempotency_key:
+            existing = EmailDeliveryLog.objects.filter(idempotency_key=idempotency_key, status='SENT').first()
+            if existing:
+                logger.info(f"Email delivery skipped (idempotent duplicate): key={idempotency_key}")
+                return True, existing, "idempotent_duplicate"
+
+        # Initialize or retrieve delivery log
+        log_entry = None
+        if idempotency_key:
+            log_entry, _ = EmailDeliveryLog.objects.get_or_create(
+                idempotency_key=idempotency_key,
+                defaults={
+                    'company': company,
+                    'recipient_email': to_email,
+                    'sender_email': sender,
+                    'subject': subject,
+                    'email_type': email_type,
+                    'status': 'PENDING',
+                    'metadata': {k: str(v) for k, v in context.items() if k not in ['otp_code', 'password', 'token']},
+                }
+            )
+        else:
+            log_entry = EmailDeliveryLog.objects.create(
+                company=company,
+                recipient_email=to_email,
+                sender_email=sender,
+                subject=subject,
+                email_type=email_type,
+                status='PENDING',
+                metadata={k: str(v) for k, v in context.items() if k not in ['otp_code', 'password', 'token']},
+            )
+
+        # Render HTML and Plain-Text templates
+        try:
+            html_content = render_to_string(f"emails/{template_name}.html", context)
+        except Exception as e:
+            logger.error(f"Failed to render HTML template emails/{template_name}.html: {str(e)}")
+            html_content = None
+
+        try:
+            text_content = render_to_string(f"emails/{template_name}.txt", context)
+        except Exception as e:
+            logger.warning(f"Plain-text template emails/{template_name}.txt not found or failed: {str(e)}")
+            text_content = html_content or ""
+
+        try:
+            log_entry.attempts += 1
+            msg = EmailMultiAlternatives(
+                subject=subject,
+                body=text_content,
+                from_email=sender,
+                to=[to_email],
+                reply_to=reply_to_list,
+            )
+
+            if html_content:
+                msg.attach_alternative(html_content, "text/html")
+
+            if attachments:
+                for att in attachments:
+                    filename, content, mimetype = att
+                    msg.attach(filename, content, mimetype)
+
+            msg.send(fail_silently=False)
+
+            log_entry.status = 'SENT'
+            log_entry.sent_at = timezone.now()
+            log_entry.provider_name = getattr(settings, 'EMAIL_BACKEND', 'SMTP').split('.')[-1]
+            log_entry.save(update_fields=['status', 'sent_at', 'attempts', 'provider_name'])
+            return True, log_entry, None
+
+        except Exception as exc:
+            err_msg = str(exc)
+            logger.error(f"Email delivery failed to {to_email}: {err_msg}")
+            log_entry.status = 'FAILED'
+            log_entry.error_message = err_msg
+            log_entry.save(update_fields=['status', 'attempts', 'error_message'])
+            return False, log_entry, err_msg
+
+    # =========================================================================
+    # High-level Workflow Helpers
+    # =========================================================================
+
+    @classmethod
+    def send_registration_otp(cls, to_email: str, otp_code: str) -> Tuple[bool, Optional[EmailDeliveryLog], Optional[str]]:
+        """Sends single-use 6-digit registration OTP with 5-minute expiry."""
+        subject = "Verify your email address — SriLekh"
+        context = {
+            'otp_code': otp_code,
+            'subject': subject,
+        }
+        return cls.send_email(
+            to_email=to_email,
+            subject=subject,
+            template_name="registration_otp",
+            context=context,
+            email_type='REGISTRATION_OTP',
+        )
+
+    @classmethod
+    def send_welcome_email(
+        cls,
+        to_email: str,
+        company_name: str,
+        user_name: Optional[str] = None,
+        gstin: Optional[str] = None,
+        state: Optional[str] = None,
+        login_url: Optional[str] = None,
+        company: Optional[Any] = None,
+    ) -> Tuple[bool, Optional[EmailDeliveryLog], Optional[str]]:
+        """Sends welcoming onboarding email after successful business registration."""
+        subject = f"Welcome to SriLekh — Account Activated for {company_name}"
+        context = {
+            'subject': subject,
+            'company_name': company_name,
+            'user_name': user_name or "Partner",
+            'gstin': gstin,
+            'state': state,
+            'login_url': login_url or f"{getattr(settings, 'FRONTEND_URL', 'https://srilekh.com')}/login",
+        }
+        return cls.send_email(
+            to_email=to_email,
+            subject=subject,
+            template_name="welcome",
+            context=context,
+            email_type='WELCOME',
+            company=company,
+        )
+
+    @classmethod
+    def send_password_reset_email(
+        cls,
+        to_email: str,
+        reset_url: str,
+    ) -> Tuple[bool, Optional[EmailDeliveryLog], Optional[str]]:
+        """Sends time-limited password reset link."""
+        subject = "Reset Your Password — SriLekh"
+        context = {
+            'subject': subject,
+            'email': to_email,
+            'reset_url': reset_url,
+        }
+        return cls.send_email(
+            to_email=to_email,
+            subject=subject,
+            template_name="password_reset",
+            context=context,
+            email_type='PASSWORD_RESET',
+        )
+
+    @classmethod
+    def send_password_changed_email(
+        cls,
+        to_email: str,
+        timestamp: Optional[str] = None,
+        login_url: Optional[str] = None,
+    ) -> Tuple[bool, Optional[EmailDeliveryLog], Optional[str]]:
+        """Sends confirmation that password was successfully altered."""
+        subject = "Security Alert: Your Password Was Changed — SriLekh"
+        if not timestamp:
+            timestamp = timezone.now().strftime("%d %b %Y, %I:%M %p UTC")
+        context = {
+            'subject': subject,
+            'email': to_email,
+            'timestamp': timestamp,
+            'login_url': login_url or f"{getattr(settings, 'FRONTEND_URL', 'https://srilekh.com')}/login",
+        }
+        return cls.send_email(
+            to_email=to_email,
+            subject=subject,
+            template_name="password_changed",
+            context=context,
+            email_type='PASSWORD_CHANGED',
+        )
+
+    @classmethod
+    def send_invoice_posted_email(
+        cls,
+        to_email: str,
+        recipient_name: str,
+        seller_name: str,
+        invoice_number: str,
+        invoice_date: str,
+        total_amount: str,
+        taxable_amount: str,
+        cgst_amount: Optional[str] = None,
+        sgst_amount: Optional[str] = None,
+        igst_amount: Optional[str] = None,
+        due_date: Optional[str] = None,
+        seller_gstin: Optional[str] = None,
+        recipient_gstin: Optional[str] = None,
+        seller_address: Optional[str] = None,
+        seller_phone: Optional[str] = None,
+        seller_email: Optional[str] = None,
+        secure_view_url: Optional[str] = None,
+        pdf_content: Optional[bytes] = None,
+        pdf_filename: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        company: Optional[Any] = None,
+    ) -> Tuple[bool, Optional[EmailDeliveryLog], Optional[str]]:
+        """Sends official invoice notification with optional PDF attachment."""
+        subject = f"New Invoice {invoice_number} issued to {recipient_name} — SriLekh"
+        has_attachment = bool(pdf_content and pdf_filename)
+        context = {
+            'subject': subject,
+            'recipient_name': recipient_name,
+            'seller_name': seller_name,
+            'invoice_number': invoice_number,
+            'invoice_date': invoice_date,
+            'due_date': due_date,
+            'seller_gstin': seller_gstin,
+            'recipient_gstin': recipient_gstin,
+            'taxable_amount': taxable_amount,
+            'cgst_amount': cgst_amount,
+            'sgst_amount': sgst_amount,
+            'igst_amount': igst_amount,
+            'total_amount': total_amount,
+            'seller_address': seller_address,
+            'seller_phone': seller_phone,
+            'seller_email': seller_email,
+            'secure_view_url': secure_view_url,
+            'has_attachment': has_attachment,
+        }
+
+        attachments = None
+        if has_attachment:
+            attachments = [(pdf_filename, pdf_content, 'application/pdf')]
+
+        return cls.send_email(
+            to_email=to_email,
+            subject=subject,
+            template_name="invoice_posted",
+            context=context,
+            email_type='INVOICE_POSTED',
+            idempotency_key=idempotency_key,
+            attachments=attachments,
+            company=company,
+        )
+
+    @classmethod
+    def send_revised_invoice_email(
+        cls,
+        to_email: str,
+        seller_name: str,
+        invoice_number: str,
+        invoice_date: str,
+        total_amount: str,
+        seller_email: Optional[str] = None,
+        secure_view_url: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        company: Optional[Any] = None,
+    ) -> Tuple[bool, Optional[EmailDeliveryLog], Optional[str]]:
+        """Sends amendment notification for revised invoices."""
+        subject = f"Revised Tax Invoice {invoice_number} from {seller_name} — SriLekh"
+        context = {
+            'subject': subject,
+            'seller_name': seller_name,
+            'invoice_number': invoice_number,
+            'invoice_date': invoice_date,
+            'total_amount': total_amount,
+            'seller_email': seller_email,
+            'secure_view_url': secure_view_url,
+        }
+        return cls.send_email(
+            to_email=to_email,
+            subject=subject,
+            template_name="invoice_revised",
+            context=context,
+            email_type='INVOICE_REVISED',
+            idempotency_key=idempotency_key,
+            company=company,
+        )
+
+    @classmethod
+    def send_payment_received_email(
+        cls,
+        to_email: str,
+        recipient_name: str,
+        seller_name: str,
+        voucher_number: str,
+        payment_date: str,
+        amount: str,
+        payment_mode: Optional[str] = None,
+        reference_no: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        company: Optional[Any] = None,
+    ) -> Tuple[bool, Optional[EmailDeliveryLog], Optional[str]]:
+        """Sends payment receipt confirmation."""
+        subject = f"Payment Receipt {voucher_number} from {seller_name} — SriLekh"
+        context = {
+            'subject': subject,
+            'recipient_name': recipient_name,
+            'seller_name': seller_name,
+            'voucher_number': voucher_number,
+            'payment_date': payment_date,
+            'amount': amount,
+            'payment_mode': payment_mode,
+            'reference_no': reference_no,
+        }
+        return cls.send_email(
+            to_email=to_email,
+            subject=subject,
+            template_name="payment_received",
+            context=context,
+            email_type='PAYMENT_RECEIVED',
+            idempotency_key=idempotency_key,
+            company=company,
+        )
+
+    @classmethod
+    def send_credit_note_email(
+        cls,
+        to_email: str,
+        recipient_name: str,
+        seller_name: str,
+        note_number: str,
+        note_date: str,
+        amount: str,
+        original_invoice_no: Optional[str] = None,
+        reason: Optional[str] = None,
+        secure_view_url: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        company: Optional[Any] = None,
+    ) -> Tuple[bool, Optional[EmailDeliveryLog], Optional[str]]:
+        """Sends credit note notification."""
+        subject = f"Credit Note {note_number} from {seller_name} — SriLekh"
+        context = {
+            'subject': subject,
+            'recipient_name': recipient_name,
+            'seller_name': seller_name,
+            'note_number': note_number,
+            'note_date': note_date,
+            'amount': amount,
+            'original_invoice_no': original_invoice_no,
+            'reason': reason,
+            'secure_view_url': secure_view_url,
+        }
+        return cls.send_email(
+            to_email=to_email,
+            subject=subject,
+            template_name="credit_note_issued",
+            context=context,
+            email_type='CREDIT_NOTE_ISSUED',
+            idempotency_key=idempotency_key,
+            company=company,
+        )

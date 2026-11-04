@@ -1,0 +1,20 @@
+Verify Your Email Address — SriLekh
+
+Hello,
+
+Thank you for choosing SriLekh for your business accounting and invoicing. To verify your email address and continue setting up your account, please use the following one-time verification code (OTP):
+
+==================================================
+OTP: {{ otp_code }}
+(Valid for 5 minutes)
+==================================================
+
+Security Notice: SriLekh staff will never ask you for this one-time code. Do not share this OTP with anyone under any circumstances.
+
+If you did not initiate this request, you can safely ignore this email. No account will be activated without this verification code.
+
+--
+SriLekh Technologies
+https://srilekh.com
+Support: support@srilekh.com
+Sender: admin@srilekh.com

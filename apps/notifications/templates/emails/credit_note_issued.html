@@ -1,0 +1,49 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<div style="text-align: center; margin-bottom: 20px;">
+    <span class="badge" style="background: #e0e7ff; color: #4338ca;">Credit Note</span>
+</div>
+
+<h2 style="margin-top: 0; color: #0f172a; font-size: 22px; font-weight: 700; text-align: center;">Credit Note Issued</h2>
+<p style="text-align: center; color: #64748b; font-size: 15px; margin-top: -6px;">
+    <strong>{{ seller_name }}</strong> has issued a credit note to <strong>{{ recipient_name }}</strong>.
+</p>
+
+<div class="info-card">
+    <div class="info-row">
+        <span style="color: #64748b;">Credit Note No.</span>
+        <strong style="color: #0f172a; font-family: monospace;">{{ note_number }}</strong>
+    </div>
+    <div class="info-row">
+        <span style="color: #64748b;">Date</span>
+        <strong style="color: #0f172a;">{{ note_date }}</strong>
+    </div>
+    {% if original_invoice_no %}
+    <div class="info-row">
+        <span style="color: #64748b;">Against Invoice</span>
+        <strong style="color: #0f172a; font-family: monospace;">{{ original_invoice_no }}</strong>
+    </div>
+    {% endif %}
+    {% if reason %}
+    <div class="info-row">
+        <span style="color: #64748b;">Reason</span>
+        <strong style="color: #0f172a;">{{ reason }}</strong>
+    </div>
+    {% endif %}
+    <div class="info-row" style="background: #e0e7ff; padding: 12px 14px; border-radius: 8px; margin-top: 10px;">
+        <span style="color: #3730a3; font-weight: 700; font-size: 16px;">Credit Note Amount</span>
+        <strong style="color: #3730a3; font-size: 18px;">₹{{ amount }}</strong>
+    </div>
+</div>
+
+{% if secure_view_url %}
+<div style="text-align: center; margin: 30px 0;">
+    <a href="{{ secure_view_url }}" class="btn">View Credit Note &rarr;</a>
+</div>
+{% endif %}
+
+<p style="font-size: 13px; color: #64748b; text-align: center;">
+    This credit has been applied to your ledger on SriLekh.
+</p>
+{% endblock %}

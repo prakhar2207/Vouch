@@ -1,0 +1,42 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<div style="text-align: center; margin-bottom: 24px;">
+    <span class="badge badge-success">Account Activated</span>
+</div>
+<h2 style="margin-top: 0; color: #0f172a; font-size: 22px; font-weight: 700; text-align: center;">Welcome to SriLekh, {{ user_name|default:"Partner" }}!</h2>
+<p>Your business account for <strong>{{ company_name }}</strong> has been successfully configured and activated.</p>
+
+<div class="info-card">
+    <div class="info-row">
+        <span style="color: #64748b;">Business / Firm Name</span>
+        <strong style="color: #0f172a;">{{ company_name }}</strong>
+    </div>
+    {% if gstin %}
+    <div class="info-row">
+        <span style="color: #64748b;">GSTIN</span>
+        <strong style="color: #0f172a; font-family: monospace;">{{ gstin }}</strong>
+    </div>
+    {% endif %}
+    {% if state %}
+    <div class="info-row">
+        <span style="color: #64748b;">State / Jurisdiction</span>
+        <strong style="color: #0f172a;">{{ state }}</strong>
+    </div>
+    {% endif %}
+    <div class="info-row">
+        <span style="color: #64748b;">Account Status</span>
+        <strong style="color: #15803d;">Active & Verified</strong>
+    </div>
+</div>
+
+<p>You now have full access to SriLekh's connected invoicing network, automated GST-compliant double-entry accounting, real-time inventory management, and instant digital voucher delivery.</p>
+
+<div style="text-align: center; margin: 30px 0;">
+    <a href="{{ login_url|default:'https://srilekh.com/login' }}" class="btn">Go to SriLekh Dashboard &rarr;</a>
+</div>
+
+<p style="font-size: 13px; color: #64748b;">
+    Need help setting up opening balances, inventory items, or Tally migration? Reply to this email or reach our dedicated support desk at <a href="mailto:support@srilekh.com">support@srilekh.com</a>.
+</p>
+{% endblock %}

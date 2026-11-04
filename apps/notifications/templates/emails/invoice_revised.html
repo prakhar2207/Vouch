@@ -1,0 +1,37 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<div style="text-align: center; margin-bottom: 20px;">
+    <span class="badge" style="background: #fef3c7; color: #b45309;">Revised Tax Invoice</span>
+</div>
+
+<h2 style="margin-top: 0; color: #0f172a; font-size: 22px; font-weight: 700; text-align: center;">Invoice Amended / Revised</h2>
+<p style="text-align: center; color: #64748b; font-size: 15px; margin-top: -6px;">
+    <strong>{{ seller_name }}</strong> has issued an amendment to invoice <strong>{{ invoice_number }}</strong>.
+</p>
+
+<div class="info-card">
+    <div class="info-row">
+        <span style="color: #64748b;">Invoice Number</span>
+        <strong style="color: #0f172a; font-family: monospace;">{{ invoice_number }}</strong>
+    </div>
+    <div class="info-row">
+        <span style="color: #64748b;">Revised Date</span>
+        <strong style="color: #0f172a;">{{ invoice_date }}</strong>
+    </div>
+    <div class="info-row" style="background: #e0f2fe; padding: 12px 14px; border-radius: 8px; margin-top: 10px;">
+        <span style="color: #0369a1; font-weight: 700; font-size: 16px;">Updated Invoice Total</span>
+        <strong style="color: #0369a1; font-size: 18px;">₹{{ total_amount }}</strong>
+    </div>
+</div>
+
+{% if secure_view_url %}
+<div style="text-align: center; margin: 30px 0;">
+    <a href="{{ secure_view_url }}" class="btn">View Updated Invoice &rarr;</a>
+</div>
+{% endif %}
+
+<p style="font-size: 13px; color: #64748b;">
+    Please update your accounts with these latest details. For queries, contact {{ seller_name }} at <a href="mailto:{{ seller_email }}">{{ seller_email }}</a>.
+</p>
+{% endblock %}

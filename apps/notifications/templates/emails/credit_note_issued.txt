@@ -1,0 +1,19 @@
+Credit Note Issued — SriLekh
+
+{{ seller_name }} has issued a credit note to {{ recipient_name }}.
+
+Credit Note Details:
+- Credit Note No.: {{ note_number }}
+- Date: {{ note_date }}
+{% if original_invoice_no %}- Against Invoice: {{ original_invoice_no }}
+{% endif %}{% if reason %}- Reason: {{ reason }}
+{% endif %}- Amount: INR {{ amount }}
+
+{% if secure_view_url %}View Credit Note:
+{{ secure_view_url }}
+{% endif %}
+--
+SriLekh Technologies
+https://srilekh.com
+Support: support@srilekh.com
+Sender: admin@srilekh.com

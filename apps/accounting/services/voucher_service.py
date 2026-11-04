@@ -249,10 +249,13 @@ class VoucherService:
             changes={"total_amount": str(voucher.total_amount), "status": "POSTED"}
         )
 
-        # 6. Automated Invoice PDF & Viral Claim Dispatch for Sales Invoices
+        # 6. Transactional Outbox & Notification Dispatch for Sales Invoices
         if voucher.voucher_type == 'SALES':
-            from apps.accounting.services.invoice_notification_service import InvoiceNotificationService
-            transaction.on_commit(lambda: InvoiceNotificationService.dispatch_invoice_on_post(voucher))
+            from apps.notifications.outbox_service import OutboxService
+            outbox_event = OutboxService.create_invoice_outbox_event(voucher)
+            if outbox_event:
+                event_id = outbox_event.id
+                transaction.on_commit(lambda: OutboxService.dispatch_outbox_event_async(event_id))
 
         # 7. Protocol Operational DAG Emitter (Transactional atomic emission)
         from apps.protocol.operation_emitter import ProtocolOperationEmitter

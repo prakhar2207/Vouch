@@ -58,10 +58,17 @@ export default function Login() {
       } else {
         router.push('/dashboard');
       }
-    } catch (err) {
+    } catch (err: any) {
       clearTimeout(slowTimer);
       setWarmingUp(false);
-      setError('Invalid credentials. Please check your email and password.');
+      const serverErr = err.response?.data?.email || err.response?.data?.detail || err.response?.data?.error;
+      if (Array.isArray(serverErr)) {
+        setError(serverErr[0]);
+      } else if (serverErr) {
+        setError(serverErr);
+      } else {
+        setError('Invalid credentials. Please check your email and password.');
+      }
       setLoading(false);
     }
   };
@@ -122,13 +129,12 @@ export default function Login() {
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label htmlFor="login-password" className="text-xs font-semibold text-foreground">Password</label>
-              <button 
-                type="button"
-                onClick={() => alert("Please contact your administrator to reset your password.")}
-                className="text-xs text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
+              <Link 
+                href="/forgot-password"
+                className="text-xs text-muted-foreground hover:text-primary transition-colors"
               >
                 Forgot password?
-              </button>
+              </Link>
             </div>
             <div className="relative">
               <input 
@@ -159,40 +165,33 @@ export default function Login() {
             className="w-full min-h-[44px] bg-primary text-primary-foreground p-3 rounded-xl font-bold text-sm hover:bg-primary/90 transition-all shadow-md shadow-primary/20 disabled:opacity-75 cursor-pointer flex items-center justify-center gap-2"
           >
             {loading ? (
-              <>
-                <span className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin shrink-0" />
-                <span>{warmingUp ? "Connecting to secure server..." : "Signing in..."}</span>
-              </>
+              <span className="flex items-center gap-2">
+                <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+                Signing in...
+              </span>
             ) : (
               <>
                 <LogIn className="w-4 h-4" />
-                <span>Sign In</span>
+                Sign In
               </>
             )}
           </button>
 
-          {/* Cold-start reassuring notice */}
-          {loading && warmingUp && (
-            <div className="flex items-center justify-center gap-2 text-[11px] text-amber-500/90 font-medium animate-pulse text-center pt-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping shrink-0" />
-              <span>Initial connection in progress — warming up secure cloud instance...</span>
-            </div>
+          {/* Cold-start alert for free-tier backends */}
+          {warmingUp && (
+            <p className="text-[11px] text-center text-amber-500/90 animate-pulse transition-opacity">
+              Connecting to secure database...
+            </p>
           )}
         </form>
 
-        {/* Footer */}
-        <div className="mt-6 text-center text-xs text-muted-foreground">
-          Don't have an account?{' '}
-          <Link href="/register" className="text-primary hover:underline font-semibold">
-            Register here
-          </Link>
-        </div>
-
-        {/* Keyboard hint */}
-        <div className="mt-4 text-center">
-          <span className="text-xs text-muted-foreground font-mono">
-            Press Enter to sign in
-          </span>
+        <div className="mt-8 pt-6 border-t border-border/50 text-center">
+          <p className="text-xs text-muted-foreground">
+            Don't have an account?{' '}
+            <Link href="/register" className="text-primary hover:underline font-semibold transition-colors">
+              Create an account
+            </Link>
+          </p>
         </div>
       </div>
     </div>
