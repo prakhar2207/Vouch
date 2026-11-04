@@ -234,6 +234,10 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(hour=20, minute=30),  # 20:30 UTC = 02:00 AM IST
         'kwargs': {'upload_s3': True, 'encrypt': True},
     },
+    'sweep-and-retry-outbox-notifications': {
+        'task': 'apps.notifications.tasks.retry_pending_outbox_events_task',
+        'schedule': 60.0,  # Sweeps every 60 seconds
+    },
 }
 
 # Off-site Disaster Recovery & Cloud Storage Settings

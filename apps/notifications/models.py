@@ -37,6 +37,8 @@ class EmailDeliveryLog(models.Model):
         ('PENDING', 'Pending'),
         ('SENDING', 'Sending'),
         ('SENT', 'Sent'),
+        ('DELIVERY_ACCEPTED', 'Delivery Accepted'),
+        ('DELIVERY_UNKNOWN', 'Delivery Unknown'),
         ('RETRY_PENDING', 'Retry Pending'),
         ('FAILED', 'Failed'),
         ('SKIPPED', 'Skipped'),
@@ -69,7 +71,9 @@ class EmailDeliveryLog(models.Model):
     idempotency_key = models.CharField(max_length=255, null=True, blank=True, unique=True, db_index=True)
     claim_token = models.CharField(max_length=128, null=True, blank=True, db_index=True)
     claim_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
+    reconciliation_notes = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now, db_index=True)
 
     class Meta:
@@ -92,7 +96,9 @@ class TransactionalOutboxEvent(models.Model):
     STATUS_CHOICES = (
         ('PENDING', 'Pending'),
         ('PROCESSING', 'Processing'),
+        ('DELIVERY_ACCEPTED', 'Delivery Accepted'),
         ('PROCESSED', 'Processed'),
+        ('DELIVERY_UNKNOWN', 'Delivery Unknown'),
         ('RETRY_PENDING', 'Retry Pending'),
         ('FAILED', 'Failed'),
         ('DEAD_LETTER', 'Dead Letter'),
@@ -104,6 +110,7 @@ class TransactionalOutboxEvent(models.Model):
     aggregate_type = models.CharField(max_length=50, default='Voucher')
     aggregate_id = models.CharField(max_length=100, db_index=True)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='outbox_events')
+    email_delivery_log = models.ForeignKey('EmailDeliveryLog', null=True, blank=True, on_delete=models.SET_NULL, related_name='outbox_events')
     payload = models.JSONField(default=dict)
     idempotency_key = models.CharField(max_length=255, unique=True, db_index=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING', db_index=True)

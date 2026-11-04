@@ -37,6 +37,8 @@ def retry_pending_outbox_events_task():
 
     now = timezone.now()
 
+    from apps.notifications.models import EmailDeliveryLog
+
     # 1. Crash recovery: Detect abandoned PROCESSING events whose leases have expired
     abandoned_events = TransactionalOutboxEvent.objects.filter(
         status='PROCESSING',
@@ -53,31 +55,59 @@ def retry_pending_outbox_events_task():
                 .first()
             )
             if locked:
-                locked.retry_count += 1
-                locked.claim_token = None
-                locked.lease_expires_at = None
-                if locked.retry_count >= locked.max_retries:
-                    locked.status = 'DEAD_LETTER'
-                    locked.error_log = "Processing lease expired and maximum retries exceeded (suspected worker crash)."
+                email_log = locked.email_delivery_log
+                if not email_log and locked.idempotency_key:
+                    email_log = EmailDeliveryLog.objects.filter(idempotency_key=locked.idempotency_key).first()
+
+                if email_log and email_log.status in ('SENT', 'DELIVERY_ACCEPTED'):
+                    # Prior worker actually delivered the email before dying! Advance outbox to PROCESSED
+                    locked.status = 'PROCESSED'
+                    locked.processed_at = now
+                    locked.claim_token = None
+                    locked.lease_expires_at = None
+                    locked.save(update_fields=['status', 'processed_at', 'claim_token', 'lease_expires_at'])
+                    recovered += 1
+                elif email_log and email_log.status == 'DELIVERY_UNKNOWN':
+                    locked.status = 'DELIVERY_UNKNOWN'
+                    locked.claim_token = None
+                    locked.lease_expires_at = None
+                    locked.error_log = "Associated email delivery is in DELIVERY_UNKNOWN status; automated retry suspended pending reconciliation."
+                    locked.save(update_fields=['status', 'claim_token', 'lease_expires_at', 'error_log'])
+                    recovered += 1
                 else:
-                    locked.status = 'RETRY_PENDING'
-                    locked.next_retry_at = now + timedelta(seconds=15)
-                locked.save(update_fields=['status', 'retry_count', 'claim_token', 'lease_expires_at', 'error_log', 'next_retry_at'])
-                recovered += 1
+                    locked.retry_count += 1
+                    locked.claim_token = None
+                    locked.lease_expires_at = None
+                    if locked.retry_count >= locked.max_retries:
+                        locked.status = 'DEAD_LETTER'
+                        locked.error_log = "Processing lease expired and maximum retries exceeded (suspected worker crash)."
+                    else:
+                        locked.status = 'RETRY_PENDING'
+                        locked.next_retry_at = now + timedelta(seconds=15)
+                    locked.save(update_fields=['status', 'retry_count', 'claim_token', 'lease_expires_at', 'error_log', 'next_retry_at'])
+                    recovered += 1
 
     if recovered > 0:
         logger.warning(f"Recovered {recovered} abandoned outbox event(s) with expired leases.")
 
-    # 2. Dispatch eligible PENDING and RETRY_PENDING events
-    eligible_events = TransactionalOutboxEvent.objects.filter(
-        status__in=['PENDING', 'RETRY_PENDING']
-    ).filter(
-        models.Q(next_retry_at__isnull=True) | models.Q(next_retry_at__lte=now)
-    )[:50]
+    # 2. Concurrency-Safe Dispatch for eligible PENDING and RETRY_PENDING events (skip_locked prevents competing sweepers from double-queueing)
+    eligible_ids = []
+    with transaction.atomic():
+        eligible_qs = (
+            TransactionalOutboxEvent.objects
+            .select_for_update(skip_locked=True)
+            .filter(status__in=['PENDING', 'RETRY_PENDING'])
+            .filter(models.Q(next_retry_at__isnull=True) | models.Q(next_retry_at__lte=now))[:50]
+        )
+        eligible_ids = list(eligible_qs.values_list('id', flat=True))
+        if eligible_ids:
+            TransactionalOutboxEvent.objects.filter(id__in=eligible_ids).update(
+                next_retry_at=now + timedelta(seconds=60)
+            )
 
     count = 0
-    for event in eligible_events:
-        OutboxService.dispatch_outbox_event_async(event.id)
+    for event_id in eligible_ids:
+        OutboxService.dispatch_outbox_event_async(event_id)
         count += 1
 
     logger.info(f"Triggered async dispatch for {count} outbox events (recovered {recovered} abandoned).")

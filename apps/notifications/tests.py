@@ -590,9 +590,9 @@ class NotificationSystemTests(TestCase):
             retry_count=0,
         )
 
-        # Worker 2 attempts to process
+        # Worker 2 attempts to process - must return False (processing suppressed while lease active)
         success = OutboxService.process_outbox_event(event.id)
-        self.assertTrue(success)
+        self.assertFalse(success)
 
         # Claim token remains with Worker 1
         event.refresh_from_db()

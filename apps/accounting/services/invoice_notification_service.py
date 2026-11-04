@@ -1,5 +1,4 @@
 import logging
-import threading
 import urllib.parse
 from decimal import Decimal
 from typing import Dict, Any, Optional
@@ -269,8 +268,10 @@ class InvoiceNotificationService:
                 logger.exception(f"Background dispatch failed for voucher {voucher.voucher_number}: {e}")
 
         if async_mode:
-            thread = threading.Thread(target=_dispatch, daemon=True)
-            thread.start()
+            if getattr(settings, 'TESTING', False) or getattr(settings, 'SYNCHRONOUS_NOTIFICATIONS', False):
+                _dispatch()
+            else:
+                logger.warning(f"Celery unavailable and daemon threads prohibited in production for voucher {voucher.voucher_number}.")
         else:
             _dispatch()
 

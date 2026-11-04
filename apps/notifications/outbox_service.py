@@ -1,8 +1,8 @@
 import logging
 import secrets
-import threading
 from datetime import timedelta
 from typing import Optional, Union
+import uuid
 from uuid import UUID
 
 from django.conf import settings
@@ -97,10 +97,14 @@ class OutboxService:
                 logger.info(f"Outbox event {event_id} already in terminal state {event.status}.")
                 return True
 
+            if event.status == 'DELIVERY_UNKNOWN':
+                logger.warning(f"Outbox event {event_id} is in DELIVERY_UNKNOWN status. Automated re-processing suppressed pending reconciliation.")
+                return False
+
             if event.status == 'PROCESSING':
                 if event.lease_expires_at and event.lease_expires_at > now:
                     logger.info(f"Outbox event {event_id} actively claimed by worker until {event.lease_expires_at}. Suppressing duplicate.")
-                    return True
+                    return False
                 else:
                     logger.warning(f"Outbox event {event_id} lease expired ({event.lease_expires_at}). Taking over claim via worker {worker_id}.")
 
@@ -131,7 +135,7 @@ class OutboxService:
                 event.claim_token = None
                 event.lease_expires_at = None
 
-                if event.status in ('SKIPPED', 'DEAD_LETTER'):
+                if event.status in ('SKIPPED', 'DEAD_LETTER', 'DELIVERY_UNKNOWN'):
                     event.save(update_fields=['status', 'claim_token', 'lease_expires_at', 'error_log'])
                 elif success:
                     event.status = 'PROCESSED'
@@ -169,6 +173,15 @@ class OutboxService:
     def _process_invoice_posted_event(cls, event: TransactionalOutboxEvent) -> bool:
         """Internal worker logic for INVOICE_POSTED."""
         voucher_id = event.payload.get('voucher_id') or event.aggregate_id
+        try:
+            uuid.UUID(str(voucher_id))
+        except (ValueError, TypeError, AttributeError):
+            logger.error(f"Invalid voucher UUID '{voucher_id}' in outbox event {event.id}.")
+            event.status = 'DEAD_LETTER'
+            event.error_log = f"Invalid voucher UUID: {voucher_id}"
+            event.save(update_fields=['status', 'error_log'])
+            return False
+
         voucher = (
             Voucher.objects
             .select_related('company', 'party_ledger')
@@ -302,8 +315,20 @@ class OutboxService:
             company=company,
         )
 
+        if log:
+            event.email_delivery_log = log
+            event.save(update_fields=['email_delivery_log'])
+
         if not success:
             event.error_log = err or "Email delivery failed"
+            if log and log.status == 'DELIVERY_UNKNOWN':
+                event.status = 'DELIVERY_UNKNOWN'
+            event.save(update_fields=['error_log', 'status'])
+            return False
+
+        if log and log.status not in ('SENT', 'DELIVERY_ACCEPTED'):
+            logger.info(f"Email for voucher {voucher.voucher_number} not in terminal sent state (status: {log.status}). Keeping outbox non-terminal.")
+            event.error_log = f"Awaiting confirmed delivery (email status: {log.status})"
             event.save(update_fields=['error_log'])
             return False
 

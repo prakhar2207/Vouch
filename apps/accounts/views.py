@@ -7,7 +7,7 @@ from django.conf import settings
 from django.contrib.auth.hashers import make_password, check_password
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
@@ -162,42 +162,71 @@ class RegisterInitiateView(TestBypassThrottleMixin, APIView):
         otp_expiry_secs = getattr(settings, 'OTP_EXPIRY_SECONDS', 300)
         otp_cooldown_secs = getattr(settings, 'OTP_RESEND_COOLDOWN_SECONDS', 60)
 
-        with transaction.atomic():
-            # 3. Invalidate any existing active challenges for this email
-            EmailVerificationChallenge.objects.filter(email=email, is_consumed=False).update(is_consumed=True)
+        challenge = None
+        for attempt in range(3):
+            try:
+                with transaction.atomic():
+                    # 3. Invalidate any existing active challenges for this email under row lock
+                    active_challenges = list(
+                        EmailVerificationChallenge.objects
+                        .select_for_update()
+                        .filter(email=email, challenge_type='REGISTRATION', is_consumed=False)
+                    )
+                    for ac in active_challenges:
+                        ac.is_consumed = True
+                        ac.save(update_fields=['is_consumed'])
 
-            # 4. Generate cryptographically secure 6-digit OTP
-            otp_code = f"{secrets.randbelow(900000) + 100000}"
-            otp_hash = make_password(otp_code)
-            session_token = secrets.token_urlsafe(32)
+                    # 4. Generate cryptographically secure 6-digit OTP
+                    otp_code = f"{secrets.randbelow(900000) + 100000}"
+                    otp_hash = make_password(otp_code)
+                    session_token = secrets.token_urlsafe(32)
 
-            client_ip = request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
+                    client_ip = request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
 
-            challenge = EmailVerificationChallenge.objects.create(
-                email=email,
-                otp_hash=otp_hash,
-                session_token=session_token,
-                challenge_type='REGISTRATION',
-                expires_at=now + timedelta(seconds=otp_expiry_secs),
-                resend_available_at=now + timedelta(seconds=otp_cooldown_secs),
-                ip_address=client_ip if client_ip and len(client_ip) <= 45 else None,
-            )
+                    challenge = EmailVerificationChallenge.objects.create(
+                        email=email,
+                        otp_hash=otp_hash,
+                        session_token=session_token,
+                        challenge_type='REGISTRATION',
+                        expires_at=now + timedelta(seconds=otp_expiry_secs),
+                        resend_available_at=now + timedelta(seconds=otp_cooldown_secs),
+                        ip_address=client_ip if client_ip and len(client_ip) <= 45 else None,
+                    )
 
-            # 5. Persist unverified PendingRegistration record
-            registration_token = secrets.token_urlsafe(48)
-            PendingRegistration.objects.update_or_create(
-                email=email,
-                defaults={
-                    'password_hash': make_password(password),
-                    'verification_challenge': challenge,
-                    'registration_token': registration_token,
-                    'is_verified': False,
-                    'expires_at': now + timedelta(hours=1),
-                }
-            )
+                    # 5. Persist unverified PendingRegistration record under row lock
+                    registration_token = secrets.token_urlsafe(48)
+                    pending = (
+                        PendingRegistration.objects
+                        .select_for_update()
+                        .filter(email=email)
+                        .first()
+                    )
+                    if pending:
+                        pending.password_hash = make_password(password)
+                        pending.verification_challenge = challenge
+                        pending.registration_token = registration_token
+                        pending.is_verified = False
+                        pending.expires_at = now + timedelta(hours=1)
+                        pending.save(update_fields=['password_hash', 'verification_challenge', 'registration_token', 'is_verified', 'expires_at', 'updated_at'])
+                    else:
+                        pending = PendingRegistration.objects.create(
+                            email=email,
+                            password_hash=make_password(password),
+                            verification_challenge=challenge,
+                            registration_token=registration_token,
+                            is_verified=False,
+                            expires_at=now + timedelta(hours=1),
+                        )
+                break
+            except IntegrityError:
+                if attempt == 2:
+                    raise
+                import time
+                time.sleep(0.05)
 
-        # 6. Dispatch OTP Email after atomic database commit
-        EmailService.send_registration_otp(email, otp_code)
+        # 6. Dispatch OTP Email with session-scoped idempotency key after atomic database commit
+        otp_idem_key = f"reg_otp_{challenge.session_token}"
+        EmailService.send_registration_otp(email, otp_code, idempotency_key=otp_idem_key)
 
         return Response({
             "success": True,
@@ -374,7 +403,8 @@ class RegisterResendOtpView(TestBypassThrottleMixin, APIView):
             pending.save(update_fields=['verification_challenge', 'updated_at'])
 
         # Dispatch replacement OTP email after atomic database commit
-        EmailService.send_registration_otp(challenge.email, otp_code)
+        otp_idem_key = f"reg_otp_{new_session_token}"
+        EmailService.send_registration_otp(challenge.email, otp_code, idempotency_key=otp_idem_key)
 
         return Response({
             "success": True,

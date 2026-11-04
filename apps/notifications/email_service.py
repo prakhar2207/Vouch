@@ -89,21 +89,42 @@ class EmailService:
                     )
                 )
                 if not created:
-                    if log_entry.status == 'SENT':
+                    if log_entry.status in ('SENT', 'DELIVERY_ACCEPTED'):
                         logger.info(f"Email delivery skipped (idempotent duplicate): key={idempotency_key}")
                         return True, log_entry, "idempotent_duplicate"
                     elif log_entry.status == 'SENDING':
                         if log_entry.claim_expires_at and log_entry.claim_expires_at > now:
                             logger.info(f"Email delivery already in-flight for key={idempotency_key}. Suppressing duplicate.")
-                            return True, log_entry, "in_flight_send"
+                            # Mandatory Invariant: active SENDING is NOT confirmed sent!
+                            return False, log_entry, "in_flight_send"
                         else:
-                            logger.warning(f"In-flight lease expired for key={idempotency_key}. Taking over send slot.")
+                            # In-flight lease expired without transition to SENT!
+                            # Could the previous worker have completed delivery before crashing?
+                            # Mark DELIVERY_UNKNOWN rather than blindly sending duplicate emails to customers
+                            logger.warning(f"In-flight lease expired for key={idempotency_key}. Transitioning to DELIVERY_UNKNOWN.")
+                            log_entry.status = 'DELIVERY_UNKNOWN'
+                            log_entry.claim_token = None
+                            log_entry.claim_expires_at = None
+                            log_entry.reconciliation_notes = (
+                                f"Worker lease expired while in SENDING status at {log_entry.claim_expires_at}. "
+                                f"Marked DELIVERY_UNKNOWN to prevent duplicate customer emails pending reconciliation."
+                            )
+                            log_entry.save(update_fields=['status', 'claim_token', 'claim_expires_at', 'reconciliation_notes'])
+                            return False, log_entry, "delivery_unknown_lease_expired"
+                    elif log_entry.status == 'DELIVERY_UNKNOWN':
+                        logger.warning(f"Email delivery log for key={idempotency_key} is in DELIVERY_UNKNOWN status. Blind retry suppressed.")
+                        return False, log_entry, "delivery_unknown_suppressed"
+                    elif log_entry.status == 'FAILED':
+                        logger.warning(f"Email delivery log for key={idempotency_key} is permanently FAILED.")
+                        return False, log_entry, "already_failed"
 
+                    # For PENDING or RETRY_PENDING: claim the send slot
                     log_entry.status = 'SENDING'
                     log_entry.claim_token = worker_claim_token
                     log_entry.claim_expires_at = lease_expiry
+                    log_entry.last_attempt_at = now
                     log_entry.attempts += 1
-                    log_entry.save(update_fields=['status', 'claim_token', 'claim_expires_at', 'attempts'])
+                    log_entry.save(update_fields=['status', 'claim_token', 'claim_expires_at', 'last_attempt_at', 'attempts'])
         else:
             log_entry = EmailDeliveryLog.objects.create(
                 company=company,
@@ -131,14 +152,15 @@ class EmailService:
             logger.warning(f"Plain-text template emails/{template_name}.txt not found or failed: {str(e)}")
             text_content = html_content or ""
 
+        client_msg_id = f"<{idempotency_key or secrets.token_hex(16)}@srilekh.com>"
         try:
-            log_entry.attempts += 1
             msg = EmailMultiAlternatives(
                 subject=subject,
                 body=text_content,
                 from_email=sender,
                 to=[to_email],
                 reply_to=reply_to_list,
+                headers={'Message-ID': client_msg_id, 'X-SriLekh-Idempotency': str(idempotency_key or '')}
             )
 
             if html_content:
@@ -156,32 +178,39 @@ class EmailService:
                 if locked:
                     if idempotency_key and locked.claim_token != worker_claim_token:
                         logger.warning(f"Claim lost on email delivery log {log_entry.id} (worker {worker_claim_token} vs {locked.claim_token}).")
-                        return True, locked, "claim_lost"
+                        return False, locked, "claim_lost"
 
                     locked.status = 'SENT'
                     locked.sent_at = timezone.now()
                     locked.claim_token = None
                     locked.claim_expires_at = None
                     locked.provider_name = getattr(settings, 'EMAIL_BACKEND', 'SMTP').split('.')[-1]
-                    locked.save(update_fields=['status', 'sent_at', 'claim_token', 'claim_expires_at', 'provider_name'])
+                    locked.provider_message_id = client_msg_id
+                    locked.save(update_fields=['status', 'sent_at', 'claim_token', 'claim_expires_at', 'provider_name', 'provider_message_id'])
                     return True, locked, None
             return True, log_entry, None
 
         except Exception as exc:
             err_msg = str(exc)
-            logger.error(f"Email delivery failed to {to_email}: {err_msg}")
+            is_timeout = any(term in err_msg.lower() for term in ['timed out', 'timeout', 'connection reset', 'econnreset'])
+            logger.error(f"Email delivery exception to {to_email}: {err_msg} (is_timeout={is_timeout})")
             with transaction.atomic():
                 locked = EmailDeliveryLog.objects.select_for_update().filter(id=log_entry.id).first()
                 if locked:
                     locked.claim_token = None
                     locked.claim_expires_at = None
-                    if locked.attempts >= locked.max_attempts:
+                    if is_timeout:
+                        locked.status = 'DELIVERY_UNKNOWN'
+                        locked.error_message = f"Ambiguous timeout: {err_msg[:400]}"
+                        locked.reconciliation_notes = "Marked DELIVERY_UNKNOWN due to connection timeout/reset during transmission."
+                    elif locked.attempts >= locked.max_attempts:
                         locked.status = 'FAILED'
+                        locked.error_message = err_msg[:500]
                     else:
                         locked.status = 'RETRY_PENDING'
-                    locked.error_message = err_msg[:500]  # Sanitize length
-                    locked.save(update_fields=['status', 'claim_token', 'claim_expires_at', 'error_message'])
-                    return False, locked, err_msg
+                        locked.error_message = err_msg[:500]
+                    locked.save(update_fields=['status', 'claim_token', 'claim_expires_at', 'error_message', 'reconciliation_notes'])
+                    return False, locked, ("timeout_ambiguous" if is_timeout else err_msg)
             return False, log_entry, err_msg
 
     # =========================================================================
@@ -189,19 +218,23 @@ class EmailService:
     # =========================================================================
 
     @classmethod
-    def send_registration_otp(cls, to_email: str, otp_code: str) -> Tuple[bool, Optional[EmailDeliveryLog], Optional[str]]:
-        """Sends single-use 6-digit registration OTP with 5-minute expiry."""
+    def send_registration_otp(cls, to_email: str, otp_code: str, idempotency_key: Optional[str] = None) -> Tuple[bool, Optional[EmailDeliveryLog], Optional[str]]:
+        """Sends single-use 6-digit registration OTP with 5-minute expiry and stable challenge idempotency."""
         subject = "Verify your email address — SriLekh"
         context = {
             'otp_code': otp_code,
             'subject': subject,
         }
+        if not idempotency_key:
+            import hashlib
+            idempotency_key = f"reg_otp_{to_email}_{hashlib.sha256(otp_code.encode()).hexdigest()[:16]}"
         return cls.send_email(
             to_email=to_email,
             subject=subject,
             template_name="registration_otp",
             context=context,
             email_type='REGISTRATION_OTP',
+            idempotency_key=idempotency_key,
         )
 
     @classmethod

@@ -312,10 +312,13 @@ class EmailDeliveryLogListView(APIView):
             {
                 "id": str(log.id),
                 "recipient_email": log.recipient_email,
+                "sender_email": log.sender_email,
                 "subject": log.subject,
                 "email_type": log.email_type,
                 "status": log.status,
                 "attempts": log.attempts,
+                "provider_message_id": log.provider_message_id,
+                "reconciliation_notes": log.reconciliation_notes,
                 "sent_at": log.sent_at.isoformat() if log.sent_at else None,
                 "created_at": log.created_at.isoformat(),
                 "error_message": (log.error_message or '')[:200],  # Sanitize to prevent credential/trace exposure
@@ -347,7 +350,7 @@ class EmailDeliveryLogRetryAPIView(APIView):
         if not log:
             return Response({"success": False, "error": "Delivery log entry not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        if log.status == 'SENT':
+        if log.status in ('SENT', 'DELIVERY_ACCEPTED'):
             return Response({"success": False, "error": "This message has already been successfully delivered."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Reset log status and retry
@@ -356,6 +359,7 @@ class EmailDeliveryLogRetryAPIView(APIView):
         log.claim_token = None
         log.claim_expires_at = None
         log.error_message = None
+        log.reconciliation_notes = f"Manually retried by {request.user.email} at {timezone.now().isoformat()}"
         log.save()
 
         # If there is a corresponding outbox event, reset and re-dispatch it

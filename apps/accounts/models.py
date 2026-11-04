@@ -81,6 +81,13 @@ class EmailVerificationChallenge(models.Model):
             models.Index(fields=['email', 'is_verified', 'is_consumed']),
             models.Index(fields=['session_token', 'is_consumed']),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['email', 'challenge_type'],
+                condition=models.Q(is_consumed=False),
+                name='unique_active_challenge_per_email_and_type'
+            )
+        ]
 
     def is_expired(self):
         return timezone.now() > self.expires_at
